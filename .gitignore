@@ -1,0 +1,12 @@
+# virtual environment
+.venv/
+
+# logs
+logs/
+
+# python
+__pycache__/
+
+# test outputs
+outputs/
+

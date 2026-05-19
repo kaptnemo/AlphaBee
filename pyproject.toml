@@ -1,0 +1,27 @@
+[project]
+name = "alphabee"
+version = "0.1.0"
+description = "An AI-native investment copilot that continuously scans markets like a swarm intelligence system."
+authors = [
+    {name = "captainemo"}
+]
+license = "MIT"
+requires-python = ">=3.13,<4.0.0"
+dependencies = [
+    "langgraph (>=1.2.0,<2.0.0)",
+    "mem0ai (>=2.0.2,<3.0.0)",
+    "openai (>=2.36.0,<3.0.0)",
+    "deepagents (>=0.6.1,<0.7.0)",
+    "langchain-openai (>=1.2.1,<2.0.0)",
+    "tushare (>=1.4.29,<2.0.0)",
+    "akshare (>=1.18.60,<2.0.0)",
+    "baostock (>=0.9.1,<0.10.0)",
+    "pyarrow (>=24.0.0,<25.0.0)",
+    "structlog (>=25.5.0,<26.0.0)",
+    "langchain-middleware-stack (>=0.1.3,<0.2.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

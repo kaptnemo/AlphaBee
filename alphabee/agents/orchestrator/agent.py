@@ -1,0 +1,81 @@
+from deepagents import create_deep_agent, CompiledSubAgent
+from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import LLMToolSelectorMiddleware
+from langchain.agents.middleware import ToolRetryMiddleware
+from langchain_openai import ChatOpenAI
+
+from alphabee.agents.orchestrator.prompts import ALPHABEE_SYSTEM_PROMPT
+from alphabee.config import settings
+from alphabee.agents.fundamental.agent import fundamental_agent
+from alphabee.agents.market.agent import market_agent
+from alphabee.agents.risk.agent import risk_agent
+
+
+model = ChatOpenAI(
+    model=settings.llm.model,
+    api_key=settings.llm.api_key,
+    base_url=settings.llm.base_url,
+)
+
+
+alphabee_agent = create_deep_agent(
+    model=model,
+    system_prompt=ALPHABEE_SYSTEM_PROMPT,
+    subagents=[
+        CompiledSubAgent(
+            name="FundamentalAgent",
+            description="负责分析公司的基本面，包括财务数据、业务模式、竞争优势等。",
+            runnable=fundamental_agent,
+        ),
+        CompiledSubAgent(
+            name="MarketAgent",
+            description="负责分析市场数据，包括股票价格、交易量、市场趋势等。",
+            runnable=market_agent,
+        ),
+        CompiledSubAgent(
+            name="RiskAgent",
+            description="负责分析公司的风险，包括财务风险、市场风险、运营风险等。",
+            runnable=risk_agent,
+        ),
+    ],
+    middleware=[
+        # TodoListMiddleware(),
+        # LLMToolSelectorMiddleware(
+        #     model=model,
+        #     # Qwen API requires the word "json" in the prompt when response_format=json_object
+        #     system_prompt="Select the most relevant tools for the user's query. Respond in JSON format.",
+        # ),
+        ToolRetryMiddleware(
+            max_retries=3,
+            backoff_factor=2.0,
+            initial_delay=1.0,
+        )
+    ]
+)
+
+if __name__ == "__main__":
+    import asyncio
+    
+    query = "给我深入分析一下宁德时代的业务成长性"
+    
+    async def stream_response():
+        print("\n" + "="*50)
+        print("实时分析过程：")
+        print("="*50)
+        
+        async for chunk in alphabee_agent.astream(
+            {"messages": [("user", query)]},
+            stream_mode="updates",
+        ):
+            # if 'tools' in chunk:
+            #     print("\n工具调用：")
+            #     messages = chunk['messages']
+            #     import pdb; pdb.set_trace()
+            #     print(chunk)
+            # if 'model' in chunk:
+            #     import pdb; pdb.set_trace()
+            #     print(chunk)
+            print(chunk)
+                
+        
+    asyncio.run(stream_response())
