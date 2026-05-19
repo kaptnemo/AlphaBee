@@ -3,3 +3,16 @@ llm:
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   model: "qwen3.6-plus"
   proxy_url: "http://192.168.50.228:7897"
+
+web_search:
+  tavily:
+    api_key: "${TAVILY_API_KEY:}"
+    base_url: "https://api.tavily.com"
+    proxy_url: "http://192.168.50.228:7897"
+    timeout: 15.0
+    max_results: 6
+  ddgs:
+    proxy_url: "http://192.168.50.228:7897"
+    timeout: 20
+    region: "cn-zh"
+    max_results: 6

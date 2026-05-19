@@ -4,6 +4,8 @@ from langchain_openai import ChatOpenAI
 from alphabee.agents.market.prompts import MARKET_AGENT_PROMPT
 from alphabee.config import settings
 from alphabee.tools.market_data import get_market_data
+from alphabee.tools.common import web_search
+
 
 market_agent = create_deep_agent(
     model=ChatOpenAI(
@@ -12,5 +14,8 @@ market_agent = create_deep_agent(
         base_url=settings.llm.base_url,
     ),
     system_prompt=MARKET_AGENT_PROMPT,
-    tools=[get_market_data]
+    tools=[
+        # web_search,
+        get_market_data,
+    ]
 )

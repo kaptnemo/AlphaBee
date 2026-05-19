@@ -1,6 +1,4 @@
-from pathlib import Path
-
-from pydantic import BaseModel, DirectoryPath
+from pydantic import BaseModel, Field
 
 from alphabee.config.loader import ConfigLoader
 
@@ -12,8 +10,29 @@ class LLMConfig(BaseModel):
     proxy_url: str | None = None
 
 
+class TavilyConfig(BaseModel):
+    api_key: str = ""
+    base_url: str = "https://api.tavily.com"
+    proxy_url: str | None = None
+    timeout: float = Field(default=15.0, description="请求超时秒数")
+    max_results: int = Field(default=6, description="默认返回结果数")
+
+
+class DDGSConfig(BaseModel):
+    proxy_url: str | None = None
+    timeout: int = Field(default=20, description="请求超时秒数")
+    region: str = Field(default="cn-zh", description="搜索区域，如 cn-zh, us-en")
+    max_results: int = Field(default=6, description="默认返回结果数")
+
+
+class WebSearchConfig(BaseModel):
+    tavily: TavilyConfig = Field(default_factory=TavilyConfig)
+    ddgs: DDGSConfig = Field(default_factory=DDGSConfig)
+
+
 class Settings(BaseModel):
     llm: LLMConfig
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
 def get_settings() -> Settings:

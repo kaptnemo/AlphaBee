@@ -68,46 +68,52 @@ def _print_header(query: str) -> None:
     print()
 
 
-def _print_step_model_thinking(text: str, step: int, elapsed: float) -> None:
+def _print_step_model_thinking(text: str, step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
     """LLM 正在推理 / 生成文字。"""
-    prefix = _c(f"[{step:02d}]", _C.GRAY) + " " + _c("🤔 模型推理", _C.BOLD, _C.BLUE)
+    indent = "  " * depth
+    agent_tag = _c(f" [{agent_path}]", _C.MAGENTA if depth > 0 else _C.CYAN) if agent_path else ""
+    prefix = indent + _c(f"[{step:02d}]", _C.GRAY) + " " + _c("🤔 模型推理", _C.BOLD, _C.BLUE) + agent_tag
     print(f"{prefix}  {_c(f'+{elapsed:.1f}s', _C.GRAY)}")
-    # 截断太长的内容，避免刷屏
     display = text.strip()
     if len(display) > 500:
         display = display[:500] + _c("  ...(已截断)", _C.DIM)
     for line in display.splitlines():
-        print("       " + _c(line, _C.BLUE))
+        print(indent + "       " + _c(line, _C.BLUE))
     print()
 
 
-def _print_step_tool_call(tool_name: str, args: dict[str, Any], step: int, elapsed: float) -> None:
+def _print_step_tool_call(tool_name: str, args: dict[str, Any], step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
     """LLM 决定调用某个工具/子代理。"""
-    prefix = _c(f"[{step:02d}]", _C.GRAY) + " " + _c("🔧 调用工具", _C.BOLD, _C.YELLOW)
+    indent = "  " * depth
+    agent_tag = _c(f" [{agent_path}]", _C.MAGENTA if depth > 0 else _C.CYAN) if agent_path else ""
+    prefix = indent + _c(f"[{step:02d}]", _C.GRAY) + " " + _c("🔧 调用工具", _C.BOLD, _C.YELLOW) + agent_tag
     print(f"{prefix}  {_c(f'+{elapsed:.1f}s', _C.GRAY)}")
-    print("       " + _c(f"▶  {tool_name}", _C.BOLD, _C.YELLOW))
+    print(indent + "       " + _c(f"▶  {tool_name}", _C.BOLD, _C.YELLOW))
     if args:
         args_str = json.dumps(args, ensure_ascii=False, indent=None)
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
-        print("       " + _c(f"   入参: {args_str}", _C.DIM))
+        print(indent + "       " + _c(f"   入参: {args_str}", _C.DIM))
     print()
 
 
-def _print_step_tool_result(tool_name: str, content: str, status: str, step: int, elapsed: float) -> None:
+def _print_step_tool_result(tool_name: str, content: str, status: str, step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
     """工具调用结果返回。"""
+    indent = "  " * depth
     icon = "✅" if status != "error" else "❌"
     color = _C.GREEN if status != "error" else _C.RED
-    prefix = _c(f"[{step:02d}]", _C.GRAY) + " " + _c(f"{icon} 工具结果", _C.BOLD, color)
+    agent_tag = _c(f" [{agent_path}]", _C.MAGENTA if depth > 0 else _C.CYAN) if agent_path else ""
+    prefix = indent + _c(f"[{step:02d}]", _C.GRAY) + " " + _c(f"{icon} 工具结果", _C.BOLD, color) + agent_tag
     print(f"{prefix}  {_c(f'+{elapsed:.1f}s', _C.GRAY)}")
-    print("       " + _c(f"◀  {tool_name}", _C.BOLD, color))
+    print(indent + "       " + _c(f"◀  {tool_name}", _C.BOLD, color))
     display = content.strip() if content else "(空)"
     if len(display) > 600:
         display = display[:600] + _c("  ...(已截断)", _C.DIM)
-    for line in display.splitlines()[:12]:  # 最多显示12行
-        print("       " + _c(line, color if status != "error" else _C.RED))
-    if len(display.splitlines()) > 12:
-        print("       " + _c(f"   ... 共 {len(display.splitlines())} 行", _C.DIM))
+    lines = display.splitlines()
+    for line in lines[:12]:
+        print(indent + "       " + _c(line, color if status != "error" else _C.RED))
+    if len(lines) > 12:
+        print(indent + "       " + _c(f"   ... 共 {len(lines)} 行", _C.DIM))
     print()
 
 
@@ -174,6 +180,22 @@ def _tool_args_from_call(tool_call: dict) -> dict:
     return args if isinstance(args, dict) else {}
 
 
+def _parse_namespace(namespace: tuple) -> tuple[str, int]:
+    """Convert a LangGraph namespace tuple into a human-readable path and depth.
+
+    Namespace format: ("AgentName:uuid", "ChildAgent:uuid", ...)
+    Returns: ("Orchestrator > CrossAnalysisAgent > FundamentalAgent", depth)
+    """
+    if not namespace:
+        return "Orchestrator", 0
+    parts = []
+    for seg in namespace:
+        # Strip the ":uuid" suffix that LangGraph appends
+        name = seg.split(":")[0] if ":" in seg else seg
+        parts.append(name)
+    return " > ".join(parts), len(parts)
+
+
 # ---------------------------------------------------------------------------
 # Core streaming runner
 # ---------------------------------------------------------------------------
@@ -184,8 +206,9 @@ async def run_query(query: str) -> None:
 
     _print_header(query)
 
-    # Map tool_call_id → tool_name so we can label ToolMessage results
-    pending_calls: dict[str, str] = {}
+    # (namespace_tuple, tool_call_id) → tool_name
+    # namespace scoping avoids collisions across parallel subgraph branches
+    pending_calls: dict[tuple, str] = {}
 
     step = 0
     final_answer = ""
@@ -193,11 +216,13 @@ async def run_query(query: str) -> None:
     logger.info("query_start", query=query)
 
     try:
-        async for chunk in alphabee_agent.astream(
+        async for namespace, chunk in alphabee_agent.astream(
             {"messages": [("user", query)]},
             stream_mode="updates",
+            subgraphs=True,
         ):
             elapsed = time.monotonic() - start_ts
+            agent_path, depth = _parse_namespace(namespace)
 
             for node_name, node_update in chunk.items():
                 if not node_update:
@@ -214,10 +239,10 @@ async def run_query(query: str) -> None:
                         text = _extract_text(msg.content)
                         tool_calls: list = msg.tool_calls or []
 
-                        # Log structured data
                         logger.info(
                             "model_output",
                             step=step,
+                            agent=agent_path,
                             node=node_name,
                             has_text=bool(text),
                             tool_calls=[_tool_name_from_call(tc) for tc in tool_calls],
@@ -225,23 +250,22 @@ async def run_query(query: str) -> None:
                             elapsed=round(elapsed, 2),
                         )
 
-                        # Print text reasoning (if any)
                         if text:
-                            _print_step_model_thinking(text, step, elapsed)
-                            final_answer = text  # keep last AI text as candidate answer
+                            _print_step_model_thinking(text, step, elapsed, agent_path, depth)
+                            final_answer = text
 
-                        # Print each tool call
                         for tc in tool_calls:
                             step += 1
                             tname = _tool_name_from_call(tc)
                             targs = _tool_args_from_call(tc)
                             tc_id = tc.get("id", "")
                             if tc_id:
-                                pending_calls[tc_id] = tname
-                            _print_step_tool_call(tname, targs, step, elapsed)
+                                pending_calls[(namespace, tc_id)] = tname
+                            _print_step_tool_call(tname, targs, step, elapsed, agent_path, depth)
                             logger.info(
                                 "tool_call",
                                 step=step,
+                                agent=agent_path,
                                 node=node_name,
                                 tool=tname,
                                 args=targs,
@@ -252,20 +276,26 @@ async def run_query(query: str) -> None:
                     # ── ToolMessage: result from a tool/subagent ──
                     elif isinstance(msg, ToolMessage):
                         tc_id = getattr(msg, "tool_call_id", "")
-                        tname = pending_calls.pop(tc_id, getattr(msg, "name", None) or "tool")
+                        tname = pending_calls.pop(
+                            (namespace, tc_id),
+                            getattr(msg, "name", None) or "tool",
+                        )
                         status = getattr(msg, "status", "success") or "success"
                         content_text = _extract_text(msg.content)
 
                         logger.info(
                             "tool_result",
                             step=step,
+                            agent=agent_path,
                             node=node_name,
                             tool=tname,
                             status=status,
                             result_length=len(content_text),
                             elapsed=round(elapsed, 2),
                         )
-                        _print_step_tool_result(tname, content_text, status, step, elapsed)
+                        _print_step_tool_result(
+                            tname, content_text, status, step, elapsed, agent_path, depth
+                        )
 
     except KeyboardInterrupt:
         print()

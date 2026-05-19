@@ -1,6 +1,4 @@
 from deepagents import create_deep_agent, CompiledSubAgent
-from langchain.agents.middleware import TodoListMiddleware
-from langchain.agents.middleware import LLMToolSelectorMiddleware
 from langchain.agents.middleware import ToolRetryMiddleware
 from langchain_openai import ChatOpenAI
 
@@ -9,6 +7,8 @@ from alphabee.config import settings
 from alphabee.agents.fundamental.agent import fundamental_agent
 from alphabee.agents.market.agent import market_agent
 from alphabee.agents.risk.agent import risk_agent
+from alphabee.agents.cross.agent import cross_agent
+from alphabee.tools.common import web_search
 
 
 model = ChatOpenAI(
@@ -37,6 +37,15 @@ alphabee_agent = create_deep_agent(
             description="负责分析公司的风险，包括财务风险、市场风险、运营风险等。",
             runnable=risk_agent,
         ),
+        CompiledSubAgent(
+            name="CrossAnalysisAgent",
+            description=(
+                "交叉比对分析师：同时调用基本面、行情、风险三个子代理，"
+                "系统性发现各维度之间的矛盾、背离、异常信号与潜在机会。"
+                "适合综合分析、寻找投资机会、发现风险信号等场景。"
+            ),
+            runnable=cross_agent,
+        ),
     ],
     middleware=[
         # TodoListMiddleware(),
@@ -50,7 +59,8 @@ alphabee_agent = create_deep_agent(
             backoff_factor=2.0,
             initial_delay=1.0,
         )
-    ]
+    ],
+    tools=[web_search]
 )
 
 if __name__ == "__main__":
