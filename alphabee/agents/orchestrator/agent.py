@@ -8,6 +8,7 @@ from alphabee.agents.fundamental.agent import fundamental_agent
 from alphabee.agents.market.agent import market_agent
 from alphabee.agents.risk.agent import risk_agent
 from alphabee.agents.cross.agent import cross_agent
+from alphabee.agents.industry.agent import industry_agent
 from alphabee.tools.common import web_search
 from alphabee.middleware.common import check_message_limit
 
@@ -46,6 +47,16 @@ alphabee_agent = create_deep_agent(
                 "适合综合分析、寻找投资机会、发现风险信号等场景。"
             ),
             runnable=cross_agent,
+        ),
+        CompiledSubAgent(
+            name="IndustryAgent",
+            description=(
+                "行业/产业基本面分析师：分析特定行业的整体景气度、估值水平（PE/PB历史分位）、"
+                "近期价格表现（近1周/1月/3月/6月/1年涨跌）、行业总市值规模及成分股结构。"
+                "适用场景：某个行业现在贵不贵、哪个行业最近表现最好、某行业的龙头股有哪些。"
+                "不负责单只股票的个股分析。"
+            ),
+            runnable=industry_agent,
         ),
     ],
     middleware=[

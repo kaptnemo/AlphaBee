@@ -97,7 +97,7 @@ class AkShareHelper:
         """Wrap AkShare API call with retry logic."""
 
         def wrapper(*arg, **kwargs):
-            max_retries = 10
+            max_retries = 1
             for attempt in range(max_retries):
                 try:
                     return AkShareResult(func(*arg, **kwargs), name)
@@ -137,3 +137,6 @@ if __name__ == "__main__":
         # print(stock_news_df.data.head())
         stock_news_df = helper.stock_news_em(symbol="药明康德")
         print(stock_news_df.data.head())
+
+        names = helper.stock_board_industry_name_em()
+        print(names.data.head())

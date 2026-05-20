@@ -21,7 +21,7 @@ cross_agent = create_deep_agent(
         CompiledSubAgent(
             name="FundamentalAgent",
             description=(
-                "获取公司多期财务数据：营收、净利润、ROE、ROA、毛利率、"
+                "获取公司/行业多期财务数据：营收、净利润、ROE、ROA、毛利率、"
                 "现金流、自由现金流、成长性指标（同比增速）等基本面信息。"
             ),
             runnable=fundamental_agent,
