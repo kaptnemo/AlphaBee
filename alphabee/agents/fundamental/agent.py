@@ -5,6 +5,7 @@ from alphabee.agents.fundamental.prompts import FUNDAMENTAL_AGENT_PROMPT
 from alphabee.config import settings
 from alphabee.tools.fundamentals import get_fundamentals
 from alphabee.tools.common import web_search
+from alphabee.middleware.common import check_message_limit
 
 fundamental_agent = create_deep_agent(
     model=ChatOpenAI(
@@ -16,5 +17,8 @@ fundamental_agent = create_deep_agent(
     tools=[
         # web_search,
         get_fundamentals,
+    ],
+    middleware=[
+        check_message_limit,
     ]
 )

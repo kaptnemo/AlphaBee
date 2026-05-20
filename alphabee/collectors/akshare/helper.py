@@ -136,5 +136,4 @@ if __name__ == "__main__":
         # stock_news_df = helper.stock_news_main_cx()
         # print(stock_news_df.data.head())
         stock_news_df = helper.stock_news_em(symbol="药明康德")
-        import pdb; pdb.set_trace()
         print(stock_news_df.data.head())

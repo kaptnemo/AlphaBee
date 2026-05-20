@@ -8,6 +8,7 @@ from alphabee.tools.market_data import get_market_data
 from alphabee.tools.fundamentals import get_fundamentals
 from alphabee.tools.news import get_stock_news_summary
 from alphabee.tools.common import web_search
+from alphabee.middleware.common import check_message_limit
 
 
 risk_agent = create_deep_agent(
@@ -22,5 +23,8 @@ risk_agent = create_deep_agent(
         get_market_data,
         get_fundamentals,
         get_stock_news_summary,
+    ],
+    middleware=[
+        check_message_limit,
     ]
 )

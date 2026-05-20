@@ -14,12 +14,14 @@ import sys
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from alphabee.agents.orchestrator.agent import alphabee_agent
 from alphabee.utils import configure_logging, get_logger
+from alphabee.workflow import render_monitor_report, run_framework_monitor
 
 
 # ---------------------------------------------------------------------------
@@ -82,28 +84,50 @@ def _print_step_model_thinking(text: str, step: int, elapsed: float, agent_path:
     print()
 
 
+def _truncate_json(data: Any, limit: int = 200) -> str:
+    text = json.dumps(data, ensure_ascii=False, indent=None)
+    if len(text) > limit:
+        return text[:limit] + "..."
+    return text
+
+
+def _classify_call(tool_name: str, args: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    """Return (kind, display_name, display_args) for a tool/subagent call."""
+    subagent_type = args.get("subagent_type")
+    if tool_name == "task" and isinstance(subagent_type, str) and subagent_type.strip():
+        display_args = {k: v for k, v in args.items() if k != "subagent_type"}
+        return ("subagent", subagent_type.strip(), display_args)
+    return ("tool", tool_name, args)
+
+
 def _print_step_tool_call(tool_name: str, args: dict[str, Any], step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
     """LLM 决定调用某个工具/子代理。"""
     indent = "  " * depth
+    kind, display_name, display_args = _classify_call(tool_name, args)
+    title = "🤖 调用子代理" if kind == "subagent" else "🔧 调用工具"
+    color = _C.MAGENTA if kind == "subagent" else _C.YELLOW
     agent_tag = _c(f" [{agent_path}]", _C.MAGENTA if depth > 0 else _C.CYAN) if agent_path else ""
-    prefix = indent + _c(f"[{step:02d}]", _C.GRAY) + " " + _c("🔧 调用工具", _C.BOLD, _C.YELLOW) + agent_tag
+    prefix = indent + _c(f"[{step:02d}]", _C.GRAY) + " " + _c(title, _C.BOLD, color) + agent_tag
     print(f"{prefix}  {_c(f'+{elapsed:.1f}s', _C.GRAY)}")
-    print(indent + "       " + _c(f"▶  {tool_name}", _C.BOLD, _C.YELLOW))
-    if args:
-        args_str = json.dumps(args, ensure_ascii=False, indent=None)
-        if len(args_str) > 200:
-            args_str = args_str[:200] + "..."
-        print(indent + "       " + _c(f"   入参: {args_str}", _C.DIM))
+    print(indent + "       " + _c(f"▶  {display_name}", _C.BOLD, color))
+    if display_args:
+        print(indent + "       " + _c(f"   入参: {_truncate_json(display_args)}", _C.DIM))
     print()
 
 
 def _print_step_tool_result(tool_name: str, content: str, status: str, step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
     """工具调用结果返回。"""
     indent = "  " * depth
-    icon = "✅" if status != "error" else "❌"
-    color = _C.GREEN if status != "error" else _C.RED
+    is_subagent = tool_name.endswith("Agent")
+    if is_subagent:
+        title = "🤖 子代理结果"
+        color = _C.MAGENTA if status != "error" else _C.RED
+    else:
+        icon = "✅" if status != "error" else "❌"
+        title = f"{icon} 工具结果"
+        color = _C.GREEN if status != "error" else _C.RED
     agent_tag = _c(f" [{agent_path}]", _C.MAGENTA if depth > 0 else _C.CYAN) if agent_path else ""
-    prefix = indent + _c(f"[{step:02d}]", _C.GRAY) + " " + _c(f"{icon} 工具结果", _C.BOLD, color) + agent_tag
+    prefix = indent + _c(f"[{step:02d}]", _C.GRAY) + " " + _c(title, _C.BOLD, color) + agent_tag
     print(f"{prefix}  {_c(f'+{elapsed:.1f}s', _C.GRAY)}")
     print(indent + "       " + _c(f"◀  {tool_name}", _C.BOLD, color))
     display = content.strip() if content else "(空)"
@@ -180,6 +204,13 @@ def _tool_args_from_call(tool_call: dict) -> dict:
     return args if isinstance(args, dict) else {}
 
 
+def _tool_label_from_call(tool_call: dict) -> str:
+    tool_name = _tool_name_from_call(tool_call)
+    args = _tool_args_from_call(tool_call)
+    kind, display_name, _ = _classify_call(tool_name, args)
+    return f"{kind}:{display_name}"
+
+
 def _parse_namespace(namespace: tuple) -> tuple[str, int]:
     """Convert a LangGraph namespace tuple into a human-readable path and depth.
 
@@ -206,7 +237,7 @@ async def run_query(query: str) -> None:
 
     _print_header(query)
 
-    # (namespace_tuple, tool_call_id) → tool_name
+    # (namespace_tuple, tool_call_id) → display_name
     # namespace scoping avoids collisions across parallel subgraph branches
     pending_calls: dict[tuple, str] = {}
 
@@ -245,7 +276,7 @@ async def run_query(query: str) -> None:
                             agent=agent_path,
                             node=node_name,
                             has_text=bool(text),
-                            tool_calls=[_tool_name_from_call(tc) for tc in tool_calls],
+                            tool_calls=[_tool_label_from_call(tc) for tc in tool_calls],
                             text_length=len(text),
                             elapsed=round(elapsed, 2),
                         )
@@ -258,9 +289,10 @@ async def run_query(query: str) -> None:
                             step += 1
                             tname = _tool_name_from_call(tc)
                             targs = _tool_args_from_call(tc)
+                            kind, display_name, _ = _classify_call(tname, targs)
                             tc_id = tc.get("id", "")
                             if tc_id:
-                                pending_calls[(namespace, tc_id)] = tname
+                                pending_calls[(namespace, tc_id)] = display_name
                             _print_step_tool_call(tname, targs, step, elapsed, agent_path, depth)
                             logger.info(
                                 "tool_call",
@@ -268,6 +300,8 @@ async def run_query(query: str) -> None:
                                 agent=agent_path,
                                 node=node_name,
                                 tool=tname,
+                                call_kind=kind,
+                                display_name=display_name,
                                 args=targs,
                                 call_id=tc_id,
                                 elapsed=round(elapsed, 2),
@@ -341,7 +375,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "query",
         nargs="?",
-        default=DEFAULT_QUERY,
+        default=None,
         help="分析问题，例如：\"帮我分析一下贵州茅台的投资价值\"",
     )
     parser.add_argument(
@@ -354,6 +388,22 @@ def _parse_args() -> argparse.Namespace:
         "--log-dir",
         default="./logs",
         help="日志文件目录（默认: ./logs）",
+    )
+    parser.add_argument(
+        "--monitor-framework",
+        default=None,
+        help="观察框架 Markdown 路径。提供后将进入持续跟踪模式。",
+    )
+    parser.add_argument(
+        "--symbol",
+        default=None,
+        help="监控模式下的股票代码，例如 300760 或 300760.SZ",
+    )
+    parser.add_argument(
+        "--monitor-periods",
+        type=int,
+        default=8,
+        help="监控模式拉取的财报期数（默认: 8）",
     )
     return parser.parse_args()
 
@@ -371,13 +421,18 @@ def main() -> None:
     global _USE_COLOR
 
     args = _parse_args()
-    args.query = _normalize_query(args.query)
+    if args.monitor_framework and not args.symbol:
+        raise SystemExit("--monitor-framework 模式下必须同时提供 --symbol")
+
+    if args.query:
+        args.query = _normalize_query(args.query)
+    elif not args.monitor_framework:
+        args.query = DEFAULT_QUERY
 
     if args.no_color or not sys.stdout.isatty():
         _USE_COLOR = False
 
     import logging
-    from pathlib import Path
 
     configure_logging(log_dir=Path(args.log_dir))
 
@@ -388,6 +443,20 @@ def main() -> None:
             handler, logging.FileHandler
         ):
             handler.setLevel(logging.WARNING)
+
+    if args.monitor_framework:
+        start_ts = time.monotonic()
+        _print_header(f"监控框架：{args.monitor_framework} | 标的：{args.symbol}")
+        result = asyncio.run(
+            run_framework_monitor(
+                framework_path=args.monitor_framework,
+                symbol=args.symbol,
+                periods=args.monitor_periods,
+            )
+        )
+        _print_final_answer(render_monitor_report(result))
+        _print_footer(1, time.monotonic() - start_ts)
+        return
 
     asyncio.run(run_query(args.query))
 

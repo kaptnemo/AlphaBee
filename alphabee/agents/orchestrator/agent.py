@@ -9,6 +9,7 @@ from alphabee.agents.market.agent import market_agent
 from alphabee.agents.risk.agent import risk_agent
 from alphabee.agents.cross.agent import cross_agent
 from alphabee.tools.common import web_search
+from alphabee.middleware.common import check_message_limit
 
 
 model = ChatOpenAI(
@@ -58,34 +59,8 @@ alphabee_agent = create_deep_agent(
             max_retries=3,
             backoff_factor=2.0,
             initial_delay=1.0,
-        )
+        ),
+        check_message_limit,
     ],
     tools=[web_search]
 )
-
-if __name__ == "__main__":
-    import asyncio
-    
-    query = "给我深入分析一下宁德时代的业务成长性"
-    
-    async def stream_response():
-        print("\n" + "="*50)
-        print("实时分析过程：")
-        print("="*50)
-        
-        async for chunk in alphabee_agent.astream(
-            {"messages": [("user", query)]},
-            stream_mode="updates",
-        ):
-            # if 'tools' in chunk:
-            #     print("\n工具调用：")
-            #     messages = chunk['messages']
-            #     import pdb; pdb.set_trace()
-            #     print(chunk)
-            # if 'model' in chunk:
-            #     import pdb; pdb.set_trace()
-            #     print(chunk)
-            print(chunk)
-                
-        
-    asyncio.run(stream_response())
