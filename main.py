@@ -2,7 +2,8 @@
 
 Usage:
     python main.py "帮我分析一下宁德时代的投资价值"
-    python main.py                         # 使用内置默认问题
+    python main.py                         # 进入多轮对话模式
+    python main.py --chat                  # 强制进入多轮对话模式
     python main.py --no-color              # 禁用终端颜色
     python main.py --log-dir ./logs        # 指定日志目录
 """
@@ -170,6 +171,13 @@ def _print_error(msg: str) -> None:
     print()
 
 
+def _print_chat_help() -> None:
+    print()
+    print(_c("  💬 多轮对话模式", _C.BOLD, _C.CYAN))
+    print(_c("  直接输入问题继续追问；输入 /clear 清空上下文，/exit 结束会话。", _C.DIM))
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Message content extractor
 # ---------------------------------------------------------------------------
@@ -231,9 +239,16 @@ def _parse_namespace(namespace: tuple) -> tuple[str, int]:
 # Core streaming runner
 # ---------------------------------------------------------------------------
 
-async def run_query(query: str) -> None:
+def _append_turn_history(history: list[Any], query: str, answer: str) -> None:
+    history.append(HumanMessage(content=query))
+    if answer:
+        history.append(AIMessage(content=answer))
+
+
+async def run_query(query: str, history: list[Any] | None = None) -> str:
     logger = get_logger("main")
     start_ts = time.monotonic()
+    conversation = [*(history or []), HumanMessage(content=query)]
 
     _print_header(query)
 
@@ -244,11 +259,11 @@ async def run_query(query: str) -> None:
     step = 0
     final_answer = ""
 
-    logger.info("query_start", query=query)
+    logger.info("query_start", query=query, history_messages=len(conversation) - 1)
 
     try:
         async for namespace, chunk in alphabee_agent.astream(
-            {"messages": [("user", query)]},
+            {"messages": conversation},
             stream_mode="updates",
             subgraphs=True,
         ):
@@ -358,13 +373,58 @@ async def run_query(query: str) -> None:
         total_steps=step,
         total_time=round(total_time, 2),
     )
+    return final_answer
+
+
+async def run_chat_session(initial_query: str | None = None) -> None:
+    history: list[Any] = []
+    turn = 1
+
+    _print_chat_help()
+
+    if initial_query:
+        initial_query = _normalize_query(initial_query)
+        answer = await run_query(initial_query, history)
+        _append_turn_history(history, initial_query, answer)
+        turn += 1
+
+    while True:
+        try:
+            raw = input(_c(f"[{turn:02d}] 你> ", _C.BOLD, _C.CYAN))
+        except EOFError:
+            print()
+            break
+        except KeyboardInterrupt:
+            print()
+            break
+
+        query = raw.strip()
+        if not query:
+            continue
+
+        command = query.lower()
+        if command in {"/exit", "/quit", "exit", "quit"}:
+            print()
+            print(_c("  👋 会话结束", _C.DIM))
+            print()
+            break
+        if command == "/clear":
+            history.clear()
+            turn = 1
+            print()
+            print(_c("  ♻ 上下文已清空", _C.DIM))
+            print()
+            continue
+
+        query = _normalize_query(query)
+        answer = await run_query(query, history)
+        _append_turn_history(history, query, answer)
+        turn += 1
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-
-DEFAULT_QUERY = "帮我分析一下宁德时代近期的投资价值，包括基本面、行情和风险"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -376,7 +436,13 @@ def _parse_args() -> argparse.Namespace:
         "query",
         nargs="?",
         default=None,
-        help="分析问题，例如：\"帮我分析一下贵州茅台的投资价值\"",
+        help="分析问题；不传则进入多轮对话模式",
+    )
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        default=False,
+        help="进入多轮对话模式；可与初始问题一起使用",
     )
     parser.add_argument(
         "--no-color",
@@ -426,8 +492,6 @@ def main() -> None:
 
     if args.query:
         args.query = _normalize_query(args.query)
-    elif not args.monitor_framework:
-        args.query = DEFAULT_QUERY
 
     if args.no_color or not sys.stdout.isatty():
         _USE_COLOR = False
@@ -456,6 +520,10 @@ def main() -> None:
         )
         _print_final_answer(render_monitor_report(result))
         _print_footer(1, time.monotonic() - start_ts)
+        return
+
+    if args.chat or not args.query:
+        asyncio.run(run_chat_session(args.query))
         return
 
     asyncio.run(run_query(args.query))
