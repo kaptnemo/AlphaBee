@@ -11,6 +11,7 @@ from alphabee.agents.cross.agent import cross_agent
 from alphabee.agents.industry.agent import industry_agent
 from alphabee.tools.common import web_search
 from alphabee.middleware.common import check_message_limit
+from alphabee.middleware.web_search_guard import web_search_guard
 
 
 model = ChatOpenAI(
@@ -71,6 +72,7 @@ alphabee_agent = create_deep_agent(
             backoff_factor=2.0,
             initial_delay=1.0,
         ),
+        web_search_guard,
         check_message_limit,
     ],
     tools=[web_search]

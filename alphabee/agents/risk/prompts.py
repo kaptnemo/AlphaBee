@@ -1,3 +1,5 @@
+from alphabee.agents.shared_prompts import WEB_SEARCH_BOUNDARY
+
 RISK_AGENT_PROMPT = """
 你是 AlphaBee 的风险控制分析师。
 
@@ -24,4 +26,4 @@ RISK_AGENT_PROMPT = """
 2. 核心风险
 3. 最大仓位建议
 4. 哪类用户不适合
-"""
+""" + WEB_SEARCH_BOUNDARY

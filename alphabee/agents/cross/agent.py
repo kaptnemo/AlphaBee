@@ -1,4 +1,5 @@
 from alphabee.middleware.common import check_message_limit
+from alphabee.middleware.web_search_guard import web_search_guard
 from deepagents import create_deep_agent, CompiledSubAgent
 from langchain_openai import ChatOpenAI
 
@@ -8,6 +9,7 @@ from alphabee.agents.market.agent import market_agent
 from alphabee.agents.risk.agent import risk_agent
 from alphabee.config import settings
 from alphabee.tools.common import web_search
+
 
 
 cross_agent = create_deep_agent(
@@ -44,7 +46,10 @@ cross_agent = create_deep_agent(
         ),
     ],
     middleware=[
+        web_search_guard,
         check_message_limit,
     ],
-    tools=[web_search]
+    tools=[
+        web_search,
+    ]
 )

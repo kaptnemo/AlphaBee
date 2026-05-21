@@ -1,3 +1,5 @@
+from alphabee.agents.shared_prompts import WEB_SEARCH_BOUNDARY
+
 CROSS_ANALYSIS_AGENT_PROMPT = """
 你是 AlphaBee 的交叉分析师（CrossAnalyst）。你的核心价值在于发现单一维度分析无法揭示的矛盾、异常与机会。
 
@@ -46,4 +48,4 @@ CROSS_ANALYSIS_AGENT_PROMPT = """
 - 每条发现必须引用具体数据（不能只说"ROE 较高"，要说"ROE 28.5%，高于行业均值约 15%"）
 - 异常与机会分开列示，避免混淆
 - 如果三个子代理数据不足，明确说明哪方数据缺失
-"""
+""" + WEB_SEARCH_BOUNDARY
