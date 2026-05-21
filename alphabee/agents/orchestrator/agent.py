@@ -9,7 +9,7 @@ from alphabee.agents.market.agent import market_agent
 from alphabee.agents.risk.agent import risk_agent
 from alphabee.agents.cross.agent import cross_agent
 from alphabee.agents.industry.agent import industry_agent
-from alphabee.tools.common import web_search
+from alphabee.tools.common import web_search, extract_symbols_from_query
 from alphabee.middleware.common import check_message_limit
 from alphabee.middleware.web_search_guard import web_search_guard
 
@@ -75,5 +75,8 @@ alphabee_agent = create_deep_agent(
         web_search_guard,
         check_message_limit,
     ],
-    tools=[web_search]
+    tools=[
+        extract_symbols_from_query,
+        web_search,
+    ]
 )

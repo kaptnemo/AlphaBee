@@ -107,3 +107,6 @@ if __name__ == "__main__":
     )
     logger.info("Fetched index weight result", result=str(result))
     logger.info("Fetched index weight dataframe", rows=len(result.data))
+
+    all_stocks = ts_client.stock_basic(exchange="", list_status="L")
+    all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")

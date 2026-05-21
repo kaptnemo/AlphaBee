@@ -1,7 +1,10 @@
 """Common tools — general-purpose utilities available to all agents."""
 
+import re
 import asyncio
 from typing import Literal
+
+from pathlib import Path
 
 import structlog
 from pydantic import BaseModel, Field
@@ -240,16 +243,51 @@ async def web_search(
         )
 
 
+def extract_symbols_from_query(query: str) -> dict[str, str]:
+    """从用户查询中提取股票代码或公司名称，返回标准化的股票名称与代码映射。目前仅支持 A 股。
+
+    例如：
+    - "宁德时代最新的海外订单情况" → {"宁德时代": "300750.SZ"}
+    - "分析一下特斯拉和比亚迪的财报" → {"特斯拉": "TSLA", "比亚迪": "002594.SZ"}
+
+    这个函数可以使用简单的正则表达式、预定义的公司列表，或者调用外部 API 来实现。
+    目前实现一个非常基础的版本，仅供示例。
+    """
+    all_stocks_path = Path(__file__).resolve().parents[1] / "static" / "all_stocks.csv"
+
+    if all_stocks_path.exists():
+        import pandas as pd
+        df = pd.read_csv(all_stocks_path)
+        company_map = dict(zip(df["name"], df["ts_code"]))
+    else:
+        raise FileNotFoundError(f"Stock list not found at {all_stocks_path}. Please run the tushare collector to generate it.")
+
+    symbols = []
+    for name, code in company_map.items():
+        if name in query:
+            symbols.append(code)
+
+    # 也可以尝试直接匹配股票代码（如 6位数字 + .SZ/.SH）
+    code_pattern = re.compile(r"\b\d{6}\.(SZ|SH)\b", re.IGNORECASE)
+    matches = code_pattern.findall(query)
+    symbols.extend(matches)
+
+    return {name: code for name, code in company_map.items() if code in symbols}
+
+
 if __name__ == "__main__":
-    import asyncio
+    # import asyncio
 
-    query = "宁德时代最新的海外订单情况"
+    # query = "宁德时代最新的海外订单情况"
 
-    result = asyncio.run(
-        web_search(
-            query=query,
-            topic="finance"
-        )
-    )
+    # result = asyncio.run(
+    #     web_search(
+    #         query=query,
+    #         topic="finance"
+    #     )
+    # )
 
+    # print(result)
+
+    result = extract_symbols_from_query("分析一下特斯拉和比亚迪的财报")
     print(result)
