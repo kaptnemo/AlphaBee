@@ -97,7 +97,6 @@ def _planner_agent(prompt: str) -> CompiledStateGraph:
         model=_model(),
         system_prompt=prompt,
         tools=[],
-        response_format=ThinkingNodeOutput,
         name="HarnessPlanner",
     )
 
@@ -108,7 +107,6 @@ def _reporter_agent(prompt: str) -> CompiledStateGraph:
         model=_model(),
         system_prompt=prompt,
         tools=[],
-        response_format=ThinkingNodeOutput,
         name="HarnessReporter",
     )
 
@@ -119,7 +117,6 @@ def _critic_agent(prompt: str) -> CompiledStateGraph:
         model=_model(),
         system_prompt=prompt,
         tools=[],
-        response_format=ThinkingNodeOutput,
         name="HarnessCritic",
     )
 
@@ -130,7 +127,6 @@ def _evaluator_agent(prompt: str) -> CompiledStateGraph:
         model=_model(),
         system_prompt=prompt,
         tools=[],
-        response_format=EvaluationAssessment,
         name="HarnessEvaluator",
     )
 
@@ -151,13 +147,135 @@ def _state_to_prompt_payload(state: HarnessState) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def _extract_structured_output(result: dict[str, Any]) -> ThinkingNodeOutput:
+def _extract_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") in {"text", "thinking"}:
+                parts.append(block.get("text", ""))
+        return "\n".join(part for part in parts if part)
+    return str(content)
+
+
+def _extract_final_text(result: dict[str, Any]) -> str:
+    messages = result.get("messages", [])
+    if messages:
+        return _extract_text(getattr(messages[-1], "content", messages[-1])).strip()
+
     structured = result.get("structured_response")
     if structured is None:
-        raise ValueError("Thinking node did not return a structured_response.")
-    if isinstance(structured, ThinkingNodeOutput):
-        return structured
-    return ThinkingNodeOutput.model_validate(structured)
+        return ""
+    if hasattr(structured, "model_dump_json"):
+        return structured.model_dump_json()
+    return json.dumps(structured, ensure_ascii=False)
+
+
+def _parse_json_text(raw: str) -> Any:
+    text = raw.strip()
+    if not text:
+        raise ValueError("Model returned empty text instead of JSON.")
+
+    candidates: list[str] = []
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 2:
+            fenced = "\n".join(lines[1:-1]).strip()
+            if fenced.startswith("json"):
+                fenced = fenced[4:].strip()
+            candidates.append(fenced)
+    candidates.append(text)
+
+    start_positions = [index for index in (text.find("{"), text.find("[")) if index != -1]
+    if start_positions:
+        start = min(start_positions)
+        opener = text[start]
+        closer = "}" if opener == "{" else "]"
+        end = text.rfind(closer)
+        if end > start:
+            candidates.append(text[start : end + 1])
+
+    seen = set()
+    for candidate in candidates:
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            return json.loads(normalized)
+        except json.JSONDecodeError:
+            continue
+
+    excerpt = text[:400].replace("\n", "\\n")
+    raise ValueError(f"Failed to parse model output as JSON: {excerpt}")
+
+
+def _coerce_thinking_output(payload: Any) -> ThinkingNodeOutput:
+    if isinstance(payload, ThinkingNodeOutput):
+        return payload
+    if isinstance(payload, dict):
+        return ThinkingNodeOutput.model_validate(payload)
+    if isinstance(payload, list):
+        grouped: dict[str, list[dict[str, Any]]] = {
+            "decisions": [],
+            "issues": [],
+            "artifacts": [],
+        }
+        unknown_items: list[Any] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                unknown_items.append(item)
+                continue
+
+            item_type = str(item.get("type", "")).lower()
+            if item_type == "decision" or {"maker", "rationale", "confidence"} <= item.keys():
+                grouped["decisions"].append(item)
+                continue
+            if item_type == "issue" or {"severity", "category", "message"} <= item.keys():
+                grouped["issues"].append(item)
+                continue
+            if item_type == "artifact" or {"producer_step"} <= item.keys():
+                grouped["artifacts"].append(item)
+                continue
+            unknown_items.append(item)
+
+        if unknown_items:
+            raise ValueError(f"Unsupported thinking output items: {unknown_items[:3]}")
+        return ThinkingNodeOutput.model_validate(grouped)
+
+    raise ValueError(f"Unsupported thinking output payload type: {type(payload).__name__}")
+
+
+def _coerce_evaluation_assessment(payload: Any) -> EvaluationAssessment:
+    if isinstance(payload, EvaluationAssessment):
+        return payload
+    if isinstance(payload, list):
+        if len(payload) != 1:
+            raise ValueError("Evaluation output must be a single JSON object.")
+        payload = payload[0]
+    return EvaluationAssessment.model_validate(payload)
+
+
+def _json_instruction(schema: type[BaseModel], *, example: str) -> str:
+    return (
+        "输出要求：\n"
+        "1. 只返回 JSON，不要 Markdown，不要代码块，不要额外解释。\n"
+        "2. 顶层必须严格符合下面给出的结构。\n"
+        f"3. 输出示例：{example}\n"
+        f"4. JSON Schema:\n{json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)}"
+    )
+
+
+async def _invoke_json_agent(
+    agent: CompiledStateGraph,
+    *,
+    prompt: str,
+) -> Any:
+    result = await agent.ainvoke({"messages": [{"role": "user", "content": prompt}]})
+    return _parse_json_text(_extract_final_text(result))
 
 
 def _upsert_step(steps: list[Step], step: Step) -> list[Step]:
@@ -262,14 +380,14 @@ async def _run_thinking_node(
 
     prompt = (
         f"{prompt_prefix}\n\n"
+        f"{_json_instruction(ThinkingNodeOutput, example='{\"decisions\": [], \"issues\": [], \"artifacts\": []}')}\n\n"
         f"当前 step_id: {step_id}\n"
         f"默认 artifact.type: {default_artifact_type}\n"
         "请直接返回结构化对象，不要输出额外说明。\n\n"
         f"{_state_to_prompt_payload({**state, 'steps': steps})}"
     )
-    result = await agent.ainvoke({"messages": [{"role": "user", "content": prompt}]})
     normalized = _normalize_output(
-        _extract_structured_output(result),
+        _coerce_thinking_output(await _invoke_json_agent(agent, prompt=prompt)),
         step_id=step_id,
         default_artifact_type=default_artifact_type,
     )
@@ -459,19 +577,12 @@ async def _run_evaluator_node(
 
     evaluator_prompt = (
         "请基于以下定量指标和当前 run 状态，生成最终评估。\n\n"
+        f"{_json_instruction(EvaluationAssessment, example='{\"summary\": \"\", \"strengths\": [], \"weaknesses\": [], \"blocking_issues\": [], \"passed\": false, \"recommendation\": \"\", \"improvement_actions\": []}')}\n\n"
         f"定量指标：\n{metrics.model_dump_json(indent=2)}\n\n"
         f"{_state_to_prompt_payload({**state, 'steps': steps})}"
     )
-    result = await _evaluator_agent(prompt).ainvoke(
-        {"messages": [{"role": "user", "content": evaluator_prompt}]}
-    )
-    structured = result.get("structured_response")
-    if structured is None:
-        raise ValueError("Evaluator node did not return a structured_response.")
-    assessment = (
-        structured
-        if isinstance(structured, EvaluationAssessment)
-        else EvaluationAssessment.model_validate(structured)
+    assessment = _coerce_evaluation_assessment(
+        await _invoke_json_agent(_evaluator_agent(prompt), prompt=evaluator_prompt)
     )
 
     report = EvaluationReport(

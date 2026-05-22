@@ -1,4 +1,8 @@
 from alphabee.collectors.akshare.helper import AkShareHelper
+from alphabee.tools.cache import SyncTTLCache
+
+
+_NEWS_CACHE = SyncTTLCache(ttl_seconds=300.0)
 
 
 def get_stock_news_summary(symbol: str) -> str:
@@ -15,15 +19,20 @@ def get_stock_news_summary(symbol: str) -> str:
         最近新闻的标题与发布时间列表，每行格式为"[发布时间] 新闻标题"，
         若无数据则返回提示字符串。
     """
-    with AkShareHelper() as helper:
-        result = helper.stock_news_em(symbol=symbol)
-        df = result.data
+    normalized_symbol = symbol.strip()
 
-    if df.empty:
-        return f"未找到股票 {symbol} 的相关新闻。"
+    def _compute() -> str:
+        with AkShareHelper() as helper:
+            result = helper.stock_news_em(symbol=normalized_symbol)
+            df = result.data
 
-    lines = [
-        f"[{row['发布时间']}] {row['新闻标题']}"
-        for _, row in df.iterrows()
-    ]
-    return "\n".join(lines)
+        if df.empty:
+            return f"未找到股票 {normalized_symbol} 的相关新闻。"
+
+        lines = [
+            f"[{row['发布时间']}] {row['新闻标题']}"
+            for _, row in df.iterrows()
+        ]
+        return "\n".join(lines)
+
+    return _NEWS_CACHE.get_or_compute(("stock_news_summary", normalized_symbol), _compute)

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.config import settings
+from alphabee.tools.cache import AsyncTTLCache
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +83,9 @@ class Fundamentals(BaseModel):
     financial_ratios: list[FinancialRatios] = Field(description="多期关键财务比率，按时间倒序")
     growth_metrics: list[GrowthMetrics] = Field(description="多期成长性指标（同比增速），按时间倒序")
     summary: Summary = Field(description="大模型生成的多期趋势综合分析摘要")
+
+
+_FUNDAMENTALS_CACHE = AsyncTTLCache(ttl_seconds=300.0)
 
 
 # ---------------------------------------------------------------------------
@@ -250,136 +254,138 @@ async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
     periods = max(1, min(periods, 20))
     ts_code = _normalize_ts_code(symbol)
 
-    # Query far enough back to cover requested periods (each ~91 days)
-    start_date = (
-        datetime.date.today() - datetime.timedelta(days=periods * 110 + 180)
-    ).strftime("%Y%m%d")
+    async def _compute() -> Fundamentals:
+        # Query far enough back to cover requested periods (each ~91 days)
+        start_date = (
+            datetime.date.today() - datetime.timedelta(days=periods * 110 + 180)
+        ).strftime("%Y%m%d")
 
-    with TuShareHelper() as helper:
-        income_df = helper.income(
+        with TuShareHelper() as helper:
+            income_df = helper.income(
+                ts_code=ts_code,
+                start_date=start_date,
+                fields="ts_code,end_date,total_revenue,operate_profit,n_income,ebitda,basic_eps",
+            ).data
+            balance_df = helper.balancesheet(
+                ts_code=ts_code,
+                start_date=start_date,
+                fields="ts_code,end_date,total_assets,total_liab,"
+                       "total_hldr_eqy_exc_min_int,money_cap,"
+                       "total_cur_assets,total_cur_liab",
+            ).data
+            cashflow_df = helper.cashflow(
+                ts_code=ts_code,
+                start_date=start_date,
+                fields="ts_code,end_date,n_cashflow_act,n_cashflow_inv_act,"
+                       "n_cash_flows_fnc_act,c_pay_acq_const_fiolta",
+            ).data
+            fina_df = helper.fina_indicator(
+                ts_code=ts_code,
+                start_date=start_date,
+                fields="ts_code,end_date,roe,roa,grossprofit_margin,netprofit_margin,"
+                       "current_ratio,quick_ratio,debt_to_assets,"
+                       "or_yoy,netprofit_yoy,basic_eps_yoy,fcff",
+            ).data
+            stock_basic_df = helper.stock_basic(
+                ts_code=ts_code, fields="ts_code,name"
+            ).data
+
+        name = stock_basic_df.iloc[0]["name"] if not stock_basic_df.empty else ""
+
+        income_df = _dedup_by_date(income_df)
+        balance_df = _dedup_by_date(balance_df)
+        cashflow_df = _dedup_by_date(cashflow_df)
+        fina_df = _dedup_by_date(fina_df)
+
+        ref_dates: list[str] = income_df.head(periods)["end_date"].tolist()
+
+        income_list: list[IncomeStatement] = []
+        balance_list: list[BalanceSheet] = []
+        cf_list: list[CashFlow] = []
+        ratio_list: list[FinancialRatios] = []
+        growth_list: list[GrowthMetrics] = []
+
+        for date in ref_dates:
+            inc = _lookup_row(income_df, date)
+            bal = _lookup_row(balance_df, date)
+            cf = _lookup_row(cashflow_df, date)
+            fin = _lookup_row(fina_df, date)
+
+            if inc is not None:
+                income_list.append(IncomeStatement(
+                    period=str(inc["end_date"]),
+                    revenue=_safe_float(inc["total_revenue"]),
+                    operating_profit=_safe_float(inc["operate_profit"]),
+                    net_profit=_safe_float(inc["n_income"]),
+                    ebitda=_safe_float(inc["ebitda"]),
+                    basic_eps=_safe_float(inc["basic_eps"]),
+                ))
+
+            if bal is not None:
+                balance_list.append(BalanceSheet(
+                    period=str(bal["end_date"]),
+                    total_assets=_safe_float(bal["total_assets"]),
+                    total_liabilities=_safe_float(bal["total_liab"]),
+                    total_equity=_safe_float(bal["total_hldr_eqy_exc_min_int"]),
+                    cash=_safe_float(bal["money_cap"]),
+                    current_assets=_safe_float(bal["total_cur_assets"]),
+                    current_liabilities=_safe_float(bal["total_cur_liab"]),
+                ))
+
+            if cf is not None:
+                operating_cf = _safe_float(cf["n_cashflow_act"])
+                capex = _safe_float(cf["c_pay_acq_const_fiolta"])
+                fcff = _safe_float(fin["fcff"]) if fin is not None else 0.0
+                free_cf = fcff if fcff != 0.0 else (operating_cf - capex)
+                cf_list.append(CashFlow(
+                    period=str(cf["end_date"]),
+                    operating_cf=operating_cf,
+                    investing_cf=_safe_float(cf["n_cashflow_inv_act"]),
+                    financing_cf=_safe_float(cf["n_cash_flows_fnc_act"]),
+                    free_cf=free_cf,
+                ))
+
+            if fin is not None:
+                ratio_list.append(FinancialRatios(
+                    period=str(fin["end_date"]),
+                    roe=_safe_float(fin["roe"]),
+                    roa=_safe_float(fin["roa"]),
+                    gross_margin=_safe_float(fin["grossprofit_margin"]),
+                    net_margin=_safe_float(fin["netprofit_margin"]),
+                    current_ratio=_safe_float(fin["current_ratio"]),
+                    quick_ratio=_safe_float(fin["quick_ratio"]),
+                    debt_to_assets=_safe_float(fin["debt_to_assets"]),
+                ))
+                growth_list.append(GrowthMetrics(
+                    period=str(fin["end_date"]),
+                    revenue_growth_yoy=_safe_float(fin["or_yoy"]),
+                    profit_growth_yoy=_safe_float(fin["netprofit_yoy"]),
+                    eps_growth_yoy=_safe_float(fin["basic_eps_yoy"]),
+                ))
+
+        summary = await _generate_summary(
+            name=name,
             ts_code=ts_code,
-            start_date=start_date,
-            fields="ts_code,end_date,total_revenue,operate_profit,n_income,ebitda,basic_eps",
-        ).data
-        balance_df = helper.balancesheet(
-            ts_code=ts_code,
-            start_date=start_date,
-            fields="ts_code,end_date,total_assets,total_liab,"
-                   "total_hldr_eqy_exc_min_int,money_cap,"
-                   "total_cur_assets,total_cur_liab",
-        ).data
-        cashflow_df = helper.cashflow(
-            ts_code=ts_code,
-            start_date=start_date,
-            fields="ts_code,end_date,n_cashflow_act,n_cashflow_inv_act,"
-                   "n_cash_flows_fnc_act,c_pay_acq_const_fiolta",
-        ).data
-        fina_df = helper.fina_indicator(
-            ts_code=ts_code,
-            start_date=start_date,
-            fields="ts_code,end_date,roe,roa,grossprofit_margin,netprofit_margin,"
-                   "current_ratio,quick_ratio,debt_to_assets,"
-                   "or_yoy,netprofit_yoy,basic_eps_yoy,fcff",
-        ).data
-        stock_basic_df = helper.stock_basic(
-            ts_code=ts_code, fields="ts_code,name"
-        ).data
+            income_list=income_list,
+            balance_list=balance_list,
+            cf_list=cf_list,
+            ratio_list=ratio_list,
+            growth_list=growth_list,
+        )
 
-    name = stock_basic_df.iloc[0]["name"] if not stock_basic_df.empty else ""
+        return Fundamentals(
+            symbol=ts_code,
+            name=name,
+            periods=ref_dates,
+            income_statements=income_list,
+            balance_sheets=balance_list,
+            cash_flows=cf_list,
+            financial_ratios=ratio_list,
+            growth_metrics=growth_list,
+            summary=summary,
+        )
 
-    # De-duplicate each table: keep first row per end_date
-    # (Tushare may return multiple report_type rows for the same period;
-    #  the first one is typically the consolidated statement, report_type=1)
-    income_df = _dedup_by_date(income_df)
-    balance_df = _dedup_by_date(balance_df)
-    cashflow_df = _dedup_by_date(cashflow_df)
-    fina_df = _dedup_by_date(fina_df)
-
-    # Reference periods: take top N from income_df (already sorted newest-first)
-    ref_dates: list[str] = income_df.head(periods)["end_date"].tolist()
-
-    income_list: list[IncomeStatement] = []
-    balance_list: list[BalanceSheet] = []
-    cf_list: list[CashFlow] = []
-    ratio_list: list[FinancialRatios] = []
-    growth_list: list[GrowthMetrics] = []
-
-    for date in ref_dates:
-        inc = _lookup_row(income_df, date)
-        bal = _lookup_row(balance_df, date)
-        cf = _lookup_row(cashflow_df, date)
-        fin = _lookup_row(fina_df, date)
-
-        if inc is not None:
-            income_list.append(IncomeStatement(
-                period=str(inc["end_date"]),
-                revenue=_safe_float(inc["total_revenue"]),
-                operating_profit=_safe_float(inc["operate_profit"]),
-                net_profit=_safe_float(inc["n_income"]),
-                ebitda=_safe_float(inc["ebitda"]),
-                basic_eps=_safe_float(inc["basic_eps"]),
-            ))
-
-        if bal is not None:
-            balance_list.append(BalanceSheet(
-                period=str(bal["end_date"]),
-                total_assets=_safe_float(bal["total_assets"]),
-                total_liabilities=_safe_float(bal["total_liab"]),
-                total_equity=_safe_float(bal["total_hldr_eqy_exc_min_int"]),
-                cash=_safe_float(bal["money_cap"]),
-                current_assets=_safe_float(bal["total_cur_assets"]),
-                current_liabilities=_safe_float(bal["total_cur_liab"]),
-            ))
-
-        if cf is not None:
-            operating_cf = _safe_float(cf["n_cashflow_act"])
-            capex = _safe_float(cf["c_pay_acq_const_fiolta"])
-            fcff = _safe_float(fin["fcff"]) if fin is not None else 0.0
-            free_cf = fcff if fcff != 0.0 else (operating_cf - capex)
-            cf_list.append(CashFlow(
-                period=str(cf["end_date"]),
-                operating_cf=operating_cf,
-                investing_cf=_safe_float(cf["n_cashflow_inv_act"]),
-                financing_cf=_safe_float(cf["n_cash_flows_fnc_act"]),
-                free_cf=free_cf,
-            ))
-
-        if fin is not None:
-            ratio_list.append(FinancialRatios(
-                period=str(fin["end_date"]),
-                roe=_safe_float(fin["roe"]),
-                roa=_safe_float(fin["roa"]),
-                gross_margin=_safe_float(fin["grossprofit_margin"]),
-                net_margin=_safe_float(fin["netprofit_margin"]),
-                current_ratio=_safe_float(fin["current_ratio"]),
-                quick_ratio=_safe_float(fin["quick_ratio"]),
-                debt_to_assets=_safe_float(fin["debt_to_assets"]),
-            ))
-            growth_list.append(GrowthMetrics(
-                period=str(fin["end_date"]),
-                revenue_growth_yoy=_safe_float(fin["or_yoy"]),
-                profit_growth_yoy=_safe_float(fin["netprofit_yoy"]),
-                eps_growth_yoy=_safe_float(fin["basic_eps_yoy"]),
-            ))
-
-    summary = await _generate_summary(
-        name=name,
-        ts_code=ts_code,
-        income_list=income_list,
-        balance_list=balance_list,
-        cf_list=cf_list,
-        ratio_list=ratio_list,
-        growth_list=growth_list,
-    )
-
-    return Fundamentals(
-        symbol=ts_code,
-        name=name,
-        periods=ref_dates,
-        income_statements=income_list,
-        balance_sheets=balance_list,
-        cash_flows=cf_list,
-        financial_ratios=ratio_list,
-        growth_metrics=growth_list,
-        summary=summary,
+    return await _FUNDAMENTALS_CACHE.get_or_compute(
+        ("fundamentals", ts_code, periods),
+        _compute,
     )

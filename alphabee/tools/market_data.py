@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 from alphabee.collectors.tushare.helper import TuShareHelper
 from pydantic import BaseModel, Field
 
+from alphabee.tools.cache import SyncTTLCache
+
 
 class Quote(BaseModel):
     """实时报价与估值数据"""
@@ -62,6 +64,9 @@ class MarketData(BaseModel):
     sector: Sector = Field(description="行业与板块信息")
 
 
+_MARKET_DATA_CACHE = SyncTTLCache(ttl_seconds=300.0)
+
+
 def _normalize_ts_code(symbol: str) -> str:
     s = symbol.strip().lower()
     if s.startswith("sh"):
@@ -101,87 +106,90 @@ def get_market_data(symbol: str) -> MarketData:
     """
     ts_code = _normalize_ts_code(symbol)
 
-    today = datetime.today().strftime("%Y%m%d")
-    lookback = (datetime.today() - timedelta(days=10)).strftime("%Y%m%d")
+    def _compute() -> MarketData:
+        today = datetime.today().strftime("%Y%m%d")
+        lookback = (datetime.today() - timedelta(days=10)).strftime("%Y%m%d")
 
-    with TuShareHelper() as helper:
-        daily_df = helper.daily(
-            ts_code=ts_code, start_date=lookback, end_date=today
-        ).data
-        daily_basic_df = helper.daily_basic(
-            ts_code=ts_code, start_date=lookback, end_date=today
-        ).data
-        moneyflow_df = helper.moneyflow(
-            ts_code=ts_code, start_date=lookback, end_date=today
-        ).data
-        stock_basic_df = helper.stock_basic(
-            ts_code=ts_code, fields="ts_code,name,industry"
-        ).data
+        with TuShareHelper() as helper:
+            daily_df = helper.daily(
+                ts_code=ts_code, start_date=lookback, end_date=today
+            ).data
+            daily_basic_df = helper.daily_basic(
+                ts_code=ts_code, start_date=lookback, end_date=today
+            ).data
+            moneyflow_df = helper.moneyflow(
+                ts_code=ts_code, start_date=lookback, end_date=today
+            ).data
+            stock_basic_df = helper.stock_basic(
+                ts_code=ts_code, fields="ts_code,name,industry"
+            ).data
 
-    d = daily_df.iloc[0]
-    db = daily_basic_df.iloc[0]
-    mf = moneyflow_df.iloc[0] if not moneyflow_df.empty else None
+        d = daily_df.iloc[0]
+        db = daily_basic_df.iloc[0]
+        mf = moneyflow_df.iloc[0] if not moneyflow_df.empty else None
 
-    name = stock_basic_df.iloc[0]["name"] if not stock_basic_df.empty else ""
-    industry = stock_basic_df.iloc[0]["industry"] if not stock_basic_df.empty else ""
+        name = stock_basic_df.iloc[0]["name"] if not stock_basic_df.empty else ""
+        industry = stock_basic_df.iloc[0]["industry"] if not stock_basic_df.empty else ""
 
-    prev_close = float(d["pre_close"])
-    amplitude = (float(d["high"]) - float(d["low"])) / prev_close * 100 if prev_close else 0.0
+        prev_close = float(d["pre_close"])
+        amplitude = (float(d["high"]) - float(d["low"])) / prev_close * 100 if prev_close else 0.0
 
-    quote = Quote(
-        price=float(d["close"]),
-        change=float(d["change"]),
-        change_pct=float(d["pct_chg"]),
-        open=float(d["open"]),
-        high=float(d["high"]),
-        low=float(d["low"]),
-        prev_close=prev_close,
-        volume=int(d["vol"]),
-        turnover=float(d["amount"]) * 1000,
-        amplitude=amplitude,
-        turnover_rate=float(db["turnover_rate"]),
-        pe_ttm=float(db["pe_ttm"]) if db["pe_ttm"] is not None else 0.0,
-        pb=float(db["pb"]) if db["pb"] is not None else 0.0,
-        market_cap=float(db["total_mv"]),
-        circulating_market_cap=float(db["circ_mv"]),
-        timestamp=str(d["trade_date"]),
-    )
-
-    if mf is not None:
-        super_large = float(mf["buy_elg_amount"]) - float(mf["sell_elg_amount"])
-        large = float(mf["buy_lg_amount"]) - float(mf["sell_lg_amount"])
-        capital_flow = CapitalFlow(
-            main_force_inflow=super_large + large,
-            super_large_order=super_large,
-            large_order=large,
-            retail_flow=float(mf["buy_sm_amount"]) - float(mf["sell_sm_amount"]),
-            northbound_flow=0.0,
-            flow_trend="",
-            capital_rank_in_sector=0,
-        )
-    else:
-        capital_flow = CapitalFlow(
-            main_force_inflow=0.0,
-            super_large_order=0.0,
-            large_order=0.0,
-            retail_flow=0.0,
-            northbound_flow=0.0,
-            flow_trend="",
-            capital_rank_in_sector=0,
+        quote = Quote(
+            price=float(d["close"]),
+            change=float(d["change"]),
+            change_pct=float(d["pct_chg"]),
+            open=float(d["open"]),
+            high=float(d["high"]),
+            low=float(d["low"]),
+            prev_close=prev_close,
+            volume=int(d["vol"]),
+            turnover=float(d["amount"]) * 1000,
+            amplitude=amplitude,
+            turnover_rate=float(db["turnover_rate"]),
+            pe_ttm=float(db["pe_ttm"]) if db["pe_ttm"] is not None else 0.0,
+            pb=float(db["pb"]) if db["pb"] is not None else 0.0,
+            market_cap=float(db["total_mv"]),
+            circulating_market_cap=float(db["circ_mv"]),
+            timestamp=str(d["trade_date"]),
         )
 
-    sector = Sector(
-        industry=industry,
-        concepts=[],
-        sector_change_pct=0.0,
-        sector_rank_today=0,
-        leading_stock=False,
-    )
+        if mf is not None:
+            super_large = float(mf["buy_elg_amount"]) - float(mf["sell_elg_amount"])
+            large = float(mf["buy_lg_amount"]) - float(mf["sell_lg_amount"])
+            capital_flow = CapitalFlow(
+                main_force_inflow=super_large + large,
+                super_large_order=super_large,
+                large_order=large,
+                retail_flow=float(mf["buy_sm_amount"]) - float(mf["sell_sm_amount"]),
+                northbound_flow=0.0,
+                flow_trend="",
+                capital_rank_in_sector=0,
+            )
+        else:
+            capital_flow = CapitalFlow(
+                main_force_inflow=0.0,
+                super_large_order=0.0,
+                large_order=0.0,
+                retail_flow=0.0,
+                northbound_flow=0.0,
+                flow_trend="",
+                capital_rank_in_sector=0,
+            )
 
-    return MarketData(
-        symbol=ts_code,
-        name=name,
-        quote=quote,
-        capital_flow=capital_flow,
-        sector=sector,
-    )
+        sector = Sector(
+            industry=industry,
+            concepts=[],
+            sector_change_pct=0.0,
+            sector_rank_today=0,
+            leading_stock=False,
+        )
+
+        return MarketData(
+            symbol=ts_code,
+            name=name,
+            quote=quote,
+            capital_flow=capital_flow,
+            sector=sector,
+        )
+
+    return _MARKET_DATA_CACHE.get_or_compute(("market_data", ts_code), _compute)

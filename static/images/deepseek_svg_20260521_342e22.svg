@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <style>
+      text { font-family: 'Helvetica Neue', Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="400" height="400" fill="#f8f9fc"/>
+
+  <!-- 外圈六边形 -->
+  <polygon points="200,100 273.2,135 273.2,215 200,250 126.8,215 126.8,135"
+           fill="none" stroke="#f5a623" stroke-width="6" stroke-linejoin="round"/>
+
+  <!-- 内圈六边形（蜂巢纹理） -->
+  <polygon points="200,135 240.2,155 240.2,195 200,215 159.8,195 159.8,155"
+           fill="none" stroke="#f5a623" stroke-width="2.5" stroke-dasharray="6,4" stroke-linejoin="round"/>
+
+  <!-- α 符号 -->
+  <text x="200" y="195" text-anchor="middle" font-size="60" fill="#f5a623" font-family="Georgia, serif" font-style="italic">α</text>
+
+  <!-- 右下角小蜜蜂标记 -->
+  <g transform="translate(245, 230)">
+    <!-- 蜜蜂身体 -->
+    <ellipse cx="0" cy="0" rx="14" ry="10" fill="#f5a623" opacity="0.7"/>
+    <!-- 翅膀 -->
+    <ellipse cx="-8" cy="-8" rx="8" ry="5" fill="#f5a623" opacity="0.4" transform="rotate(-20 -8 -8)"/>
+    <ellipse cx="8" cy="-8" rx="8" ry="5" fill="#f5a623" opacity="0.4" transform="rotate(20 8 -8)"/>
+    <!-- 触角 -->
+    <line x1="-4" y1="-10" x2="-8" y2="-18" stroke="#f5a623" stroke-width="2" opacity="0.7"/>
+    <line x1="4" y1="-10" x2="8" y2="-18" stroke="#f5a623" stroke-width="2" opacity="0.7"/>
+    <circle cx="-8" cy="-18" r="2.5" fill="#f5a623" opacity="0.7"/>
+    <circle cx="8" cy="-18" r="2.5" fill="#f5a623" opacity="0.7"/>
+    <!-- 尾部刺针 -->
+    <polygon points="0,10 -4,16 4,16" fill="#f5a623" opacity="0.7"/>
+  </g>
+
+  <!-- 底部文字 -->
+  <text x="200" y="310" text-anchor="middle" font-size="22" fill="#2c3e50" font-weight="700" letter-spacing="2">ALPHABEE</text>
+  <text x="200" y="335" text-anchor="middle" font-size="12" fill="#7f8c8d" letter-spacing="1">多代理投资分析系统</text>
+</svg>
