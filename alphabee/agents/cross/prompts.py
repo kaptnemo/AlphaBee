@@ -76,6 +76,7 @@ CROSS_HARNESS_REPORTER_PROMPT = """
   - divergences: 背离/冲突列表
   - confidence: 高/中/低或等价表达
 - 结论优先强调跨维度关系，而不是重复单个子代理原文。
+- 如果输入中带有 critic 的 rewrite_reason 或最新 critic Issue，必须把它们当成本轮重写约束，优先修复后再输出新的 report。
 """ + WEB_SEARCH_BOUNDARY
 
 
@@ -94,6 +95,7 @@ CROSS_HARNESS_CRITIC_PROMPT = """
 - 发现问题时，优先新增 Issue，并关联 related_artifact 或 related_step。
 - 如报告基本稳健，可生成 review / critique Artifact，总结通过点与保留意见。
 - 每条 critic Decision 必须引用 based_on 证据 ID。
+- 如果 report 需要 reporter 重写，优先新增 high/critical 级别的 Issue，并尽量使用 report_rewrite_needed、missing_cross_evidence、weak_grounding、cross_source_conflict、time_mismatch、incomplete_report 等 category。
 """ + WEB_SEARCH_BOUNDARY
 
 

@@ -47,6 +47,11 @@ class HarnessState(TypedDict):
     issues: list[Issue]
     final_artifact_id: str | None
     evaluation_artifact_id: str | None
+    reporter_round: int
+    critic_round: int
+    max_reporter_rounds: int
+    latest_step_output: dict[str, Any] | None
+    rewrite_reason: str | None
 
 
 class ThinkingNodeOutput(BaseModel):
@@ -77,6 +82,35 @@ class HarnessStateDiff(BaseModel):
     removed_artifact_ids: list[str] = Field(default_factory=list)
     removed_decision_ids: list[str] = Field(default_factory=list)
     removed_issue_ids: list[str] = Field(default_factory=list)
+
+
+DEFAULT_MAX_REPORTER_ROUNDS = 3
+REWRITE_TRIGGER_CATEGORIES = {
+    "report_rewrite_needed",
+    "missing_data",
+    "verification_needed",
+    "conflict",
+    "cross_source_conflict",
+    "time_mismatch",
+    "numeric_inconsistency",
+    "missing_cross_evidence",
+    "weak_grounding",
+    "unsupported_cross_claim",
+    "incomplete_report",
+}
+REWRITE_TRIGGER_KEYWORDS = (
+    "rewrite",
+    "revise",
+    "rework",
+    "重写",
+    "改写",
+    "补充",
+    "修订",
+    "证据不足",
+    "缺口",
+    "冲突",
+    "错配",
+)
 
 
 def _make_id(prefix: str) -> str:
@@ -143,6 +177,11 @@ def _state_to_prompt_payload(state: HarnessState) -> str:
         "issues": [issue.model_dump(mode="json") for issue in state["issues"]],
         "final_artifact_id": state["final_artifact_id"],
         "evaluation_artifact_id": state["evaluation_artifact_id"],
+        "reporter_round": state["reporter_round"],
+        "critic_round": state["critic_round"],
+        "max_reporter_rounds": state["max_reporter_rounds"],
+        "latest_step_output": state["latest_step_output"],
+        "rewrite_reason": state["rewrite_reason"],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -343,6 +382,11 @@ def _snapshot_payload(state: HarnessState) -> dict[str, Any]:
         "issues": [issue.model_dump(mode="json") for issue in state["issues"]],
         "final_artifact_id": state["final_artifact_id"],
         "evaluation_artifact_id": state["evaluation_artifact_id"],
+        "reporter_round": state["reporter_round"],
+        "critic_round": state["critic_round"],
+        "max_reporter_rounds": state["max_reporter_rounds"],
+        "latest_step_output": state["latest_step_output"],
+        "rewrite_reason": state["rewrite_reason"],
     }
 
 
@@ -364,6 +408,7 @@ async def _run_thinking_node(
     agent: CompiledStateGraph,
     store: BaseStore,
 ) -> HarnessState:
+    previous_step = next((step for step in state["steps"] if step.id == step_id), None)
     running_step = Step(
         id=step_id,
         kind=kind,
@@ -375,6 +420,7 @@ async def _run_thinking_node(
             "issue_ids": [issue.id for issue in state["issues"]],
         },
         status=StepStatus.RUNNING,
+        retries=(previous_step.retries + 1) if previous_step is not None else 0,
     )
     steps = _upsert_step(state["steps"], running_step)
 
@@ -408,10 +454,25 @@ async def _run_thinking_node(
         "observations": state["observations"],
         "decisions": decisions,
         "issues": issues,
-        "final_artifact_id": (
-            normalized.artifacts[-1].id if normalized.artifacts else state["final_artifact_id"]
+        "final_artifact_id": next(
+            (
+                artifact.id
+                for artifact in reversed(normalized.artifacts)
+                if artifact.type == "report"
+            ),
+            state["final_artifact_id"],
         ),
         "evaluation_artifact_id": state["evaluation_artifact_id"],
+        "reporter_round": state["reporter_round"],
+        "critic_round": state["critic_round"],
+        "max_reporter_rounds": state["max_reporter_rounds"],
+        "latest_step_output": {
+            "step_id": step_id,
+            "artifact_ids": [artifact.id for artifact in normalized.artifacts],
+            "decision_ids": [decision.id for decision in normalized.decisions],
+            "issue_ids": [issue.id for issue in normalized.issues],
+        },
+        "rewrite_reason": state["rewrite_reason"],
     }
     _store_snapshot(store, state["run"].id, step_id, next_state)
     return next_state
@@ -434,32 +495,114 @@ def _planner_node_factory(store: BaseStore):
 
 def _reporter_node_factory(store: BaseStore, prompt: str):
     async def reporter_node(state: HarnessState) -> HarnessState:
-        return await _run_thinking_node(
-            state,
+        reporter_round = state["reporter_round"] + 1
+        state_for_run: HarnessState = {
+            **state,
+            "reporter_round": reporter_round,
+        }
+        round_prompt = (
+            f"请基于当前状态整合已有产物，生成阶段性报告。\n"
+            f"当前 reporter 轮次: {reporter_round}/{state['max_reporter_rounds']}。"
+        )
+        if state["rewrite_reason"]:
+            round_prompt += (
+                "\n这是基于 critic 反馈的重写。"
+                "你必须优先修复以下问题，再产出新的 report：\n"
+                f"- {state['rewrite_reason']}"
+            )
+
+        next_state = await _run_thinking_node(
+            state_for_run,
             step_id="reporter",
             kind="report",
             default_artifact_type="report",
-            prompt_prefix="请基于当前状态整合已有产物，生成阶段性报告。",
+            prompt_prefix=round_prompt,
             agent=_reporter_agent(prompt),
             store=store,
         )
+        final_state: HarnessState = {
+            **next_state,
+            "rewrite_reason": None,
+        }
+        _store_snapshot(store, state["run"].id, "reporter", final_state)
+        return final_state
 
     return reporter_node
 
 
+def _resolve_critic_rewrite_request(state: HarnessState) -> tuple[bool, str | None]:
+    latest_step_output = state["latest_step_output"] or {}
+    if latest_step_output.get("step_id") != "critic":
+        return False, None
+
+    issue_ids = set(latest_step_output.get("issue_ids", []))
+    decision_ids = set(latest_step_output.get("decision_ids", []))
+    critic_issues = [issue for issue in state["issues"] if issue.id in issue_ids]
+    critic_decisions = [decision for decision in state["decisions"] if decision.id in decision_ids]
+
+    trigger_issues = [
+        issue
+        for issue in critic_issues
+        if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
+        or issue.category in REWRITE_TRIGGER_CATEGORIES
+    ]
+    trigger_decisions = [
+        decision
+        for decision in critic_decisions
+        if decision.confidence >= 0.5
+        and any(keyword in decision.rationale.lower() for keyword in REWRITE_TRIGGER_KEYWORDS)
+    ]
+    needs_rewrite = bool(trigger_issues or trigger_decisions)
+    if not needs_rewrite:
+        return False, None
+
+    reason_parts = [issue.message for issue in trigger_issues[:3]]
+    if not reason_parts:
+        reason_parts = [decision.rationale for decision in trigger_decisions[:2]]
+    if not reason_parts:
+        reason_parts = ["critic identified report issues that require a rewrite."]
+    return True, "；".join(reason_parts)
+
+
 def _critic_node_factory(store: BaseStore, prompt: str):
     async def critic_node(state: HarnessState) -> HarnessState:
-        return await _run_thinking_node(
-            state,
+        critic_round = state["critic_round"] + 1
+        state_for_run: HarnessState = {
+            **state,
+            "critic_round": critic_round,
+        }
+        next_state = await _run_thinking_node(
+            state_for_run,
             step_id="critic",
             kind="critic",
             default_artifact_type="critique",
-            prompt_prefix="请审查当前 run 的结论、证据和风险缺口。",
+            prompt_prefix=(
+                "请审查当前 run 的结论、证据和风险缺口。\n"
+                f"当前 critic 轮次: {critic_round}。\n"
+                "如果 report 需要 reporter 重写，优先通过 high/critical Issue 表达，"
+                "并尽量使用以下 category 之一："
+                "report_rewrite_needed / missing_cross_evidence / weak_grounding / "
+                "cross_source_conflict / time_mismatch / incomplete_report。"
+            ),
             agent=_critic_agent(prompt),
             store=store,
         )
+        needs_rewrite, rewrite_reason = _resolve_critic_rewrite_request(next_state)
+        final_state: HarnessState = {
+            **next_state,
+            "rewrite_reason": rewrite_reason if needs_rewrite else None,
+        }
+        _store_snapshot(store, state["run"].id, "critic", final_state)
+        return final_state
 
     return critic_node
+
+
+def _route_after_critic(state: HarnessState) -> str:
+    needs_rewrite, _ = _resolve_critic_rewrite_request(state)
+    if needs_rewrite and state["reporter_round"] < state["max_reporter_rounds"]:
+        return "reporter"
+    return "evaluator"
 
 
 def _find_latest_artifact(state: HarnessState, artifact_type: str) -> Artifact | None:
@@ -646,6 +789,16 @@ async def _run_evaluator_node(
         "issues": evaluation_issues,
         "final_artifact_id": state["final_artifact_id"],
         "evaluation_artifact_id": evaluation_artifact.id,
+        "reporter_round": state["reporter_round"],
+        "critic_round": state["critic_round"],
+        "max_reporter_rounds": state["max_reporter_rounds"],
+        "latest_step_output": {
+            "step_id": "evaluator",
+            "artifact_ids": [evaluation_artifact.id],
+            "decision_ids": [evaluation_decision.id],
+            "issue_ids": [issue.id for issue in evaluation_issues if issue.related_step == running_step.id],
+        },
+        "rewrite_reason": state["rewrite_reason"],
     }
     _store_snapshot(store, state["run"].id, "evaluator", next_state)
     _store_snapshot(store, state["run"].id, "final", next_state)
@@ -674,11 +827,18 @@ def create_initial_harness_state(
     issues: list[Issue] | None = None,
     run_id: str | None = None,
 ) -> HarnessState:
+    runtime_context = dict(context or {})
+    raw_max_reporter_rounds = runtime_context.get("max_reporter_rounds", DEFAULT_MAX_REPORTER_ROUNDS)
+    max_reporter_rounds = (
+        raw_max_reporter_rounds
+        if isinstance(raw_max_reporter_rounds, int) and raw_max_reporter_rounds > 0
+        else DEFAULT_MAX_REPORTER_ROUNDS
+    )
     run = Run(
         id=run_id or _make_id("run"),
         goal=goal,
         status=RunStatus.RUNNING,
-        context=context or {},
+        context=runtime_context,
         started_at=datetime.now(),
     )
     return {
@@ -690,6 +850,11 @@ def create_initial_harness_state(
         "issues": issues or [],
         "final_artifact_id": None,
         "evaluation_artifact_id": None,
+        "reporter_round": 0,
+        "critic_round": 0,
+        "max_reporter_rounds": max_reporter_rounds,
+        "latest_step_output": None,
+        "rewrite_reason": None,
     }
 
 
@@ -710,7 +875,14 @@ def build_harness_graph(
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "reporter")
     graph.add_edge("reporter", "critic")
-    graph.add_edge("critic", "evaluator")
+    graph.add_conditional_edges(
+        "critic",
+        _route_after_critic,
+        {
+            "reporter": "reporter",
+            "evaluator": "evaluator",
+        },
+    )
     graph.add_edge("evaluator", END)
     return graph.compile(checkpointer=checkpointer or InMemorySaver(), store=runtime_store), runtime_store
 
@@ -755,6 +927,21 @@ def diff_harness_states(before: dict[str, Any], after: dict[str, Any]) -> Harnes
         removed_issue_ids=sorted(before_issues - after_issues),
     )
 
+
+def _select_state_for_prompt(state: HarnessState) -> dict[str, Any]:
+    latest_artifacts = state["artifacts"][-3:]
+
+    high_issues = [
+        issue for issue in state["issues"]
+        if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
+    ]
+
+    referenced_ids = set()
+    for decision in state["decisions"]:
+        if decision.confidence >= 0.5:
+            referenced_ids.update(decision.based_on)
+
+    
 
 class HarnessRuntime:
     def __init__(

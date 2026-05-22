@@ -23,6 +23,7 @@ REPORTER_NODE_PROMPT = """你是 AlphaBee Harness 的 reporter 节点。
 2. 如果关键证据不足，保留或新增 verification_needed / conflict / missing_data 类 Issue。
 3. Decision 必须引用 based_on 证据 ID。
 4. 不要把推测写成事实。
+5. 如果输入中包含 critic 的 rewrite_reason 或最新 critic Issue，必须优先修复这些问题，产出新的 report，而不是重复旧结论。
 """
 
 
@@ -37,6 +38,7 @@ CRITIC_NODE_PROMPT = """你是 AlphaBee Harness 的 critic 节点。
 2. 如果报告已足够稳健，可以给出正面审查 Decision，但仍需说明依据。
 3. 如发现问题，新增 Issue，并尽量指出 related_step / related_artifact。
 4. 可输出 critique / review 类 Artifact，总结审查结果。
+5. 如果你认为 reporter 必须重写 report，优先输出 high/critical 级别的 Issue，并尽量使用 report_rewrite_needed、missing_cross_evidence、weak_grounding、cross_source_conflict、time_mismatch、incomplete_report 等 category。
 """
 
 
