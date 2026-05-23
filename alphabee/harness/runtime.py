@@ -6,7 +6,7 @@ from functools import lru_cache
 from typing import Any, TypedDict
 from uuid import uuid4
 
-from deepagents import create_deep_agent
+from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -15,7 +15,6 @@ from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel, Field
 
-from alphabee.config import settings
 from alphabee.core import (
     Artifact,
     Decision,
@@ -36,6 +35,7 @@ from alphabee.harness.prompts import (
     PLANNER_NODE_PROMPT,
     REPORTER_NODE_PROMPT,
 )
+from alphabee.utils import create_chat_model
 
 
 class HarnessState(TypedDict):
@@ -117,52 +117,28 @@ def _make_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:12]}"
 
 
-def _model() -> ChatOpenAI:
-    return ChatOpenAI(
-        model=settings.llm.model,
-        api_key=settings.llm.api_key,
-        base_url=settings.llm.base_url,
-    )
+def _model(component: str) -> ChatOpenAI:
+    return create_chat_model(component)
 
 
 @lru_cache(maxsize=16)
-def _planner_agent(prompt: str) -> CompiledStateGraph:
-    return create_deep_agent(
-        model=_model(),
-        system_prompt=prompt,
-        tools=[],
-        name="HarnessPlanner",
-    )
+def _planner_model(prompt: str) -> ChatOpenAI:
+    return create_chat_model("harness.planner")
 
 
 @lru_cache(maxsize=16)
-def _reporter_agent(prompt: str) -> CompiledStateGraph:
-    return create_deep_agent(
-        model=_model(),
-        system_prompt=prompt,
-        tools=[],
-        name="HarnessReporter",
-    )
+def _reporter_model(prompt: str) -> ChatOpenAI:
+    return create_chat_model("harness.reporter")
 
 
 @lru_cache(maxsize=16)
-def _critic_agent(prompt: str) -> CompiledStateGraph:
-    return create_deep_agent(
-        model=_model(),
-        system_prompt=prompt,
-        tools=[],
-        name="HarnessCritic",
-    )
+def _critic_model(prompt: str) -> ChatOpenAI:
+    return create_chat_model("harness.critic")
 
 
 @lru_cache(maxsize=16)
-def _evaluator_agent(prompt: str) -> CompiledStateGraph:
-    return create_deep_agent(
-        model=_model(),
-        system_prompt=prompt,
-        tools=[],
-        name="HarnessEvaluator",
-    )
+def _evaluator_model(prompt: str) -> ChatOpenAI:
+    return create_chat_model("harness.evaluator")
 
 
 def _state_to_prompt_payload(state: HarnessState) -> str:
@@ -309,12 +285,15 @@ def _json_instruction(schema: type[BaseModel], *, example: str) -> str:
 
 
 async def _invoke_json_agent(
-    agent: CompiledStateGraph,
+    model: ChatOpenAI,
     *,
+    system_prompt: str,
     prompt: str,
 ) -> Any:
-    result = await agent.ainvoke({"messages": [{"role": "user", "content": prompt}]})
-    return _parse_json_text(_extract_final_text(result))
+    messages = [SystemMessage(content=system_prompt), {"role": "user", "content": prompt}]
+    response = await model.ainvoke(messages)
+    raw_text = _extract_text(response.content).strip()
+    return _parse_json_text(raw_text)
 
 
 def _upsert_step(steps: list[Step], step: Step) -> list[Step]:
@@ -405,7 +384,8 @@ async def _run_thinking_node(
     kind: str,
     default_artifact_type: str,
     prompt_prefix: str,
-    agent: CompiledStateGraph,
+    model: ChatOpenAI,
+    system_prompt: str,
     store: BaseStore,
 ) -> HarnessState:
     previous_step = next((step for step in state["steps"] if step.id == step_id), None)
@@ -433,7 +413,7 @@ async def _run_thinking_node(
         f"{_state_to_prompt_payload({**state, 'steps': steps})}"
     )
     normalized = _normalize_output(
-        _coerce_thinking_output(await _invoke_json_agent(agent, prompt=prompt)),
+        _coerce_thinking_output(await _invoke_json_agent(model, system_prompt=system_prompt, prompt=prompt)),
         step_id=step_id,
         default_artifact_type=default_artifact_type,
     )
@@ -486,7 +466,8 @@ def _planner_node_factory(store: BaseStore):
             kind="plan",
             default_artifact_type="plan",
             prompt_prefix="请为本次 run 生成执行计划与关键关注点。",
-            agent=_planner_agent(PLANNER_NODE_PROMPT),
+            model=_planner_model(PLANNER_NODE_PROMPT),
+            system_prompt=PLANNER_NODE_PROMPT,
             store=store,
         )
 
@@ -517,7 +498,8 @@ def _reporter_node_factory(store: BaseStore, prompt: str):
             kind="report",
             default_artifact_type="report",
             prompt_prefix=round_prompt,
-            agent=_reporter_agent(prompt),
+            model=_reporter_model(prompt),
+            system_prompt=prompt,
             store=store,
         )
         final_state: HarnessState = {
@@ -584,7 +566,8 @@ def _critic_node_factory(store: BaseStore, prompt: str):
                 "report_rewrite_needed / missing_cross_evidence / weak_grounding / "
                 "cross_source_conflict / time_mismatch / incomplete_report。"
             ),
-            agent=_critic_agent(prompt),
+            model=_critic_model(prompt),
+            system_prompt=prompt,
             store=store,
         )
         needs_rewrite, rewrite_reason = _resolve_critic_rewrite_request(next_state)
@@ -725,7 +708,7 @@ async def _run_evaluator_node(
         f"{_state_to_prompt_payload({**state, 'steps': steps})}"
     )
     assessment = _coerce_evaluation_assessment(
-        await _invoke_json_agent(_evaluator_agent(prompt), prompt=evaluator_prompt)
+        await _invoke_json_agent(_evaluator_model(prompt), system_prompt=prompt, prompt=evaluator_prompt)
     )
 
     report = EvaluationReport(

@@ -259,7 +259,4 @@ graph.add_edge("collect_subagents", "run_cross_harness")
 graph.add_edge("run_cross_harness", "finalize_cross_message")
 graph.add_edge("finalize_cross_message", END)
 
-cross_agent = graph.compile(
-    checkpointer=InMemorySaver(),
-    store=InMemoryStore(),
-)
+cross_agent = graph.compile(store=InMemoryStore())

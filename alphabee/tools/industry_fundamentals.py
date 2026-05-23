@@ -12,12 +12,11 @@ import math
 from typing import Optional
 
 import pandas as pd
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from alphabee.collectors.akshare.helper import AkShareHelper
 from alphabee.collectors.tushare.helper import TuShareHelper
-from alphabee.config import settings
+from alphabee.utils import tracked_chat_completion
 
 
 # ---------------------------------------------------------------------------
@@ -425,12 +424,8 @@ async def _generate_industry_summary(
         "}"
     )
 
-    client = AsyncOpenAI(
-        api_key=settings.llm.api_key,
-        base_url=settings.llm.base_url,
-    )
-    response = await client.chat.completions.create(
-        model=settings.llm.model,
+    response = await tracked_chat_completion(
+        component="tool.industry_fundamentals.summary",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
     )

@@ -2,12 +2,11 @@ import datetime
 import json
 import math
 
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from alphabee.collectors.tushare.helper import TuShareHelper
-from alphabee.config import settings
 from alphabee.tools.cache import AsyncTTLCache
+from alphabee.utils import tracked_chat_completion
 
 
 # ---------------------------------------------------------------------------
@@ -197,12 +196,8 @@ async def _generate_summary(
         "}"
     )
 
-    client = AsyncOpenAI(
-        api_key=settings.llm.api_key,
-        base_url=settings.llm.base_url,
-    )
-    response = await client.chat.completions.create(
-        model=settings.llm.model,
+    response = await tracked_chat_completion(
+        component="tool.fundamentals.summary",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
     )

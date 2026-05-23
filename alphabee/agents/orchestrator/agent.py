@@ -1,9 +1,7 @@
 from deepagents import create_deep_agent, CompiledSubAgent
 from langchain.agents.middleware import ToolRetryMiddleware
-from langchain_openai import ChatOpenAI
 
 from alphabee.agents.orchestrator.prompts import ALPHABEE_SYSTEM_PROMPT
-from alphabee.config import settings
 from alphabee.agents.fundamental.agent import fundamental_agent
 from alphabee.agents.market.agent import market_agent
 from alphabee.agents.risk.agent import risk_agent
@@ -12,13 +10,10 @@ from alphabee.agents.industry.agent import industry_agent
 from alphabee.tools.common import web_search, extract_symbols_from_query
 from alphabee.middleware.common import check_message_limit
 from alphabee.middleware.web_search_guard import web_search_guard
+from alphabee.utils import create_chat_model
 
 
-model = ChatOpenAI(
-    model=settings.llm.model,
-    api_key=settings.llm.api_key,
-    base_url=settings.llm.base_url,
-)
+model = create_chat_model("agent.orchestrator")
 
 
 alphabee_agent = create_deep_agent(

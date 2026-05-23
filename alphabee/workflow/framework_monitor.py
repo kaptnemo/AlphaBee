@@ -7,14 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from alphabee.config import settings
 from alphabee.tools.common import web_search
 from alphabee.tools.fundamentals import get_fundamentals
 from alphabee.tools.market_data import get_market_data
 from alphabee.tools.news import get_stock_news_summary
+from alphabee.utils import tracked_chat_completion
 
 
 class MonitorStage(BaseModel):
@@ -246,12 +245,8 @@ async def _call_monitor_llm(
 {json.dumps(previous_snapshot, ensure_ascii=False, indent=2) if previous_snapshot else "无"}
 """.strip()
 
-    client = AsyncOpenAI(
-        api_key=settings.llm.api_key,
-        base_url=settings.llm.base_url,
-    )
-    response = await client.chat.completions.create(
-        model=settings.llm.model,
+    response = await tracked_chat_completion(
+        component="workflow.framework_monitor",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
     )
