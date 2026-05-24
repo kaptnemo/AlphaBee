@@ -24,6 +24,34 @@ from alphabee.core import Artifact, Decision, Issue, IssueSeverity, Observation,
 from alphabee.harness import HarnessRuntime
 
 
+MAX_SUPPLEMENT_ROUNDS = 1
+
+# Issue categories that signal a data gap worth supplementing
+_SUPPLEMENT_TRIGGER_CATEGORIES = {
+    "subagent_failure",
+    "missing_data",
+    "missing_cross_evidence",
+    "data_gap",
+}
+
+# (lowercase keyword in issue message) → subagent name
+_KEYWORD_TO_AGENT: list[tuple[str, str]] = [
+    ("fundamentalagent", "FundamentalAgent"),
+    ("fundamental", "FundamentalAgent"),
+    ("基本面", "FundamentalAgent"),
+    ("财务", "FundamentalAgent"),
+    ("marketagent", "MarketAgent"),
+    ("market", "MarketAgent"),
+    ("行情", "MarketAgent"),
+    ("估值", "MarketAgent"),
+    ("资金", "MarketAgent"),
+    ("riskagent", "RiskAgent"),
+    ("risk", "RiskAgent"),
+    ("风险", "RiskAgent"),
+    ("舆情", "RiskAgent"),
+]
+
+
 class CrossAnalysisState(TypedDict, total=False):
     messages: list[AnyMessage]
     run: Run
@@ -34,6 +62,8 @@ class CrossAnalysisState(TypedDict, total=False):
     issues: list[Issue]
     final_artifact_id: str | None
     evaluation_artifact_id: str | None
+    supplement_round: int
+    max_supplement_rounds: int
 
 
 def _make_id(prefix: str) -> str:
@@ -193,6 +223,8 @@ async def collect_subagent_artifacts(state: CrossAnalysisState) -> CrossAnalysis
         "issues": issues,
         "final_artifact_id": None,
         "evaluation_artifact_id": None,
+        "supplement_round": 0,
+        "max_supplement_rounds": MAX_SUPPLEMENT_ROUNDS,
     }
 
 
@@ -211,7 +243,7 @@ async def run_cross_harness(state: CrossAnalysisState) -> CrossAnalysisState:
         thread_id=run.id,
     )
     return {
-        "messages": state.get("messages", []),
+        **state,
         "run": result.run,
         "steps": result.steps,
         "artifacts": result.artifacts,
@@ -221,6 +253,124 @@ async def run_cross_harness(state: CrossAnalysisState) -> CrossAnalysisState:
         "final_artifact_id": result.final_artifact_id,
         "evaluation_artifact_id": result.evaluation_artifact_id,
     }
+
+
+def _agents_to_supplement(issues: list[Issue]) -> set[str]:
+    """Determine which subagents should be re-called based on gap issues."""
+    agents: set[str] = set()
+    for issue in issues:
+        if issue.category not in _SUPPLEMENT_TRIGGER_CATEGORIES:
+            continue
+        if issue.severity not in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}:
+            continue
+        msg_lower = issue.message.lower()
+        for keyword, agent_name in _KEYWORD_TO_AGENT:
+            if keyword in msg_lower:
+                agents.add(agent_name)
+    return agents
+
+
+_SUBAGENT_RUNNABLES = {
+    "FundamentalAgent": fundamental_agent,
+    "MarketAgent": market_agent,
+    "RiskAgent": risk_agent,
+}
+
+_ARTIFACT_TYPE_MAP = {
+    "FundamentalAgent": "fundamental_analysis",
+    "MarketAgent": "market_analysis",
+    "RiskAgent": "risk_analysis",
+}
+
+
+async def supplement_missing_data(state: CrossAnalysisState) -> CrossAnalysisState:
+    """After run_cross_harness, re-call subagents for any high-severity data gaps found by
+    planner/critic, then route back for a second harness pass with the enriched artifacts."""
+    supplement_round = state.get("supplement_round", 0)
+    max_supplement_rounds = state.get("max_supplement_rounds", MAX_SUPPLEMENT_ROUNDS)
+
+    if supplement_round >= max_supplement_rounds:
+        return state
+
+    agents_needed = _agents_to_supplement(state.get("issues", []))
+    if not agents_needed:
+        return {**state, "supplement_round": supplement_round + 1}
+
+    query = _latest_query(state.get("messages", []))
+    step_id = f"supplement_round_{supplement_round + 1}"
+
+    results = await asyncio.gather(*[
+        _invoke_subagent(name, _SUBAGENT_RUNNABLES[name], query)
+        for name in agents_needed
+    ])
+
+    new_artifacts: list[Artifact] = []
+    new_issues = list(state.get("issues", []))
+
+    for agent_name, text, error in results:
+        if error is not None:
+            new_issues.append(Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.MEDIUM,
+                category="subagent_failure",
+                message=f"{agent_name} supplement failed: {error}",
+                related_step=step_id,
+            ))
+            continue
+        parsed = _maybe_parse_json(text or "")
+        new_artifacts.append(Artifact(
+            id=_make_id("artifact"),
+            type=_ARTIFACT_TYPE_MAP[agent_name],
+            producer_step=step_id,
+            value={
+                "agent": agent_name,
+                "query": query,
+                "raw_response": text or "",
+                "parsed_response": parsed,
+                "supplement_round": supplement_round + 1,
+            },
+        ))
+
+    if not new_artifacts:
+        return {**state, "supplement_round": supplement_round + 1, "issues": new_issues}
+
+    # Create a fresh run ID so the harness re-executes from scratch with enriched data.
+    new_run = state["run"].model_copy(update={
+        "id": _make_id("cross-run"),
+        "status": RunStatus.RUNNING,
+        "context": {**state["run"].context, "supplement_round": supplement_round + 1},
+        "started_at": datetime.now(),
+    })
+    # Carry only collect + supplement steps (drop harness-internal planner/reporter/critic/evaluator
+    # steps from previous round so the harness starts clean with fresh step IDs).
+    carry_steps = [
+        s for s in state.get("steps", [])
+        if s.id == "collect_subagents" or s.id.startswith("supplement_round_")
+    ]
+    return {
+        **state,
+        "run": new_run,
+        "steps": carry_steps,
+        "artifacts": [*state.get("artifacts", []), *new_artifacts],
+        "decisions": [],
+        "observations": [],
+        "issues": new_issues,
+        "final_artifact_id": None,
+        "evaluation_artifact_id": None,
+        "supplement_round": supplement_round + 1,
+    }
+
+
+def _route_after_supplement(state: CrossAnalysisState) -> str:
+    supplement_round = state.get("supplement_round", 0)
+    # If new supplement artifacts were produced in this round, re-run harness.
+    new_artifacts = [
+        a for a in state.get("artifacts", [])
+        if isinstance(a.value, dict) and a.value.get("supplement_round", 0) == supplement_round
+    ]
+    if new_artifacts:
+        return "run_cross_harness"
+    return "finalize_cross_message"
 
 
 def finalize_cross_message(state: CrossAnalysisState) -> CrossAnalysisState:
@@ -253,10 +403,19 @@ def finalize_cross_message(state: CrossAnalysisState) -> CrossAnalysisState:
 graph = StateGraph(CrossAnalysisState)
 graph.add_node("collect_subagents", collect_subagent_artifacts)
 graph.add_node("run_cross_harness", run_cross_harness)
+graph.add_node("supplement_missing_data", supplement_missing_data)
 graph.add_node("finalize_cross_message", finalize_cross_message)
 graph.add_edge(START, "collect_subagents")
 graph.add_edge("collect_subagents", "run_cross_harness")
-graph.add_edge("run_cross_harness", "finalize_cross_message")
+graph.add_edge("run_cross_harness", "supplement_missing_data")
+graph.add_conditional_edges(
+    "supplement_missing_data",
+    _route_after_supplement,
+    {
+        "run_cross_harness": "run_cross_harness",
+        "finalize_cross_message": "finalize_cross_message",
+    },
+)
 graph.add_edge("finalize_cross_message", END)
 
 cross_agent = graph.compile(store=InMemoryStore())
