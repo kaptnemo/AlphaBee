@@ -35,6 +35,7 @@ from alphabee.harness.prompts import (
     PLANNER_NODE_PROMPT,
     REPORTER_NODE_PROMPT,
 )
+from alphabee.harness.state_compressor import CompressorConfig, HarnessStateCompressor
 from alphabee.utils import create_chat_model
 
 
@@ -139,6 +140,11 @@ def _critic_model(prompt: str) -> ChatOpenAI:
 @lru_cache(maxsize=16)
 def _evaluator_model(prompt: str) -> ChatOpenAI:
     return create_chat_model("harness.evaluator")
+
+
+@lru_cache(maxsize=1)
+def _compressor_model() -> ChatOpenAI:
+    return create_chat_model("harness.compressor")
 
 
 def _state_to_prompt_payload(state: HarnessState) -> str:
@@ -387,6 +393,7 @@ async def _run_thinking_node(
     model: ChatOpenAI,
     system_prompt: str,
     store: BaseStore,
+    compressor: HarnessStateCompressor | None = None,
 ) -> HarnessState:
     previous_step = next((step for step in state["steps"] if step.id == step_id), None)
     running_step = Step(
@@ -403,6 +410,15 @@ async def _run_thinking_node(
         retries=(previous_step.retries + 1) if previous_step is not None else 0,
     )
     steps = _upsert_step(state["steps"], running_step)
+    state_with_running_step: HarnessState = {**state, "steps": steps}
+
+    if compressor is not None:
+        state_payload = await compressor.compress(
+            state_with_running_step,
+            model=_compressor_model(),
+        )
+    else:
+        state_payload = _state_to_prompt_payload(state_with_running_step)
 
     prompt = (
         f"{prompt_prefix}\n\n"
@@ -410,7 +426,7 @@ async def _run_thinking_node(
         f"当前 step_id: {step_id}\n"
         f"默认 artifact.type: {default_artifact_type}\n"
         "请直接返回结构化对象，不要输出额外说明。\n\n"
-        f"{_state_to_prompt_payload({**state, 'steps': steps})}"
+        f"{state_payload}"
     )
     normalized = _normalize_output(
         _coerce_thinking_output(await _invoke_json_agent(model, system_prompt=system_prompt, prompt=prompt)),
@@ -457,7 +473,7 @@ async def _run_thinking_node(
     return next_state
 
 
-def _planner_node_factory(store: BaseStore):
+def _planner_node_factory(store: BaseStore, compressor: HarnessStateCompressor | None = None):
     async def planner_node(state: HarnessState) -> HarnessState:
         return await _run_thinking_node(
             state,
@@ -468,12 +484,13 @@ def _planner_node_factory(store: BaseStore):
             model=_planner_model(PLANNER_NODE_PROMPT),
             system_prompt=PLANNER_NODE_PROMPT,
             store=store,
+            compressor=compressor,
         )
 
     return planner_node
 
 
-def _reporter_node_factory(store: BaseStore, prompt: str):
+def _reporter_node_factory(store: BaseStore, prompt: str, compressor: HarnessStateCompressor | None = None):
     async def reporter_node(state: HarnessState) -> HarnessState:
         reporter_round = state["reporter_round"] + 1
         state_for_run: HarnessState = {
@@ -500,6 +517,7 @@ def _reporter_node_factory(store: BaseStore, prompt: str):
             model=_reporter_model(prompt),
             system_prompt=prompt,
             store=store,
+            compressor=compressor,
         )
         final_state: HarnessState = {
             **next_state,
@@ -545,7 +563,7 @@ def _resolve_critic_rewrite_request(state: HarnessState) -> tuple[bool, str | No
     return True, "；".join(reason_parts)
 
 
-def _critic_node_factory(store: BaseStore, prompt: str):
+def _critic_node_factory(store: BaseStore, prompt: str, compressor: HarnessStateCompressor | None = None):
     async def critic_node(state: HarnessState) -> HarnessState:
         critic_round = state["critic_round"] + 1
         state_for_run: HarnessState = {
@@ -568,6 +586,7 @@ def _critic_node_factory(store: BaseStore, prompt: str):
             model=_critic_model(prompt),
             system_prompt=prompt,
             store=store,
+            compressor=compressor,
         )
         needs_rewrite, rewrite_reason = _resolve_critic_rewrite_request(next_state)
         final_state: HarnessState = {
@@ -847,12 +866,13 @@ def build_harness_graph(
     reporter_prompt: str = REPORTER_NODE_PROMPT,
     critic_prompt: str = CRITIC_NODE_PROMPT,
     evaluator_prompt: str = EVALUATOR_NODE_PROMPT,
+    compressor: HarnessStateCompressor | None = None,
 ) -> tuple[CompiledStateGraph, BaseStore]:
     graph = StateGraph(HarnessState)
     runtime_store = store or InMemoryStore()
-    graph.add_node("planner", _planner_node_factory(runtime_store))
-    graph.add_node("reporter", _reporter_node_factory(runtime_store, reporter_prompt))
-    graph.add_node("critic", _critic_node_factory(runtime_store, critic_prompt))
+    graph.add_node("planner", _planner_node_factory(runtime_store, compressor))
+    graph.add_node("reporter", _reporter_node_factory(runtime_store, reporter_prompt, compressor))
+    graph.add_node("critic", _critic_node_factory(runtime_store, critic_prompt, compressor))
     graph.add_node("evaluator", _evaluator_node_factory(runtime_store, evaluator_prompt))
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "reporter")
@@ -934,13 +954,23 @@ class HarnessRuntime:
         reporter_prompt: str = REPORTER_NODE_PROMPT,
         critic_prompt: str = CRITIC_NODE_PROMPT,
         evaluator_prompt: str = EVALUATOR_NODE_PROMPT,
+        compressor: HarnessStateCompressor | None = None,
+        use_state_compression: bool = True,
     ) -> None:
+        # Build a default compressor if compression is requested but none provided.
+        resolved_compressor: HarnessStateCompressor | None
+        if use_state_compression:
+            resolved_compressor = compressor if compressor is not None else HarnessStateCompressor()
+        else:
+            resolved_compressor = None
+
         self.graph, self.store = build_harness_graph(
             checkpointer=checkpointer,
             store=store,
             reporter_prompt=reporter_prompt,
             critic_prompt=critic_prompt,
             evaluator_prompt=evaluator_prompt,
+            compressor=resolved_compressor,
         )
 
     async def arun(
