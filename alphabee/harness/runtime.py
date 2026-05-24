@@ -417,7 +417,6 @@ async def _run_thinking_node(
         step_id=step_id,
         default_artifact_type=default_artifact_type,
     )
-
     artifacts = [*state["artifacts"], *normalized.artifacts]
     decisions = [*state["decisions"], *normalized.decisions]
     issues = [*state["issues"], *normalized.issues]
