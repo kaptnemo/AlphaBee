@@ -15,14 +15,14 @@ files = [
 
 [[package]]
 name = "akshare"
-version = "1.18.60"
+version = "1.18.63"
 description = "AKShare is an elegant and simple financial data interface library for Python, built for human beings!"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "akshare-1.18.60-py3-none-any.whl", hash = "sha256:14e47cd2df694faf6efa6e7b1e4812061dbe76fd5f6ed04964b3119ee94a2c5f"},
-    {file = "akshare-1.18.60.tar.gz", hash = "sha256:959cb82dfcdd8c792e3304d4fe467d2fbff3ca31e469cf3ef0749bed01c1b158"},
+    {file = "akshare-1.18.63-py3-none-any.whl", hash = "sha256:1e0c271d0c2aabc91a592b6aad5791c160de3674cf01d025c0b7cbdbcab41f3a"},
+    {file = "akshare-1.18.63.tar.gz", hash = "sha256:dc8bfb90f9c0818589f7cc377406f84877b4aabc02d138363c0dc962971a93ff"},
 ]
 
 [package.dependencies]
@@ -2947,6 +2947,17 @@ pygments = ">=2.13.0,<3.0.0"
 jupyter = ["ipywidgets (>=7.5.1,<9)"]
 
 [[package]]
+name = "simplegeneric"
+version = "0.8.1"
+description = "Simple generic functions (similar to Python's own len(), pickle.dump(), etc.)"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "simplegeneric-0.8.1.zip", hash = "sha256:dc972e06094b9af5b855b3df4a646395e43d1c9d0d39ed345b7393560d0b9173"},
+]
+
+[[package]]
 name = "simplejson"
 version = "4.1.1"
 description = "Simple, fast, extensible JSON encoder/decoder for Python"
@@ -4010,4 +4021,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<4.0.0"
-content-hash = "162a3a24ac31d939d432cf351575cc65a79a2d26da1b097b9da309ae69436396"
+content-hash = "0a2c8f5d5bf6b900a1b70d93fa3628cf174ec4414a97eab666a70c372647a2e4"

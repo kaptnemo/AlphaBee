@@ -41,6 +41,13 @@ class IssueSeverity(str, Enum):
     CRITICAL = "critical"
 
 
+class IssueStatus(str, Enum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+    IGNORED = "ignored"
+    DEFERRED = "deferred"
+
+
 class Run(BaseModel):
     """A complete execution unit for one user goal or autonomous task."""
 
@@ -190,6 +197,18 @@ class Issue(BaseModel):
     related_artifact: str | None = Field(
         default=None,
         description="Related artifact ID when the issue is tied to one artifact.",
+    )
+    status: IssueStatus = Field(
+        default=IssueStatus.OPEN,
+        description="Lifecycle status of the issue: open, resolved, ignored, or deferred.",
+    )
+    owner_node: str | None = Field(
+        default=None,
+        description="The node responsible for resolving this issue (e.g. reporter, critic).",
+    )
+    resolution_evidence: str | None = Field(
+        default=None,
+        description="Artifact ID or description that demonstrates resolution of this issue.",
     )
 
 
