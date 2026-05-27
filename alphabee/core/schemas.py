@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RunStatus(str, Enum):
@@ -34,6 +34,41 @@ class ObservationFreshness(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ArtifactRoleGroup(str, Enum):
+    """Coarse role classification used for per-node context slicing.
+
+    DATA       – raw outputs from external tools / sub-agents (inputs to reporting)
+    PLAN       – planning and task-structure artifacts
+    NARRATIVE  – reporter-produced conclusions and final text
+    REVIEW     – critic-produced feedback, checks, and annotations
+    EVALUATION – evaluator-produced assessment and scoring
+    OTHER      – anything that does not fit the above categories
+    """
+    DATA = "data"
+    PLAN = "plan"
+    NARRATIVE = "narrative"
+    REVIEW = "review"
+    EVALUATION = "evaluation"
+    OTHER = "other"
+
+
+# Canonical mapping from the free-form ``Artifact.type`` string to a role group.
+# Used by the auto-inference validator so callers rarely need to set role_group
+# explicitly.
+_ARTIFACT_TYPE_TO_ROLE_GROUP: dict[str, ArtifactRoleGroup] = {
+    "fundamental_analysis": ArtifactRoleGroup.DATA,
+    "market_analysis": ArtifactRoleGroup.DATA,
+    "risk_analysis": ArtifactRoleGroup.DATA,
+    "plan": ArtifactRoleGroup.PLAN,
+    "report": ArtifactRoleGroup.NARRATIVE,
+    "summary": ArtifactRoleGroup.NARRATIVE,
+    "conclusion": ArtifactRoleGroup.NARRATIVE,
+    "critique": ArtifactRoleGroup.REVIEW,
+    "review": ArtifactRoleGroup.REVIEW,
+    "evaluation_report": ArtifactRoleGroup.EVALUATION,
+}
+
+
 class IssueSeverity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -46,6 +81,19 @@ class IssueStatus(str, Enum):
     RESOLVED = "resolved"
     IGNORED = "ignored"
     DEFERRED = "deferred"
+
+
+class IssueScope(str, Enum):
+    """Which pipeline stage produced this issue.
+
+    Used by the compressor to surface relevant issues to each node without
+    handing every node the full issue list.
+    """
+    PLANNING = "planning"
+    DATA = "data"
+    REPORT = "report"
+    REVIEW = "review"
+    EVALUATION = "evaluation"
 
 
 class Run(BaseModel):
@@ -126,6 +174,23 @@ class Artifact(BaseModel):
         default="1.0",
         description="Schema version for artifact payload compatibility.",
     )
+    role_group: ArtifactRoleGroup = Field(
+        default=ArtifactRoleGroup.OTHER,
+        description=(
+            "Role group for context slicing: data / plan / narrative / review / evaluation. "
+            "Auto-inferred from ``type`` when not explicitly set."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_role_group(cls, data: Any) -> Any:
+        """Set role_group from type when the caller did not provide it."""
+        if isinstance(data, dict) and not data.get("role_group"):
+            artifact_type = data.get("type", "")
+            inferred = _ARTIFACT_TYPE_TO_ROLE_GROUP.get(artifact_type, ArtifactRoleGroup.OTHER)
+            return {**data, "role_group": inferred}
+        return data
 
 
 class Observation(BaseModel):
@@ -147,6 +212,16 @@ class Observation(BaseModel):
     freshness: ObservationFreshness = Field(
         default=ObservationFreshness.UNKNOWN,
         description="How fresh the observation is relative to the task context.",
+    )
+
+
+class EvidenceRef(BaseModel):
+    """A typed reference from a Decision to supporting evidence."""
+
+    ref_id: str = Field(..., description="ID of the referenced artifact, observation, or decision.")
+    ref_type: Literal["artifact", "observation", "decision"] = Field(
+        ...,
+        description="Kind of entity being referenced.",
     )
 
 
@@ -172,6 +247,36 @@ class Decision(BaseModel):
         default_factory=list,
         description="Referenced observation, artifact, or decision IDs used as evidence.",
     )
+    evidence_refs: list[EvidenceRef] = Field(
+        default_factory=list,
+        description=(
+            "Typed evidence references. When populated, supersedes ``based_on`` "
+            "for evidence-map building so the compressor does not need to guess ref_type."
+        ),
+    )
+
+    def resolved_evidence(
+        self,
+        artifact_ids: set[str],
+        observation_ids: set[str],
+    ) -> list[EvidenceRef]:
+        """Return typed EvidenceRef list.
+
+        Uses ``evidence_refs`` if already populated; otherwise infers ``ref_type``
+        from ``based_on`` by looking up against the caller-supplied id sets.
+        """
+        if self.evidence_refs:
+            return self.evidence_refs
+        result: list[EvidenceRef] = []
+        for ref_id in self.based_on:
+            if ref_id in artifact_ids:
+                ref_type: Literal["artifact", "observation", "decision"] = "artifact"
+            elif ref_id in observation_ids:
+                ref_type = "observation"
+            else:
+                ref_type = "decision"
+            result.append(EvidenceRef(ref_id=ref_id, ref_type=ref_type))
+        return result
 
 
 class Issue(BaseModel):
@@ -209,6 +314,10 @@ class Issue(BaseModel):
     resolution_evidence: str | None = Field(
         default=None,
         description="Artifact ID or description that demonstrates resolution of this issue.",
+    )
+    scope: IssueScope = Field(
+        default=IssueScope.REPORT,
+        description="Pipeline stage that produced this issue (planning/data/report/review/evaluation).",
     )
 
 

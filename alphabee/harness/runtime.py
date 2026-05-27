@@ -23,6 +23,7 @@ from alphabee.core import (
     EvaluateMetrics,
     Issue,
     IssueSeverity,
+    IssueScope,
     Observation,
     Run,
     RunStatus,
@@ -35,8 +36,9 @@ from alphabee.harness.prompts import (
     PLANNER_NODE_PROMPT,
     REPORTER_NODE_PROMPT,
 )
-from alphabee.harness.state_compressor import CompressorConfig, HarnessStateCompressor
+from alphabee.harness.state_compressor import CompressorConfig, HarnessStateCompressor, NodeKind
 from alphabee.utils import create_chat_model
+from alphabee.harness.utils import json_instruction
 
 
 class HarnessState(TypedDict):
@@ -53,6 +55,11 @@ class HarnessState(TypedDict):
     max_reporter_rounds: int
     latest_step_output: dict[str, Any] | None
     rewrite_reason: str | None
+
+
+class DataCollectionNodeOutput(BaseModel):
+    artifacts: list[Artifact] = Field(default_factory=list)
+    observations: list[Observation] = Field(default_factory=list)
 
 
 class ThinkingNodeOutput(BaseModel):
@@ -112,6 +119,15 @@ REWRITE_TRIGGER_KEYWORDS = (
     "冲突",
     "错配",
 )
+
+# Maps the node step_id to the IssueScope that should be stamped on issues it
+# produces.  Used by _normalize_output so every issue carries its origin scope.
+_STEP_SCOPE_MAP: dict[str, IssueScope] = {
+    "planner": IssueScope.PLANNING,
+    "reporter": IssueScope.REPORT,
+    "critic": IssueScope.REVIEW,
+    "evaluator": IssueScope.EVALUATION,
+}
 
 
 def _make_id(prefix: str) -> str:
@@ -280,15 +296,6 @@ def _coerce_evaluation_assessment(payload: Any) -> EvaluationAssessment:
     return EvaluationAssessment.model_validate(payload)
 
 
-def _json_instruction(schema: type[BaseModel], *, example: str) -> str:
-    return (
-        "输出要求：\n"
-        "1. 只返回 JSON，不要 Markdown，不要代码块，不要额外解释。\n"
-        "2. 顶层必须严格符合下面给出的结构。\n"
-        f"3. 输出示例：{example}\n"
-        f"4. JSON Schema:\n{json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)}"
-    )
-
 
 async def _invoke_json_agent(
     model: ChatOpenAI,
@@ -344,6 +351,10 @@ def _normalize_output(
                 update={
                     "id": issue.id or _make_id(step_id),
                     "related_step": issue.related_step or step_id,
+                    "owner_node": issue.owner_node or step_id,
+                    "scope": issue.scope if issue.scope != IssueScope.REPORT else (
+                        _STEP_SCOPE_MAP.get(step_id, IssueScope.REPORT)
+                    ),
                 }
             )
         )
@@ -422,7 +433,7 @@ async def _run_thinking_node(
 
     prompt = (
         f"{prompt_prefix}\n\n"
-        f"{_json_instruction(ThinkingNodeOutput, example='{\"decisions\": [], \"issues\": [], \"artifacts\": []}')}\n\n"
+        f"{json_instruction(ThinkingNodeOutput, example='{\"decisions\": [], \"issues\": [], \"artifacts\": []}')}\n\n"
         f"当前 step_id: {step_id}\n"
         f"默认 artifact.type: {default_artifact_type}\n"
         "请直接返回结构化对象，不要输出额外说明。\n\n"
@@ -721,7 +732,7 @@ async def _run_evaluator_node(
 
     evaluator_prompt = (
         "请基于以下定量指标和当前 run 状态，生成最终评估。\n\n"
-        f"{_json_instruction(EvaluationAssessment, example='{\"summary\": \"\", \"strengths\": [], \"weaknesses\": [], \"blocking_issues\": [], \"passed\": false, \"recommendation\": \"\", \"improvement_actions\": []}')}\n\n"
+        f"{json_instruction(EvaluationAssessment, example='{\"summary\": \"\", \"strengths\": [], \"weaknesses\": [], \"blocking_issues\": [], \"passed\": false, \"recommendation\": \"\", \"improvement_actions\": []}')}\n\n"
         f"定量指标：\n{metrics.model_dump_json(indent=2)}\n\n"
         f"{_state_to_prompt_payload({**state, 'steps': steps})}"
     )
@@ -766,6 +777,8 @@ async def _run_evaluator_node(
                 message=message,
                 related_step=running_step.id,
                 related_artifact=evaluation_artifact.id,
+                scope=IssueScope.EVALUATION,
+                owner_node="evaluator",
             )
         )
 

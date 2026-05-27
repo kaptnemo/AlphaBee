@@ -40,7 +40,7 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from alphabee.core import Artifact, Decision, Issue, IssueSeverity, Observation, Run
+from alphabee.core import Artifact, ArtifactRoleGroup, Decision, EvidenceRef, Issue, IssueSeverity, Observation, Run
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,34 @@ DEFAULT_MAX_CLAIM_CHARS: int = 300
 DEFAULT_MAX_SNIPPET_CHARS: int = 200
 DEFAULT_MAX_DECISION_RATIONALE_CHARS: int = 300
 
+DEFAULT_MAX_OTHER_ARTIFACTS: int = 3
+
+# ---------------------------------------------------------------------------
+# Role-group helpers (replaces the old frozenset-based type checks)
+# ---------------------------------------------------------------------------
+
+
+def _latest_by_type_in_group(
+    artifacts: list[Artifact],
+    group: ArtifactRoleGroup,
+) -> dict[str, Artifact]:
+    """Return the latest artifact per ``type`` within a role group."""
+    result: dict[str, Artifact] = {}
+    for a in artifacts:
+        if a.role_group == group:
+            result[a.type] = a  # later overwrites earlier = keeps latest
+    return result
+
+
+def _artifacts_of_group(
+    artifacts: list[Artifact],
+    group: ArtifactRoleGroup,
+) -> list[Artifact]:
+    """Return all artifacts belonging to a role group, in insertion order."""
+    return [a for a in artifacts if a.role_group == group]
+
+
+# Legacy frozensets – kept only for the backward-compatible _rule_compress_legacy path.
 _PRIORITY_ARTIFACT_TYPES: frozenset[str] = frozenset(
     {"report", "evaluation_report", "plan", "critique", "review"}
 )
@@ -61,7 +89,6 @@ _DATA_ARTIFACT_TYPES: frozenset[str] = frozenset(
     {"fundamental_analysis", "market_analysis", "risk_analysis"}
 )
 
-DEFAULT_MAX_OTHER_ARTIFACTS: int = 3
 DEFAULT_ISSUE_CAPS: dict[str, int] = {
     "critical": 5,
     "high": 5,
@@ -228,56 +255,76 @@ def _build_evidence_map(
     max_snippet_chars: int,
 ) -> list[dict[str, Any]]:
     """
-    Build a claim → evidence map from decisions' *based_on* references.
+    Build a claim → evidence map from decisions' evidence references.
 
-    Each entry: { decision_id, claim, confidence, evidence: [{artifact_id|
-    observation_id, type|source, snippet|payload_preview}] }
+    Uses ``Decision.resolved_evidence()`` to get typed ``EvidenceRef`` objects,
+    which eliminates the ambiguous "guess ref_type from two dict lookups" pattern.
 
-    Gives critic/evaluator fine-grained traceability without handing them
-    the full raw_response of every artifact.
+    Each entry: { decision_id, claim, confidence, evidence: [
+        { artifact_id, type, snippet }  |
+        { observation_id, source, payload_preview }  |
+        { decision_id }
+    ]}
     """
     art_by_id: dict[str, Artifact] = {a.id: a for a in artifacts}
     obs_by_id: dict[str, Observation] = {o.id: o for o in observations}
+    art_ids = set(art_by_id)
+    obs_ids = set(obs_by_id)
 
     evidence_map: list[dict[str, Any]] = []
     for decision in decisions:
-        if hasattr(decision, "based_on"):
+        if hasattr(decision, "resolved_evidence"):
+            # Pydantic Decision object with the new typed method
+            refs = decision.resolved_evidence(art_ids, obs_ids)
             d_id = decision.id
             d_rationale = decision.rationale
             d_confidence = decision.confidence
-            d_based_on: list[str] = decision.based_on
         else:
+            # Dict fallback (e.g. legacy serialised state)
             d_id = decision.get("id", "")
             d_rationale = decision.get("rationale", "")
             d_confidence = decision.get("confidence", 0.0)
-            d_based_on = decision.get("based_on", [])
+            refs = [
+                EvidenceRef(
+                    ref_id=rid,
+                    ref_type=(
+                        "artifact" if rid in art_ids
+                        else "observation" if rid in obs_ids
+                        else "decision"
+                    ),
+                )
+                for rid in decision.get("based_on", [])
+            ]
 
-        if not d_based_on:
+        if not refs:
             continue
 
         snippets: list[dict[str, Any]] = []
-        for ref_id in d_based_on:
-            if ref_id in art_by_id:
-                art = art_by_id[ref_id]
+        for ref in refs:
+            if ref.ref_type == "artifact" and ref.ref_id in art_by_id:
+                art = art_by_id[ref.ref_id]
+                entry: dict[str, Any] = {"artifact_id": ref.ref_id, "type": art.type}
                 val = art.value
-                entry: dict[str, Any] = {"artifact_id": ref_id, "type": art.type}
                 if isinstance(val, dict):
                     raw = val.get("raw_response", "")
                     if isinstance(raw, str) and raw:
                         entry["snippet"] = _truncate_str(raw, max_snippet_chars)
                 snippets.append(entry)
-            elif ref_id in obs_by_id:
-                obs = obs_by_id[ref_id]
+            elif ref.ref_type == "observation" and ref.ref_id in obs_by_id:
+                obs = obs_by_id[ref.ref_id]
                 payload_str = (
                     json.dumps(obs.payload, ensure_ascii=False) if obs.payload else ""
                 )
                 snippets.append(
                     {
-                        "observation_id": ref_id,
+                        "observation_id": ref.ref_id,
                         "source": obs.source,
                         "payload_preview": _truncate_str(payload_str, max_snippet_chars),
                     }
                 )
+            elif ref.ref_type == "decision":
+                # Cross-decision references: just note the ID
+                snippets.append({"decision_ref_id": ref.ref_id})
 
         evidence_map.append(
             {
@@ -320,18 +367,6 @@ def _run_payload_minimal(run: Any) -> dict[str, Any]:
     return {k: d.get(k) for k in ("id", "goal", "status", "context") if k in d}
 
 
-def _latest_per_type(
-    artifacts: list[Artifact],
-    types: frozenset[str],
-) -> dict[str, Artifact]:
-    """Return the most recent artifact for each type in *types*."""
-    result: dict[str, Artifact] = {}
-    for a in artifacts:
-        if a.type in types:
-            result[a.type] = a  # later overwrites = keeps latest
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Per-node context builders
 # ---------------------------------------------------------------------------
@@ -364,7 +399,7 @@ def _build_planner_context(
 
     artifact_index = [_artifact_meta_only(a) for a in artifacts_raw]
 
-    data_arts = _latest_per_type(artifacts_raw, _DATA_ARTIFACT_TYPES)
+    data_arts = _latest_by_type_in_group(artifacts_raw, ArtifactRoleGroup.DATA)
     data_summaries = [
         _artifact_with_summary(a, cfg.max_raw_response_chars) for a in data_arts.values()
     ]
@@ -384,7 +419,7 @@ def _build_planner_context(
     }
 
     if state.get("rewrite_reason"):
-        critique_arts = [a for a in artifacts_raw if a.type in {"critique", "review"}]
+        critique_arts = _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.REVIEW)
         critique_summary: str | None = None
         if critique_arts:
             val = critique_arts[-1].value
@@ -399,7 +434,9 @@ def _build_planner_context(
 
         result["previous_failure"] = {
             "critique_summary": critique_summary,
-            "reusable_artifact_ids": [a.id for a in artifacts_raw if a.type in _DATA_ARTIFACT_TYPES],
+            "reusable_artifact_ids": [
+                a.id for a in _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.DATA)
+            ],
         }
 
     return result
@@ -431,10 +468,10 @@ def _build_reporter_context(
     run_minimal = _run_payload_minimal(run)
     output_spec = _extract_output_spec(run)
 
-    plan_arts = [a for a in artifacts_raw if a.type == "plan"]
+    plan_arts = _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.PLAN)
     plan_payload = _artifact_full(plan_arts[-1]) if plan_arts else None
 
-    data_arts = _latest_per_type(artifacts_raw, _DATA_ARTIFACT_TYPES)
+    data_arts = _latest_by_type_in_group(artifacts_raw, ArtifactRoleGroup.DATA)
     data_summaries = [
         _artifact_with_summary(a, cfg.max_raw_response_chars) for a in data_arts.values()
     ]
@@ -457,9 +494,9 @@ def _build_reporter_context(
     }
 
     if state.get("rewrite_reason"):
-        report_arts = [a for a in artifacts_raw if a.type == "report"]
-        if report_arts:
-            prior = report_arts[-1]
+        narrative_arts = _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.NARRATIVE)
+        if narrative_arts:
+            prior = narrative_arts[-1]
             prior_max = max(cfg.max_raw_response_chars, 1_500)
             result["prior_report"] = _artifact_with_summary(prior, prior_max)
 
@@ -492,10 +529,10 @@ def _build_critic_context(
     run_minimal = _run_payload_minimal(run)
     output_spec = _extract_output_spec(run)
 
-    report_arts = [a for a in artifacts_raw if a.type == "report"]
-    report_payload = _artifact_full(report_arts[-1]) if report_arts else None
+    narrative_arts = _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.NARRATIVE)
+    report_payload = _artifact_full(narrative_arts[-1]) if narrative_arts else None
 
-    plan_arts = [a for a in artifacts_raw if a.type == "plan"]
+    plan_arts = _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.PLAN)
     plan_summary: str | None = None
     if plan_arts:
         val = plan_arts[-1].value
@@ -559,11 +596,11 @@ def _build_evaluator_context(
     run_minimal = _run_payload_minimal(run)
     output_spec = _extract_output_spec(run)
 
-    report_arts = [a for a in artifacts_raw if a.type == "report"]
-    final_report = _artifact_full(report_arts[-1]) if report_arts else None
+    narrative_arts = _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.NARRATIVE)
+    final_report = _artifact_full(narrative_arts[-1]) if narrative_arts else None
 
-    critique_arts = [a for a in artifacts_raw if a.type in {"critique", "review"}]
-    latest_critique = _artifact_full(critique_arts[-1]) if critique_arts else None
+    review_arts = _artifacts_of_group(artifacts_raw, ArtifactRoleGroup.REVIEW)
+    latest_critique = _artifact_full(review_arts[-1]) if review_arts else None
 
     evidence_map = _build_evidence_map(
         decisions_raw,

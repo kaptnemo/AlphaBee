@@ -17,11 +17,11 @@ from alphabee.agents.cross.prompts import (
     CROSS_HARNESS_EVALUATOR_PROMPT,
     CROSS_HARNESS_REPORTER_PROMPT,
 )
-from alphabee.agents.fundamental.agent import fundamental_agent
-from alphabee.agents.market.agent import market_agent
-from alphabee.agents.risk.agent import risk_agent
+from alphabee.agents.fundamental.agent import fundamental_agent_factory
+from alphabee.agents.market.agent import market_agent_factory
+from alphabee.agents.risk.agent import risk_agent_factory
 from alphabee.core import Artifact, Decision, Issue, IssueSeverity, Observation, Run, RunStatus, Step, StepStatus
-from alphabee.harness import HarnessRuntime
+from alphabee.harness import HarnessRuntime, DataCollectionNodeOutput
 
 
 MAX_SUPPLEMENT_ROUNDS = 1
@@ -50,6 +50,12 @@ _KEYWORD_TO_AGENT: list[tuple[str, str]] = [
     ("风险", "RiskAgent"),
     ("舆情", "RiskAgent"),
 ]
+
+_SUBAGENT_RUNNABLES = {
+    "FundamentalAgent": fundamental_agent_factory(resultType=DataCollectionNodeOutput),
+    "MarketAgent": market_agent_factory(resultType=DataCollectionNodeOutput),
+    "RiskAgent": risk_agent_factory(resultType=DataCollectionNodeOutput),
+}
 
 
 class CrossAnalysisState(TypedDict, total=False):
@@ -157,9 +163,10 @@ async def collect_subagent_artifacts(state: CrossAnalysisState) -> CrossAnalysis
     )
 
     results = await asyncio.gather(
-        _invoke_subagent("FundamentalAgent", fundamental_agent, query),
-        _invoke_subagent("MarketAgent", market_agent, query),
-        _invoke_subagent("RiskAgent", risk_agent, query),
+        *[
+            _invoke_subagent(name, _SUBAGENT_RUNNABLES[name], query)
+            for name in ["FundamentalAgent", "MarketAgent", "RiskAgent"]
+        ]
     )
 
     artifacts: list[Artifact] = []
@@ -269,12 +276,6 @@ def _agents_to_supplement(issues: list[Issue]) -> set[str]:
                 agents.add(agent_name)
     return agents
 
-
-_SUBAGENT_RUNNABLES = {
-    "FundamentalAgent": fundamental_agent,
-    "MarketAgent": market_agent,
-    "RiskAgent": risk_agent,
-}
 
 _ARTIFACT_TYPE_MAP = {
     "FundamentalAgent": "fundamental_analysis",
