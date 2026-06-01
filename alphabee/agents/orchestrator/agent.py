@@ -68,7 +68,7 @@ alphabee_agent = create_deep_agent(
         #     system_prompt="Select the most relevant tools for the user's query. Respond in JSON format.",
         # ),
         ToolRetryMiddleware(
-            max_retries=3,
+            max_retries=1,
             backoff_factor=2.0,
             initial_delay=1.0,
         ),

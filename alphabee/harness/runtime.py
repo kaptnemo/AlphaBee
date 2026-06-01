@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import structlog
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, TypedDict
@@ -250,10 +251,57 @@ def _parse_json_text(raw: str) -> Any:
     raise ValueError(f"Failed to parse model output as JSON: {excerpt}")
 
 
+_VALID_REF_TYPES = {"artifact", "observation", "decision"}
+
+# LLMs sometimes emit ref_type values outside the allowed Literal set (e.g. "issue",
+# "step", "observation_id").  Map known variants; everything else falls back to "artifact".
+_REF_TYPE_ALIASES: dict[str, str] = {
+    "issue": "artifact",
+    "step": "artifact",
+    "artifact_id": "artifact",
+    "observation_id": "observation",
+    "decision_id": "decision",
+}
+
+
+def _sanitize_decisions(decisions: list[Any]) -> tuple[list[Any], list[str]]:
+    """Coerce invalid evidence_refs.ref_type values and return (cleaned_decisions, warnings)."""
+    cleaned: list[Any] = []
+    warnings: list[str] = []
+    for dec in decisions:
+        if not isinstance(dec, dict):
+            cleaned.append(dec)
+            continue
+        refs = dec.get("evidence_refs")
+        if not refs:
+            cleaned.append(dec)
+            continue
+        clean_refs: list[Any] = []
+        for ref in refs:
+            if isinstance(ref, dict):
+                rt = ref.get("ref_type", "")
+                if rt not in _VALID_REF_TYPES:
+                    coerced = _REF_TYPE_ALIASES.get(str(rt).lower(), "artifact")
+                    warnings.append(
+                        f"evidence_refs.ref_type '{rt}' is invalid; coerced to '{coerced}'"
+                    )
+                    ref = {**ref, "ref_type": coerced}
+            clean_refs.append(ref)
+        cleaned.append({**dec, "evidence_refs": clean_refs})
+    return cleaned, warnings
+
+
 def _coerce_thinking_output(payload: Any) -> ThinkingNodeOutput:
     if isinstance(payload, ThinkingNodeOutput):
         return payload
     if isinstance(payload, dict):
+        if "decisions" in payload and isinstance(payload["decisions"], list):
+            clean_decisions, warnings = _sanitize_decisions(payload["decisions"])
+            if warnings:
+                structlog.get_logger().warning(
+                    "evidence_refs.ref_type coerced", warnings=warnings
+                )
+            payload = {**payload, "decisions": clean_decisions}
         return ThinkingNodeOutput.model_validate(payload)
     if isinstance(payload, list):
         grouped: dict[str, list[dict[str, Any]]] = {
@@ -281,6 +329,12 @@ def _coerce_thinking_output(payload: Any) -> ThinkingNodeOutput:
 
         if unknown_items:
             raise ValueError(f"Unsupported thinking output items: {unknown_items[:3]}")
+        clean_decisions, warnings = _sanitize_decisions(grouped["decisions"])
+        if warnings:
+            structlog.get_logger().warning(
+                "evidence_refs.ref_type coerced", warnings=warnings
+            )
+        grouped["decisions"] = clean_decisions
         return ThinkingNodeOutput.model_validate(grouped)
 
     raise ValueError(f"Unsupported thinking output payload type: {type(payload).__name__}")
@@ -968,7 +1022,7 @@ class HarnessRuntime:
         critic_prompt: str = CRITIC_NODE_PROMPT,
         evaluator_prompt: str = EVALUATOR_NODE_PROMPT,
         compressor: HarnessStateCompressor | None = None,
-        use_state_compression: bool = True,
+        use_state_compression: bool = False,
     ) -> None:
         # Build a default compressor if compression is requested but none provided.
         resolved_compressor: HarnessStateCompressor | None

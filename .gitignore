@@ -9,4 +9,7 @@ __pycache__/
 
 # test outputs
 outputs/
+data/
 
+# env files
+.env

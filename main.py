@@ -7,6 +7,8 @@ Usage:
     python main.py --no-color              # 禁用终端颜色
     python main.py --log-dir ./logs        # 指定日志目录
 """
+from dotenv import load_dotenv
+load_dotenv()
 
 import argparse
 import asyncio
