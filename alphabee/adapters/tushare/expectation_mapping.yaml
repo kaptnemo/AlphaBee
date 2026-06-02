@@ -1,0 +1,24 @@
+# AlphaBee Tushare Adapter — 预期/预告字段映射
+# API: forecast()、express()
+
+forecast:
+  end_date:        period
+  type:           forecast_type
+  p_change_min:   profit_forecast_min_change
+  p_change_max:   profit_forecast_max_change
+  net_profit_min: forecast_net_profit_min
+  net_profit_max: forecast_net_profit_max
+  last_parent_net: last_year_net_profit
+  summary:        forecast_summary
+  change_reason:  change_reason
+
+express:
+  end_date:       period
+  revenue:        express_revenue
+  operate_profit: express_operating_profit
+  n_income:       express_net_profit
+  diluted_eps:    express_diluted_eps
+  diluted_roe:    express_diluted_roe
+  yoy_sales:      express_revenue_yoy
+  yoy_dedu_np:    express_net_profit_yoy
+  perf_summary:   express_perf_summary

@@ -1,0 +1,14 @@
+name: accounts_receivable_growth
+description: 应收账款同比增速（%），衡量客户赊账规模扩张速度；结合营收增速可判断回款质量是否恶化
+required_facts: []
+required_derived_facts:
+  - accounts_receivable_yoy
+formula: accounts_receivable_yoy
+thresholds:
+  fast: "value > 30"
+  moderate: "10 <= value <= 30"
+  slow: "value < 10"
+interpretation:
+  fast: 应收账款快速扩张（>30%），需关注信用政策是否过度松弛或客户付款能力是否下降
+  moderate: 应收账款增速处于合理区间（10%-30%），需结合营收增速对比判断
+  slow: 应收账款增速较低（<10%），回款较为及时，信用风险有限

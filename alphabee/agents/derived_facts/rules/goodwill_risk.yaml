@@ -1,0 +1,14 @@
+name: goodwill_risk
+description: 商誉 / 净资产，衡量并购溢价风险；商誉减值可直接侵蚀当期利润，是并购扩张型公司的重要风险指标
+required_facts:
+  - goodwill
+  - shareholders_equity
+formula: goodwill / shareholders_equity
+thresholds:
+  low: "value < 0.10"
+  medium: "0.10 <= value <= 0.30"
+  high: "value > 0.30"
+interpretation:
+  low: 商誉占比低，外延并购较少或整合效果良好，商誉减值风险有限
+  medium: 存在一定规模商誉，需关注被收购标的的业绩承诺完成情况及经营状况
+  high: 商誉占净资产比例较高，一旦被收购资产业绩不达标或估值重估，可能触发大额减值损失

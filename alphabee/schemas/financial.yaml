@@ -1,0 +1,560 @@
+# AlphaBee 内部标准字段 — 财务报表域
+# 覆盖：利润表、资产负债表、现金流量表、财务比率、成长性指标
+# 频率：季度 / 年度报告期
+
+# ─────────────────────────────────────────
+# 利润表 (Income Statement)
+# ─────────────────────────────────────────
+
+revenue:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 营业总收入
+  aliases:
+    zh: [营收, 营业收入, 营业总收入]
+    en: [total revenue, operating revenue]
+  required_by:
+    derived_facts: [market_share_change, inventory_pressure, asset_turnover, capex_intensity, receivable_pressure]
+  source_mappings:
+    tushare: [total_revenue]
+  notes: 取自利润表，包含主营业务收入及其他业务收入。
+
+operating_profit:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 营业利润
+  aliases:
+    zh: [营业利润, 经营利润]
+    en: [operating profit, operating income]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [operate_profit]
+  notes: 营业利润是利润表中反映企业营业活动及相关项目影响后的利润指标，不应简单等同于主营业务利润或经营性现金利润。
+
+net_profit:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 归母净利润（归属于上市公司股东的净利润）
+  aliases:
+    zh: [净利润, 归母净利润, 净利]
+    en: [net profit, net income attributable to parent]
+  required_by:
+    derived_facts: [cashflow_quality, profit_leverage]
+  source_mappings:
+    tushare: [n_income]
+  notes: 扣除少数股东权益后归属于母公司股东的净利润。
+
+ebitda:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 息税折旧摊销前利润（EBITDA）
+  aliases:
+    zh: [EBITDA, 息税折旧摊销前利润]
+    en: [EBITDA]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [ebitda]
+
+basic_eps:
+  category: financial
+  type: float
+  unit: CNY_PER_SHARE
+  frequency: [quarterly, annual]
+  description: 基本每股收益
+  aliases:
+    zh: [每股收益, 基本EPS, EPS]
+    en: [basic EPS, basic earnings per share]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [basic_eps]
+
+interest_expense:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 利息支出（财务费用中的利息费用）
+  aliases:
+    zh: [利息支出, 利息费用, 财务费用-利息]
+    en: [interest expense, finance costs]
+  required_by:
+    derived_facts: [interest_coverage]
+  source_mappings:
+    tushare: [interest_expense]
+  notes: 取自利润表财务费用明细，部分公司可能不单独披露。
+
+# ─────────────────────────────────────────
+# 资产负债表 (Balance Sheet)
+# ─────────────────────────────────────────
+
+total_assets:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 资产总计
+  aliases:
+    zh: [总资产, 资产合计]
+    en: [total assets]
+  required_by:
+    derived_facts: [debt_ratio, asset_turnover, goodwill_risk]
+  source_mappings:
+    tushare: [total_assets]
+
+total_liabilities:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 负债合计
+  aliases:
+    zh: [总负债, 负债总额]
+    en: [total liabilities]
+  required_by:
+    derived_facts: [debt_ratio]
+  source_mappings:
+    tushare: [total_liab]
+
+shareholders_equity:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 归母股东权益（不含少数股东权益）
+  aliases:
+    zh: [股东权益, 净资产, 归母净资产]
+    en: [shareholders equity, net assets attributable to parent]
+  required_by:
+    derived_facts: [goodwill_risk]
+  source_mappings:
+    tushare: [total_hldr_eqy_exc_min_int]
+  notes: avg_shareholders_equity（ROE分母）由本字段跨期平均计算，非独立来源字段。
+
+avg_shareholders_equity:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 平均股东权益（期初+期末)/2，ROE分母
+  aliases:
+    zh: [平均净资产, 平均股东权益]
+    en: [average shareholders equity]
+  required_by:
+    derived_facts: [roe_level]
+  source_mappings: {}
+  notes: 由 shareholders_equity 跨期平均计算，不直接来自数据源。
+
+cash:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 货币资金
+  aliases:
+    zh: [货币资金, 现金及现金等价物]
+    en: [cash and cash equivalents]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [money_cap]
+
+current_assets:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 流动资产合计
+  aliases:
+    zh: [流动资产, 流动资产合计]
+    en: [current assets, total current assets]
+  required_by:
+    derived_facts: [current_ratio]
+  source_mappings:
+    tushare: [total_cur_assets]
+
+current_liabilities:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 流动负债合计
+  aliases:
+    zh: [流动负债, 流动负债合计]
+    en: [current liabilities, total current liabilities]
+  required_by:
+    derived_facts: [current_ratio]
+  source_mappings:
+    tushare: [total_cur_liab]
+
+accounts_receivable:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 应收账款（含应收票据）
+  aliases:
+    zh: [应收账款, 应收票据及应收账款]
+    en: [accounts receivable, trade receivables]
+  required_by:
+    derived_facts: [receivable_pressure, accounts_receivable_yoy]
+  source_mappings:
+    tushare: [accounts_receiv]
+  notes: Tushare balancesheet 表中字段为 accounts_receiv；部分口径含应收票据，需注意。
+
+accounts_receivable_prev:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 上期应收账款（含应收票据），与 accounts_receivable 配合计算同比增速
+  aliases:
+    zh: [上期应收账款, 前期应收账款]
+    en: [prior period accounts receivable]
+  required_by:
+    derived_facts: [accounts_receivable_yoy]
+  source_mappings:
+    tushare: [accounts_receiv]
+  notes: 由调用方从多期数据中取上一期的 accounts_receiv 填充，通常为同比对应期（年报取上年年报，季报取上年同期）。
+
+inventory:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 存货
+  aliases:
+    zh: [存货, 库存]
+    en: [inventory, inventories]
+  required_by:
+    derived_facts: [inventory_pressure]
+  source_mappings:
+    tushare: [inventories]
+
+goodwill:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 商誉
+  aliases:
+    zh: [商誉]
+    en: [goodwill]
+  required_by:
+    derived_facts: [goodwill_risk]
+  source_mappings:
+    tushare: [goodwill]
+
+# ─────────────────────────────────────────
+# 现金流量表 (Cash Flow Statement)
+# ─────────────────────────────────────────
+
+operating_cashflow:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 经营活动产生的现金流量净额
+  aliases:
+    zh: [经营现金流, 经营活动现金流净额, 经营性现金流]
+    en: [operating cash flow, cash flow from operations, net cash from operating activities]
+  required_by:
+    derived_facts: [cashflow_quality, dividend_coverage]
+  source_mappings:
+    tushare: [n_cashflow_act]
+    akshare: [经营活动产生的现金流量净额]
+    baostock: [netOperateCashFlow]
+
+investing_cashflow:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 投资活动产生的现金流量净额
+  aliases:
+    zh: [投资现金流, 投资活动现金流]
+    en: [investing cash flow, cash flow from investing activities]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [n_cashflow_inv_act]
+    baostock: [netInvestCashFlow]
+
+financing_cashflow:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 筹资活动产生的现金流量净额
+  aliases:
+    zh: [筹资现金流, 融资现金流]
+    en: [financing cash flow, cash flow from financing activities]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [n_cash_flows_fnc_act]
+    baostock: [netFinanceCashFlow]
+
+capex:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 资本性支出（购建固定资产、无形资产等支付的现金）
+  aliases:
+    zh: [资本支出, CapEx, 购建固定资产支出]
+    en: [capital expenditure, capex, purchases of fixed assets]
+  required_by:
+    derived_facts: [capex_intensity]
+  source_mappings:
+    tushare: [c_pay_acq_const_fiolta]
+  notes: 正值表示支出金额（Tushare原始值为正数现金支出）。
+
+free_cashflow:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 自由现金流（FCFF）= 经营现金流 - 资本性支出
+  aliases:
+    zh: [自由现金流, FCFF, FCF]
+    en: [free cash flow, FCFF]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [fcff]
+  notes: Tushare fina_indicator 提供预计算值；若缺失则由 operating_cashflow - capex 计算。
+
+dividends_paid:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 分配股利、利润或偿付利息支付的现金（股息支出）
+  aliases:
+    zh: [分红支出, 股息支出, 派息]
+    en: [dividends paid, cash dividends]
+  required_by:
+    derived_facts: [dividend_coverage]
+  source_mappings:
+    tushare: [c_pay_dist_dpcp_int_pvd]
+  notes: 取自现金流量表筹资活动项，含股利及利息偿付。
+
+# ─────────────────────────────────────────
+# 财务比率 (Financial Ratios)
+# ─────────────────────────────────────────
+
+roe:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 净资产收益率（ROE，%）
+  aliases:
+    zh: [ROE, 净资产收益率, 股东回报率]
+    en: [ROE, return on equity]
+  required_by:
+    derived_facts: [roe_level, pb_roe_match]
+  source_mappings:
+    tushare: [roe]
+  notes: Tushare fina_indicator 返回百分比形式（如 15.3 表示 15.3%）；pb_roe_match 规则使用时需除以100。
+
+roa:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 总资产净利率（ROA，%）
+  aliases:
+    zh: [ROA, 总资产回报率]
+    en: [ROA, return on assets]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [roa]
+
+gross_margin:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 毛利率（%）
+  aliases:
+    zh: [毛利率, 销售毛利率]
+    en: [gross margin, gross profit margin]
+  required_by:
+    derived_facts: [gross_margin_trend]
+  source_mappings:
+    tushare: [grossprofit_margin]
+  notes: gross_margin_trend 规则需要两期数据，分别以 gross_margin_current 和 gross_margin_prev 传入。
+
+gross_margin_current:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 当期毛利率（%），与 gross_margin_prev 配合用于趋势计算
+  aliases:
+    zh: [当期毛利率]
+    en: [current period gross margin]
+  required_by:
+    derived_facts: [gross_margin_trend]
+  source_mappings:
+    tushare: [grossprofit_margin]
+  notes: 等同于 gross_margin，专为 derived_facts 跨期比较而设的别名视角。
+
+gross_margin_prev:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 上期毛利率（%），与 gross_margin_current 配合用于趋势计算
+  aliases:
+    zh: [上期毛利率, 前期毛利率]
+    en: [prior period gross margin]
+  required_by:
+    derived_facts: [gross_margin_trend]
+  source_mappings:
+    tushare: [grossprofit_margin]
+  notes: 由调用方从多期数据中取上一期的 grossprofit_margin 填充。
+
+net_margin:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 净利润率（%）
+  aliases:
+    zh: [净利润率, 净利率]
+    en: [net margin, net profit margin]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [netprofit_margin]
+
+current_ratio:
+  category: financial
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 流动比率（倍）= 流动资产 / 流动负债
+  aliases:
+    zh: [流动比率]
+    en: [current ratio]
+  required_by:
+    derived_facts: [current_ratio]
+  source_mappings:
+    tushare: [current_ratio]
+
+quick_ratio:
+  category: financial
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 速动比率（倍）= (流动资产 - 存货) / 流动负债
+  aliases:
+    zh: [速动比率]
+    en: [quick ratio, acid-test ratio]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [quick_ratio]
+
+debt_to_assets:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 资产负债率（%）= 总负债 / 总资产
+  aliases:
+    zh: [资产负债率, 负债率]
+    en: [debt-to-assets ratio, leverage ratio]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [debt_to_assets]
+  notes: Tushare 已预计算；derived_facts debt_ratio 规则自行计算（total_liabilities / total_assets）。
+
+ebit:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 息税前利润（EBIT）= 净利润 + 利息支出 + 所得税
+  aliases:
+    zh: [EBIT, 息税前利润]
+    en: [EBIT, earnings before interest and taxes]
+  required_by:
+    derived_facts: [interest_coverage]
+  source_mappings: {}
+  notes: 通常由 operating_profit 近似（若无利息资本化），或由 net_profit + interest_expense + income_tax 计算。
+
+# ─────────────────────────────────────────
+# 成长性指标 (Growth Metrics)
+# ─────────────────────────────────────────
+
+revenue_yoy:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 营业收入同比增长率（%）
+  aliases:
+    zh: [营收增速, 营收同比, 收入同比增长率]
+    en: [revenue growth YoY, revenue YoY]
+  required_by:
+    derived_facts: [profit_leverage, market_share_change, inventory_pressure, revenue_growth, receivable_growth_gap]
+  source_mappings:
+    tushare: [or_yoy]
+
+net_profit_yoy:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 净利润同比增长率（%）
+  aliases:
+    zh: [净利润增速, 净利润同比, 利润同比]
+    en: [net profit growth YoY, net income YoY]
+  required_by:
+    derived_facts: [profit_leverage, peg_ratio]
+  source_mappings:
+    tushare: [netprofit_yoy]
+
+eps_growth_yoy:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 基本每股收益同比增长率（%）
+  aliases:
+    zh: [EPS增速, 每股收益同比]
+    en: [EPS growth YoY]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [basic_eps_yoy]
+
+inventory_yoy:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 存货同比增长率（%）
+  aliases:
+    zh: [存货增速, 存货同比]
+    en: [inventory growth YoY]
+  required_by:
+    derived_facts: [inventory_pressure]
+  source_mappings: {}
+  notes: 由调用方从多期 inventory 数据计算：(inventory_t - inventory_t-4) / abs(inventory_t-4) * 100。

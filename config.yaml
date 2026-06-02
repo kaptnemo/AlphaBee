@@ -16,3 +16,6 @@ web_search:
     timeout: 20
     region: "cn-zh"
     max_results: 6
+
+tushare:
+  api_key: "${TUSHARE_TOKEN:}"

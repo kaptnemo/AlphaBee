@@ -1,0 +1,14 @@
+name: dividend_coverage
+description: 经营现金流 / 股息支付总额，衡量分红的可持续性；依赖举债或出售资产分红不具备长期可持续性
+required_facts:
+  - operating_cashflow
+  - dividends_paid
+formula: operating_cashflow / dividends_paid
+thresholds:
+  sustainable: "value >= 2.0"
+  adequate: "1.0 <= value <= 2.0"
+  risky: "value < 1.0"
+interpretation:
+  sustainable: 经营现金流两倍以上覆盖分红，股息分配高度可持续，股息增长空间充足
+  adequate: 经营现金流基本覆盖分红，股息可维持但弹性有限，需关注业绩稳定性
+  risky: 经营现金流不足以覆盖分红，可能依赖举债或变卖资产维持派息，存在削减股息风险

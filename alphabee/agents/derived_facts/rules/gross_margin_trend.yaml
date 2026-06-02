@@ -1,0 +1,14 @@
+name: gross_margin_trend
+description: 毛利率同比变化（单位：百分点），衡量产品定价能力与成本管控趋势；是判断竞争格局是否恶化的早期信号
+required_facts:
+  - gross_margin_current
+  - gross_margin_prev
+formula: gross_margin_current - gross_margin_prev
+thresholds:
+  expanding: "value > 2"
+  stable: "-2 <= value <= 2"
+  contracting: "value < -2"
+interpretation:
+  expanding: 毛利率持续扩张，产品竞争力增强或原材料成本改善，盈利质量向好
+  stable: 毛利率基本稳定，定价能力与成本结构均衡，商业模式成熟
+  contracting: 毛利率持续收窄，需关注价格战加剧、原料涨价或产品结构下移

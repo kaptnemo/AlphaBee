@@ -1,0 +1,66 @@
+id: revenue_quality_risk
+
+name: 收入质量风险
+
+category: financial_quality
+
+dimension: revenue_quality
+
+description: >
+  判断收入增长是否得到回款支持，
+  识别潜在的收入确认激进、客户账期拉长、
+  应收账款积压等风险。
+
+required_facts:
+  - revenue_yoy
+  - accounts_receivable_yoy
+
+required_derived_facts:
+  - revenue_growth
+  - accounts_receivable_growth
+  - receivable_growth_gap
+
+trigger_rules:
+
+  high:
+    condition: receivable_growth_gap >= 40
+
+  medium:
+    condition: receivable_growth_gap >= 20
+
+  low:
+    condition: receivable_growth_gap >= 10
+
+interpretation_templates:
+
+  high: >
+    应收账款增速显著高于收入增速，
+    收入增长尚未有效转化为回款，
+    需要重点关注收入真实性和回款能力。
+
+  medium: >
+    应收账款增长快于收入增长，
+    存在一定收入质量风险，
+    建议结合现金流和账龄结构进一步验证。
+
+  low: >
+    应收账款增长略快于收入增长，
+    目前风险有限，但需要持续观察趋势。
+
+critic_questions:
+  - 是否属于行业普遍账期拉长？
+  - 是否存在大客户付款节奏变化？
+  - 是否有重大订单集中确认？
+  - 是否连续多年出现该现象？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+
+  earnings_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral

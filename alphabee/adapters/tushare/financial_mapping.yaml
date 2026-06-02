@@ -1,0 +1,59 @@
+# AlphaBee Tushare Adapter — 财务数据字段映射
+# API: income()、balancesheet()、cashflow()、fina_indicator()
+# 仅 Tushare 字段名允许出现在此文件，下游统一使用 AlphaBee 标准字段名
+
+# ─────────────────────────────────────────
+# 利润表 income()
+# ─────────────────────────────────────────
+income:
+  end_date:             period
+  total_revenue:        revenue
+  operate_profit:       operating_profit
+  n_income:             net_profit
+  ebitda:               ebitda
+  basic_eps:            basic_eps
+  interest_expense:     interest_expense
+
+# ─────────────────────────────────────────
+# 资产负债表 balancesheet()
+# ─────────────────────────────────────────
+balancesheet:
+  end_date:                       period
+  total_assets:                   total_assets
+  total_liab:                     total_liabilities
+  total_hldr_eqy_exc_min_int:     shareholders_equity
+  money_cap:                      cash
+  total_cur_assets:               current_assets
+  total_cur_liab:                 current_liabilities
+  accounts_receiv:                accounts_receivable
+  inventories:                    inventory
+  goodwill:                       goodwill
+
+# ─────────────────────────────────────────
+# 现金流量表 cashflow()
+# ─────────────────────────────────────────
+cashflow:
+  end_date:                  period
+  n_cashflow_act:            operating_cashflow
+  n_cashflow_inv_act:        investing_cashflow
+  n_cash_flows_fnc_act:      financing_cashflow
+  c_pay_acq_const_fiolta:    capex
+  fcff:                      free_cashflow
+  c_pay_dist_dpcp_int_pvd:   dividends_paid
+
+# ─────────────────────────────────────────
+# 财务指标 fina_indicator()
+# ─────────────────────────────────────────
+fina_indicator:
+  end_date:               period
+  roe:                    roe
+  roa:                    roa
+  grossprofit_margin:     gross_margin
+  netprofit_margin:       net_margin
+  current_ratio:          current_ratio
+  quick_ratio:            quick_ratio
+  debt_to_assets:         debt_to_assets
+  or_yoy:                 revenue_yoy
+  netprofit_yoy:          net_profit_yoy
+  basic_eps_yoy:          eps_growth_yoy
+  fcff:                   free_cashflow

@@ -1,0 +1,14 @@
+name: receivable_pressure
+description: 应收账款占营收比例，衡量企业账款回收质量与信用风险；比值越高说明"纸面收入"越多，现金兑现能力越弱
+required_facts:
+  - accounts_receivable
+  - revenue
+formula: accounts_receivable / revenue
+thresholds:
+  low: "value < 0.15"
+  medium: "0.15 <= value <= 0.30"
+  high: "value > 0.30"
+interpretation:
+  low: 应收账款占比低，现金收款质量好
+  medium: 应收账款偏高，需关注客户回款周期是否拉长
+  high: 应收账款占比过高，存在坏账风险或收入虚增风险

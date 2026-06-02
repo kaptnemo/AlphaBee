@@ -1,0 +1,14 @@
+name: peg_ratio
+description: 市盈率（PE-TTM）/ 净利润增速（%），衡量成长溢价是否合理；适用于成长型企业，不适用于周期股或利润负增长标的
+required_facts:
+  - pe_ttm
+  - net_profit_yoy
+formula: pe_ttm / net_profit_yoy
+thresholds:
+  undervalued: "value < 1.0"
+  fair: "1.0 <= value <= 2.0"
+  overvalued: "value > 2.0"
+interpretation:
+  undervalued: PEG < 1，当前估值低于成长速度，可能存在安全边际，性价比较高
+  fair: PEG在合理区间，当前估值基本反映成长预期，需持续跟踪增速兑现情况
+  overvalued: PEG > 2，成长溢价过高，若后续增速放缓则估值回调风险显著

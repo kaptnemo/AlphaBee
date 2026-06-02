@@ -1,0 +1,392 @@
+# AlphaBee 内部标准字段 — 行情与估值域
+# 覆盖：日行情、估值指标、资金流向、均线技术指标
+# 频率：日频
+
+# ─────────────────────────────────────────
+# 日行情 (Daily Quote)
+# ─────────────────────────────────────────
+
+close_price:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 收盘价（元）
+  aliases:
+    zh: [收盘价, 最新价, 收盘]
+    en: [close price, closing price]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [close]
+    akshare: [收盘]
+    baostock: [close]
+
+open_price:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 开盘价（元）
+  aliases:
+    zh: [开盘价, 开盘]
+    en: [open price, opening price]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [open]
+    baostock: [open]
+
+high_price:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 当日最高价（元）
+  aliases:
+    zh: [最高价, 最高]
+    en: [high price, daily high]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [high]
+    baostock: [high]
+
+low_price:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 当日最低价（元）
+  aliases:
+    zh: [最低价, 最低]
+    en: [low price, daily low]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [low]
+    baostock: [low]
+
+prev_close_price:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 昨日收盘价（元）
+  aliases:
+    zh: [昨收价, 昨日收盘]
+    en: [previous close, prior close]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [pre_close]
+
+price_change:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 涨跌额（元），正数为上涨
+  aliases:
+    zh: [涨跌额, 价格变动]
+    en: [price change]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [change]
+
+price_change_pct:
+  category: market
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 涨跌幅（%），正数为上涨
+  aliases:
+    zh: [涨跌幅, 涨幅, 跌幅]
+    en: [price change pct, return pct, daily return]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [pct_chg]
+    akshare: [涨跌幅]
+
+volume:
+  category: market
+  type: int
+  unit: VOLUME_LOT
+  frequency: [daily]
+  description: 成交量（手，1手=100股）
+  aliases:
+    zh: [成交量, 交易量]
+    en: [volume, trading volume]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [vol]
+    baostock: [volume]
+
+turnover_amount:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 成交额（元）
+  aliases:
+    zh: [成交额, 成交金额]
+    en: [turnover, trading value, amount]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [amount]
+  notes: Tushare amount 单位为千元（元/1000），使用时需乘以1000换算为元。
+
+amplitude:
+  category: market
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 振幅（%）= (最高价 - 最低价) / 昨收价 × 100
+  aliases:
+    zh: [振幅, 价格振幅]
+    en: [amplitude, price range pct]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 由 high_price、low_price、prev_close_price 在 adapter 层计算。
+
+turnover_rate:
+  category: market
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 换手率（%），成交量 / 流通股本
+  aliases:
+    zh: [换手率]
+    en: [turnover rate, churn rate]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [turnover_rate]
+
+# ─────────────────────────────────────────
+# 估值指标 (Valuation)
+# ─────────────────────────────────────────
+
+pe_ttm:
+  category: market
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 市盈率 TTM（滚动12个月），0表示亏损或暂无数据
+  aliases:
+    zh: [PE, 市盈率, 动态市盈率, PE-TTM]
+    en: [PE ratio, price-to-earnings TTM, P/E]
+  required_by:
+    derived_facts: [peg_ratio, valuation_compression]
+  source_mappings:
+    tushare: [pe_ttm]
+    akshare: [市盈率-动态]
+
+pb_ratio:
+  category: market
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 市净率（总市值 / 净资产），0表示暂无数据
+  aliases:
+    zh: [PB, 市净率]
+    en: [PB ratio, price-to-book ratio, P/B]
+  required_by:
+    derived_facts: [pb_roe_match]
+  source_mappings:
+    tushare: [pb]
+    akshare: [市净率]
+
+market_cap:
+  category: market
+  type: float
+  unit: CNY_10K
+  frequency: [daily]
+  description: 总市值（万元）
+  aliases:
+    zh: [总市值, 市值]
+    en: [market cap, total market capitalization]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [total_mv]
+  notes: Tushare 单位为万元；下游展示通常转换为亿元（÷10000）。
+
+circulating_market_cap:
+  category: market
+  type: float
+  unit: CNY_10K
+  frequency: [daily]
+  description: 流通市值（万元）
+  aliases:
+    zh: [流通市值, 流通市值]
+    en: [circulating market cap, float market cap]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [circ_mv]
+
+pe_ttm_5y_avg:
+  category: market
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 近5年 PE-TTM 均值（用于估值压缩判断）
+  aliases:
+    zh: [5年均值PE, 历史均值PE, PE历史均值]
+    en: [5-year average PE TTM, historical mean PE]
+  required_by:
+    derived_facts: [valuation_compression]
+  source_mappings: {}
+  notes: 由历史 pe_ttm 序列均值计算，需调用方从 Tushare daily_basic 历史数据中计算并传入。
+
+# ─────────────────────────────────────────
+# 资金流向 (Capital Flow)
+# ─────────────────────────────────────────
+
+main_force_inflow:
+  category: market
+  type: float
+  unit: CNY_10K
+  frequency: [daily]
+  description: 主力净流入（万元）= 超大单净额 + 大单净额，正数为流入
+  aliases:
+    zh: [主力净流入, 主力资金流入]
+    en: [main force net inflow, institutional net flow]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 由 super_large_order_flow + large_order_flow 计算。
+
+super_large_order_flow:
+  category: market
+  type: float
+  unit: CNY_10K
+  frequency: [daily]
+  description: 超大单净流入（万元）= 超大单买入 - 超大单卖出
+  aliases:
+    zh: [超大单净流入, 超大单]
+    en: [super large order net flow]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [buy_elg_amount, sell_elg_amount]
+  notes: Tushare moneyflow 表；buy_elg_amount - sell_elg_amount 计算得到。
+
+large_order_flow:
+  category: market
+  type: float
+  unit: CNY_10K
+  frequency: [daily]
+  description: 大单净流入（万元）= 大单买入 - 大单卖出
+  aliases:
+    zh: [大单净流入, 大单]
+    en: [large order net flow]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [buy_lg_amount, sell_lg_amount]
+
+retail_flow:
+  category: market
+  type: float
+  unit: CNY_10K
+  frequency: [daily]
+  description: 散户小单净流入（万元），负数通常代表散户净卖出
+  aliases:
+    zh: [散户净流入, 小单净流入]
+    en: [retail net flow, small order net flow]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [buy_sm_amount, sell_sm_amount]
+
+# ─────────────────────────────────────────
+# 技术均线 (Moving Averages)
+# ─────────────────────────────────────────
+
+ma5:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 5日移动平均价（元）
+  aliases:
+    zh: [5日均线, MA5]
+    en: [5-day moving average, MA5]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 由 close_price 历史序列计算，非数据源直接字段。
+
+ma10:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 10日移动平均价（元）
+  aliases:
+    zh: [10日均线, MA10]
+    en: [10-day moving average, MA10]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+
+ma20:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 20日移动平均价（元）
+  aliases:
+    zh: [20日均线, MA20]
+    en: [20-day moving average, MA20]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+
+ma60:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 60日移动平均价（元）
+  aliases:
+    zh: [60日均线, MA60, 季线]
+    en: [60-day moving average, MA60]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+
+ma120:
+  category: market
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 120日移动平均价（元）
+  aliases:
+    zh: [120日均线, MA120, 半年线]
+    en: [120-day moving average, MA120]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+
+medium_order_flow:
+  category: market
+  type: float
+  unit: CNY_10K
+  frequency: [daily]
+  description: 中单净流入（万元）= 中单买入 - 中单卖出
+  aliases:
+    zh: [中单净流入, 中单]
+    en: [medium order net flow]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [buy_md_amount, sell_md_amount]
+  notes: Tushare moneyflow 表；buy_md_amount - sell_md_amount 计算得到。

@@ -1,0 +1,203 @@
+# AlphaBee 内部标准字段 — 预期与预告域
+# 覆盖：业绩预告、业绩快报
+# 频率：事件驱动（公告发布时）
+
+# ─────────────────────────────────────────
+# 业绩预告 (Earnings Forecast)
+# ─────────────────────────────────────────
+
+forecast_type:
+  category: expectation
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 业绩预告类型（预增/预减/扭亏/首亏/续亏/续盈/略增/略减）
+  aliases:
+    zh: [预告类型, 业绩预告类型]
+    en: [forecast type, guidance type]
+  source_mappings:
+    tushare: [type]
+
+profit_forecast_min_change:
+  category: expectation
+  type: float
+  unit: PERCENT
+  frequency: [event]
+  description: 净利润同比变动最小值（%）
+  aliases:
+    zh: [净利润增幅下限, 业绩增速下限]
+    en: [min profit change pct, guidance min]
+  source_mappings:
+    tushare: [p_change_min]
+
+profit_forecast_max_change:
+  category: expectation
+  type: float
+  unit: PERCENT
+  frequency: [event]
+  description: 净利润同比变动最大值（%）
+  aliases:
+    zh: [净利润增幅上限, 业绩增速上限]
+    en: [max profit change pct, guidance max]
+  source_mappings:
+    tushare: [p_change_max]
+
+forecast_net_profit_min:
+  category: expectation
+  type: float
+  unit: CNY
+  frequency: [event]
+  description: 预告净利润下限（元）
+  aliases:
+    zh: [预告净利润最小值, 净利润预告下限]
+    en: [forecast net profit min]
+  source_mappings:
+    tushare: [net_profit_min]
+
+forecast_net_profit_max:
+  category: expectation
+  type: float
+  unit: CNY
+  frequency: [event]
+  description: 预告净利润上限（元）
+  aliases:
+    zh: [预告净利润最大值, 净利润预告上限]
+    en: [forecast net profit max]
+  source_mappings:
+    tushare: [net_profit_max]
+
+last_year_net_profit:
+  category: expectation
+  type: float
+  unit: CNY
+  frequency: [annual]
+  description: 上年同期归母净利润（元），作为预告比较基准
+  aliases:
+    zh: [上年净利润, 同期净利润, 对比基准净利润]
+    en: [last year net profit, prior year net income]
+  source_mappings:
+    tushare: [last_parent_net]
+
+forecast_summary:
+  category: expectation
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 业绩预告摘要描述
+  aliases:
+    zh: [业绩预告摘要, 预告说明]
+    en: [forecast summary, guidance summary]
+  source_mappings:
+    tushare: [summary]
+
+change_reason:
+  category: expectation
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 业绩变动原因说明
+  aliases:
+    zh: [变动原因, 业绩变动说明]
+    en: [change reason, guidance explanation]
+  source_mappings:
+    tushare: [change_reason]
+
+# ─────────────────────────────────────────
+# 业绩快报 (Earnings Express)
+# ─────────────────────────────────────────
+
+express_revenue:
+  category: expectation
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 业绩快报营业收入（元）
+  aliases:
+    zh: [快报营收, 业绩快报营收]
+    en: [express revenue, preliminary revenue]
+  source_mappings:
+    tushare: [revenue]
+
+express_operating_profit:
+  category: expectation
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 业绩快报营业利润（元）
+  aliases:
+    zh: [快报营业利润]
+    en: [express operating profit, preliminary operating profit]
+  source_mappings:
+    tushare: [operate_profit]
+
+express_net_profit:
+  category: expectation
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 业绩快报归母净利润（元）
+  aliases:
+    zh: [快报净利润, 快报归母净利润]
+    en: [express net profit, preliminary net profit]
+  source_mappings:
+    tushare: [n_income]
+
+express_diluted_eps:
+  category: expectation
+  type: float
+  unit: CNY_PER_SHARE
+  frequency: [quarterly, annual]
+  description: 业绩快报摊薄每股收益（元/股）
+  aliases:
+    zh: [快报EPS, 摊薄每股收益]
+    en: [express diluted EPS, preliminary EPS]
+  source_mappings:
+    tushare: [diluted_eps]
+
+express_diluted_roe:
+  category: expectation
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 业绩快报摊薄净资产收益率（%）
+  aliases:
+    zh: [快报ROE, 摊薄ROE]
+    en: [express diluted ROE, preliminary ROE]
+  source_mappings:
+    tushare: [diluted_roe]
+
+express_revenue_yoy:
+  category: expectation
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 业绩快报营业收入同比增长率（%）
+  aliases:
+    zh: [快报营收同比, 快报收入同比]
+    en: [express revenue YoY, preliminary revenue growth]
+  source_mappings:
+    tushare: [yoy_sales]
+
+express_net_profit_yoy:
+  category: expectation
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 业绩快报扣非净利润同比增长率（%）
+  aliases:
+    zh: [快报净利润同比, 快报利润增速]
+    en: [express net profit YoY, preliminary profit growth]
+  source_mappings:
+    tushare: [yoy_dedu_np]
+
+express_perf_summary:
+  category: expectation
+  type: str
+  unit: TEXT
+  frequency: [quarterly, annual]
+  description: 业绩快报业绩摘要
+  aliases:
+    zh: [快报摘要, 业绩快报说明]
+    en: [express performance summary, preliminary results summary]
+  source_mappings:
+    tushare: [perf_summary]

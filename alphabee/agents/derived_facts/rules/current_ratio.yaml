@@ -1,0 +1,14 @@
+name: current_ratio
+description: 流动资产 / 流动负债，衡量企业12个月内的短期偿债能力；需结合流动资产质量（应收账款、存货占比）综合判断
+required_facts:
+  - current_assets
+  - current_liabilities
+formula: current_assets / current_liabilities
+thresholds:
+  strong: "value >= 2.0"
+  adequate: "1.0 <= value <= 2.0"
+  weak: "value < 1.0"
+interpretation:
+  strong: 流动比率充裕，短期偿债无忧，但过高也可能说明资产运用效率不高
+  adequate: 短期偿债能力基本足够，需关注流动资产中应收账款和存货的可变现性
+  weak: 流动资产不足以覆盖流动负债，存在短期流动性缺口，需关注信贷额度和现金储备

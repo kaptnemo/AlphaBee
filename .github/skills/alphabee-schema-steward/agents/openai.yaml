@@ -1,0 +1,5 @@
+interface:
+  display_name: AlphaBee 字段治理助手
+  short_description: 维护 AlphaBee 内部字段字典与数据源映射关系
+  icon: 📚
+  primary_color: "#2563EB"

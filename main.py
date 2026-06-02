@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langfuse.langchain import CallbackHandler
 
-from alphabee.agents.orchestrator.agent import alphabee_agent
+from alphabee.agents_legacy.orchestrator.agent import alphabee_agent
 from alphabee.utils import configure_logging, get_logger
 from alphabee.workflow import render_monitor_report, run_framework_monitor
 
@@ -263,9 +264,13 @@ async def run_query(query: str, history: list[Any] | None = None) -> str:
 
     logger.info("query_start", query=query, history_messages=len(conversation) - 1)
 
+    # Create a fresh Langfuse handler per request so each query gets its own trace tree
+    trace_handler = CallbackHandler()
+
     try:
         async for namespace, chunk in alphabee_agent.astream(
             {"messages": conversation},
+            config={"callbacks": [trace_handler]},
             stream_mode="updates",
             subgraphs=True,
         ):

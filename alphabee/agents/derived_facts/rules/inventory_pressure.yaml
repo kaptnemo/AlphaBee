@@ -1,0 +1,14 @@
+name: inventory_pressure
+description: 存货同比增速与营收同比增速之差（百分点），衡量存货积压或去库存风险
+required_facts:
+  - inventory_yoy
+  - revenue_yoy
+formula: inventory_yoy - revenue_yoy
+thresholds:
+  accumulating: "value > 15"
+  normal: "-15 <= value <= 15"
+  depleting: "value < -15"
+interpretation:
+  accumulating: 存货增速远超营收，可能面临滞销积压，后续存在减值计提或被迫降价去库存压力
+  normal: 存货增长与营收增长基本匹配，库存管理健康，产销协调良好
+  depleting: 存货快速消化，景气上行主动去库或需求旺盛拉动；亦需关注是否因供应链紧张导致备货不足

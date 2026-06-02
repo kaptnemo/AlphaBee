@@ -1,0 +1,14 @@
+name: pb_roe_match
+description: 市净率（PB）/ ROE（%），衡量市场给予的净资产溢价是否与盈利能力相称；PB/ROE越低说明以单位盈利能力支付的估值越便宜
+required_facts:
+  - pb_ratio
+  - roe
+formula: pb_ratio / (roe * 100)
+thresholds:
+  undervalued: "value < 0.5"
+  fair: "0.5 <= value <= 1.5"
+  overvalued: "value > 1.5"
+interpretation:
+  undervalued: 按ROE衡量PB定价偏低，可能被市场低估或处于困境反转阶段，具备长期配置价值
+  fair: PB与ROE大致匹配，估值合理，是典型的"好公司合理价格"
+  overvalued: 市场对单位ROE支付过高溢价，需有持续的ROE提升预期才能支撑，估值容错率低

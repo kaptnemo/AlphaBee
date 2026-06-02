@@ -1,0 +1,14 @@
+name: roe_level
+description: 净资产收益率（ROE = 净利润 / 平均净资产），衡量股东权益的盈利效率；是巴菲特护城河分析的核心指标
+required_facts:
+  - net_profit
+  - avg_shareholders_equity
+formula: net_profit / avg_shareholders_equity
+thresholds:
+  excellent: "value >= 0.15"
+  good: "0.08 <= value <= 0.15"
+  weak: "value < 0.08"
+interpretation:
+  excellent: ROE ≥ 15%，股东权益回报优秀，通常具备较强的品牌护城河或规模壁垒
+  good: ROE处于正常区间，盈利能力尚可，需结合行业均值与杜邦拆解综合评估
+  weak: ROE低于8%，权益回报偏低，可能存在资产利用效率低下或盈利能力不足问题

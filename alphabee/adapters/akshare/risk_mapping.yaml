@@ -1,0 +1,8 @@
+# AlphaBee AkShare Adapter — 风险域字段映射
+# API: stock_news_em()
+
+stock_news_em:
+  新闻标题:   news_title
+  title:      news_title      # fallback English key
+  发布时间:   news_publish_time
+  publish_time: news_publish_time  # fallback English key

@@ -1,0 +1,14 @@
+name: market_share_change
+description: 公司营收增速与行业营收增速之差（单位：百分点），衡量企业在行业中市场份额的动态变化
+required_facts:
+  - revenue_yoy
+  - industry_revenue_yoy
+formula: revenue_yoy - industry_revenue_yoy
+thresholds:
+  gaining: "value > 5"
+  stable: "-5 <= value <= 5"
+  losing: "value < -5"
+interpretation:
+  gaining: 公司增速显著超越行业，市场份额持续扩张，竞争地位增强
+  stable: 公司增速与行业大体一致，市场份额基本稳定
+  losing: 公司增速显著落后行业，市场份额萎缩，需关注竞争力下滑风险

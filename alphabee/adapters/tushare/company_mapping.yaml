@@ -1,0 +1,40 @@
+# AlphaBee Tushare Adapter — 公司信息字段映射
+# API: stock_basic()、stock_company()、top10_holders()、stk_managers()
+
+stock_basic:
+  ts_code:     stock_code
+  name:        company_name
+  area:        area
+  industry:    industry
+  market:      market
+  list_date:   list_date
+  exchange:    exchange
+  sector:      sector
+  list_status: list_status
+  curr_type:   currency_type
+
+stock_company:
+  chairman:     chairman
+  manager:      manager
+  secretary:    secretary
+  reg_capital:  registered_capital  # 原始单位：万元；× 10000 换算为元
+  employees:    employees
+  province:     province
+  city:         city
+  website:      website
+  email:        email
+  tel:          tel
+  introduction: introduction
+  main_business: main_business
+  business_scope: business_scope
+
+top10_holders:
+  end_date:     period
+  holder_name:  top10_holder_name
+  hold_amount:  top10_holder_amount
+  hold_ratio:   top10_holder_ratio
+
+stk_managers:
+  name:   executive_name
+  title:  executive_title
+  reward: executive_reward  # 单位：万元

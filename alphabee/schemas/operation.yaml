@@ -1,0 +1,73 @@
+# AlphaBee 内部标准字段 — 主营业务构成域
+# 覆盖：主营业务分项收入、成本、利润、毛利率
+# 频率：半年度 / 年度（来自 Tushare fina_mainbz）
+
+biz_segment_name:
+  category: operation
+  type: str
+  unit: TEXT
+  frequency: [semi_annual, annual]
+  description: 主营业务分项名称（如产品类别或地区）
+  aliases:
+    zh: [业务分项, 业务类别, 产品分类]
+    en: [business segment name, product category]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [bz_item]
+
+biz_segment_revenue:
+  category: operation
+  type: float
+  unit: CNY
+  frequency: [semi_annual, annual]
+  description: 主营业务分项营业收入（元）
+  aliases:
+    zh: [分项营收, 分项收入, 业务收入]
+    en: [segment revenue, business segment sales]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [bz_sales]
+
+biz_segment_cost:
+  category: operation
+  type: float
+  unit: CNY
+  frequency: [semi_annual, annual]
+  description: 主营业务分项营业成本（元）
+  aliases:
+    zh: [分项成本, 业务成本]
+    en: [segment cost, business segment cost]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [bz_cost]
+
+biz_segment_profit:
+  category: operation
+  type: float
+  unit: CNY
+  frequency: [semi_annual, annual]
+  description: 主营业务分项营业利润（元）
+  aliases:
+    zh: [分项利润, 业务利润]
+    en: [segment profit, business segment profit]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [bz_profit]
+
+biz_gross_margin:
+  category: operation
+  type: float
+  unit: PERCENT
+  frequency: [semi_annual, annual]
+  description: 主营业务分项毛利率（%）= 分项利润 / 分项收入 × 100
+  aliases:
+    zh: [分项毛利率, 业务毛利率]
+    en: [segment gross margin, business segment gross margin]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 由 biz_segment_profit / biz_segment_revenue × 100 计算，不直接来自数据源。

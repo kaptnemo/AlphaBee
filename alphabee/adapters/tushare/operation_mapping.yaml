@@ -1,0 +1,9 @@
+# AlphaBee Tushare Adapter — 主营业务构成字段映射
+# API: fina_mainbz()
+
+fina_mainbz:
+  end_date:   period
+  bz_item:    biz_segment_name
+  bz_sales:   biz_segment_revenue
+  bz_cost:    biz_segment_cost
+  bz_profit:  biz_segment_profit

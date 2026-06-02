@@ -5,6 +5,7 @@ from typing import Any
 from pandas import DataFrame
 from alphabee.collectors.tushare import ts
 from alphabee.utils import get_logger
+from alphabee.adapters.tushare import TuShare_Adapter
 
 # mongo_client: pymongo.MongoClient[dict[str, Any]] = pymongo.MongoClient(
 #     "mongodb://root:cyw271828@localhost:27017/"
@@ -17,7 +18,7 @@ class TuShareResult:
     """wrapper tushare result, add common operations"""
 
     def __init__(self, data: DataFrame, collection_name: str):
-        self._data = data
+        self._data = TuShare_Adapter.adapt(collection_name, data)
         self._collection_name = collection_name
 
     @property
@@ -102,11 +103,22 @@ class TuShareHelper:
 
 if __name__ == "__main__":
     ts_client = TuShareHelper()
-    result = ts_client.index_weight(
-        index_code="399300.SZ", start_date="20221201", end_date="20221231"
-    )
-    logger.info("Fetched index weight result", result=str(result))
-    logger.info("Fetched index weight dataframe", rows=len(result.data))
+    # result = ts_client.index_weight(
+    #     index_code="399300.SZ", start_date="20221201", end_date="20221231"
+    # )
+    # logger.info("Fetched index weight result", result=str(result))
+    # logger.info("Fetched index weight dataframe", rows=len(result.data))
 
-    all_stocks = ts_client.stock_basic(exchange="", list_status="L")
-    all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")
+    # all_stocks = ts_client.stock_basic(exchange="", list_status="L")
+    # import pdb; pdb.set_trace()
+    # all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")
+
+
+    
+    df = ts_client.balancesheet(
+        ts_code='600000.SH',
+        start_date='20170101',
+        end_date='20260608',
+        fields='ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,cap_rese,total_assets'
+    ).data
+    print(df)

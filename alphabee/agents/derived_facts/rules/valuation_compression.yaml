@@ -1,0 +1,14 @@
+name: valuation_compression
+description: 当前滚动市盈率（PE-TTM）与5年历史均值之比，衡量市场对该公司的估值溢价是否被压缩
+required_facts:
+  - pe_ttm
+  - pe_ttm_5y_avg
+formula: pe_ttm / pe_ttm_5y_avg
+thresholds:
+  compressed: "value < 0.7"
+  fair: "0.7 <= value <= 1.3"
+  premium: "value > 1.3"
+interpretation:
+  compressed: 当前估值较历史均值折价超30%，市场显著降低溢价，可能反映基本面恶化或系统性风险
+  fair: 当前估值与历史均值基本匹配，估值中性
+  premium: 当前估值较历史均值溢价超30%，市场给予高预期，需警惕估值回归风险

@@ -1,0 +1,13 @@
+name: revenue_growth
+description: 营收同比增速（%），衡量企业收入增长速度，是判断成长性与收入质量的基准维度
+required_facts:
+  - revenue_yoy
+formula: revenue_yoy
+thresholds:
+  high_growth: "value > 20"
+  moderate_growth: "5 <= value <= 20"
+  slow_or_decline: "value < 5"
+interpretation:
+  high_growth: 营收高速增长（>20%），市场扩张能力强；需同步核查应收账款是否同步增长
+  moderate_growth: 营收稳健增长（5%-20%），业务发展平稳，增速处于合理区间
+  slow_or_decline: 营收增长低迷或下滑（<5%），需关注市场竞争加剧、需求萎缩或产品周期转折

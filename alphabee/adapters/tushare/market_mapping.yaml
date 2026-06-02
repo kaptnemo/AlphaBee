@@ -1,0 +1,48 @@
+# AlphaBee Tushare Adapter — 行情与估值字段映射
+# API: daily()、daily_basic()、moneyflow()
+
+# ─────────────────────────────────────────
+# 日行情 daily()
+# ─────────────────────────────────────────
+daily:
+  close:      close_price
+  open:       open_price
+  high:       high_price
+  low:        low_price
+  pre_close:  prev_close_price
+  change:     price_change
+  pct_chg:    price_change_pct
+  vol:        volume
+  amount:     turnover_amount   # 原始单位：千元；adapter 层 × 1000 换算为元
+
+# ─────────────────────────────────────────
+# 日基本面指标 daily_basic()
+# ─────────────────────────────────────────
+daily_basic:
+  turnover_rate:  turnover_rate
+  pe_ttm:         pe_ttm
+  pb:             pb_ratio
+  total_mv:       market_cap         # 原始单位：万元
+  circ_mv:        circulating_market_cap  # 原始单位：万元
+
+# ─────────────────────────────────────────
+# 个股资金流 moneyflow()
+# 净流入 = buy - sell；由 adapter 层计算，不作 1:1 映射
+# ─────────────────────────────────────────
+moneyflow:
+  buy_elg_amount:   _buy_super_large   # 超大单买入金额（万元）
+  sell_elg_amount:  _sell_super_large  # 超大单卖出金额（万元）
+  buy_lg_amount:    _buy_large         # 大单买入金额（万元）
+  sell_lg_amount:   _sell_large        # 大单卖出金额（万元）
+  buy_md_amount:    _buy_medium        # 中单买入金额（万元）
+  sell_md_amount:   _sell_medium       # 中单卖出金额（万元）
+  buy_sm_amount:    _buy_retail        # 散户买入金额（万元）
+  sell_sm_amount:   _sell_retail       # 散户卖出金额（万元）
+
+# 衍生字段（adapter 层计算规则）
+derived:
+  super_large_order_flow: "_buy_super_large - _sell_super_large"
+  large_order_flow:       "_buy_large - _sell_large"
+  medium_order_flow:      "_buy_medium - _sell_medium"
+  retail_flow:            "_buy_retail - _sell_retail"
+  main_force_inflow:      "super_large_order_flow + large_order_flow"

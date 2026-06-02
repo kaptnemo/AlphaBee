@@ -1,0 +1,14 @@
+name: capex_intensity
+description: 资本支出（CapEx）/ 营业收入，衡量企业的资本密集度与扩张投入力度；轻资产模式通常具有更高的自由现金流
+required_facts:
+  - capex
+  - revenue
+formula: capex / revenue
+thresholds:
+  light: "value < 0.05"
+  moderate: "0.05 <= value <= 0.15"
+  heavy: "value > 0.15"
+interpretation:
+  light: 轻资产模式，资本支出极低，自由现金流充裕，盈利能力通常较强
+  moderate: 资本支出适中，处于稳定扩张或设备维护阶段，需关注投资是增长型还是维护型
+  heavy: 重资产高投入，扩张期资本占用大，需关注项目投资回报周期与外部融资依赖程度

@@ -1,0 +1,14 @@
+name: asset_turnover
+description: 营业收入 / 总资产，衡量资产运营效率；表示每单位资产能创造多少收入，是杜邦分析的核心组成部分
+required_facts:
+  - revenue
+  - total_assets
+formula: revenue / total_assets
+thresholds:
+  high: "value >= 0.80"
+  medium: "0.40 <= value <= 0.80"
+  low: "value < 0.40"
+interpretation:
+  high: 资产周转率高，单位资产创收能力强，通常为轻资产或高频次消费模式
+  medium: 资产周转处于正常区间，需结合行业特性对比，重资产行业此水平可接受
+  low: 资产周转率低，资产闲置或利用效率不足，需关注是否处于产能建设期或资产质量问题

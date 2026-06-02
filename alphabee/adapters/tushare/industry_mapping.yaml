@@ -1,0 +1,28 @@
+# AlphaBee Tushare Adapter — 行业指数字段映射
+# API: index_classify()、index_daily()、index_dailybasic()
+
+index_classify:
+  index_code:     sw_code
+  industry_name:  industry_name
+
+index_daily:
+  close:      industry_close
+  pct_chg:    industry_change_pct
+
+index_dailybasic:
+  pe_ttm:     industry_pe_ttm
+  pe:         industry_pe_ttm   # fallback if pe_ttm missing
+  pb:         industry_pb
+  total_mv:   industry_total_mv   # 原始单位：万元；÷ 10000 换算为亿元
+  float_mv:   industry_float_mv   # 原始单位：万元
+
+# ─────────────────────────────────────────
+# 申万行业日行情 sw_daily()
+# 注：sw_daily 使用 pct_change（非标准 pct_chg）
+# ─────────────────────────────────────────
+sw_daily:
+  close:       industry_close
+  pct_change:  industry_change_pct
+  pe:          industry_pe_ttm
+  pb:          industry_pb
+  float_mv:    industry_float_mv

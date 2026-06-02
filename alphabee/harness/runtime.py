@@ -8,6 +8,7 @@ from typing import Any, TypedDict
 from uuid import uuid4
 
 from langchain_core.messages import SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -1052,6 +1053,7 @@ class HarnessRuntime:
         issues: list[Issue] | None = None,
         run_id: str | None = None,
         thread_id: str | None = None,
+        parent_config: RunnableConfig | None = None,
     ) -> HarnessExecutionResult:
         initial_state = create_initial_harness_state(
             goal=goal,
@@ -1064,7 +1066,9 @@ class HarnessRuntime:
             run_id=run_id,
         )
         _store_snapshot(self.store, initial_state["run"].id, "initial", initial_state)
-        config = {"configurable": {"thread_id": thread_id or initial_state["run"].id}}
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id or initial_state["run"].id}}
+        if parent_config and parent_config.get("callbacks"):
+            config["callbacks"] = parent_config["callbacks"]
         final_state = await self.graph.ainvoke(initial_state, config=config)
         return HarnessExecutionResult.model_validate(final_state)
 

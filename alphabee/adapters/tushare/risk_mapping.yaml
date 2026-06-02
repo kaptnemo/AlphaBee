@@ -1,0 +1,23 @@
+# AlphaBee Tushare Adapter — 风险字段映射
+# API: pledge_stat()、repurchase()、stk_rewards()
+
+pledge_stat:
+  end_date:       period
+  pledge_ratio:   pledge_ratio
+  pledge_count:   pledge_count
+  unrest_pledge:  unreleased_pledge
+  rest_pledge:    released_pledge
+  total_share:    total_shares
+
+repurchase:
+  end_date:    period
+  vol:         repurchase_volume
+  amount:      repurchase_amount   # 元
+  high_limit:  repurchase_high_limit
+  low_limit:   repurchase_low_limit
+  proc:        repurchase_progress
+
+stk_rewards:
+  name:    executive_name
+  title:   executive_title
+  reward:  executive_reward   # 万元

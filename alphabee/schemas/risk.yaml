@@ -1,0 +1,197 @@
+# AlphaBee 内部标准字段 — 风险域
+# 覆盖：股权质押、回购、高管薪酬
+# 频率：事件驱动 / 季度
+
+# ─────────────────────────────────────────
+# 股权质押 (Equity Pledge)
+# ─────────────────────────────────────────
+
+pledge_ratio:
+  category: risk
+  type: float
+  unit: PERCENT
+  frequency: [quarterly]
+  description: 股权质押比例（%）= 质押股数 / 总股本
+  aliases:
+    zh: [质押比例, 股权质押率, 质押率]
+    en: [pledge ratio, equity pledge ratio]
+  source_mappings:
+    tushare: [pledge_ratio]
+
+pledge_count:
+  category: risk
+  type: int
+  unit: COUNT
+  frequency: [quarterly]
+  description: 质押笔数
+  aliases:
+    zh: [质押笔数, 质押次数]
+    en: [pledge count]
+  source_mappings:
+    tushare: [pledge_count]
+
+unreleased_pledge:
+  category: risk
+  type: float
+  unit: SHARE
+  frequency: [quarterly]
+  description: 未解除质押股数（股）
+  aliases:
+    zh: [未解押股数, 在押股数]
+    en: [unreleased pledge shares, outstanding pledge]
+  source_mappings:
+    tushare: [unrest_pledge]
+
+released_pledge:
+  category: risk
+  type: float
+  unit: SHARE
+  frequency: [quarterly]
+  description: 已解除质押股数（股）
+  aliases:
+    zh: [已解押股数]
+    en: [released pledge shares]
+  source_mappings:
+    tushare: [rest_pledge]
+
+# ─────────────────────────────────────────
+# 回购 (Repurchase)
+# ─────────────────────────────────────────
+
+repurchase_volume:
+  category: risk
+  type: float
+  unit: SHARE
+  frequency: [event]
+  description: 回购股份数量（股）
+  aliases:
+    zh: [回购数量, 回购股数]
+    en: [repurchase volume, buyback shares]
+  source_mappings:
+    tushare: [vol]
+
+repurchase_amount:
+  category: risk
+  type: float
+  unit: CNY
+  frequency: [event]
+  description: 回购金额（元）
+  aliases:
+    zh: [回购金额, 回购总金额]
+    en: [repurchase amount, buyback amount]
+  source_mappings:
+    tushare: [amount]
+
+repurchase_high_limit:
+  category: risk
+  type: float
+  unit: CNY
+  frequency: [event]
+  description: 回购价格上限（元）
+  aliases:
+    zh: [回购价格上限, 回购最高价]
+    en: [repurchase price ceiling]
+  source_mappings:
+    tushare: [high_limit]
+
+repurchase_low_limit:
+  category: risk
+  type: float
+  unit: CNY
+  frequency: [event]
+  description: 回购价格下限（元）
+  aliases:
+    zh: [回购价格下限, 回购最低价]
+    en: [repurchase price floor]
+  source_mappings:
+    tushare: [low_limit]
+
+repurchase_progress:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 回购进展状态（如：董事会预案、股东大会通过、实施中、完成）
+  aliases:
+    zh: [回购进展, 回购状态]
+    en: [repurchase progress, buyback status]
+  source_mappings:
+    tushare: [proc]
+
+# ─────────────────────────────────────────
+# 高管薪酬 (Executive Compensation)
+# ─────────────────────────────────────────
+
+executive_name:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 高管姓名
+  aliases:
+    zh: [高管姓名, 管理层姓名]
+    en: [executive name, manager name]
+  source_mappings:
+    tushare: [name]
+
+executive_title:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 高管职务（如 董事长、总经理、CFO）
+  aliases:
+    zh: [职务, 高管职位]
+    en: [title, position]
+  source_mappings:
+    tushare: [title]
+
+executive_reward:
+  category: risk
+  type: float
+  unit: CNY_10K
+  frequency: [annual]
+  description: 高管年度薪酬（万元）
+  aliases:
+    zh: [高管薪酬, 年薪, 薪资]
+    en: [executive compensation, annual reward]
+  source_mappings:
+    tushare: [reward]
+  notes: Tushare stk_rewards 表，单位为万元。
+
+total_shares:
+  category: risk
+  type: float
+  unit: SHARE
+  frequency: [quarterly]
+  description: 总股本（股），质押统计时点的参考股本
+  aliases:
+    zh: [总股本, 股本总数]
+    en: [total shares, total share capital]
+  source_mappings:
+    tushare: [total_share]
+  notes: 来自 Tushare pledge_stat 表，用于计算质押比例分母。
+
+news_title:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 新闻资讯标题
+  aliases:
+    zh: [新闻标题, 资讯标题]
+    en: [news title, headline]
+  source_mappings:
+    akshare: [新闻标题, title]
+
+news_publish_time:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 新闻发布时间（字符串格式，来自 AkShare）
+  aliases:
+    zh: [发布时间, 新闻时间]
+    en: [publish time, news time]
+  source_mappings:
+    akshare: [发布时间, publish_time]

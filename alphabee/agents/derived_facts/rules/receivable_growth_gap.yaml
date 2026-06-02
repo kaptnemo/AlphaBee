@@ -1,0 +1,17 @@
+name: receivable_growth_gap
+description: 应收账款增速与营收增速之差（百分点），正值越大说明收入增长越依赖赊销而非现金回款，是识别收入质量风险的核心指标
+required_facts:
+  - revenue_yoy
+required_derived_facts:
+  - accounts_receivable_yoy
+formula: accounts_receivable_yoy - revenue_yoy
+thresholds:
+  high_risk: "value >= 40"
+  medium_risk: "20 <= value < 40"
+  low_risk: "10 <= value < 20"
+  healthy: "value < 10"
+interpretation:
+  high_risk: 应收账款增速显著高于营收增速（差值≥40pp），收入增长尚未有效转化为回款，需重点关注收入真实性和坏账风险
+  medium_risk: 应收账款增速快于营收增速（差值20-40pp），存在一定收入质量风险，建议结合现金流和账龄结构进一步验证
+  low_risk: 应收账款增速略高于营收增速（差值10-20pp），当前风险有限，但需持续观察趋势
+  healthy: 应收账款增速与营收增速基本匹配（差值<10pp），收入回款质量良好

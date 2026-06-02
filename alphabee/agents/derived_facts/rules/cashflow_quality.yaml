@@ -1,0 +1,14 @@
+name: cashflow_quality
+description: 经营现金流与净利润之比，衡量企业盈利的现金兑现能力；比值越高说明盈利质量越好，现金流支持利润的能力越强
+required_facts:
+  - net_profit
+  - operating_cashflow
+formula: operating_cashflow / net_profit
+thresholds:
+  excellent: "value >= 1.0"
+  normal: "0.8 <= value <= 1.0"
+  warning: "value < 0.8"
+interpretation:
+  excellent: 经营现金流充分覆盖净利润，盈利质量极高，利润有真实现金支撑，财务健康度强
+  normal: 现金流基本匹配利润，盈利质量尚可，需关注是否有应收账款或存货占用导致的轻微差异
+  warning: 经营现金流明显低于净利润，利润可能存在水分，应排查应收账款扩张、存货积压或利润提前确认等问题

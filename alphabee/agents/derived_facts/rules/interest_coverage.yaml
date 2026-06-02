@@ -1,0 +1,14 @@
+name: interest_coverage
+description: 息税前利润（EBIT）/ 利息费用，衡量企业偿付利息的能力与财务安全边际；比值越高财务压力越小
+required_facts:
+  - ebit
+  - interest_expense
+formula: ebit / interest_expense
+thresholds:
+  safe: "value >= 5"
+  adequate: "2 <= value <= 5"
+  risky: "value < 2"
+interpretation:
+  safe: 利息保障倍数充裕，盈利大幅下滑仍能覆盖利息，短期偿债压力极低
+  adequate: 利息保障基本足够，但需关注盈利波动风险，建议同步观察负债到期结构
+  risky: 利息保障不足，业绩轻微下滑即可能面临偿债困难，财务风险较高

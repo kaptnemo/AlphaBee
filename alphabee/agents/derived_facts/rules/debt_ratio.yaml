@@ -1,0 +1,14 @@
+name: debt_ratio
+description: 总负债 / 总资产，衡量企业整体财务杠杆水平；不同行业有不同合理区间（金融/房地产需单独参考行业基准）
+required_facts:
+  - total_liabilities
+  - total_assets
+formula: total_liabilities / total_assets
+thresholds:
+  conservative: "value < 0.40"
+  moderate: "0.40 <= value <= 0.65"
+  aggressive: "value > 0.65"
+interpretation:
+  conservative: 负债率低，财务结构稳健，具备较大的加杠杆空间，抗风险能力强
+  moderate: 杠杆适中，属于大多数制造业和消费业的正常区间，需结合现金流与利息保障倍数综合判断
+  aggressive: 负债率偏高，关注再融资风险、信用资质及利率敏感性；若现金流同步恶化则风险显著上升

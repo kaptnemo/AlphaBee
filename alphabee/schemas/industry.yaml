@@ -1,0 +1,167 @@
+# AlphaBee 内部标准字段 — 行业域
+# 覆盖：行业估值、行业表现、成分股、行业增速
+# 数据来源：AkShare（东方财富板块）、Tushare（申万指数）
+
+industry_name:
+  category: industry
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 行业名称（东方财富或申万一级分类）
+  aliases:
+    zh: [行业名称, 板块名称]
+    en: [industry name, sector name]
+  source_mappings:
+    tushare: [industry_name]
+    akshare: [板块名称, name]
+
+industry_code:
+  category: industry
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 东方财富行业板块代码
+  aliases:
+    zh: [行业代码, 板块代码]
+    en: [industry code, board code]
+  source_mappings:
+    akshare: [板块代码, code]
+
+sw_code:
+  category: industry
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 申万行业指数代码（如 801020.SI）
+  aliases:
+    zh: [申万代码, 申万指数代码]
+    en: [Shenwan index code, SW index code]
+  source_mappings:
+    tushare: [index_code]
+
+industry_pe_ttm:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [daily, monthly]
+  description: 行业整体市盈率 TTM（倍）
+  aliases:
+    zh: [行业PE, 行业市盈率, 板块PE]
+    en: [industry PE TTM, sector PE]
+  source_mappings:
+    tushare: [pe_ttm, pe]
+
+industry_pb:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [daily, monthly]
+  description: 行业整体市净率（倍）
+  aliases:
+    zh: [行业PB, 行业市净率, 板块PB]
+    en: [industry PB, sector PB]
+  source_mappings:
+    tushare: [pb]
+    akshare: [市净率]
+
+industry_total_mv:
+  category: industry
+  type: float
+  unit: CNY_100M
+  frequency: [daily]
+  description: 行业总市值（亿元）
+  aliases:
+    zh: [行业总市值, 板块总市值]
+    en: [industry total market cap]
+  source_mappings:
+    tushare: [total_mv]
+    akshare: [总市值]
+  notes: Tushare index_dailybasic 单位为万元，adapter 层除以10000转换为亿元。
+
+industry_close:
+  category: industry
+  type: float
+  unit: POINT
+  frequency: [daily]
+  description: 行业指数最新价格（点）
+  aliases:
+    zh: [行业指数价格, 板块收盘点位, 行业收盘]
+    en: [industry index close, sector index price]
+  source_mappings:
+    tushare: [close]
+    akshare: [收盘]
+
+industry_change_pct:
+  category: industry
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 行业指数今日涨跌幅（%）
+  aliases:
+    zh: [行业涨跌幅, 板块涨跌幅, 行业涨幅]
+    en: [industry change pct, sector return]
+  source_mappings:
+    tushare: [pct_change]
+    akshare: [涨跌幅]
+
+industry_float_mv:
+  category: industry
+  type: float
+  unit: CNY_100M
+  frequency: [daily]
+  description: 行业流通市值（亿元）
+  aliases:
+    zh: [行业流通市值]
+    en: [industry float market cap]
+  source_mappings:
+    tushare: [float_mv]
+
+industry_turnover_rate:
+  category: industry
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 行业今日换手率（%）
+  aliases:
+    zh: [行业换手率, 板块换手率]
+    en: [industry turnover rate]
+  source_mappings:
+    akshare: [换手率]
+
+industry_up_count:
+  category: industry
+  type: int
+  unit: COUNT
+  frequency: [daily]
+  description: 今日行业内上涨家数
+  aliases:
+    zh: [上涨家数, 涨家数]
+    en: [advancing stocks count, up count]
+  source_mappings:
+    akshare: [上涨家数]
+
+industry_down_count:
+  category: industry
+  type: int
+  unit: COUNT
+  frequency: [daily]
+  description: 今日行业内下跌家数
+  aliases:
+    zh: [下跌家数, 跌家数]
+    en: [declining stocks count, down count]
+  source_mappings:
+    akshare: [下跌家数]
+
+industry_revenue_yoy:
+  category: industry
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 行业营收同比增长率（%），用于市场份额变化计算
+  aliases:
+    zh: [行业营收增速, 行业增速, 板块营收增速]
+    en: [industry revenue growth YoY, sector revenue YoY]
+  required_by:
+    derived_facts: [market_share_change]
+  source_mappings: {}
+  notes: 当前无直接数据源接口，需从行业成分股财务数据加权汇总计算，或引入外部宏观/行业数据库。

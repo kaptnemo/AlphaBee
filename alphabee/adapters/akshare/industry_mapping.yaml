@@ -1,0 +1,42 @@
+# AlphaBee AkShare Adapter — 行业字段映射
+# API: stock_board_industry_name_em()、stock_board_industry_hist_em()、stock_board_industry_cons_em()
+
+# ─────────────────────────────────────────
+# 行业板块列表快照 stock_board_industry_name_em()
+# ─────────────────────────────────────────
+board_snapshot:
+  板块名称:  industry_name
+  板块代码:  industry_code
+  最新价:    industry_close
+  涨跌额:    _price_change_raw
+  涨跌幅:    industry_change_pct
+  总市值:    industry_total_mv     # 原始单位：亿元（直接使用）
+  换手率:    industry_turnover_rate
+  上涨家数:  industry_up_count
+  下跌家数:  industry_down_count
+  市盈率-动态: industry_pe_ttm
+  市净率:    industry_pb
+
+# ─────────────────────────────────────────
+# 行业历史 K 线 stock_board_industry_hist_em()
+# ─────────────────────────────────────────
+board_hist:
+  日期:   trade_date
+  收盘:   industry_close
+  开盘:   industry_open
+  最高:   industry_high
+  最低:   industry_low
+  涨跌幅: industry_change_pct
+  成交量: industry_volume
+  成交额: industry_amount
+
+# ─────────────────────────────────────────
+# 行业成分股 stock_board_industry_cons_em()
+# ─────────────────────────────────────────
+board_cons:
+  代码:       constituent_code
+  名称:       constituent_name
+  最新价:     constituent_close
+  涨跌幅:     constituent_change_pct
+  总市值:     constituent_total_mv
+  流通市值:   constituent_circ_mv

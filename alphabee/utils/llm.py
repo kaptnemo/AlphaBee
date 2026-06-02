@@ -229,7 +229,6 @@ langfuse_handler = CallbackHandler()
 def create_chat_model(component: str, **kwargs: Any) -> ChatOpenAI:
     callbacks = list(kwargs.pop("callbacks", []) or [])
     callbacks.append(TokenUsageCallbackHandler(component))
-    callbacks.append(langfuse_handler)
 
     tags = list(kwargs.pop("tags", []) or [])
     tags.append(f"component:{component}")

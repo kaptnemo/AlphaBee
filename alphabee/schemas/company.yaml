@@ -1,0 +1,316 @@
+# AlphaBee 内部标准字段 — 公司基本信息域
+# 覆盖：公司档案、管理层、股权结构
+# 频率：静态 / 年度更新
+
+company_name:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 公司名称（A股上市公司简称）
+  aliases:
+    zh: [公司名称, 股票简称, 名称]
+    en: [company name, stock name]
+  source_mappings:
+    tushare: [name]
+
+stock_code:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 股票代码（Tushare 格式，如 600519.SH）
+  aliases:
+    zh: [股票代码, 证券代码]
+    en: [stock code, ticker, ts_code]
+  source_mappings:
+    tushare: [ts_code]
+
+industry:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 所属申万行业（一级分类，如 白酒、医药生物）
+  aliases:
+    zh: [行业, 所属行业, 申万行业]
+    en: [industry, sector]
+  source_mappings:
+    tushare: [industry]
+
+market:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 上市板块（主板、创业板、科创板、北交所等）
+  aliases:
+    zh: [板块, 上市板块, 市场]
+    en: [market, listing board]
+  source_mappings:
+    tushare: [market]
+
+list_date:
+  category: company
+  type: str
+  unit: DATE
+  frequency: [static]
+  description: 上市日期（YYYYMMDD）
+  aliases:
+    zh: [上市日期, 上市时间]
+    en: [listing date, IPO date]
+  source_mappings:
+    tushare: [list_date]
+
+area:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 注册地区（省份级，如 贵州、广东）
+  aliases:
+    zh: [地区, 所在地, 注册地]
+    en: [area, region]
+  source_mappings:
+    tushare: [area]
+
+exchange:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 上市交易所（SSE=上交所, SZSE=深交所, BSE=北交所）
+  aliases:
+    zh: [交易所, 上市交易所]
+    en: [exchange, stock exchange]
+  source_mappings:
+    tushare: [exchange]
+
+chairman:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 董事长姓名
+  aliases:
+    zh: [董事长]
+    en: [chairman, board chairman]
+  source_mappings:
+    tushare: [chairman]
+
+manager:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 总经理（CEO）姓名
+  aliases:
+    zh: [总经理, CEO]
+    en: [CEO, general manager]
+  source_mappings:
+    tushare: [manager]
+
+registered_capital:
+  category: company
+  type: float
+  unit: CNY
+  frequency: [annual]
+  description: 注册资本（元）
+  aliases:
+    zh: [注册资本, 注册资金]
+    en: [registered capital]
+  source_mappings:
+    tushare: [reg_capital]
+  notes: Tushare 原始单位为万元，adapter 层应乘以 10000 转换为元。
+
+employees:
+  category: company
+  type: int
+  unit: PERSON
+  frequency: [annual]
+  description: 员工总数（人）
+  aliases:
+    zh: [员工数, 员工人数, 职工人数]
+    en: [employees, headcount]
+  source_mappings:
+    tushare: [employees]
+
+province:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 注册省份
+  aliases:
+    zh: [省份, 所在省]
+    en: [province]
+  source_mappings:
+    tushare: [province]
+
+city:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 注册城市
+  aliases:
+    zh: [城市, 所在城市]
+    en: [city]
+  source_mappings:
+    tushare: [city]
+
+website:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 公司官方网站 URL
+  aliases:
+    zh: [官网, 网站]
+    en: [website, official website]
+  source_mappings:
+    tushare: [website]
+
+main_business:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 主营业务描述
+  aliases:
+    zh: [主营业务, 主要业务]
+    en: [main business, core business]
+  source_mappings:
+    tushare: [main_business]
+
+top10_holder_name:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [quarterly]
+  description: 前十大股东名称
+  aliases:
+    zh: [股东名称, 大股东]
+    en: [shareholder name, top holder]
+  source_mappings:
+    tushare: [holder_name]
+
+top10_holder_amount:
+  category: company
+  type: float
+  unit: SHARE
+  frequency: [quarterly]
+  description: 前十大股东持股数量（股）
+  aliases:
+    zh: [持股数量, 持股股数]
+    en: [shares held, holding amount]
+  source_mappings:
+    tushare: [hold_amount]
+
+top10_holder_ratio:
+  category: company
+  type: float
+  unit: PERCENT
+  frequency: [quarterly]
+  description: 前十大股东持股比例（%）
+  aliases:
+    zh: [持股比例, 持股占比]
+    en: [holding ratio, shareholding percentage]
+  source_mappings:
+    tushare: [hold_ratio]
+
+secretary:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 证券事务代表姓名
+  aliases:
+    zh: [证券事务代表, 董事会秘书]
+    en: [board secretary, investor relations officer]
+  source_mappings:
+    tushare: [secretary]
+
+introduction:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 公司简介（来自股票公司基本信息）
+  aliases:
+    zh: [公司简介, 公司介绍]
+    en: [company introduction, company overview]
+  source_mappings:
+    tushare: [introduction]
+
+tel:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 联系电话
+  aliases:
+    zh: [电话, 联系电话, 公司电话]
+    en: [telephone, phone number]
+  source_mappings:
+    tushare: [tel]
+
+email:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 公司联系邮箱
+  aliases:
+    zh: [邮箱, 电子邮件]
+    en: [email, contact email]
+  source_mappings:
+    tushare: [email]
+
+business_scope:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 经营范围
+  aliases:
+    zh: [经营范围, 业务范围]
+    en: [business scope, scope of operations]
+  source_mappings:
+    tushare: [business_scope]
+
+sector:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 证券分类（如 沪深300、中证500、科创板等）
+  aliases:
+    zh: [板块, 分类, 证券分类]
+    en: [sector, security category]
+  source_mappings:
+    tushare: [sector]
+
+list_status:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 上市状态（L-上市 D-退市 P-暂停上市）
+  aliases:
+    zh: [上市状态, 交易状态]
+    en: [listing status, trading status]
+  source_mappings:
+    tushare: [list_status]
+
+currency_type:
+  category: company
+  type: str
+  unit: TEXT
+  frequency: [static]
+  description: 交易货币类型（如 CNY、USD、HKD）
+  aliases:
+    zh: [货币类型, 计价货币]
+    en: [currency type, trading currency]
+  source_mappings:
+    tushare: [curr_type]

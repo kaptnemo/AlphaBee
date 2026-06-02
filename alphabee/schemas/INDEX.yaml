@@ -1,0 +1,101 @@
+# AlphaBee 标准字段索引
+# 扫描日期：自动维护
+# 来源：alphabee/schemas/*.yaml + alphabee/adapters/*/
+#
+# 此文件汇总所有域的字段，是 schema-steward 的入口。
+# 不要手动编辑；通过 schema steward 工具更新。
+
+domains:
+  financial:
+    file: schemas/financial.yaml
+    description: 财务报表域（利润表、资产负债表、现金流量表、财务比率、成长性）
+    field_count: 30
+    primary_source: tushare
+    apis: [income, balancesheet, cashflow, fina_indicator]
+
+  market:
+    file: schemas/market.yaml
+    description: 行情与估值域（日行情、估值、资金流向、均线）
+    field_count: 22
+    primary_source: tushare
+    apis: [daily, daily_basic, moneyflow]
+
+  company:
+    file: schemas/company.yaml
+    description: 公司基本信息域（档案、管理层、股权结构）
+    field_count: 26
+    primary_source: tushare
+    apis: [stock_basic, stock_company, top10_holders, stk_managers]
+
+  industry:
+    file: schemas/industry.yaml
+    description: 行业域（估值、表现、成分股）
+    field_count: 12
+    primary_source: [tushare, akshare]
+    apis: [index_classify, index_daily, index_dailybasic, stock_board_industry_*]
+
+  expectation:
+    file: schemas/expectation.yaml
+    description: 预期与预告域（业绩预告、业绩快报）
+    field_count: 14
+    primary_source: tushare
+    apis: [forecast, express]
+
+  risk:
+    file: schemas/risk.yaml
+    description: 风险域（股权质押、回购、高管薪酬、新闻）
+    field_count: 16
+    primary_source: [tushare, akshare]
+    apis: [pledge_stat, repurchase, stk_rewards, stock_news_em]
+
+  operation:
+    file: schemas/operation.yaml
+    description: 主营业务构成域（业务分项收入、成本、利润、毛利率）
+    field_count: 5
+    primary_source: tushare
+    apis: [fina_mainbz]
+
+adapters:
+  tushare:
+    financial_mapping:   adapters/tushare/financial_mapping.yaml
+    market_mapping:      adapters/tushare/market_mapping.yaml
+    company_mapping:     adapters/tushare/company_mapping.yaml
+    industry_mapping:    adapters/tushare/industry_mapping.yaml
+    expectation_mapping: adapters/tushare/expectation_mapping.yaml
+    risk_mapping:        adapters/tushare/risk_mapping.yaml
+    operation_mapping:   adapters/tushare/operation_mapping.yaml
+  akshare:
+    industry_mapping:    adapters/akshare/industry_mapping.yaml
+    risk_mapping:        adapters/akshare/risk_mapping.yaml
+
+# ─────────────────────────────────────────
+# 已识别的 Gap 字段（规则引用但暂无数据源接口）
+# ─────────────────────────────────────────
+field_gaps:
+  - field: avg_shareholders_equity
+    used_by: derived_facts/rules/roe_level.yaml
+    gap: 需调用方从多期 shareholders_equity 计算，不直接来自 Tushare
+
+  - field: ebit
+    used_by: derived_facts/rules/interest_coverage.yaml
+    gap: Tushare 无直接字段；建议用 operating_profit 近似，或 net_profit + interest_expense + income_tax
+
+  - field: inventory_yoy
+    used_by: derived_facts/rules/inventory_pressure.yaml
+    gap: 需调用方从多期 inventory 计算同比增速
+
+  - field: accounts_receivable_prev
+    used_by: derived_facts/rules/accounts_receivable_yoy.yaml
+    gap: 需调用方从多期 accounts_receivable 数据取上一期（同比对应期）填充
+
+  - field: gross_margin_prev
+    used_by: derived_facts/rules/gross_margin_trend.yaml
+    gap: 需调用方从多期数据取上一期 gross_margin
+
+  - field: pe_ttm_5y_avg
+    used_by: derived_facts/rules/valuation_compression.yaml
+    gap: 需调用方从 Tushare daily_basic 历史数据聚合计算
+
+  - field: industry_revenue_yoy
+    used_by: derived_facts/rules/market_share_change.yaml
+    gap: 无直接 API；需从行业成分股财务数据加权汇总，或引入外部行业数据库

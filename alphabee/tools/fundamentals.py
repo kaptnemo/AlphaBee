@@ -73,7 +73,7 @@ class Summary(BaseModel):
 
 class Fundamentals(BaseModel):
     """A股公司多期基本面数据汇总"""
-    symbol: str = Field(description="股票代码（Tushare格式，如 '600519.SH'）")
+    stock_code: str = Field(description="股票代码（Tushare格式，如 '600519.SH'）")
     name: str = Field(description="股票名称，如'贵州茅台'")
     periods: list[str] = Field(description="包含的报告期列表，按时间倒序排列（最新在前）")
     income_statements: list[IncomeStatement] = Field(description="多期利润表，按时间倒序")
@@ -137,7 +137,7 @@ def _lookup_row(df, date: str, date_col: str = "end_date"):
 
 async def _generate_summary(
     name: str,
-    ts_code: str,
+    stock_code: str,
     income_list: list[IncomeStatement],
     balance_list: list[BalanceSheet],
     cf_list: list[CashFlow],
@@ -183,7 +183,7 @@ async def _generate_summary(
 
     prompt = (
         "你是一位专业的A股证券分析师。请根据以下多期财务数据，对该公司进行简明扼要的基本面趋势分析。\n\n"
-        f"公司：{name}（{ts_code}）\n\n"
+        f"公司：{name}（{stock_code}）\n\n"
         f"多期财务数据（最新在前，共{len(rows)}期）：\n"
         f"{json.dumps(rows, ensure_ascii=False, indent=2)}\n\n"
         "请关注各指标的趋势变化（改善/恶化/稳定），并严格按以下JSON格式返回分析结果"
@@ -360,7 +360,7 @@ async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
 
         summary = await _generate_summary(
             name=name,
-            ts_code=ts_code,
+            stock_code=ts_code,
             income_list=income_list,
             balance_list=balance_list,
             cf_list=cf_list,
@@ -369,7 +369,7 @@ async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
         )
 
         return Fundamentals(
-            symbol=ts_code,
+            stock_code=ts_code,
             name=name,
             periods=ref_dates,
             income_statements=income_list,

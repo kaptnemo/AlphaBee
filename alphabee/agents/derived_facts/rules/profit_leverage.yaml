@@ -1,0 +1,14 @@
+name: profit_leverage
+description: 净利润增速与营收增速之差（百分点），衡量盈利增长是否具有"杠杆效应"，即收入增长能否带来更高比例的利润增长
+required_facts:
+  - net_profit_yoy
+  - revenue_yoy
+formula: net_profit_yoy - revenue_yoy
+thresholds:
+  leveraged: "value > 10"
+  matched: "-10 <= value <= 10"
+  diluted: "value < -10"
+interpretation:
+  leveraged: 利润增速显著高于收入增速，规模效益或费用控制优秀，经营杠杆正向释放
+  matched: 利润与收入增速大体匹配，盈利扩张稳健但尚未出现明显的利润释放
+  diluted: 利润增速低于收入增速，费用扩张或毛利压缩侵蚀盈利，需警惕增收不增利
