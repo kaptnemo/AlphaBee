@@ -1,0 +1,60 @@
+id: anomaly_cluster_risk
+
+name: 多指标异常聚集风险
+
+category: anomaly
+
+dimension: cross_validation
+
+description: >
+  当勾稽关系异常检测发现 2 个或更多异常指标同时触发时，
+  说明财务报表中存在系统性而非偶然性问题。
+  单条异常可能是数据噪音，多条同时触发则高度警示。
+
+required_facts: []
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: anomaly_pattern_count >= 2
+
+  medium:
+    condition: anomaly_high_count >= 2
+
+  low:
+    condition: anomaly_triggered_count >= 2
+
+interpretation_templates:
+
+  high: >
+    勾稽关系异常检测检出 2 个或更多异常模式同时命中，
+    说明财务报表中存在系统性矛盾，需逐条排查各异常模式
+    的拷问清单以排除操纵嫌疑。
+
+  medium: >
+    多条勾稽关系指标同时偏离历史基线（≥2 条高等级异常），
+    财务数据的自洽性存疑，建议优先核查最高 z-score 的异常项。
+
+  low: >
+    少数勾稽关系指标出现温和偏离（≥2 条触发），
+    当前偏离程度有限，但需持续关注后续趋势。
+
+  none: >
+    各项勾稽关系指标均处于历史正常波动区间，
+    财务数据内部自洽性良好，未发现显著异常。
+
+critic_questions:
+  - 触发的异常指标是否集中在同一维度（如盈利质量）还是跨多维度？
+  - 最强的异常指标（最高 z-score）的偏离方向是否与公司商业模式一致？
+  - 是否有季节性因素可以解释部分偏离？
+  - 若多期数据可用，本期异常在历史上是否出现过类似模式？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive

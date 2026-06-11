@@ -1,0 +1,61 @@
+id: credit_risk
+
+name: 信用风险
+
+description: >
+  评估企业债务结构和短期偿债能力，识别财务杠杆过高或
+  短期流动性不足带来的信用风险。
+  高信用风险意味着企业可能面临再融资困难或债务违约风险。
+
+signal_dimension_key: credit_risk
+
+interpretation_templates:
+
+  strong_positive: >
+    公司信用状况优秀，负债率低，流动性充裕，
+    偿债能力强，短期内几乎不存在信用风险。
+
+  positive: >
+    公司信用状况良好，财务杠杆适中，
+    短期偿债能力较强，信用风险处于可控范围。
+
+  neutral: >
+    公司信用状况一般，负债率处于中等水平，
+    需关注负债结构和到期偿债安排，防范潜在流动性压力。
+
+  negative: >
+    公司信用风险偏高，负债率较高或流动比率偏低，
+    需警惕再融资风险和债务到期压力，
+    建议深入分析债务结构和现金储备情况。
+
+  strong_negative: >
+    公司信用风险显著，同时面临高杠杆和流动性不足的双重压力，
+    存在较高的债务违约或资金链断裂风险，
+    需高度谨慎评估投资安全边际。
+
+critic_questions:
+
+  - question: 负债率上升是否由战略性扩张或并购驱动，是主动加杠杆还是经营恶化被动加杠杆？
+    category: counter_evidence
+    severity: critical
+    trigger_on: [negative, strong_negative]
+
+  - question: 短期债务到期情况如何，再融资渠道（银行授信、债券、股权）是否畅通？
+    category: evidence_gap
+    severity: critical
+    trigger_on: [negative, strong_negative]
+
+  - question: 是否属于金融、房地产等高杠杆行业？应使用行业基准而非绝对阈值评估负债率？
+    category: industry_cycle
+    severity: important
+    trigger_on: [negative, strong_negative, neutral]
+
+  - question: 利息覆盖倍数（EBIT / 利息支出）是否合理？经营利润是否足以覆盖财务费用？
+    category: evidence_gap
+    severity: important
+    trigger_on: [negative, strong_negative]
+
+  - question: 是否有表外负债（如经营租赁、或有负债）未纳入分析？
+    category: accounting_policy
+    severity: important
+    trigger_on: [negative, strong_negative]

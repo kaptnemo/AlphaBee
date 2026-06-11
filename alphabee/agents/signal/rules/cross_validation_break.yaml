@@ -1,0 +1,65 @@
+id: cross_validation_break
+
+name: 勾稽关系断裂风险
+
+category: anomaly
+
+dimension: cross_validation
+
+description: >
+  当单条勾稽关系的 z-score 偏离超过 2.5σ 时，
+  说明该项关联关系的本期值显著偏离历史模式。
+  勾稽关系断裂是财务操纵的最早期预警信号之一。
+
+required_facts: []
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: anomaly_max_zscore > 3.0
+
+  medium:
+    condition: anomaly_max_zscore > 2.5
+
+  low:
+    condition: anomaly_max_zscore > 2.0
+
+interpretation_templates:
+
+  high: >
+    至少一条勾稽关系严重断裂（z-score > 3.0σ），
+    对应指标本期数值与历史基线严重偏离。
+    需立排查对应规则的拷问清单，确认是正常经营变化还是操纵痕迹。
+
+  medium: >
+    存在显著勾稽关系断裂（z-score > 2.5σ），
+    对应指标偏离程度超过 99% 置信区间，建议重点核查。
+
+  low: >
+    轻度勾稽关系偏离（z-score > 2.0σ），
+    本期数据与历史模式存在一定差异，持续观察即可。
+
+  none: >
+    各项勾稽关系均未显著偏离历史基线，
+    三表之间的内在逻辑一致。
+
+critic_questions:
+  - 偏离最大的勾稽关系是什么？z-score 偏离方向是向上还是向下？
+  - 偏离的指标是否与公司近期重大事项（并购、减值、会计政策变更）相关？
+  - 偏离方向是否符合公司当前战略（如主动扩张导致存货上升）？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  earnings_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive

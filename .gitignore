@@ -10,6 +10,7 @@ __pycache__/
 # test outputs
 outputs/
 data/
+large_tool_results/
 
 # env files
 .env

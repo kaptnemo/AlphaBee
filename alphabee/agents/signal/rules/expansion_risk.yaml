@@ -1,0 +1,76 @@
+id: expansion_risk
+
+name: 扩张风险
+
+category: financial_quality
+
+dimension: expansion_risk
+
+description: >
+  评估公司通过资本支出或并购扩张带来的财务风险，
+  综合商誉占净资产比例、负债率和资本支出强度三个维度。
+  当多指标同时偏高风险时发出预警：高商誉+高杠杆的扩张模式
+  往往隐藏较大减值与流动性风险。
+
+required_facts:
+  - total_assets
+  - total_liabilities
+  - shareholders_equity
+
+required_derived_facts:
+  - goodwill_risk
+  - debt_ratio
+  - capex_intensity
+
+trigger_rules:
+
+  high:
+    condition: goodwill_risk >= 0.3 and debt_ratio > 0.5
+
+  medium:
+    condition: goodwill_risk >= 0.1 or (debt_ratio > 0.6 and capex_intensity >= 0.15)
+
+  low:
+    condition: debt_ratio > 0.5 or capex_intensity >= 0.1
+
+interpretation_templates:
+
+  high: >
+    同时满足高商誉占比（≥30%）和高负债率（>50%），
+    表明公司通过高杠杆并购进行扩张。一旦被收购标的业绩不达预期，
+    将同时面临商誉减值和债务偿付双重压力，风险显著。
+
+  medium: >
+    存在中等程度扩张风险：商誉占比较高或在高负债下仍保持较大资本支出。
+    建议核查被收购标的业绩承诺完成情况、商誉减值测试假设合理性，
+    以及后续融资渠道是否畅通。
+
+  low: >
+    负债率偏高或资本支出较大，单一指标尚在可控范围。
+    需关注后续现金流是否足以覆盖投资与偿债需求。
+
+  none: >
+    扩张方式审慎，财务杠杆适中，商誉占比低。
+    公司增长主要通过内源积累而非激进外延并购驱动，扩张风险有限。
+
+critic_questions:
+  - 商誉对应的被收购标的近三年业绩承诺完成率如何？
+  - 商誉减值测试中使用的未来现金流折现假设是否合理？
+  - 资本支出是用于扩大产能的扩张型投资还是设备更新的维持型投资？
+  - 高负债率下银行授信是否充足，再融资渠道是否畅通？
+  - 所处行业是否属于高杠杆特征行业（如金融、房地产），需要行业基准校准？
+  - 并购标的与被收购公司是否存在关联关系或利益输送风险？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  credit_risk:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive

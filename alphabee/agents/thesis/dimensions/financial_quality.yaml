@@ -1,0 +1,58 @@
+id: financial_quality
+
+name: 财务质量
+
+description: >
+  对公司整体财务健康度的综合判断，涵盖收入回款质量、
+  盈利含金量和债务结构三个核心维度。
+  该维度是投资可信度评估的基础。
+
+# 对应各信号规则在 thesis_impact 中使用的 key
+signal_dimension_key: financial_quality
+
+# 各判断档位的解释模板
+interpretation_templates:
+
+  strong_positive: >
+    公司财务质量优秀。收入回款顺畅、盈利质量高、债务结构稳健，
+    财报数据可信度强，财务基础扎实。
+
+  positive: >
+    公司财务质量良好，主要指标运行正常，
+    未发现显著财务质量风险，整体较为健康。
+
+  neutral: >
+    公司财务质量一般，部分指标存在轻度风险信号，
+    需进一步结合行业背景和历史趋势综合判断。
+
+  negative: >
+    公司财务质量偏弱，多项财务指标出现风险信号，
+    包括收入质量、盈利含金量或债务结构等方面存在明显隐患，
+    需深入核查财报真实性。
+
+  strong_negative: >
+    公司财务质量较差，多维度财务风险同时触发，
+    财报可信度存疑，投资前需高度谨慎核实。
+
+# 该维度独有的 Critic 追问（在对应档位触发时添加）
+critic_questions:
+
+  - question: 是否有会计政策变化（如收入确认方式、折旧方法）影响了指标的可比性？
+    category: accounting_policy
+    severity: important
+    trigger_on: [negative, strong_negative]
+
+  - question: 财务指标的恶化是否为行业普遍现象，还是公司个体问题？
+    category: industry_cycle
+    severity: important
+    trigger_on: [negative, strong_negative]
+
+  - question: 是否与同行业头部公司进行了横向对比以校准判断基准？
+    category: comparison
+    severity: important
+    trigger_on: [negative, strong_negative, neutral]
+
+  - question: 当前财务指标是否涵盖足够的历史期间（至少3年）以判断趋势？
+    category: evidence_gap
+    severity: minor
+    trigger_on: [neutral, positive, strong_positive]

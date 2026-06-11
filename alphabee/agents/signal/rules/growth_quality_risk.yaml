@@ -1,0 +1,74 @@
+id: growth_quality_risk
+
+name: 增长质量风险
+
+category: financial_quality
+
+dimension: growth_quality
+
+description: >
+  判断营收增长是否伴随利润同步增长和健康回款速度，
+  识别"以应收账款换增长"或"增收不增利"等增长质量风险。
+  高速增长若伴随应收与营收严重背离或利润增速大幅低于营收增速，
+  则是红色预警信号。
+
+required_facts:
+  - revenue_yoy
+  - net_profit_yoy
+
+required_derived_facts:
+  - revenue_growth
+  - profit_leverage
+  - receivable_growth_gap
+
+trigger_rules:
+
+  high:
+    condition: receivable_growth_gap >= 30 and profit_leverage < 0
+
+  medium:
+    condition: receivable_growth_gap >= 20 or (revenue_growth > 20 and profit_leverage < -10)
+
+  low:
+    condition: revenue_growth > 10 and profit_leverage < 0
+
+interpretation_templates:
+
+  high: >
+    应收账款增速严重高于营收增速（差值≥30pp）同时利润增速低于营收增速，
+    增长质量堪忧。当前增长高度依赖放宽客户信用政策，且增收不增利，
+    需重点审查收入确认政策是否激进、应收账款账龄及坏账计提是否充分。
+
+  medium: >
+    应收账款增长快于营收增长或高速增长下利润未同步释放，
+    增长质量存在隐患。建议检查下游客户付款能力和订单集中度，
+    防范回款周期拉长侵蚀现金流。
+
+  low: >
+    营收回暖但利润尚未同步增长，增长质量处于观察期。
+    可能是扩张初期的阶段性特征，若趋势持续应警惕。
+
+  none: >
+    营收增长与回款匹配，利润同步兑现，增长质量健康。
+    收入增长有真实现金流和利润支撑，增长可持续性强。
+
+critic_questions:
+  - 应收账款增速高于营收是因为大客户账期谈判调整还是普遍性客户信用下沉？
+  - 是否有大合同集中在期末确认收入导致应收激增？
+  - 同行可比公司的应收/营收比率趋势如何？
+  - 应收账款的账龄结构是否恶化（1年以上应收占比是否上升）？
+  - 增收不增利是毛利率下降导致还是费用压力导致？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  earnings_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive

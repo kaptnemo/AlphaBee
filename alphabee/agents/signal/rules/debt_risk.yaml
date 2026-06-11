@@ -1,0 +1,71 @@
+id: debt_risk
+
+name: 债务风险
+
+category: financial_quality
+
+dimension: debt_structure
+
+description: >
+  综合评估企业财务杠杆水平和短期偿债能力，
+  识别负债率偏高或短期流动性不足带来的信用风险。
+  高风险信号需同时满足高负债率和低流动比率两个条件（双重压力）；
+  仅负债率偏高而流动性尚可时归为中风险，避免对高杠杆但现金流充裕的企业过度预警。
+
+required_facts:
+  - total_liabilities
+  - total_assets
+  - current_assets
+  - current_liabilities
+
+required_derived_facts:
+  - debt_ratio
+  - current_ratio
+
+trigger_rules:
+
+  high:
+    condition: debt_ratio > 0.65 and current_ratio < 1.0
+
+  medium:
+    condition: debt_ratio > 0.65
+
+  low:
+    condition: debt_ratio > 0.50
+
+interpretation_templates:
+
+  high: >
+    负债率偏高且流动比率低于1，企业同时面临高杠杆与短期流动性双重压力，
+    信用风险显著，需重点关注再融资能力、利息负担和偿债安排。
+
+  medium: >
+    负债率偏高，整体财务杠杆较激进，
+    建议结合现金流和到期负债结构进一步评估偿债压力。
+
+  low: >
+    负债率中等偏上，目前仍在可接受范围内，
+    但若业务现金流出现波动，则需警惕杠杆压力。
+
+  none: >
+    负债率适中，流动性良好，未发现显著的债务结构风险。
+
+critic_questions:
+  - 负债率上升是否由扩张性投资或并购驱动？
+  - 短期债务到期情况如何，再融资渠道是否畅通？
+  - 是否属于金融或房地产等高杠杆行业，需使用行业基准参考？
+  - 利息支出占经营利润的比例是否合理？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  credit_risk:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive

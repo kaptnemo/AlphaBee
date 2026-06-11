@@ -7,7 +7,12 @@ required_facts，后者只含调用方提供的 canonical 字段）。Engine 按
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from alphabee.agents.derived_facts.registry import RULES, DerivedFactRule, load_rules
+
+if TYPE_CHECKING:
+    from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 
 
 class CyclicDependencyError(Exception):
@@ -69,22 +74,50 @@ class Engine:
     def run(
         self,
         rule_names: list[str],
-        fact_values: dict[str, float],
+        fact_values: dict[str, float] | None = None,
+        *,
+        financial_facts: FinancialFacts | None = None,
+        market_facts: MarketFacts | None = None,
+        extra_fields: dict[str, float] | None = None,
     ) -> dict[str, dict]:
         """按依赖顺序计算 rule_names（含传递依赖），返回每条规则的结果。
 
+        支持两种输入方式，可混用：
+
+        1. **平面值**（dict）：直接传入 ``fact_values``。
+        2. **Pydantic 模型**：传入 ``financial_facts`` / ``market_facts``，
+           引擎自动调用 ``.to_fact_values()`` 展开为平面 dict 并合并。
+
+        优先级：``fact_values`` 先加载，模型值覆盖同名字段，``extra_fields``
+        最后叠加（最高优先级）。
+
         Args:
-            rule_names: 需要计算的规则名列表。
-            fact_values: canonical 字段值字典（由调用方提供）。
+            rule_names:       需要计算的规则名列表。
+            fact_values:      canonical 字段值字典（平面值路径）。
+            financial_facts:  ``FinancialFacts`` 模型实例，自动调用
+                              ``.to_fact_values()`` 提取财务字段。
+            market_facts:     ``MarketFacts`` 模型实例，自动调用
+                              ``.to_fact_values()`` 提取行情字段。
+            extra_fields:     手动补充的字段，优先级最高。
 
         Returns:
             ``{rule_name: result_dict}``，顺序与计算顺序一致。
             result_dict 键：rule_name（计算值）、level、interpretation、
             error（可选）、blocked_by（可选，上游依赖失败时出现）。
         """
+        # ── 合并 fact_values：dict → 模型展开 → extra_fields ─────
+        merged: dict[str, float] = dict(fact_values) if fact_values else {}
+
+        if financial_facts is not None:
+            merged.update(financial_facts.to_fact_values())
+        if market_facts is not None:
+            merged.update(market_facts.to_fact_values())
+        if extra_fields is not None:
+            merged.update(extra_fields)
+
         order = self._resolve_order(rule_names)
 
-        all_values = fact_values.copy()
+        all_values = merged.copy()
         results: dict[str, dict] = {}
         failed: dict[str, str] = {}  # name → error 描述
 

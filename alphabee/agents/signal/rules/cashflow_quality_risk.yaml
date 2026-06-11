@@ -1,0 +1,67 @@
+id: cashflow_quality_risk
+
+name: 现金流质量风险
+
+category: financial_quality
+
+dimension: cashflow_quality
+
+description: >
+  判断企业净利润是否有真实经营现金流支撑，
+  识别盈利质量下降、应收账款或存货占用侵蚀现金流等风险。
+
+required_facts:
+  - operating_cashflow
+  - net_profit
+
+required_derived_facts:
+  - cashflow_quality
+
+trigger_rules:
+
+  high:
+    condition: cashflow_quality < 0.5
+
+  medium:
+    condition: cashflow_quality < 0.8
+
+  low:
+    condition: cashflow_quality < 1.0
+
+interpretation_templates:
+
+  high: >
+    经营现金流严重低于净利润，利润可能存在较大水分，
+    需重点排查应收账款大幅扩张、存货积压或利润提前确认等问题。
+
+  medium: >
+    经营现金流明显低于净利润，现金回款能力偏弱，
+    建议结合应收账款趋势和存货结构进一步验证盈利质量。
+
+  low: >
+    经营现金流略低于净利润，目前风险有限，
+    但需持续观察现金转化趋势，防止盈利质量进一步恶化。
+
+  none: >
+    经营现金流充分覆盖净利润，盈利质量良好，
+    未发现现金流支撑不足的风险信号。
+
+critic_questions:
+  - 是否存在大额应收账款拉长账期？
+  - 存货增速是否显著快于收入增速？
+  - 是否存在利润确认节奏与现金流的异常背离？
+  - 该现象是否为季节性或一次性因素导致？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  earnings_quality:
+    high: negative
+    medium: negative
+    low: slightly_negative
+    none: positive

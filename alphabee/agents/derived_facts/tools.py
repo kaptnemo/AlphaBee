@@ -2,11 +2,74 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from alphabee.agents.derived_facts.engine import Engine
 from alphabee.agents.derived_facts.registry import RULES, load_rules
+from alphabee.agents.facts.tools.financial_fact import extract_financial_facts
+from alphabee.agents.facts.tools.market_fact import extract_market_facts
+
+if TYPE_CHECKING:
+    from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 
 # 模块加载时一次性初始化规则注册表
 load_rules()
+
+
+def extract_and_merge_facts(
+    financial_data: dict[str, Any] | None = None,
+    market_data: dict[str, Any] | None = None,
+    extra_fields: dict[str, float] | None = None,
+    *,
+    financial_facts: FinancialFacts | None = None,
+    market_facts: MarketFacts | None = None,
+) -> dict[str, float]:
+    """从原始 fact tool 输出或 Pydantic 模型中提取 canonical 字段值并合并为平面 dict。
+
+    这是 Fact Collection 层与 DerivedFacts Engine 之间的桥接函数，支持两种输入形式：
+
+    - **原始 dict**（``financial_data`` / ``market_data``）：
+      通过 ``extract_financial_facts()`` / ``extract_market_facts()`` 提取。
+    - **Pydantic 模型**（``financial_facts`` / ``market_facts``）：
+      直接调用 ``.to_fact_values()`` 展开，无需额外提取步骤。
+
+    两种形式可混用，模型值优先级高于原始 dict（后写入覆盖先写入）。
+
+    返回的 dict 可直接传入 evaluate_derived_facts() 的 fact_values 参数。
+
+    Example:
+        # 原始 dict 路径
+        >>> fin = get_financial_fact("600519.SH")
+        >>> mkt = get_market_fact("600519.SH")
+        >>> values = extract_and_merge_facts(financial_data=fin, market_data=mkt)
+
+        # Pydantic 模型路径
+        >>> fin_model = get_financial_facts_model("600519.SH")
+        >>> mkt_model = get_market_facts_model("600519.SH")
+        >>> values = extract_and_merge_facts(financial_facts=fin_model, market_facts=mkt_model)
+
+        >>> evaluate_derived_facts(["cashflow_quality", "debt_ratio"], values)
+    """
+    merged: dict[str, float] = {}
+
+    # ── 原始 dict 路径 ────────────────────────────────────────────
+    if financial_data is not None:
+        merged.update(extract_financial_facts(financial_data))
+
+    if market_data is not None:
+        merged.update(extract_market_facts(market_data))
+
+    # ── Pydantic 模型路径（覆盖同名字段）────────────────────────
+    if financial_facts is not None:
+        merged.update(financial_facts.to_fact_values())
+
+    if market_facts is not None:
+        merged.update(market_facts.to_fact_values())
+
+    if extra_fields is not None:
+        merged.update(extra_fields)
+
+    return merged
 
 
 def list_derived_fact_rules() -> str:
@@ -31,9 +94,25 @@ def list_derived_fact_rules() -> str:
 
 def evaluate_derived_facts(
     rule_names: list[str],
-    fact_values: dict[str, float],
+    fact_values: dict[str, float] | None = None,
+    *,
+    financial_data: dict[str, Any] | None = None,
+    market_data: dict[str, Any] | None = None,
+    financial_facts: FinancialFacts | None = None,
+    market_facts: MarketFacts | None = None,
+    extra_fields: dict[str, float] | None = None,
 ) -> str:
     """对指定规则组合计算衍生事实，返回每条规则的计算值、档位判断和业务解释。
+
+    支持三种输入方式，自动识别，可混用：
+
+    1. **平面值**（程序化调用）：传入 ``fact_values`` 字典。
+    2. **Pydantic 模型**（推荐）：传入 ``financial_facts`` / ``market_facts``，
+       引擎直接调用 ``.to_fact_values()`` 提取字段，无需手工转换。
+    3. **原始 dict**（LLM Agent 调用）：传入 ``financial_data`` / ``market_data``，
+       内部自动通过提取层转为 canonical 字段。
+
+    优先级：``fact_values`` < 原始 dict 提取 < Pydantic 模型 < ``extra_fields``。
 
     支持链式依赖：若某条规则在 required_derived_facts 中声明依赖另一条衍生事实，
     引擎会自动按拓扑顺序先计算依赖规则，并将结果注入后续规则的输入集。
@@ -46,13 +125,16 @@ def evaluate_derived_facts(
     - 综合多维度给出信号灯式诊断
 
     Args:
-        rule_names: 要计算的规则名称列表，例如
-            ["cashflow_quality", "receivable_pressure", "debt_ratio"]。
-            可通过 list_derived_fact_rules() 查看全部可用规则。
-        fact_values: 事实字段值字典，键为字段名，值为数值，例如
-            {"operating_cashflow": 1200, "net_profit": 1000,
-             "accounts_receivable": 800, "revenue": 5000}。
-            字段名需与规则的 required_facts 匹配；缺失字段的规则会被跳过并标注。
+        rule_names:       要计算的规则名称列表，例如
+                          ["cashflow_quality", "receivable_pressure", "debt_ratio"]。
+                          可通过 list_derived_fact_rules() 查看全部可用规则。
+        fact_values:      平面 canonical 字段值字典（程序化路径），例如
+                          {"operating_cashflow": 1200, "net_profit": 1000}。
+        financial_facts:  ``FinancialFacts`` 模型实例（推荐路径），自动展开为 canonical 字段。
+        market_facts:     ``MarketFacts`` 模型实例（推荐路径），自动展开为 canonical 字段。
+        financial_data:   get_financial_fact() 的原始返回 dict（LLM 路径）。
+        market_data:      get_market_fact() 的原始返回 dict（LLM 路径）。
+        extra_fields:     手动补充的字段，如 {"industry_revenue_yoy": 12.5}，优先级最高。
 
     Returns:
         Markdown 格式的衍生事实分析报告，包含每条规则的计算值、档位判断、
@@ -60,6 +142,26 @@ def evaluate_derived_facts(
     """
     if not RULES:
         load_rules()
+
+    # ── 合并所有输入源 ────────────────────────────────────────────
+    merged_values = dict(fact_values) if fact_values else {}
+
+    if financial_data is not None or market_data is not None:
+        merged_values.update(
+            extract_and_merge_facts(
+                financial_data=financial_data,
+                market_data=market_data,
+            )
+        )
+
+    if financial_facts is not None:
+        merged_values.update(financial_facts.to_fact_values())
+
+    if market_facts is not None:
+        merged_values.update(market_facts.to_fact_values())
+
+    if extra_fields is not None:
+        merged_values.update(extra_fields)
 
     unknown_rules = [r for r in rule_names if r not in RULES]
     valid_rules = [r for r in rule_names if r in RULES]
@@ -77,7 +179,7 @@ def evaluate_derived_facts(
 
     try:
         engine = Engine()
-        all_results = engine.run(valid_rules, fact_values)
+        all_results = engine.run(valid_rules, merged_values)
     except Exception as e:
         return f"> ❌ 引擎初始化失败：{e}"
 

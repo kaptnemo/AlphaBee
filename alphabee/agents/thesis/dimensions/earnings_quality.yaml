@@ -1,0 +1,61 @@
+id: earnings_quality
+
+name: 盈利质量
+
+description: >
+  评估企业净利润的含金量和真实性，重点关注利润是否有现金流支撑、
+  收入确认是否激进，以及非经常性损益的影响。
+  高盈利质量意味着净利润能有效转化为经营现金流。
+
+signal_dimension_key: earnings_quality
+
+interpretation_templates:
+
+  strong_positive: >
+    公司盈利质量优秀，净利润充分转化为经营现金流，
+    收入确认保守稳健，盈利数据真实可靠。
+
+  positive: >
+    公司盈利质量较好，现金回款能力强，
+    利润含金量高，未发现显著的利润操纵迹象。
+
+  neutral: >
+    公司盈利质量一般，部分指标显示利润与现金流存在轻度背离，
+    建议持续观察趋势，结合非经常性损益进行核实。
+
+  negative: >
+    公司盈利质量偏弱，净利润增长与经营现金流出现明显背离，
+    或应收账款快速膨胀侵蚀盈利真实性，
+    需重点审查利润确认节奏和应收账款账龄。
+
+  strong_negative: >
+    公司盈利质量令人担忧，利润含金量极低，
+    现金流与利润严重背离，存在利润虚增或收入提前确认的重大风险，
+    建议高度谨慎对待财报利润数据。
+
+critic_questions:
+
+  - question: 是否存在大额非经常性损益项目（如资产处置、政府补贴）影响净利润质量？
+    category: accounting_policy
+    severity: critical
+    trigger_on: [negative, strong_negative]
+
+  - question: 是否连续多期出现利润与现金流背离？一次性因素还是系统性问题？
+    category: evidence_gap
+    severity: critical
+    trigger_on: [negative, strong_negative]
+
+  - question: 应收账款账龄结构如何？是否有大额逾期或坏账风险？
+    category: evidence_gap
+    severity: important
+    trigger_on: [negative, strong_negative]
+
+  - question: 是否存在关联方交易影响收入真实性？
+    category: counter_evidence
+    severity: important
+    trigger_on: [negative, strong_negative]
+
+  - question: 行业账期普遍拉长是否是应收账款增速高于收入增速的合理解释？
+    category: industry_cycle
+    severity: important
+    trigger_on: [negative, neutral]

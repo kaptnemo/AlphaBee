@@ -1,0 +1,188 @@
+# 二阶异常模式库 — 《手把手教你读财报》框架
+#
+# 每个模式定义多个一阶勾稽关系异常的组合条件，
+# 当条件同时满足时触发该模式，附带根因解释和拷问清单。
+
+patterns:
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: inflated_revenue
+    name: "虚增收入嫌疑"
+    severity: high
+    risk_dimension: earnings_quality
+    conditions:
+      - rule_id: ar_revenue_gap
+        min_zscore: 1.5
+        direction: spike
+      - rule_id: cashflow_profit_ratio
+        min_zscore: 1.5
+        direction: drop
+    explanation: >
+      应收增速>营收增速 且 经营现金流<净利润：
+      这是《手财》中反复警示的"收入未被真实回款支撑"的经典信号。
+      收入可能通过放宽信用政策、提前确认或构造交易来虚增。
+    verify_questions:
+      - 前5大客户是否在报告期末集中确认大额收入？
+      - 应收账款账龄是否在恶化（1年以上占比是否上升）？
+      - 是否有客户既是客户又是供应商（循环交易）？
+      - 坏账计提是否充分且计提政策是否连续？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: inventory_shenanigans
+    name: "存货异常"
+    severity: high
+    risk_dimension: financial_quality
+    conditions:
+      - rule_id: inventory_revenue_gap
+        min_zscore: 1.5
+        direction: spike
+    explanation: >
+      存货增速>营收增速且偏离历史基线：
+      若毛利率上升可能是主动备货（正常），
+      若毛利率下降则可能是产品滞销积压或通过少结转成本虚增利润。
+      需结合毛利率方向判断——本模式触发时请核查毛利率同期变化。
+    verify_questions:
+      - 存货中原材料/在产品/产成品的比例是否发生突变？
+      - 存货跌价准备是否充足且计提政策连贯？
+      - 产能利用率和产销率数据是否支持存货增长？
+      - 同行业可比公司的存货周转天数变化趋势如何？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: profit_without_cash
+    name: "利润含金量下降"
+    severity: high
+    risk_dimension: earnings_quality
+    conditions:
+      - rule_id: cashflow_profit_ratio
+        min_zscore: 1.5
+        direction: drop
+    explanation: >
+      经营现金流/净利润比率显著低于历史基线：
+      利润停留在应收账款或存货中，未转化为真实现金。
+      所谓"纸面利润"——账上有利润，但银行账户里没钱。
+    verify_questions:
+      - 经营现金流恶化是应收账款增加还是存货增加导致？
+      - 是否连续多期出现利润与现金流背离？
+      - 是否存在大额非经常性损益撑起利润？
+      - 是否有客户付款节奏或结算方式发生重大变化？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: depreciation_manipulation
+    name: "折旧调节利润嫌疑"
+    severity: medium
+    risk_dimension: earnings_quality
+    conditions:
+      - rule_id: depreciation_rate
+        min_zscore: 1.5
+        direction: drop
+    explanation: >
+      折旧摊销/固定资产比率显著下降：
+      可能通过延长折旧年限或变更折旧方法来减少当期费用、调节利润。
+      对于重资产行业，折旧政策的小幅变化就能对利润产生显著影响。
+    verify_questions:
+      - 会计政策是否有变更（折旧方法、折旧年限、残值率）？
+      - 固定资产成新率是否支持当前的折旧率？
+      - 同行业可比公司的折旧政策是否可比？
+      - 若按行业平均折旧率重算，对利润影响多大？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: high_cash_high_debt
+    name: "大存大贷"
+    severity: high
+    risk_dimension: credit_risk
+    conditions:
+      - rule_id: high_cash_high_debt
+        min_zscore: 1.5
+        direction: spike
+    explanation: >
+      货币资金和有息负债同时显著偏高：
+      账上存了大量现金却还要大量借款——这不符合商业逻辑。
+      通常意味着资金可能被大股东占用、质押受限，
+      或存在表外资金池操作。康得新、康美药业均为经典案例。
+    verify_questions:
+      - 货币资金中受限资金（质押、保证金、冻结）的比例是多少？
+      - 利息收入/货币资金比例是否合理（应不低于活期利率）？
+      - 是否存在大股东占用或关联方资金拆借？
+      - 审计机构是否对货币资金存在性发表过保留意见？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: expense_capitalization
+    name: "费用资本化嫌疑"
+    severity: medium
+    risk_dimension: earnings_quality
+    conditions:
+      - rule_id: margin_expense_gap
+        min_zscore: 1.5
+        direction: drop
+      - rule_id: cashflow_profit_ratio
+        min_zscore: 1.0
+        direction: drop
+    explanation: >
+      费用率下降 + 现金流/利润比率下降：
+      可能通过将当期费用资本化（计入无形资产或在建工程）
+      来推迟费用确认、虚增当期利润。
+    verify_questions:
+      - 研发支出资本化率是否显著高于同行业？
+      - 资本化的研发项目是否已实际产生收入或技术成果？
+      - 若恢复费用化处理，对当期利润的影响有多大？
+      - 在建工程转固的进度是否异常缓慢？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: tax_profit_mismatch
+    name: "所得税与利润不匹配"
+    severity: medium
+    risk_dimension: earnings_quality
+    conditions:
+      - rule_id: effective_tax_rate
+        min_zscore: 1.5
+        direction: drop
+    explanation: >
+      实际税率显著低于法定税率或历史基线：
+      可能通过子公司利润转移、滥用税收优惠、
+      或过度确认递延所得税资产（DTA）来调节净利润。
+      所得税费用是调节利润最隐蔽的手段之一。
+    verify_questions:
+      - 有效税率下降的主要原因（税收优惠/亏损抵扣/递延税项）？
+      - 递延所得税资产的确认是否合理？可回收性如何？
+      - 是否存在大量未确认的递延所得税负债？
+      - 各子公司税率是否合理且与注册地匹配？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: cost_pressure
+    name: "成本挤压"
+    severity: medium
+    risk_dimension: financial_quality
+    conditions:
+      - rule_id: margin_expense_gap
+        min_zscore: 1.5
+        direction: drop
+    explanation: >
+      毛利率下降且偏离历史基线：
+      可能面临原材料涨价、人工成本上升或价格战。
+      对制造业企业，成本挤压是盈利质量恶化的先行信号。
+    verify_questions:
+      - 毛利率下降的主要驱动因素（原材料/人工/折旧/产品结构）？
+      - 是否已在报表中充分披露成本变动原因？
+      - 同行业可比公司的毛利率趋势如何（是行业性还是公司性）？
+
+  # ═══════════════════════════════════════════════════════════════
+  - id: efficiency_gain
+    name: "运营效率提升"
+    severity: low
+    risk_dimension: financial_quality
+    conditions:
+      - rule_id: ar_revenue_gap
+        min_zscore: 1.0
+        direction: drop
+      - rule_id: cashflow_profit_ratio
+        min_zscore: 1.0
+        direction: spike
+    explanation: >
+      应收账款/营收差值缩小 且 现金流/利润比率上升：
+      回款效率提升、利润含金量增强，属于正面信号。
+      可能意味着公司加强应收账款管理、客户结构优化
+      或结算方式改善。
+    verify_questions:
+      - 回款改善是一次性事件还是趋势性变化？
+      - 是否有大客户付款节奏变化的特殊原因？
+      - 信用政策是否收紧导致部分客户流失？

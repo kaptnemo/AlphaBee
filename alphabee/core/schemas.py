@@ -65,6 +65,7 @@ _ARTIFACT_TYPE_TO_ROLE_GROUP: dict[str, ArtifactRoleGroup] = {
     "conclusion": ArtifactRoleGroup.NARRATIVE,
     "critique": ArtifactRoleGroup.REVIEW,
     "review": ArtifactRoleGroup.REVIEW,
+    "thesis_review": ArtifactRoleGroup.REVIEW,
     "evaluation_report": ArtifactRoleGroup.EVALUATION,
 }
 

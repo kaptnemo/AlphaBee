@@ -1,0 +1,73 @@
+id: profitability_quality_risk
+
+name: 盈利持续性风险
+
+category: financial_quality
+
+dimension: profitability
+
+description: >
+  评估公司核心盈利指标（ROE、毛利率趋势、利润杠杆）的可持续性，
+  识别ROE持续走弱、毛利率收窄和增收不增利等盈利质量恶化风险。
+  本规则综合三个维度判断：当前ROE水平、毛利率变化方向、利润与营收增速的匹配度。
+
+required_facts:
+  - net_profit_yoy
+  - revenue_yoy
+
+required_derived_facts:
+  - roe_level
+  - gross_margin_trend
+  - profit_leverage
+
+trigger_rules:
+
+  high:
+    condition: roe_level < 0.05 and gross_margin_trend < -2
+
+  medium:
+    condition: roe_level < 0.08 or (profit_leverage < -10 and gross_margin_trend < -1)
+
+  low:
+    condition: roe_level < 0.12 or gross_margin_trend < 0
+
+interpretation_templates:
+
+  high: >
+    ROE持续低迷（<5%）且毛利率同步收窄（下降超2个百分点），
+    盈利质量严重恶化。公司在核心业务上或面临竞争力削弱、
+    成本失控或产品结构下移等多重压力，需重点核查盈利下行根因。
+
+  medium: >
+    ROE偏低（<8%）或毛利率承压，盈利持续性存在一定隐忧。
+    建议结合行业景气、费用控制和非经常性损益进行拆分，
+    区分是周期性波动还是结构性恶化。
+
+  low: >
+    ROE或毛利率边际走弱，当前仍处于可接受区间。
+    盈利能力尚未显著恶化，但需持续跟踪趋势防止下滑加速。
+
+  none: >
+    盈利指标健康，ROE较高且毛利率稳定或扩张，
+    核心业务盈利具有可持续性，未发现显著恶化迹象。
+
+critic_questions:
+  - 毛利率变化是否受短期因素（原材料波动、汇率、一次性减值）影响而非结构性下滑？
+  - ROE走弱的主要驱动是利润率下降还是资产周转放缓？
+  - 盈利下行是否为行业周期所致？同行业竞争对手盈利趋势如何？
+  - 是否包含大额非经常性损益或会计政策变更影响盈利指标？
+  - 若ROE偏低但毛利率稳定，是否存在资产效率低下或过度资本化问题？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  earnings_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive

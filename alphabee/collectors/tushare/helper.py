@@ -109,16 +109,15 @@ if __name__ == "__main__":
     # logger.info("Fetched index weight result", result=str(result))
     # logger.info("Fetched index weight dataframe", rows=len(result.data))
 
-    # all_stocks = ts_client.stock_basic(exchange="", list_status="L")
-    # import pdb; pdb.set_trace()
-    # all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")
+    all_stocks = ts_client.stock_basic(exchange="", list_status="L")
+    all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")
 
 
     
-    df = ts_client.balancesheet(
-        ts_code='600000.SH',
-        start_date='20170101',
-        end_date='20260608',
-        fields='ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,cap_rese,total_assets'
-    ).data
-    print(df)
+    # df = ts_client.balancesheet(
+    #     ts_code='600000.SH',
+    #     start_date='20170101',
+    #     end_date='20260608',
+    #     fields='ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,cap_rese,total_assets'
+    # ).data
+    # print(df)

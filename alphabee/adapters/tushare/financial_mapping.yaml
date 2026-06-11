@@ -13,6 +13,8 @@ income:
   ebitda:               ebitda
   basic_eps:            basic_eps
   interest_expense:     interest_expense
+  income_tax:           income_tax_expense
+  total_profit:         total_profit
 
 # ─────────────────────────────────────────
 # 资产负债表 balancesheet()
@@ -40,6 +42,7 @@ cashflow:
   c_pay_acq_const_fiolta:    capex
   fcff:                      free_cashflow
   c_pay_dist_dpcp_int_pvd:   dividends_paid
+  c_paid_to_for_empl:        salary_paid
 
 # ─────────────────────────────────────────
 # 财务指标 fina_indicator()
@@ -57,3 +60,10 @@ fina_indicator:
   netprofit_yoy:          net_profit_yoy
   basic_eps_yoy:          eps_growth_yoy
   fcff:                   free_cashflow
+  interestdebt:           interest_bearing_debt
+  daa:                    depreciation_amortization
+  fixed_assets:           fixed_assets_total
+  saleexp_to_gr:          sales_expense_ratio
+  adminexp_of_gr:         admin_expense_ratio
+  finaexp_of_gr:          finance_expense_ratio
+  rd_exp:                 rd_expense

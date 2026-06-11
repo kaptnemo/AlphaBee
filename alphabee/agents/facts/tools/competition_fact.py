@@ -1,11 +1,13 @@
 """CompetitionFact tool — 同行竞争对手关键指标对比。"""
 
 import datetime
+import pandas as pd
 from typing import Any
 
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
+from alphabee.collectors.local.helper import get_stock_basic, get_industry_peers
 
 _CACHE = SyncTTLCache(ttl_seconds=1800.0)
 
@@ -27,73 +29,73 @@ def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
     Returns:
         包含同行对比数据的字典，所有字段使用 AlphaBee 标准命名。
     """
-    ts_code = normalize_ts_code(symbol)
+    stock_code = normalize_ts_code(symbol)
 
     def _compute() -> dict[str, Any]:
         today = datetime.date.today().strftime("%Y%m%d")
         lookback = (datetime.date.today() - datetime.timedelta(days=10)).strftime("%Y%m%d")
         one_year_ago = (datetime.date.today() - datetime.timedelta(days=400)).strftime("%Y%m%d")
 
-        with TuShareHelper() as helper:
-            basic_df = helper.stock_basic(
-                ts_code=ts_code,
-                fields="ts_code,name,industry",
-            ).data
-
-        if basic_df.empty:
+        basic_info = get_stock_basic(stock_code)
+        if basic_info is None:
             return {
-                "stock_code": ts_code,
+                "stock_code": stock_code,
                 "company_name": "",
                 "industry": "",
                 "total_peers": 0,
                 "peers": [],
             }
 
-        target = basic_df.iloc[0]
-        industry = safe_str(target.get("industry"))
-        company_name = safe_str(target.get("company_name"))
-
-        with TuShareHelper() as helper:
-            peers_df = helper.stock_basic(
-                industry=industry,
-                fields="ts_code,name,industry,market",
-                list_status="L",
-            ).data
-
-        if peers_df.empty:
+        industry = safe_str(basic_info.get("industry"))
+        company_name = safe_str(basic_info.get("company_name"))
+        peers = get_industry_peers(industry, exclude_stock_code=stock_code, max_peers=max_peers)
+        if not peers:
             return {
-                "stock_code": ts_code,
+                "stock_code": stock_code,
                 "company_name": company_name,
                 "industry": industry,
                 "total_peers": 0,
                 "peers": [],
             }
 
-        peer_codes = peers_df["stock_code"].tolist()
-        peer_codes_str = ",".join(peer_codes[:50])
+        peer_codes = [peer["stock_code"] for peer in peers]
 
-        with TuShareHelper() as helper:
-            daily_basic_df = helper.daily_basic(
-                ts_code=peer_codes_str,
-                trade_date=today,
-                fields="ts_code,pe_ttm,pb,total_mv,circ_mv,turnover_rate",
-            ).data
-
-        if daily_basic_df.empty:
+        daily_list = []
+        try:
             with TuShareHelper() as helper:
-                daily_basic_df = helper.daily_basic(
-                    ts_code=peer_codes_str,
-                    start_date=lookback,
-                    end_date=today,
-                    fields="ts_code,trade_date,pe_ttm,pb,total_mv,circ_mv,turnover_rate",
-                ).data
-            if not daily_basic_df.empty:
-                daily_basic_df = daily_basic_df.sort_values("trade_date", ascending=False)
-                daily_basic_df = daily_basic_df.drop_duplicates(subset=["stock_code"])
+                for peer_code in peer_codes:
+                    try:
+                        _daily_basic_df = helper.daily_basic(
+                            ts_code=peer_code,
+                            trade_date=today,
+                            fields="ts_code,pe_ttm,pb,total_mv,circ_mv,turnover_rate",
+                        ).data
+
+                        if _daily_basic_df.empty:
+                            _daily_basic_df = helper.daily_basic(
+                                ts_code=peer_code,
+                                start_date=lookback,
+                                end_date=today,
+                                fields="ts_code,trade_date,pe_ttm,pb,total_mv,circ_mv,turnover_rate",
+                            ).data
+                        if not _daily_basic_df.empty:
+                            _daily_basic_df = _daily_basic_df.sort_values("trade_date", ascending=False)
+                            _daily_basic_df = _daily_basic_df.drop_duplicates(subset=["stock_code"])
+                            daily_list.append(_daily_basic_df)
+                    except Exception:
+                        continue
+        except Exception:
+            # Tushare entirely unavailable — continue with local-only data
+            pass
+
+        if daily_list:
+            daily_basic_df = pd.concat(daily_list, ignore_index=True)
+        else:
+            daily_basic_df = pd.DataFrame()
 
         # Fetch ROE & gross margin per peer
         fina_map: dict[str, dict] = {}
-        for code in peer_codes[:30]:
+        for code in peer_codes:
             try:
                 with TuShareHelper() as helper:
                     f = helper.fina_indicator(
@@ -110,17 +112,17 @@ def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
             except Exception:
                 continue
 
-        name_map = dict(zip(peers_df["stock_code"], peers_df["company_name"]))
+        name_map = {peer["stock_code"]: peer["company_name"] for peer in peers}
 
         # Build peer records using canonical field names
-        peers: list[dict] = []
+        peer_records: list[dict] = []
         if not daily_basic_df.empty:
             daily_basic_df["_mv_sort"] = daily_basic_df["market_cap"].apply(safe_float)
             sorted_df = daily_basic_df.sort_values("_mv_sort", ascending=False)
             for _, row in sorted_df.head(max_peers).iterrows():
                 code = safe_str(row.get("stock_code"))
                 fina = fina_map.get(code, {})
-                peers.append({
+                peer_records.append({
                     "stock_code": code,
                     "company_name": name_map.get(code, ""),
                     "market_cap": safe_float(row.get("market_cap")),
@@ -131,11 +133,12 @@ def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
                     "has_metrics": True,
                 })
         else:
-            for _, row in peers_df.head(max_peers).iterrows():
-                code = safe_str(row.get("stock_code"))
-                peers.append({
+            # Fallback: no market data, still show peer list with empty metrics
+            for p in peers[:max_peers]:
+                code = safe_str(p.get("stock_code"))
+                peer_records.append({
                     "stock_code": code,
-                    "company_name": safe_str(row.get("company_name")),
+                    "company_name": safe_str(p.get("company_name")),
                     "market_cap": 0.0,
                     "pe_ttm": 0.0,
                     "pb_ratio": 0.0,
@@ -145,14 +148,14 @@ def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
                 })
 
         return {
-            "stock_code": ts_code,
+            "stock_code": stock_code,
             "company_name": company_name,
             "industry": industry,
             "total_peers": len(peer_codes),
-            "peers": peers,
+            "peers": peer_records,
         }
 
-    return _CACHE.get_or_compute(("competition_fact", ts_code, max_peers), _compute)
+    return _CACHE.get_or_compute(("competition_fact", stock_code, max_peers), _compute)
 
 
 def render(data: dict[str, Any]) -> str:
@@ -205,3 +208,8 @@ def render(data: dict[str, Any]) -> str:
     lines.append("")
     return "\n".join(lines)
 
+
+if __name__ == "__main__":
+    # Example usage
+    fact = get_competition_fact("600519.SH", max_peers=100)
+    print(render(fact))

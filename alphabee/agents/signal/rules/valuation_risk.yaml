@@ -1,0 +1,70 @@
+id: valuation_risk
+
+name: 估值风险
+
+category: financial_quality
+
+dimension: valuation
+
+description: >
+  评估公司当前估值相对于历史估值中枢和盈利增速的合理性，
+  综合PEG、历史估值压缩程度和PB-ROE匹配度三个维度。
+  高估值不一定风险，但如果同时伴随盈利增速无法支撑且
+  PB远超ROE对应的合理定价，则估值回归风险加大。
+
+required_facts:
+  - pe_ttm
+  - net_profit_yoy
+
+required_derived_facts:
+  - peg_ratio
+  - valuation_compression
+  - pb_roe_match
+
+trigger_rules:
+
+  high:
+    condition: peg_ratio > 3 or (valuation_compression > 1.3 and pb_roe_match > 2.0)
+
+  medium:
+    condition: peg_ratio > 2 or valuation_compression > 1.0
+
+  low:
+    condition: peg_ratio > 1 or valuation_compression > 0.8
+
+interpretation_templates:
+
+  high: >
+    估值严重偏离基本面支撑：PEG>3且PB远超ROE对应水平，
+    或估值较历史中枢大幅溢价且盈利增速无法消化。
+    市场给予了公司过高的增长预期，一旦增速兑现不及预期，
+    估值回归压力巨大，下跌风险显著。
+
+  medium: >
+    估值偏高，PEG>2或当前估值较历史均值有一定溢价。
+    需要公司持续兑现高增速才能支撑当前估值。
+    建议评估未来盈利增速的可持续性和业绩确定性。
+
+  low: >
+    估值略高于合理区间（PEG>1），仍有一定溢价，
+    但若盈利增速能维持则属于可接受范围。
+    需持续跟踪季报验证盈利增速假设。
+
+  none: >
+    估值与基本面匹配良好，PEG合理，PB-ROE匹配，
+    当前估值水平有基本面支撑，未发现明显估值泡沫或错配风险。
+
+critic_questions:
+  - 估值压缩（pe_ttm/pe_ttm_5y_avg偏低）是由于基本面恶化还是系统性/行业性杀估值？
+  - PEG计算中使用的净利润增速是否为可持续的经常性增速（排除非经常性损益影响）？
+  - 公司当前的PE相对行业平均PE的折溢价情况如何？
+  - PB-ROE匹配偏离是否由一次性资产重估或会计准则变更导致？
+  - 估值偏高的主要原因是什么（行业概念、资金炒作还是真实高增长预期）？
+
+thesis_impact:
+
+  financial_quality:
+    high: slightly_negative
+    medium: neutral
+    low: neutral
+    none: neutral

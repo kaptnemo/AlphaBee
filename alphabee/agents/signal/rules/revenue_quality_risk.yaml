@@ -13,11 +13,10 @@ description: >
 
 required_facts:
   - revenue_yoy
-  - accounts_receivable_yoy
+  - accounts_receivable
+  - accounts_receivable_prev
 
 required_derived_facts:
-  - revenue_growth
-  - accounts_receivable_growth
   - receivable_growth_gap
 
 trigger_rules:
@@ -47,6 +46,10 @@ interpretation_templates:
     应收账款增长略快于收入增长，
     目前风险有限，但需要持续观察趋势。
 
+  none: >
+    应收账款增速与收入增速基本匹配，收入回款质量良好，
+    未发现显著的收入质量风险信号。
+
 critic_questions:
   - 是否属于行业普遍账期拉长？
   - 是否存在大客户付款节奏变化？
@@ -59,8 +62,10 @@ thesis_impact:
     high: negative
     medium: slightly_negative
     low: neutral
+    none: positive
 
   earnings_quality:
     high: negative
     medium: slightly_negative
     low: neutral
+    none: positive

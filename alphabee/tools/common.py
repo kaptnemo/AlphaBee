@@ -258,7 +258,7 @@ def extract_symbols_from_query(query: str) -> dict[str, str]:
     if all_stocks_path.exists():
         import pandas as pd
         df = pd.read_csv(all_stocks_path)
-        company_map = dict(zip(df["name"], df["ts_code"]))
+        company_map = dict(zip(df["company_name"], df["stock_code"]))
     else:
         raise FileNotFoundError(f"Stock list not found at {all_stocks_path}. Please run the tushare collector to generate it.")
 
