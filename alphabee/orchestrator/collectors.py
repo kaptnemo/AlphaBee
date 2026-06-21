@@ -1,13 +1,9 @@
-"""Data collection node — FactCollector Agent + DerivedFacts Engine + SignalEngine.
+"""Data collection nodes — split into three LangGraph nodes for clear checkpointing.
 
-Runs the full fact pipeline:
-1. FactCollector LLM agent (comprehensive data gathering + narrative)
-2. Direct structured extraction via get_financial_facts_model / get_market_facts_model
-3. DerivedFacts Engine (deterministic, 21 YAML rules)
-4. SignalEngine (deterministic, 3 signal rules)
-5. ThesisEngine (deterministic, with optional LLM enhancement)
-
-Steps 1-2 run concurrently; 3-5 run sequentially on the merged fact_values.
+Pipeline nodes (in order):
+1. collect_raw_facts    — concurrent FactCollector LLM agent + structured model extraction
+2. run_analysis_engines — deterministic engines: DerivedFacts, Signal, Anomaly
+3. run_thesis           — ThesisEngine (+ optional LLM enhancement)
 """
 
 from __future__ import annotations
@@ -213,19 +209,44 @@ def _build_company_context(
     return ctx
 
 
-# ── main collector ───────────────────────────────────────────────────
+# ── shared node helpers ──────────────────────────────────────────────
 
 
-async def collect_facts(
+def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict | None:
+    """Return the most recent artifact value matching *artifact_type*, or None."""
+    for a in reversed(artifacts):
+        if a.type == artifact_type and isinstance(a.value, dict):
+            return a.value
+    return None
+
+
+def _finalize_step(
+    step: Step, issues: list[Issue], artifacts: list[Artifact]
+) -> Step:
+    """Return a copy of *step* with status and outputs set."""
+    if issues and not artifacts:
+        status = StepStatus.FAILED
+    elif issues:
+        status = StepStatus.PARTIAL
+    else:
+        status = StepStatus.SUCCEEDED
+    return step.model_copy(
+        update={"status": status, "outputs": [a.id for a in artifacts]}
+    )
+
+
+# ── node 1: collect_raw_facts ─────────────────────────────────────────
+
+
+async def collect_raw_facts(
     state: OrchestratorState, config: RunnableConfig,
 ) -> OrchestratorState:
-    """Run the full data pipeline and populate the state for the harness.
+    """Concurrently run FactCollector LLM agent and structured model extraction.
 
-    1. FactCollector LLM agent (narrative + comprehensive data)
-    2. Direct structured extraction (FinancialFacts + MarketFacts models)
-    3. DerivedFacts Engine (deterministic, 21 rules)
-    4. SignalEngine (deterministic, 3 signal rules)
-    5. ThesisEngine (deterministic, with optional LLM enhancement)
+    Produces:
+    - ``fact_collection`` artifact with the agent's narrative text and metadata
+    - ``fact_values`` dict in state (canonical numeric facts for downstream engines)
+    - ``financial_facts`` / ``market_facts`` Pydantic objects in state
     """
     query = _latest_query(state.get("messages", []))
     symbol = _first_symbol(query)
@@ -239,8 +260,8 @@ async def collect_facts(
     )
 
     step = Step(
-        id="collect_facts",
-        kind="collect_facts",
+        id="collect_raw_facts",
+        kind="collect_raw_facts",
         inputs={"query": query, "symbol": symbol},
         status=StepStatus.RUNNING,
     )
@@ -248,7 +269,6 @@ async def collect_facts(
     artifacts: list[Artifact] = []
     issues: list[Issue] = []
 
-    # ── Step 1 & 2 (concurrent): LLM agent + structured models ──────
     fact_text: str = ""
     financial_facts: FinancialFacts | None = None
     market_facts: MarketFacts | None = None
@@ -311,7 +331,6 @@ async def collect_facts(
         _run_structured_models(),
     )
 
-    # ── Package fact_collection artifact ─────────────────────────────
     artifacts.append(
         Artifact(
             id=_make_id("artifact"),
@@ -326,199 +345,14 @@ async def collect_facts(
         )
     )
 
-    # ── Step 3, 4 & 5: DerivedFacts + Signal + Thesis engines ────────
-    derived_results: dict = {}
-    signal_results: dict = {}
+    # Compute canonical fact_values for downstream engines
+    fact_values: dict[str, float] = {}
+    if financial_facts is not None:
+        fact_values.update(financial_facts.to_fact_values())
+    if market_facts is not None:
+        fact_values.update(market_facts.to_fact_values())
 
-    if financial_facts is not None or market_facts is not None:
-        # Merge fact_values from both models
-        fact_values: dict[str, float] = {}
-        if financial_facts is not None:
-            fact_values.update(financial_facts.to_fact_values())
-        if market_facts is not None:
-            fact_values.update(market_facts.to_fact_values())
-
-        # DerivedFacts Engine
-        try:
-            load_rules()
-            df_engine = DerivedFactsEngine()
-            all_rule_names = list(RULES.keys())
-            derived_results = df_engine.run(all_rule_names, fact_values)
-
-            artifacts.append(
-                Artifact(
-                    id=_make_id("artifact"),
-                    type="derived_facts",
-                    producer_step=step.id,
-                    value={
-                        "results": derived_results,
-                        "rule_count": len(all_rule_names),
-                    },
-                )
-            )
-        except Exception as exc:
-            issues.append(
-                Issue(
-                    id=_make_id("issue"),
-                    severity=IssueSeverity.HIGH,
-                    category="subagent_failure",
-                    message=f"DerivedFacts engine failed: {exc}",
-                    related_step=step.id,
-                )
-            )
-
-        # SignalEngine
-        try:
-            load_signal_rules()
-            signal_engine = SignalEngine()
-            all_signal_names = list(SIGNAL_RULES.keys())
-            signal_results = signal_engine.run(all_signal_names, fact_values)
-
-            artifacts.append(
-                Artifact(
-                    id=_make_id("artifact"),
-                    type="signal_analysis",
-                    producer_step=step.id,
-                    value={
-                        "results": signal_results,
-                        "rule_count": len(all_signal_names),
-                    },
-                )
-            )
-        except Exception as exc:
-            issues.append(
-                Issue(
-                    id=_make_id("issue"),
-                    severity=IssueSeverity.HIGH,
-                    category="subagent_failure",
-                    message=f"SignalEngine failed: {exc}",
-                    related_step=step.id,
-                )
-            )
-
-        # ── Step 4.5: AnomalyEngine（勾稽关系异常检测）─────────────
-        anomaly_report_dict: dict = {}
-        if financial_facts is not None and len(financial_facts.snapshots) >= 2:
-            try:
-                from alphabee.agents.anomaly.engine import AnomalyEngine
-
-                # 提取 employees（跨来源引用：company_profile）
-                extra_vals: dict[str, float] = {}
-                try:
-                    profile = get_company_profile(symbol)
-                    company_data = profile.get("company", {}) if profile else {}
-                    employees_raw = company_data.get("employees", {})
-                    if isinstance(employees_raw, dict):
-                        employees_val = employees_raw.get(0)
-                        if employees_val is not None:
-                            extra_vals["employees"] = float(employees_val)
-                except Exception:
-                    pass
-
-                anomaly_engine = AnomalyEngine()
-                anomaly_report = anomaly_engine.run(
-                    financial_facts, extra_values=extra_vals or None,
-                )
-                anomaly_report_dict = anomaly_report.to_dict()
-
-                # 注入 fact_values 供下游信号规则引用
-                anomaly_fv = anomaly_report.to_fact_values()
-                fact_values.update(anomaly_fv)
-
-                artifacts.append(
-                    Artifact(
-                        id=_make_id("artifact"),
-                        type="anomaly_report",
-                        producer_step=step.id,
-                        value=anomaly_report_dict,
-                    )
-                )
-            except Exception as exc:
-                issues.append(
-                    Issue(
-                        id=_make_id("issue"),
-                        severity=IssueSeverity.MEDIUM,
-                        category="subagent_failure",
-                        message=f"AnomalyEngine failed: {exc}",
-                        related_step=step.id,
-                    )
-                )
-
-        # ── Step 5: ThesisEngine ───────────────────────────────────────
-        if signal_results:
-            try:
-                thesis_engine = ThesisEngine()
-                thesis = thesis_engine.run(
-                    symbol=symbol or "unknown",
-                    period="latest",
-                    signal_results=signal_results,
-                )
-
-                # Extract company context from fact_collection text + structured models
-                company_ctx = _build_company_context(
-                    symbol=symbol,
-                    fact_text=fact_text,
-                    financial_facts=financial_facts,
-                    market_facts=market_facts,
-                )
-
-                # Optionally enhance with LLM when explicitly enabled
-                enhanced = None
-                if state.get("enhance"):
-                    try:
-                        enhancer = ThesisEnhancer()
-                        enhanced = enhancer.enhance(
-                            thesis=thesis,
-                            signal_results=signal_results,
-                            company_context=company_ctx,
-                            user_intent=query,
-                            fact_summary=fact_text[:2000] if fact_text else "",
-                        )
-                    except Exception:
-                        pass  # fall through to plain thesis
-
-                artifacts.append(
-                    Artifact(
-                        id=_make_id("artifact"),
-                        type="thesis_analysis",
-                        producer_step=step.id,
-                        value={
-                            "thesis": thesis.to_dict(),
-                            "enhanced": enhanced.to_dict() if enhanced else None,
-                            "industry_context": {
-                                "industry": company_ctx.industry,
-                                "sub_industry": company_ctx.sub_industry,
-                                "market_cap_category": company_ctx.market_cap_category,
-                                "lifecycle_stage": company_ctx.lifecycle_stage,
-                                "business_model_summary": (
-                                    company_ctx.business_model_summary[:300]
-                                    if company_ctx.business_model_summary
-                                    else ""
-                                ),
-                            },
-                            "anomaly_data": {
-                                "anomaly_count": anomaly_report_dict.get("anomaly_count", 0),
-                                "pattern_count": anomaly_report_dict.get("pattern_count", 0),
-                                "anomalies": [
-                                    a for a in anomaly_report_dict.get("anomalies", [])
-                                    if a.get("level") != "none"
-                                ],
-                                "pattern_matches": anomaly_report_dict.get("pattern_matches", []),
-                            },
-                        },
-                    )
-                )
-            except Exception as exc:
-                issues.append(
-                    Issue(
-                        id=_make_id("issue"),
-                        severity=IssueSeverity.HIGH,
-                        category="subagent_failure",
-                        message=f"ThesisEngine failed: {exc}",
-                        related_step=step.id,
-                    )
-                )
-    else:
+    if not fact_values and symbol:
         issues.append(
             Issue(
                 id=_make_id("issue"),
@@ -532,21 +366,7 @@ async def collect_facts(
             )
         )
 
-    # ── Finalize step status ─────────────────────────────────────────
-    if issues and not artifacts:
-        step_status = StepStatus.FAILED
-    elif issues:
-        step_status = StepStatus.PARTIAL
-    else:
-        step_status = StepStatus.SUCCEEDED
-
-    completed_step = step.model_copy(
-        update={
-            "status": step_status,
-            "outputs": [a.id for a in artifacts],
-        }
-    )
-
+    completed_step = _finalize_step(step, issues, artifacts)
     return {
         "messages": state.get("messages", []),
         "run": run,
@@ -559,4 +379,302 @@ async def collect_facts(
         "evaluation_artifact_id": None,
         "supplement_round": 0,
         "max_supplement_rounds": 1,
+        "fact_values": fact_values,
+        "financial_facts": financial_facts,
+        "market_facts": market_facts,
+    }
+
+
+# ── node 2: run_analysis_engines ──────────────────────────────────────
+
+
+async def run_analysis_engines(
+    state: OrchestratorState, config: RunnableConfig,
+) -> OrchestratorState:
+    """Run deterministic analysis engines on the structured fact values.
+
+    Engines (each isolated with try/except — one failure does not block others):
+    - DerivedFactsEngine  (21 YAML rules)
+    - SignalEngine         (3 signal rules)
+    - AnomalyEngine        (statistical cross-check, requires ≥2 snapshots)
+
+    Note: AnomalyEngine currently runs *after* SignalEngine (preserving the
+    original pipeline order). The anomaly fact-values injection therefore has
+    no effect on the already-computed signal results. This ordering issue is
+    tracked separately and intentionally left unchanged here.
+    """
+    run = state.get("run")
+    symbol = run.context.get("symbol") if run else None
+    fact_values: dict[str, float] = dict(state.get("fact_values") or {})
+    financial_facts = state.get("financial_facts")
+
+    step = Step(
+        id="run_analysis_engines",
+        kind="run_analysis_engines",
+        inputs={"symbol": symbol, "fact_values_count": len(fact_values)},
+        status=StepStatus.RUNNING,
+    )
+
+    new_artifacts: list[Artifact] = []
+    new_issues: list[Issue] = []
+
+    if not fact_values:
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.CRITICAL,
+                category="missing_data",
+                message="No fact_values available — skipping all analysis engines.",
+                related_step=step.id,
+            )
+        )
+        completed_step = _finalize_step(step, new_issues, new_artifacts)
+        return {
+            **state,
+            "steps": state.get("steps", []) + [completed_step],
+            "issues": state.get("issues", []) + new_issues,
+        }
+
+    # ── DerivedFacts Engine ───────────────────────────────────────────
+    try:
+        load_rules()
+        df_engine = DerivedFactsEngine()
+        all_rule_names = list(RULES.keys())
+        derived_results = df_engine.run(all_rule_names, fact_values)
+        new_artifacts.append(
+            Artifact(
+                id=_make_id("artifact"),
+                type="derived_facts",
+                producer_step=step.id,
+                value={"results": derived_results, "rule_count": len(all_rule_names)},
+            )
+        )
+    except Exception as exc:
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="subagent_failure",
+                message=f"DerivedFacts engine failed: {exc}",
+                related_step=step.id,
+            )
+        )
+
+    # ── SignalEngine ──────────────────────────────────────────────────
+    try:
+        load_signal_rules()
+        signal_engine = SignalEngine()
+        all_signal_names = list(SIGNAL_RULES.keys())
+        signal_results = signal_engine.run(all_signal_names, fact_values)
+        new_artifacts.append(
+            Artifact(
+                id=_make_id("artifact"),
+                type="signal_analysis",
+                producer_step=step.id,
+                value={"results": signal_results, "rule_count": len(all_signal_names)},
+            )
+        )
+    except Exception as exc:
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="subagent_failure",
+                message=f"SignalEngine failed: {exc}",
+                related_step=step.id,
+            )
+        )
+
+    # ── AnomalyEngine ─────────────────────────────────────────────────
+    if financial_facts is not None and len(financial_facts.snapshots) >= 2:
+        try:
+            from alphabee.agents.anomaly.engine import AnomalyEngine
+
+            extra_vals: dict[str, float] = {}
+            try:
+                profile = get_company_profile(symbol)
+                company_data = profile.get("company", {}) if profile else {}
+                employees_raw = company_data.get("employees", {})
+                if isinstance(employees_raw, dict):
+                    employees_val = employees_raw.get(0)
+                    if employees_val is not None:
+                        extra_vals["employees"] = float(employees_val)
+            except Exception:
+                pass
+
+            anomaly_engine = AnomalyEngine()
+            anomaly_report = anomaly_engine.run(
+                financial_facts, extra_values=extra_vals or None,
+            )
+            # Inject anomaly fact-values for future downstream use
+            fact_values.update(anomaly_report.to_fact_values())
+            new_artifacts.append(
+                Artifact(
+                    id=_make_id("artifact"),
+                    type="anomaly_report",
+                    producer_step=step.id,
+                    value=anomaly_report.to_dict(),
+                )
+            )
+        except Exception as exc:
+            new_issues.append(
+                Issue(
+                    id=_make_id("issue"),
+                    severity=IssueSeverity.MEDIUM,
+                    category="subagent_failure",
+                    message=f"AnomalyEngine failed: {exc}",
+                    related_step=step.id,
+                )
+            )
+
+    completed_step = _finalize_step(step, new_issues, new_artifacts)
+    return {
+        **state,
+        "steps": state.get("steps", []) + [completed_step],
+        "artifacts": state.get("artifacts", []) + new_artifacts,
+        "issues": state.get("issues", []) + new_issues,
+        "fact_values": fact_values,
+    }
+
+
+# ── node 3: run_thesis ────────────────────────────────────────────────
+
+
+async def run_thesis(
+    state: OrchestratorState, config: RunnableConfig,
+) -> OrchestratorState:
+    """Run ThesisEngine on signal results, with optional LLM enhancement.
+
+    Reads ``signal_analysis`` artifact from state; skips gracefully when absent.
+    """
+    run = state.get("run")
+    symbol = run.context.get("symbol") if run else None
+    query = run.context.get("query", "") if run else ""
+    financial_facts = state.get("financial_facts")
+    market_facts = state.get("market_facts")
+    enhance = state.get("enhance", False)
+
+    step = Step(
+        id="run_thesis",
+        kind="run_thesis",
+        inputs={"symbol": symbol},
+        status=StepStatus.RUNNING,
+    )
+
+    new_artifacts: list[Artifact] = []
+    new_issues: list[Issue] = []
+
+    # Read inputs from upstream artifacts
+    signal_av = _find_artifact(state.get("artifacts", []), "signal_analysis")
+    signal_results: dict = signal_av.get("results", {}) if signal_av else {}
+
+    fc_av = _find_artifact(state.get("artifacts", []), "fact_collection")
+    fact_text: str = fc_av.get("raw_response", "") if fc_av else ""
+
+    anomaly_av = _find_artifact(state.get("artifacts", []), "anomaly_report")
+    anomaly_data: dict = {}
+    if anomaly_av:
+        anomaly_data = {
+            "anomaly_count": anomaly_av.get("anomaly_count", 0),
+            "pattern_count": anomaly_av.get("pattern_count", 0),
+            "anomalies": [
+                a for a in anomaly_av.get("anomalies", [])
+                if a.get("level") != "none"
+            ],
+            "pattern_matches": anomaly_av.get("pattern_matches", []),
+        }
+
+    if not signal_results:
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.MEDIUM,
+                category="missing_data",
+                message="No signal results available — skipping ThesisEngine.",
+                related_step=step.id,
+            )
+        )
+        completed_step = _finalize_step(step, new_issues, new_artifacts)
+        return {
+            **state,
+            "steps": state.get("steps", []) + [completed_step],
+            "issues": state.get("issues", []) + new_issues,
+        }
+
+    try:
+        # Use the actual reporting period from the latest snapshot when available
+        period = "latest"
+        if financial_facts is not None and financial_facts.snapshots:
+            snap_period = financial_facts.snapshots[0].period
+            if snap_period:
+                period = snap_period
+
+        thesis_engine = ThesisEngine()
+        thesis = thesis_engine.run(
+            symbol=symbol or "unknown",
+            period=period,
+            signal_results=signal_results,
+        )
+
+        company_ctx = _build_company_context(
+            symbol=symbol,
+            fact_text=fact_text,
+            financial_facts=financial_facts,
+            market_facts=market_facts,
+        )
+
+        enhanced = None
+        if enhance:
+            try:
+                enhancer = ThesisEnhancer()
+                enhanced = enhancer.enhance(
+                    thesis=thesis,
+                    signal_results=signal_results,
+                    company_context=company_ctx,
+                    user_intent=query,
+                    fact_summary=fact_text[:2000] if fact_text else "",
+                )
+            except Exception:
+                pass
+
+        new_artifacts.append(
+            Artifact(
+                id=_make_id("artifact"),
+                type="thesis_analysis",
+                producer_step=step.id,
+                value={
+                    "thesis": thesis.to_dict(),
+                    "enhanced": enhanced.to_dict() if enhanced else None,
+                    "industry_context": {
+                        "industry": company_ctx.industry,
+                        "sub_industry": company_ctx.sub_industry,
+                        "market_cap_category": company_ctx.market_cap_category,
+                        "lifecycle_stage": company_ctx.lifecycle_stage,
+                        "business_model_summary": (
+                            company_ctx.business_model_summary[:300]
+                            if company_ctx.business_model_summary
+                            else ""
+                        ),
+                    },
+                    "anomaly_data": anomaly_data,
+                },
+            )
+        )
+    except Exception as exc:
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="subagent_failure",
+                message=f"ThesisEngine failed: {exc}",
+                related_step=step.id,
+            )
+        )
+
+    completed_step = _finalize_step(step, new_issues, new_artifacts)
+    return {
+        **state,
+        "steps": state.get("steps", []) + [completed_step],
+        "artifacts": state.get("artifacts", []) + new_artifacts,
+        "issues": state.get("issues", []) + new_issues,
     }

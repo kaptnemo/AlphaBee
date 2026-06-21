@@ -1,10 +1,12 @@
 """Orchestrator — top-level entry point for AlphaBee.
 
 Simplified pipeline:
-1. collect_facts   — FactCollector + DerivedFacts + SignalEngine + ThesisEngine
-2. review_thesis   — ThesisReviewer (deterministic + optional LLM audit)
-3. generate_report — Single LLM call: structured data → Markdown report
-4. finalize        — Merge all results into JSON AIMessage
+1. collect_raw_facts      — FactCollector + structured model extraction (concurrent)
+2. run_analysis_engines   — DerivedFacts + SignalEngine + AnomalyEngine
+3. run_thesis             — ThesisEngine + optional LLM enhancement
+4. review_thesis          — ThesisReviewer (deterministic + optional LLM audit)
+5. generate_report        — Single LLM call: structured data → Markdown report
+6. finalize               — Merge all results into JSON AIMessage
 """
 
 from __future__ import annotations
@@ -24,7 +26,12 @@ from alphabee.core import (
     Step,
     StepStatus,
 )
-from alphabee.orchestrator.collectors import _build_company_context, collect_facts
+from alphabee.orchestrator.collectors import (
+    _build_company_context,
+    collect_raw_facts,
+    run_analysis_engines,
+    run_thesis,
+)
 from alphabee.orchestrator.reporter import generate_report
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import make_id
@@ -91,6 +98,8 @@ async def review_thesis(
     company_ctx = _build_company_context(
         symbol=thesis.symbol if thesis else "",
         fact_text=fact_text,
+        financial_facts=state.get("financial_facts"),
+        market_facts=state.get("market_facts"),
     )
 
     # ── Run reviewer ──
@@ -225,13 +234,17 @@ def _reconstruct_thesis(thesis_dict: dict):
 
 _graph = StateGraph(OrchestratorState)
 
-_graph.add_node("collect_facts", collect_facts)
+_graph.add_node("collect_raw_facts", collect_raw_facts)
+_graph.add_node("run_analysis_engines", run_analysis_engines)
+_graph.add_node("run_thesis", run_thesis)
 _graph.add_node("review_thesis", review_thesis)
 _graph.add_node("generate_report", generate_report)
 _graph.add_node("finalize_message", finalize_message)
 
-_graph.add_edge(START, "collect_facts")
-_graph.add_edge("collect_facts", "review_thesis")
+_graph.add_edge(START, "collect_raw_facts")
+_graph.add_edge("collect_raw_facts", "run_analysis_engines")
+_graph.add_edge("run_analysis_engines", "run_thesis")
+_graph.add_edge("run_thesis", "review_thesis")
 _graph.add_edge("review_thesis", "generate_report")
 _graph.add_edge("generate_report", "finalize_message")
 _graph.add_edge("finalize_message", END)
