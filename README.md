@@ -19,8 +19,9 @@
 - **行业语境校准**：从 Tushare 提取权威行业分类，审查层对金融/医药/半导体等高杠杆或高研发行业做阈值调整
 - **YAML 驱动的规则引擎**：所有衍生指标、信号、勾稽关系规则均为声明式 YAML，支持拓扑排序依赖解析与安全 AST 公式求值
 - **统一字段适配层**：Adapter + Schema Registry 将 Tushare/AkShare 原始字段映射为 AlphaBee 规范字段名（7 大领域、125+ 字段）
+- **任务记录与自蒸馏**：每次运行自动保存 TaskRecord → TaskAnalyzer 确定性统计分析 → RuleDistiller LLM 蒸馏建议（新信号/行业校准/阈值调整）
 - **可观测性**：Langfuse 全链路追踪 + structlog 结构化日志
-- **交互式 CLI**：单次查询 / 多轮对话，支持 --enhance / --llm-review 可选增强
+- **交互式 CLI**：单次查询 / 多轮对话 / 任务统计 / 蒸馏报告，支持 --enhance / --llm-review 可选增强
 
 ---
 
@@ -100,6 +101,24 @@ poetry run python main.py --no-color "分析 000858.SZ"
 | 直接输入问题 | 继续追问 |
 | `/clear` | 清空上下文 |
 | `/exit` | 退出会话 |
+
+### 任务记录与分析
+
+```bash
+# 每次运行自动保存记录到 outputs/task_records/
+
+# 查看统计摘要
+poetry run python main.py --task-stats
+
+# 生成规则蒸馏建议报告（需 LLM）
+poetry run python main.py --distill
+
+# 查看指定标的的历史运行记录
+poetry run python main.py --task-history 600519.SH
+
+# 查看单次运行的完整记录
+poetry run python main.py --task-record task-a1b2c3d4e5f6
+```
 
 ---
 
@@ -298,6 +317,7 @@ alphabee/
     fact_analysis/      综合分析（占位）
   agents_legacy/        Legacy DeepAgents 架构（不再使用）
   orchestrator/         StateGraph 主编排 + 报告生成
+  task_records/         任务记录采集 / 分析 / 蒸馏
   adapters/             Tushare/AkShare 字段映射 (YAML)
   collectors/           数据采集层 (Tushare/AkShare/Baostock)
   config/               配置读取
@@ -312,6 +332,51 @@ main.py                 CLI 入口
 config.yaml             运行配置
 tests/                  测试套件
 ```
+
+---
+
+## 后续工作
+
+### 1. 完善任务记录与规则自蒸馏
+
+**现状**：`task_records/` 模块已实现基础采集（`TaskRecorder` — 包含完整报告 JSON `report_raw`）、存储（`TaskStore`）、确定性分析（`TaskAnalyzer`）和 LLM 蒸馏建议（`RuleDistiller`）。每次运行自动保存记录，通过 `--task-stats` / `--distill` 产出统计和蒸馏报告。
+
+**后续**：
+
+- **阶段计时采集**：在 StateGraph 节点间注入 timing hook，使 `StageTiming` 数据自动填充（当前依赖手动传参）
+- **信号触发率回归检测**：规则修改后自动对比修改前后的触发率变化，检测规则退化
+- **蒸馏闭环自动化**：`--distill` 产出的候选 YAML 增加 diff 对比 + 一键回测功能
+- **行业基线自建**：积累 100+ 不同行业标的的运行记录后，自动计算行业 μ±σ 作为 reviewer 的对比基准
+
+### 2. 增加上下文压缩
+
+**现状**：FactCollectorAgent 的 LLM 调用和报告生成 LLM 调用都直接消费原始上下文，没有压缩层。当历史记录积累、FactCollector 输出的 raw_response 变长时，context window 压力递增。
+
+**设计方向**：
+
+- **分层压缩**：对 `fact_collection` artifact 的 raw_response 做结构化摘要提取（保留数值表格，压缩叙述文字）
+- **角色感知剪裁**：借鉴 `harness/state_compressor.py` 的 `NodeKind` 设计，不同节点接收不同粒度的上下文（如 report 生成需要完整数据，thesis 审查只需摘要）
+- **增量注入**：多轮对话中，前一轮的完整 report 压缩为结论 + 关键指标快照后再注入下一轮 context
+
+### 3. 增加记忆力模块——用户投资画像
+
+**目标**：记录用户在多次查询中关注的公司、行业、分析维度偏好，逐步构建用户投资画像，使系统能提供更个性化的分析视角和关注点提醒。
+
+**设计方向**：
+
+- **画像维度**：
+  - 行业偏好（用户查询频次最高的申万行业）
+  - 风格偏好（价值/成长、大盘/中小盘、高分红/高增长）
+  - 风控偏好（对确定性要求高/低、对杠杆容忍度、对估值敏感度）
+  - 关注维度权重（财务真实性 vs 成长性 vs 估值合理性，用户更关注哪个）
+- **采集方式**：
+  - 零侵入：从 `TaskRecord` 的 `query` / `symbol` / `flags` 字段累积，不额外询问用户
+  - 维度偏好从 `--enhance` 的使用频率和 reviewer issue 分布推断
+- **输出**：
+  - 报告中加入"与你投资风格的匹配度"视角
+  - 多轮对话中主动提示"你上次关注的 XX 行业/公司有新财报"（如启用 Monitor）
+  - `--task-stats` 中增加用户画像卡片
+- **存储**：`outputs/user_profile.json`，定期从 `task_records/` 重算更新
 
 ---
 

@@ -28,6 +28,7 @@ from langfuse.langchain import CallbackHandler
 from alphabee.orchestrator.agent import alphabee_agent
 from alphabee.utils import configure_logging, get_logger
 from alphabee.workflow import render_monitor_report, run_framework_monitor
+from alphabee.tools.common import extract_symbols_from_query
 
 
 # ---------------------------------------------------------------------------
@@ -615,6 +616,28 @@ async def run_query(
             print(final_answer)
         print()
 
+    # ── Record capture for task records ──
+    if report_payload:
+        try:
+            from alphabee.task_records import TaskRecorder, TaskStore
+            symbols = extract_symbols_from_query(query)
+            symbol = list(symbols.values())[0] if symbols else None
+            artifacts_list = report_payload.get("artifacts", [])
+            recorder = TaskRecorder()
+            record = recorder.capture(
+                query=query,
+                symbol=symbol,
+                flags={"enhance": enhance, "llm_review": llm_review},
+                payload=report_payload,
+                artifacts=artifacts_list,
+                start_ts=start_ts,
+            )
+            store = TaskStore()
+            store.save(record)
+            logger.info("task_record_saved", task_id=record.task_id, symbol=symbol)
+        except Exception as exc:
+            logger.warning("task_record_capture_failed", error=str(exc))
+
     _print_footer(step, total_time, enhance, llm_review)
     logger.info(
         "query_done",
@@ -739,6 +762,28 @@ def _parse_args() -> argparse.Namespace:
         default=8,
         help="监控模式拉取的财报期数（默认: 8）",
     )
+    parser.add_argument(
+        "--task-stats",
+        action="store_true",
+        default=False,
+        help="输出最近运行记录的统计摘要",
+    )
+    parser.add_argument(
+        "--distill",
+        action="store_true",
+        default=False,
+        help="基于运行记录产出规则蒸馏建议报告（需 LLM）",
+    )
+    parser.add_argument(
+        "--task-history",
+        default=None,
+        help="查看指定标的的历史运行记录，如 600519.SH",
+    )
+    parser.add_argument(
+        "--task-record",
+        default=None,
+        help="查看指定 task_id 的完整运行记录",
+    )
     return parser.parse_args()
 
 
@@ -749,6 +794,107 @@ def _normalize_query(query: str) -> str:
         if key.strip().isidentifier():
             return rest.strip()
     return query
+
+
+def _handle_task_cli(args: argparse.Namespace) -> None:
+    """处理 task records 相关的 CLI 命令。"""
+    from alphabee.task_records import TaskAnalyzer, TaskStore, distill
+
+    store = TaskStore()
+    count = store.count()
+
+    if count == 0:
+        print(_c("  ℹ 暂无运行记录。请先执行分析任务。", _C.DIM))
+        return
+
+    print()
+    print(_hr("═", 70, _C.CYAN))
+    print(_c("  📊 AlphaBee Task Records", _C.BOLD, _C.CYAN))
+    print(_c(f"  共 {count} 条记录", _C.DIM))
+    print(_hr("═", 70, _C.CYAN))
+    print()
+
+    if args.task_stats:
+        analyzer = TaskAnalyzer(store)
+        summary = analyzer.summary()
+
+        print(_c("  📈 执行概况", _C.BOLD, _C.WHITE))
+        print(f"  总运行: {summary['run_count']} 次, 平均耗时: {summary['avg_duration_s']}s")
+        print()
+
+        print(_c("  🚨 最高频问题类别", _C.BOLD, _C.WHITE))
+        for cat, cnt in summary["top_issues"][:8]:
+            print(f"  {cat:30s} {cnt:4d}")
+
+        print()
+        print(_c("  🏷 最高频问题模式", _C.BOLD, _C.WHITE))
+        for kw, cnt in summary["top_message_clusters"][:8]:
+            print(f"  {kw:30s} {cnt:4d}")
+
+        print()
+        print(_c("  📡 信号触发率", _C.BOLD, _C.WHITE))
+        print(f"  {'信号':30s} {'触发率':>6s}  {'High%':>6s}  {'Med%':>6s}  {'Low%':>6s}  {'Block%':>6s}")
+        for sid, stats in summary["signal_trigger_rates"].items():
+            print(f"  {sid:30s} {stats['triggered_pct']:5.0f}%  "
+                  f"{stats['high_pct']:5.0f}%  {stats['medium_pct']:5.0f}%  "
+                  f"{stats['low_pct']:5.0f}%  {stats['blocked_pct']:5.0f}%")
+
+        print()
+        print(_c("  🎯 Flag 影响 (overall_confidence) ", _C.BOLD, _C.WHITE))
+        fi = summary["flag_impact"]
+        for group, data in fi.items():
+            if data.get("count", 0) > 0:
+                print(f"  {group:20s}: H={data['high_pct']:5.1f}% M={data['medium_pct']:5.1f}% L={data['low_pct']:5.1f}% ({data['count']}次)")
+
+        print()
+        print(_c("  ⚠ 单证据维度", _C.BOLD, _C.WHITE))
+        for dim, cnt in summary["single_evidence_dims"][:5]:
+            print(f"  {dim:30s} {cnt:4d}")
+        if not summary["single_evidence_dims"]:
+            print("  (无)")
+
+        print()
+        print(_c("  🏭 语境适配缺口行业", _C.BOLD, _C.WHITE))
+        for ind, cnt in summary["context_gap_industries"][:5]:
+            print(f"  {ind:30s} {cnt:4d}")
+        if not summary["context_gap_industries"]:
+            print("  (无)")
+
+    if args.distill:
+        print(_c("  🔬 正在生成蒸馏分析报告...", _C.BOLD, _C.YELLOW))
+        print()
+        try:
+            report = distill()
+            print(report)
+        except Exception as exc:
+            print(_c(f"  ❌ 蒸馏失败: {exc}", _C.RED))
+
+    if args.task_history:
+        target = args.task_history.strip()
+        records = [r for r in store.load_all() if r.symbol == target]
+        if not records:
+            print(_c(f"  ℹ 未找到标的 {target} 的历史记录", _C.DIM))
+            return
+        print(_c(f"  📋 {target} 历史记录 ({len(records)} 条)", _C.BOLD, _C.WHITE))
+        print()
+        print(f"  {'时间':22s} {'置信度':8s} {'审查':14s} {'异常':4s} {'问题':4s} {'耗时'}")
+        print(f"  {'-'*22} {'-'*8} {'-'*14} {'-'*4} {'-'*4} {'-'*6}")
+        for r in records:
+            print(f"  {r.timestamp[:19]:22s} {r.overall_confidence:8s} "
+                  f"{r.review_overall_status:14s} {r.anomaly_triggered_count:4d} "
+                  f"{len(r.issues):4d} {r.total_duration_s:5.0f}s")
+
+    if args.task_record:
+        tid = args.task_record.strip()
+        record = store.load(tid)
+        if record is None:
+            print(_c(f"  ❌ 未找到记录: {tid}", _C.RED))
+            return
+        import json as _json
+        print(_json.dumps(record.model_dump(mode="json"), ensure_ascii=False, indent=2))
+
+    print()
+    print(_hr("═", 70, _C.CYAN))
 
 
 def main() -> None:
@@ -793,6 +939,11 @@ def main() -> None:
         print(_c("  💡 最终回答", _C.BOLD, _C.GREEN))
         print(render_monitor_report(result))
         _print_footer(1, time.monotonic() - start_ts, enhance=False, llm_review=False)
+        return
+
+    # ── Task records CLI ──
+    if args.task_stats or args.distill or args.task_history or args.task_record:
+        _handle_task_cli(args)
         return
 
     if args.chat or not args.query:

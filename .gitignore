@@ -14,3 +14,11 @@ large_tool_results/
 
 # env files
 .env
+
+# python cache
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+.pytest_cache/
