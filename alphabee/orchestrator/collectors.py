@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
 
 from langchain_core.messages import AnyMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -44,42 +43,29 @@ from alphabee.core import (
 )
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.tools.common import extract_symbols_from_query
+from alphabee.utils.pipeline import extract_text, make_id
 
 # ── helpers ──────────────────────────────────────────────────────────
 
 
 def _make_id(prefix: str) -> str:
-    return f"{prefix}-{uuid4().hex[:12]}"
-
-
-def _extract_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") in {"text", "thinking"}:
-                parts.append(block.get("text", ""))
-        return "\n".join(part for part in parts if part)
-    return str(content)
+    return make_id(prefix)
 
 
 def _latest_query(messages: list[AnyMessage]) -> str:
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
-            text = _extract_text(message.content).strip()
+            text = extract_text(message.content).strip()
             if text:
                 return text
-    return _extract_text(messages[-1].content).strip() if messages else ""
+    return extract_text(messages[-1].content).strip() if messages else ""
 
 
 def _extract_final_text(result: dict[str, Any]) -> str:
     messages = result.get("messages", [])
     if not messages:
         return ""
-    return _extract_text(messages[-1].content).strip()
+    return extract_text(messages[-1].content).strip()
 
 
 def _first_symbol(query: str) -> str | None:

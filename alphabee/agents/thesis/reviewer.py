@@ -19,6 +19,7 @@ from alphabee.agents.thesis.models import (
 )
 from alphabee.agents.thesis.prompts import REVIEWER_SYSTEM_PROMPT, REVIEWER_USER_TEMPLATE
 from alphabee.utils import create_chat_model
+from alphabee.utils.pipeline import extract_text, parse_json
 
 logger = structlog.get_logger(__name__)
 
@@ -382,38 +383,7 @@ class ThesisReviewer:
     # ── Text / JSON helpers ──────────────────────────────────────────────────
 
     def _extract_text(self, content) -> str:
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts = [
-                block if isinstance(block, str)
-                else block.get("text", "")
-                if isinstance(block, dict) and block.get("type") in {"text", "thinking"}
-                else ""
-                for block in content
-            ]
-            return "\n".join(p for p in parts if p)
-        return str(content)
+        return extract_text(content)
 
     def _parse_json(self, text: str) -> dict:
-        text = text.strip()
-        if not text:
-            raise ValueError("LLM returned empty text")
-        candidates: list[str] = [text]
-        if text.startswith("```"):
-            lines = text.splitlines()
-            if len(lines) >= 2:
-                fenced = "\n".join(lines[1:-1]).strip()
-                if fenced.startswith("json"):
-                    fenced = fenced[4:].strip()
-                candidates.append(fenced)
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end > start:
-            candidates.append(text[start:end + 1])
-        for c in candidates:
-            try:
-                return json.loads(c)
-            except json.JSONDecodeError:
-                continue
-        raise ValueError("JSON parse failed")
+        return parse_json(text)

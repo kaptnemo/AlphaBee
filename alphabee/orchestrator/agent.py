@@ -10,7 +10,6 @@ Simplified pipeline:
 from __future__ import annotations
 
 import json
-from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
@@ -28,10 +27,11 @@ from alphabee.core import (
 from alphabee.orchestrator.collectors import _build_company_context, collect_facts
 from alphabee.orchestrator.reporter import generate_report
 from alphabee.orchestrator.state import OrchestratorState
+from alphabee.utils.pipeline import make_id
 
 
 def _make_id(prefix: str) -> str:
-    return f"{prefix}-{uuid4().hex[:12]}"
+    return make_id(prefix)
 
 
 # ── review_thesis node ──────────────────────────────────────────────────────
@@ -216,59 +216,8 @@ def _find_artifact_value(artifacts: list, artifact_type: str) -> dict | None:
 
 def _reconstruct_thesis(thesis_dict: dict):
     """Reconstruct an InvestmentThesis from the dict stored in the artifact."""
-    from alphabee.agents.thesis.models import (
-        CriticQuestion,
-        EvidenceItem,
-        InvestmentThesis,
-        ThesisDimension,
-    )
-
-    dims = thesis_dict.get("thesis", {}).get("dimensions", {})
-    dimensions: dict = {}
-    for dim_id, d in dims.items():
-        evidence = [
-            EvidenceItem(
-                signal_id=e.get("signal_id", ""),
-                signal_name=e.get("signal_name", ""),
-                level=e.get("level", ""),
-                impact=e.get("impact", ""),
-                interpretation=e.get("interpretation", ""),
-            )
-            for e in d.get("evidence", [])
-        ]
-        dimensions[dim_id] = ThesisDimension(
-            id=d.get("id", dim_id),
-            name=d.get("name", ""),
-            judgment=d.get("judgment", "neutral"),
-            score=d.get("score", 0.0),
-            evidence=evidence,
-            interpretation=d.get("interpretation", ""),
-            confidence=d.get("confidence", 1.0),
-        )
-
-    thesis_data = thesis_dict.get("thesis", {})
-    cqs = thesis_data.get("critic_questions", [])
-    critic_questions = [
-        CriticQuestion(
-            question=cq.get("question", ""),
-            source=cq.get("source", ""),
-            category=cq.get("category", "general"),
-            severity=cq.get("severity", "minor"),
-        )
-        for cq in cqs
-    ]
-
-    return InvestmentThesis(
-        symbol=thesis_data.get("symbol", ""),
-        period=thesis_data.get("period", ""),
-        dimensions=dimensions,
-        primary_risks=thesis_data.get("primary_risks", []),
-        overall_judgment=thesis_data.get("overall_judgment", "neutral"),
-        overall_score=thesis_data.get("overall_score", 0.0),
-        critic_questions=critic_questions,
-        signal_count=thesis_data.get("signal_count", 0),
-        triggered_signal_count=thesis_data.get("triggered_signal_count", 0),
-    )
+    from alphabee.agents.thesis.models import InvestmentThesis
+    return InvestmentThesis.from_dict(thesis_dict)
 
 
 # ── graph assembly ──────────────────────────────────────────────────────────

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -13,49 +12,11 @@ from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils import create_chat_model
+from alphabee.utils.pipeline import extract_text, make_id, parse_json
 
 
 def _make_id(prefix: str) -> str:
-    return f"{prefix}-{uuid4().hex[:12]}"
-
-
-def _extract_text(content) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = [
-            block if isinstance(block, str)
-            else block.get("text", "")
-            if isinstance(block, dict) and block.get("type") in {"text", "thinking"}
-            else ""
-            for block in content
-        ]
-        return "\n".join(p for p in parts if p)
-    return str(content)
-
-
-def _parse_json(text: str) -> dict:
-    text = text.strip()
-    if not text:
-        raise ValueError("LLM returned empty text")
-    candidates: list[str] = [text]
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if len(lines) >= 2:
-            fenced = "\n".join(lines[1:-1]).strip()
-            if fenced.startswith("json"):
-                fenced = fenced[4:].strip()
-            candidates.append(fenced)
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
-        candidates.append(text[start:end + 1])
-    for c in candidates:
-        try:
-            return json.loads(c)
-        except json.JSONDecodeError:
-            continue
-    raise ValueError("JSON parse failed")
+    return make_id(prefix)
 
 
 def _find_artifact(artifacts: list, artifact_type: str) -> dict | None:
@@ -203,9 +164,9 @@ async def generate_report(
                 )
             ),
         ])
-        raw_text = _extract_text(response.content)
+        raw_text = extract_text(response.content)
         try:
-            report_value = _parse_json(raw_text)
+            report_value = parse_json(raw_text)
         except ValueError:
             # If JSON parsing fails, use raw text as the report
             report_value = {"raw_markdown": raw_text, "title": "财报质量体检报告"}

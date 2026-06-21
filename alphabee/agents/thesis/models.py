@@ -83,6 +83,16 @@ class EvidenceItem:
     impact: str               # negative / slightly_negative / neutral / ...
     interpretation: str = ""  # 信号解释文字
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EvidenceItem:
+        return cls(
+            signal_id=data.get("signal_id", ""),
+            signal_name=data.get("signal_name", ""),
+            level=data.get("level", ""),
+            impact=data.get("impact", ""),
+            interpretation=data.get("interpretation", ""),
+        )
+
 
 @dataclass
 class ThesisDimension:
@@ -96,6 +106,18 @@ class ThesisDimension:
     interpretation: str = ""
     confidence: float = 1.0   # 0-1，信号覆盖度越高置信度越高
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], dim_id: str = "") -> ThesisDimension:
+        return cls(
+            id=data.get("id", dim_id),
+            name=data.get("name", ""),
+            judgment=data.get("judgment", "neutral"),
+            score=float(data.get("score", 0.0)),
+            evidence=[EvidenceItem.from_dict(e) for e in data.get("evidence", [])],
+            interpretation=data.get("interpretation", ""),
+            confidence=float(data.get("confidence", 1.0)),
+        )
+
 
 @dataclass
 class CriticQuestion:
@@ -105,6 +127,15 @@ class CriticQuestion:
     source: str               # 来源：信号 ID 或维度 ID
     category: str             # evidence_gap / counter_evidence / industry_cycle / comparison / accounting_policy / general
     severity: str             # critical / important / minor
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CriticQuestion:
+        return cls(
+            question=data.get("question", ""),
+            source=data.get("source", ""),
+            category=data.get("category", "general"),
+            severity=data.get("severity", "minor"),
+        )
 
 
 @dataclass
@@ -162,6 +193,49 @@ class InvestmentThesis:
                 for q in self.critic_questions
             ],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> InvestmentThesis:
+        """从 ``to_dict()`` 的输出（或 artifact value 中的 ``thesis`` 子字典）重建实例。
+
+        兼容两种输入形态：
+        - **扁平格式**：``to_dict()`` 的直接输出，顶层包含 ``symbol``、``dimensions`` 等字段。
+        - **artifact 包裹格式**：orchestrator artifact value 的格式为
+          ``{"thesis": {...}, "enhanced": ..., ...}``，此时先取 ``data["thesis"]`` 再解析。
+
+        Args:
+            data: 任意一种格式的字典。若为空则返回空 InvestmentThesis。
+
+        Returns:
+            重建的 ``InvestmentThesis`` 实例。
+        """
+        if not data:
+            return cls(symbol="", period="")
+
+        # 自动处理 artifact 包裹格式
+        if "thesis" in data and isinstance(data["thesis"], dict) and "symbol" not in data:
+            data = data["thesis"]
+
+        dimensions = {
+            dim_id: ThesisDimension.from_dict(d, dim_id=dim_id)
+            for dim_id, d in data.get("dimensions", {}).items()
+        }
+        critic_questions = [
+            CriticQuestion.from_dict(cq)
+            for cq in data.get("critic_questions", [])
+        ]
+
+        return cls(
+            symbol=data.get("symbol", ""),
+            period=data.get("period", ""),
+            dimensions=dimensions,
+            primary_risks=list(data.get("primary_risks", [])),
+            overall_judgment=data.get("overall_judgment", "neutral"),
+            overall_score=float(data.get("overall_score", 0.0)),
+            critic_questions=critic_questions,
+            signal_count=int(data.get("signal_count", 0)),
+            triggered_signal_count=int(data.get("triggered_signal_count", 0)),
+        )
 
 
 def score_to_judgment(score: float) -> str:

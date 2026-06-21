@@ -5,7 +5,6 @@ import structlog
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, TypedDict
-from uuid import uuid4
 
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -40,6 +39,7 @@ from alphabee.harness.prompts import (
 )
 from alphabee.harness.state_compressor import CompressorConfig, HarnessStateCompressor, NodeKind
 from alphabee.utils import create_chat_model
+from alphabee.utils.pipeline import extract_text, make_id, parse_json
 from alphabee.harness.utils import json_instruction
 
 
@@ -133,7 +133,7 @@ _STEP_SCOPE_MAP: dict[str, IssueScope] = {
 
 
 def _make_id(prefix: str) -> str:
-    return f"{prefix}-{uuid4().hex[:12]}"
+    return make_id(prefix)
 
 
 def _model(component: str) -> ChatOpenAI:
@@ -186,24 +186,10 @@ def _state_to_prompt_payload(state: HarnessState) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def _extract_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") in {"text", "thinking"}:
-                parts.append(block.get("text", ""))
-        return "\n".join(part for part in parts if part)
-    return str(content)
-
-
 def _extract_final_text(result: dict[str, Any]) -> str:
     messages = result.get("messages", [])
     if messages:
-        return _extract_text(getattr(messages[-1], "content", messages[-1])).strip()
+        return extract_text(getattr(messages[-1], "content", messages[-1])).strip()
 
     structured = result.get("structured_response")
     if structured is None:
@@ -213,43 +199,8 @@ def _extract_final_text(result: dict[str, Any]) -> str:
     return json.dumps(structured, ensure_ascii=False)
 
 
-def _parse_json_text(raw: str) -> Any:
-    text = raw.strip()
-    if not text:
-        raise ValueError("Model returned empty text instead of JSON.")
-
-    candidates: list[str] = []
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if len(lines) >= 2:
-            fenced = "\n".join(lines[1:-1]).strip()
-            if fenced.startswith("json"):
-                fenced = fenced[4:].strip()
-            candidates.append(fenced)
-    candidates.append(text)
-
-    start_positions = [index for index in (text.find("{"), text.find("[")) if index != -1]
-    if start_positions:
-        start = min(start_positions)
-        opener = text[start]
-        closer = "}" if opener == "{" else "]"
-        end = text.rfind(closer)
-        if end > start:
-            candidates.append(text[start : end + 1])
-
-    seen = set()
-    for candidate in candidates:
-        normalized = candidate.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        try:
-            return json.loads(normalized)
-        except json.JSONDecodeError:
-            continue
-
-    excerpt = text[:400].replace("\n", "\\n")
-    raise ValueError(f"Failed to parse model output as JSON: {excerpt}")
+# Alias kept for any internal callers that use the old name.
+_parse_json_text = parse_json
 
 
 _VALID_REF_TYPES = {"artifact", "observation", "decision"}
@@ -360,7 +311,7 @@ async def _invoke_json_agent(
 ) -> Any:
     messages = [SystemMessage(content=system_prompt), {"role": "user", "content": prompt}]
     response = await model.ainvoke(messages)
-    raw_text = _extract_text(response.content).strip()
+    raw_text = extract_text(response.content).strip()
     return _parse_json_text(raw_text)
 
 
