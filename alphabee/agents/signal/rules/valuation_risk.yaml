@@ -63,8 +63,8 @@ critic_questions:
 
 thesis_impact:
 
-  financial_quality:
-    high: slightly_negative
-    medium: neutral
+  valuation_fit:
+    high: negative
+    medium: slightly_negative
     low: neutral
-    none: neutral
+    none: positive

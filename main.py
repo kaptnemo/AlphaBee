@@ -305,14 +305,14 @@ def _render_final_report(final_payload: dict) -> None:
         print(_hr("─", 60, _C.CYAN))
         print(_c("  🐞 系统问题", _C.BOLD, _C.YELLOW))
         print(_hr("─", 60, _C.CYAN))
-        for i in issues[:5]:
+        for i in issues:
             sev = i.get("severity", "?")
             cat = i.get("category", "?")
             msg = i.get("message", "")
             color = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.DIM
             print(_c(f"  [{sev}] {cat}: {msg}", color))
-        if len(issues) > 5:
-            print(_c(f"  ... 共 {len(issues)} 个问题", _C.DIM))
+        # if len(issues) > 5:
+        print(_c(f"  共 {len(issues)} 个问题", _C.DIM))
         print()
 
     # Disclaimer

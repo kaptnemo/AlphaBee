@@ -1,0 +1,76 @@
+id: capital_efficiency_risk
+
+name: 资本配置效率风险
+
+category: capital_quality
+
+dimension: capital_efficiency
+
+description: >
+  评估公司资本使用效率和股东回报能力。
+  低ROE、差现金流质量加上高资本支出，往往意味着大量资金被低效占用；
+  分红覆盖率偏低则说明账面利润无法转化为真实的股东回报。
+  本规则综合三个维度识别资本配置能力不足的风险。
+
+required_facts:
+  - net_profit
+  - operating_cash_flow
+
+required_derived_facts:
+  - roe_level
+  - cashflow_quality
+  - capex_intensity
+  - dividend_coverage
+
+trigger_rules:
+
+  high:
+    condition: roe_level < 0.06 and cashflow_quality < 0.3
+
+  medium:
+    condition: (roe_level < 0.08 and capex_intensity > 0.15) or cashflow_quality < 0.2
+
+  low:
+    condition: roe_level < 0.10 or (capex_intensity > 0.20 and dividend_coverage < 1.0)
+
+interpretation_templates:
+
+  high: >
+    资本配置效率严重偏低：ROE跌破6%且经营现金流转化率极差，
+    说明账面利润大量无法变现、资金占用效率极低。
+    管理层的资本分配决策存在重大缺陷，股东价值持续被损耗。
+
+  medium: >
+    资本配置效率偏低：ROE偏弱同时仍保持较高资本支出，
+    或现金流质量不佳，资本投入产出比不理想。
+    建议关注在建项目回报率和资金使用效率。
+
+  low: >
+    资本配置效率存在轻度风险：ROE低于合理水平，
+    或高资本支出下分红能力不足，资本效率处于偏低区间。
+
+  none: >
+    公司资本配置效率良好：ROE维持健康水平、经营现金流充裕、
+    资本支出有节制且具备向股东返还利润的能力。
+    管理层的资本分配能力得到财务数据的有力支撑。
+
+critic_questions:
+  - ROE偏低是主动做低（重资产扩张期/战略投入期）还是被动下滑（竞争力减弱）？
+  - 高资本支出是否有清晰的项目回报测算和建设进度？
+  - 同行业可比公司的ROE和capex强度如何？
+  - 公司分红率偏低是因为有更优质的再投资机会还是现金流不足？
+  - 历史上资本支出项目的回报率（IRR）是否达到预期？
+
+thesis_impact:
+
+  capital_efficiency:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  financial_quality:
+    high: slightly_negative
+    medium: neutral
+    low: neutral
+    none: neutral

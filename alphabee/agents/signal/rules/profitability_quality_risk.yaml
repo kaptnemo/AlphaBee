@@ -60,6 +60,18 @@ critic_questions:
 
 thesis_impact:
 
+  competitive_moat:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  capital_efficiency:
+    high: slightly_negative
+    medium: neutral
+    low: neutral
+    none: positive
+
   financial_quality:
     high: negative
     medium: slightly_negative

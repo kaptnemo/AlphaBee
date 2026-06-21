@@ -126,9 +126,14 @@ class ThesisReviewer:
             strong_negative = 0
             for ev in evidence:
                 impact = ev.impact if hasattr(ev, "impact") else ""
+                ev_level = ev.level if hasattr(ev, "level") else ""
                 if impact == "positive":
                     positive += 1
-                    strong_positive += 1
+                    # Only count as strong_positive if the risk signal actually fired
+                    # (non-none level). A none:positive means "no risk found" — it is
+                    # mild positive evidence, not a strong counter-signal.
+                    if ev_level and ev_level != "none":
+                        strong_positive += 1
                 elif impact == "slightly_positive":
                     positive += 1
                 elif impact == "negative":
@@ -140,7 +145,9 @@ class ThesisReviewer:
                 issues.append(
                     f"信号方向冲突：{positive} 条正面 vs {negative} 条负面"
                 )
-                # Severe conflict: strong-vs-strong or multi-signal clashes
+                # Severe conflict: strong-vs-strong or multi-signal clashes.
+                # Note: none-level "positive" evidence is NOT counted as strong_positive
+                # because it represents absence-of-risk, not an affirmative positive finding.
                 is_severe = (
                     (strong_positive >= 1 and strong_negative >= 1)
                     or (positive >= 2 and negative >= 2)
@@ -315,7 +322,11 @@ class ThesisReviewer:
                 v.missing_evidence.append("证据不充分：" + review.get("evidence_rationale", ""))
 
             if not review.get("signals_consistent", True):
-                if _STATUS_RANK.get("contested", 0) > _STATUS_RANK.get(v.status, 0):
+                # Only promote to contested when Layer 1 found NO conflict at all.
+                # If Layer 1 already detected conflicts and downgraded to qualified
+                # (e.g. via Rule 3b), don't let LLM re-promote — the deterministic
+                # resolution should be respected.
+                if v.status == "confirmed":
                     v.status = "contested"
                 v.conflict_description = review.get("consistency_rationale", "")
 

@@ -20,7 +20,7 @@ SIGNAL_LEVEL_TO_SCORE: dict[str, float] = {
     "high": 1.0,
     "medium": 0.6,
     "low": 0.3,
-    "none": 0.0,
+    "none": 0.2,   # absence of risk is mild positive evidence (non-zero so thesis_impact.none:positive is reflected)
 }
 
 # thesis_impact 方向 → 方向分值（负=负面，正=正面）

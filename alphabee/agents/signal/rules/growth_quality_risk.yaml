@@ -61,6 +61,12 @@ critic_questions:
 
 thesis_impact:
 
+  growth_quality:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
   financial_quality:
     high: negative
     medium: slightly_negative

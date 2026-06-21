@@ -1,0 +1,74 @@
+id: moat_erosion_risk
+
+name: 竞争壁垒侵蚀风险
+
+category: competitive_quality
+
+dimension: competitive_moat
+
+description: >
+  评估公司核心竞争优势（护城河）是否出现侵蚀迹象。
+  通过毛利率趋势、ROE水平和营收增速三个指标综合判断：
+  毛利率持续收窄说明定价权减弱；ROE走低说明竞争优势带来的超额回报在下降；
+  低增速下ROE仍低说明不是暂时因素。
+
+required_facts:
+  - revenue_yoy
+
+required_derived_facts:
+  - gross_margin_trend
+  - roe_level
+  - revenue_growth
+
+trigger_rules:
+
+  high:
+    condition: gross_margin_trend < -3 and roe_level < 0.10
+
+  medium:
+    condition: gross_margin_trend < -2 or (roe_level < 0.12 and revenue_growth < 5)
+
+  low:
+    condition: gross_margin_trend < -1 or roe_level < 0.15
+
+interpretation_templates:
+
+  high: >
+    竞争壁垒严重侵蚀：毛利率大幅下滑（>3pp）且ROE跌破10%，
+    公司的核心盈利能力和定价权同步恶化。
+    这可能反映行业竞争加剧、产品差异化能力减弱或成本压力传导不畅，
+    需深入评估商业模式护城河的完整性。
+
+  medium: >
+    竞争壁垒出现侵蚀信号：毛利率连续收窄（>2pp）或低增速下ROE仍低，
+    定价权或经营效率有所下降。
+    建议比较行业同类公司毛利率趋势，判断是公司特有问题还是行业共性压力。
+
+  low: >
+    竞争壁垒存在轻度压力：毛利率小幅下滑或ROE处于偏低区间，
+    属于需观察的早期预警信号，需跟踪下季度是否延续。
+
+  none: >
+    公司竞争壁垒保持稳健：毛利率维持稳定或上升，ROE处于较高水平，
+    核心竞争优势未见明显侵蚀迹象，护城河可信度强。
+
+critic_questions:
+  - 毛利率下滑是原材料成本压力（外部因素）还是产品结构下移（内部能力减弱）？
+  - 相比同行业龙头，公司毛利率趋势是领先还是落后？
+  - ROE走低是因为资产规模扩张稀释（成长期阶段特征）还是利润率真实下降？
+  - 公司是否处于产品迭代的空档期，导致暂时性盈利能力下降？
+  - 近期是否有大客户流失或价格战引发的毛利压缩？
+
+thesis_impact:
+
+  competitive_moat:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
+
+  earnings_quality:
+    high: slightly_negative
+    medium: neutral
+    low: neutral
+    none: neutral
