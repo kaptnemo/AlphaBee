@@ -1,15 +1,12 @@
 """Dynamic Tushare query tool — lets agents call any Tushare API by name."""
 
 import json
-from pathlib import Path
 
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
+from alphabee.utils.paths import PROJECT_ROOT
 
 _QUERY_CACHE = SyncTTLCache(ttl_seconds=300.0)
-
-# Project root — used to verify paths; two levels up from this file
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def query_tushare(api_name: str, params: str, max_rows: int = 50) -> str:

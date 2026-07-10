@@ -11,6 +11,8 @@ __pycache__/
 outputs/
 data/
 large_tool_results/
+pdfs/
+*.pdf
 
 # env files
 .env

@@ -1,10 +1,12 @@
 import logging
 import sys
 from logging.handlers import TimedRotatingFileHandler
-from pathlib import Path
 from typing import Any
 
 import structlog
+
+from pathlib import Path
+from alphabee.utils.paths import PROJECT_ROOT
 
 _IS_CONFIGURED = False
 
@@ -19,8 +21,7 @@ def configure_logging(
     if _IS_CONFIGURED:
         return
 
-    project_root = Path(__file__).resolve().parents[2]
-    resolved_log_dir = log_dir or (project_root / "logs")
+    resolved_log_dir = log_dir or (PROJECT_ROOT / "logs")
     resolved_log_dir.mkdir(parents=True, exist_ok=True)
 
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=False)

@@ -122,6 +122,61 @@ def _build_report_payload(state: OrchestratorState) -> dict:
     else:
         payload["anomaly"] = {"anomaly_count": 0, "pattern_count": 0, "anomalies": [], "pattern_matches": []}
 
+    # ── conflicts + verifications → full structured data ──
+    conflicts_raw = state.get("conflicts_result")
+    verification_results: list[dict] = state.get("verification_results") or []
+    if conflicts_raw:
+        verify_by_hid: dict[str, dict] = {}
+        for vr in verification_results:
+            hid = vr.get("hypothesis_id", "")
+            if hid:
+                verify_by_hid[hid] = vr
+
+        enriched_conflicts: list[dict] = []
+        for c in conflicts_raw.get("conflicts", []):
+            enriched_hyps: list[dict] = []
+            for h in c.get("hypotheses", []):
+                hid = h.get("id", "")
+                vr = verify_by_hid.get(hid, {})
+                enriched_hyps.append({
+                    "explanation": h.get("explanation", ""),
+                    "predictions": h.get("predictions", []),
+                    "verification_status": vr.get("status", h.get("status", "pending")),
+                    "support_score": vr.get("support_score"),
+                    "contradiction_score": vr.get("contradiction_score"),
+                    "confidence": vr.get("confidence"),
+                    "supporting_evidence": vr.get("supporting_evidence", []),
+                    "refuting_evidence": vr.get("refuting_evidence", []),
+                    "gaps": vr.get("gaps", []),
+                    "summary": vr.get("summary", ""),
+                })
+
+            enriched_conflicts.append({
+                "theme": c.get("theme", ""),
+                "severity": c.get("severity", ""),
+                "description": c.get("description", ""),
+                "confidence": c.get("confidence", 0),
+                "hypotheses": enriched_hyps,
+            })
+
+        verified_count = sum(
+            1 for c in enriched_conflicts
+            for h in c["hypotheses"]
+            if h["verification_status"] in ("verified", "partial")
+        )
+        rejected_count = sum(
+            1 for c in enriched_conflicts
+            for h in c["hypotheses"]
+            if h["verification_status"] == "rejected"
+        )
+
+        payload["conflict_analysis"] = {
+            "conflict_count": len(enriched_conflicts),
+            "verified_count": verified_count,
+            "rejected_count": rejected_count,
+            "conflicts": enriched_conflicts,
+        }
+
     # ── issues ──
     payload["issues"] = [
         {

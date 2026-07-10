@@ -1,16 +1,16 @@
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 import yaml
+
+from alphabee.utils.paths import PROJECT_ROOT
 
 
 class ConfigLoader:
     def __init__(self, config_path: str | None = None):
         if config_path is None:
-            base_dir = Path(__file__).resolve().parents[2]
-            config_path = str(base_dir / "config.yaml")
+            config_path = str(PROJECT_ROOT / "config.yaml")
 
         self.config_path = config_path
 

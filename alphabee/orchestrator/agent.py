@@ -27,9 +27,13 @@ from alphabee.core import (
     StepStatus,
 )
 from alphabee.orchestrator.collectors import (
-    _build_company_context,
     collect_raw_facts,
+)
+from alphabee.orchestrator.analyzers import (
+    _build_company_context,
     run_analysis_engines,
+    explore_conflicts,
+    verify_hypotheses,
     run_thesis,
 )
 from alphabee.orchestrator.reporter import generate_report
@@ -149,6 +153,100 @@ async def review_thesis(
             related_step=step.id,
         ))
 
+    # ── Inject verified conflicts as additional review evidence ──
+    conflicts_raw = state.get("conflicts_result")
+    if conflicts_raw:
+        verification_results = state.get("verification_results") or []
+        verify_by_hid: dict[str, dict] = {
+            vr.get("hypothesis_id", ""): vr for vr in verification_results
+        }
+
+        _CONFLICT_DIM_KEYWORDS: dict[str, list[str]] = {
+            "盈利": ["earnings_quality"],
+            "现金流": ["financial_quality", "earnings_quality"],
+            "估值": ["valuation"],
+            "成长": ["growth_quality"],
+            "负债": ["credit_risk"],
+            "应收": ["financial_quality"],
+            "存货": ["financial_quality"],
+            "三表": ["financial_quality"],
+            "行业": ["growth_quality"],
+        }
+
+        for conflict in conflicts_raw.get("conflicts", []):
+            theme = conflict.get("theme", "")
+            severity = conflict.get("severity", "")
+            conflict_severity = (
+                IssueSeverity.HIGH if severity in ("high", "critical")
+                else IssueSeverity.MEDIUM
+            )
+
+            for hyp in conflict.get("hypotheses", []):
+                vstatus = hyp.get("status", "pending")
+                if vstatus not in ("verified", "partial"):
+                    continue
+
+                hid = hyp.get("id", "")
+                vr = verify_by_hid.get(hid, {})
+                explanation = hyp.get("explanation", "")
+                gap_hint = (
+                    f" 缺口: {', '.join(vr.get('gaps', [])[:3])}"
+                    if vr.get("gaps") else ""
+                )
+
+                issues.append(Issue(
+                    id=_make_id("issue"),
+                    severity=conflict_severity,
+                    category="verified_conflict",
+                    message=(
+                        f"[冲突已验证] {theme}: {explanation}. "
+                        f"结论: {vr.get('summary', '')}" + gap_hint
+                    ),
+                    related_step=step.id,
+                ))
+
+                # Cross-reference: does verified conflict contradict a
+                # thesis dimension with positive judgment?
+                for kw, dim_ids in _CONFLICT_DIM_KEYWORDS.items():
+                    if kw not in theme:
+                        continue
+                    for dim_id in dim_ids:
+                        dim = thesis.dimensions.get(dim_id)
+                        if dim is None:
+                            continue
+                        dim_name = dim.name if hasattr(dim, "name") else dim_id
+                        judgment = dim.judgment if hasattr(dim, "judgment") else ""
+                        if judgment in ("strong_positive", "positive"):
+                            issues.append(Issue(
+                                id=_make_id("issue"),
+                                severity=IssueSeverity.HIGH,
+                                category="thesis_conflict",
+                                message=(
+                                    f"[论点矛盾] 维度'{dim_name}'判断为{judgment}，"
+                                    f"但已验证冲突'{theme}'暗示相反方向. "
+                                    f"假设: {explanation}"
+                                ),
+                                related_step=step.id,
+                            ))
+
+        # Produce Decisions for rejected hypotheses (ruled-out findings)
+        for conflict in conflicts_raw.get("conflicts", []):
+            for hyp in conflict.get("hypotheses", []):
+                if hyp.get("status") != "rejected":
+                    continue
+                hid = hyp.get("id", "")
+                vr = verify_by_hid.get(hid, {})
+                decisions.append(Decision(
+                    id=_make_id("decision"),
+                    maker="conflict_verifier",
+                    rationale=(
+                        f"假设已排除: {conflict.get('theme', '')} — "
+                        f"{hyp.get('explanation', '')}. "
+                        f"推翻理由: {vr.get('summary', '')}"
+                    ),
+                    confidence=vr.get("contradiction_score", 0.7),
+                ))
+
     # ── Produce thesis_review Artifact ──
     review_artifact = Artifact(
         id=_make_id("artifact"),
@@ -236,6 +334,8 @@ _graph = StateGraph(OrchestratorState)
 
 _graph.add_node("collect_raw_facts", collect_raw_facts)
 _graph.add_node("run_analysis_engines", run_analysis_engines)
+_graph.add_node("explore_conflicts", explore_conflicts)
+_graph.add_node("verify_hypotheses", verify_hypotheses)
 _graph.add_node("run_thesis", run_thesis)
 _graph.add_node("review_thesis", review_thesis)
 _graph.add_node("generate_report", generate_report)
@@ -243,7 +343,9 @@ _graph.add_node("finalize_message", finalize_message)
 
 _graph.add_edge(START, "collect_raw_facts")
 _graph.add_edge("collect_raw_facts", "run_analysis_engines")
-_graph.add_edge("run_analysis_engines", "run_thesis")
+_graph.add_edge("run_analysis_engines", "explore_conflicts")
+_graph.add_edge("explore_conflicts", "verify_hypotheses")
+_graph.add_edge("verify_hypotheses", "run_thesis")
 _graph.add_edge("run_thesis", "review_thesis")
 _graph.add_edge("review_thesis", "generate_report")
 _graph.add_edge("generate_report", "finalize_message")

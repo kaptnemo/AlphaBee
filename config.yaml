@@ -1,6 +1,7 @@
 llm:
   api_key: "${LLM_API_KEY}"
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  # base_url: "https://api.deepseek.com"
   model: "deepseek-v4-pro"
   proxy_url: "http://192.168.50.228:7897"
 

@@ -14,6 +14,7 @@ from alphabee.tools.fundamentals import get_fundamentals
 from alphabee.tools.market_data import get_market_data
 from alphabee.tools.news import get_stock_news_summary
 from alphabee.utils import tracked_chat_completion
+from alphabee.utils.paths import PROJECT_ROOT
 
 
 class MonitorStage(BaseModel):
@@ -281,10 +282,9 @@ async def run_framework_monitor(
         days=30,
     )
 
-    project_root = Path(__file__).resolve().parents[2]
     slug = _slugify(framework_file.stem)
-    snapshot_path = project_root / "outputs" / "monitor_snapshots" / f"{slug}.json"
-    report_path = project_root / "outputs" / "monitor_reports" / f"{slug}.md"
+    snapshot_path = PROJECT_ROOT / "outputs" / "monitor_snapshots" / f"{slug}.json"
+    report_path = PROJECT_ROOT / "outputs" / "monitor_reports" / f"{slug}.md"
     previous_snapshot = _load_previous_snapshot(snapshot_path)
 
     report = await _call_monitor_llm(
@@ -309,8 +309,8 @@ async def run_framework_monitor(
     )
     result = MonitorExecutionResult(
         report=final_report,
-        snapshot_path=str(snapshot_path.relative_to(project_root)),
-        report_path=str(report_path.relative_to(project_root)),
+        snapshot_path=str(snapshot_path.relative_to(PROJECT_ROOT)),
+        report_path=str(report_path.relative_to(PROJECT_ROOT)),
     )
 
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)

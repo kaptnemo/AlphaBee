@@ -1,8 +1,8 @@
-from pathlib import Path
-
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
+from langchain.agents.middleware import ToolRetryMiddleware
 
+from alphabee.utils.paths import PROJECT_ROOT
 from alphabee.utils import create_chat_model
 from alphabee.middleware.common import check_message_limit
 from alphabee.middleware.web_search_guard import web_search_guard
@@ -22,12 +22,9 @@ from alphabee.agents.facts.tools import (
     get_risk_fact,
 )
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-
 def fact_collector_agent_factory():
     """事实收集代理工厂：创建并返回一个 FactCollectorAgent 实例。"""
-    backend = FilesystemBackend(root_dir=str(_PROJECT_ROOT), virtual_mode=True)
+    backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
     return create_deep_agent(
         model=create_chat_model("agent.facts"),
         system_prompt=FACT_COLLECTOR_PROMPT,
@@ -45,6 +42,7 @@ def fact_collector_agent_factory():
         ],
         middleware=[
             web_search_guard,
+            ToolRetryMiddleware(),
             check_message_limit,
         ],
         backend=backend,

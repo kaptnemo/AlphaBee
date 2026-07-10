@@ -72,12 +72,12 @@ class TuShareHelper:
         """
 
         def wrapper(*arg, **kwargs):
-            max_retries = 10
-            for attempt in range(max_retries):
+            max_retries = 1
+            for attempt in range(1, max_retries + 1):
                 try:
                     return TuShareResult(func(*arg, **kwargs), name)
                 except Exception as e:
-                    if attempt == max_retries - 1:
+                    if attempt == max_retries:
                         logger.error(
                             "Tushare API failed after max retries",
                             api=name,
@@ -85,15 +85,21 @@ class TuShareHelper:
                             error=str(e),
                         )
                         raise
-                    wait = attempt + 1  # 1s, 2s, ..., 9s
+                    wait = attempt ** 2  # 1s, 4s, 9s
                     logger.warning(
                         "Tushare API error, retrying",
                         api=name,
-                        attempt=attempt + 1,
+                        attempt=attempt,
                         wait_seconds=wait,
                         error=str(e),
                     )
                     time.sleep(wait)
+            else:
+                logger.error("Tushare API failed after max retries", api=name)
+                if e is not None:
+                    raise e
+                else:
+                    raise RuntimeError(f"Tushare API {name} failed after {max_retries} attempts")
 
         return wrapper
 

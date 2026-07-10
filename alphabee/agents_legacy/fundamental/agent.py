@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import TypeVar
 
 from deepagents import create_deep_agent
@@ -6,6 +5,7 @@ from deepagents.backends.filesystem import FilesystemBackend
 from pydantic import BaseModel
 
 from alphabee.agents_legacy.fundamental.prompts import FUNDAMENTAL_AGENT_PROMPT
+from alphabee.utils.paths import PROJECT_ROOT
 from alphabee.middleware.web_search_guard import web_search_guard
 from alphabee.tools.tushare_query import query_tushare
 from alphabee.tools.common import web_search
@@ -15,13 +15,12 @@ from alphabee.harness.utils import json_instruction
 
 T = TypeVar("T", default=str)
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_SKILLS_SOURCES = [str(_PROJECT_ROOT / ".github" / "skills")]
+_SKILLS_SOURCES = [str(PROJECT_ROOT / ".github" / "skills")]
 
 
 def fundamental_agent_factory(resultType: T, example: str = "") -> T:
     """基本面分析代理，通过 Tushare skill 自主决定获取哪些财务数据，分析公司盈利能力、成长性、财务健康、行业地位和护城河等。"""
-    backend = FilesystemBackend(root_dir=str(_PROJECT_ROOT), virtual_mode=True)
+    backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
     if issubclass(resultType, BaseModel):
         return create_deep_agent(
             model=create_chat_model("agent.fundamental"),

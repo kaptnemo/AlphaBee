@@ -82,6 +82,8 @@ def get_market_fact(symbol: str) -> dict[str, Any]:
                 "main_force_inflow": super_large + large,
             }
 
+        pe_ttm_5y_avg = _compute_pe_ttm_5y_avg(daily_basic_history_df)
+
         return {
             "stock_code": ts_code,
             "company_name": company_name,
@@ -90,10 +92,7 @@ def get_market_fact(symbol: str) -> dict[str, Any]:
             "latest_moneyflow": latest_moneyflow,
             "ma": ma,
             "history": daily_df.head(10).to_dict(orient="records"),
-            "daily_basic_history": (
-                daily_basic_history_df.to_dict(orient="records")
-                if not daily_basic_history_df.empty else []
-            ),
+            "pe_ttm_5y_avg": pe_ttm_5y_avg,
         }
 
     return _CACHE.get_or_compute(("market_fact", ts_code), _compute)
@@ -145,10 +144,14 @@ def extract_market_facts(
 
 
 def _extract_pe_ttm_5y_avg(data: dict) -> float | None:
-    """从 daily_basic_history 中计算近 5 年 PE(TTM) 均值。
+    """从返回数据中获取或计算近 5 年 PE(TTM) 均值。
 
     对历史日频 PE 取平均，近似作为 5 年估值中枢参考。
     """
+    direct = safe_float(data.get("pe_ttm_5y_avg"))
+    if direct is not None:
+        return direct
+
     history = data.get("daily_basic_history", [])
     if not history:
         return None
@@ -160,6 +163,23 @@ def _extract_pe_ttm_5y_avg(data: dict) -> float | None:
     if not pe_values:
         return None
     return sum(pe_values) / len(pe_values)
+
+
+def _compute_pe_ttm_5y_avg(daily_basic_history_df: Any) -> float | None:
+    """Compute the 5-year average PE(TTM) directly from the fetched DataFrame."""
+    if daily_basic_history_df is None or daily_basic_history_df.empty:
+        return None
+    pe_series = daily_basic_history_df.get("pe_ttm")
+    if pe_series is None:
+        return None
+    pe_values = []
+    for raw in pe_series.tolist():
+        val = safe_float(raw)
+        if val is not None and val > 0:
+            pe_values.append(val)
+    if not pe_values:
+        return None
+    return float(sum(pe_values) / len(pe_values))
 
 
 def get_market_facts_model(symbol: str) -> "MarketFacts":

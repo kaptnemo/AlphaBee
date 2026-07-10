@@ -34,3 +34,9 @@ class OrchestratorState(TypedDict, total=False):
     fact_values: dict       # 规范化数值事实，由 collect_raw_facts 填充
     financial_facts: object  # FinancialFacts | None，供 AnomalyEngine 使用
     market_facts: object     # MarketFacts | None，供 _build_company_context 使用
+    derived_facts: dict      # 衍生事实，由 run_analysis_engines 填充
+    signal_analysis: dict    # 信号分析结果，由 run_analysis_engines 填充
+    anomaly_report: dict | None  # 异常报告，由 run_analysis_engines 填充
+    conflicts_result: dict | None  # ConflictAnalysisResult.model_dump()，由 explore_conflicts 生成
+    verification_results: list | None  # list[VerificationResultItem.model_dump()]，由 verify_hypotheses 生成
+    # ── 由各节点生成的中间产物 ─────────────────────────

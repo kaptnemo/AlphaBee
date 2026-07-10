@@ -15,6 +15,12 @@ import json
 from typing import Any
 from uuid import uuid4
 
+try:
+    from json_repair import repair_json as _repair_json
+    _JSON_REPAIR_AVAILABLE = True
+except ImportError:
+    _JSON_REPAIR_AVAILABLE = False
+
 
 def extract_text(content: Any) -> str:
     """Normalise LangChain / OpenAI message content to a plain string.
@@ -60,8 +66,13 @@ def parse_json(text: str) -> Any:
 
     candidates: list[str] = []
 
-    # ── 1. Markdown fence ────────────────────────────────────────────
-    if text.startswith("```"):
+    # ── 1. Markdown fence (anywhere in text) ─────────────────────────
+    import re as _re
+    fence_match = _re.search(r"```(?:json)?\s*\n([\s\S]*?)\n```", text)
+    if fence_match:
+        candidates.append(fence_match.group(1).strip())
+    elif text.startswith("```"):
+        # Fallback: old line-based extraction for malformed fences
         lines = text.splitlines()
         if len(lines) >= 2:
             fenced = "\n".join(lines[1:-1]).strip()
@@ -93,6 +104,20 @@ def parse_json(text: str) -> Any:
             return json.loads(normalised)
         except json.JSONDecodeError:
             continue
+
+    # ── 4. json_repair fallback ───────────────────────────────────────
+    if _JSON_REPAIR_AVAILABLE:
+        # Try each candidate through the repair engine
+        for candidate in candidates:
+            normalised = candidate.strip()
+            if not normalised:
+                continue
+            try:
+                repaired = _repair_json(normalised, return_objects=True)
+                if repaired is not None and repaired != "" and repaired != [] and repaired != {}:
+                    return repaired
+            except Exception:
+                continue
 
     excerpt = text[:400].replace("\n", "\\n")
     raise ValueError(f"Failed to parse model output as JSON: {excerpt}")

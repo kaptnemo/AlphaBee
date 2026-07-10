@@ -19,6 +19,7 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
 - thesis: 投资论点（含 dimensions 各维度 judgment/score/confidence/evidence/interpretation）
 - review: 审查结果（可能为 null。含 dimension_verdicts/overall_status/blocking_issues/warning_issues）
 - anomaly: 勾稽关系异常检测结果（anomaly_count / pattern_count / anomalies + 每条 z-score/level + pattern_matches 含模式名/解释/拷问清单）
+- conflict_analysis: 数据矛盾探索与验证结果（conflict_count / verified_count / rejected_count / conflicts 列表，每条含 theme / severity / description / hypotheses，每条 hypothesis 含 explanation / verification_status / supporting_evidence / refuting_evidence / gaps / summary）
 - issues: 系统已知问题列表
 
 ## 报告格式
@@ -47,6 +48,13 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
 - 最短排除路径：指出只需要确认哪 1-2 个事实就能基本排除这个模式的疑点
 
 无异常时写'本期未检出显著勾稽关系异常，三表之间的内在逻辑一致。'",
+    "conflict_analysis": "逐条分析检测到的数据矛盾：
+  - 每个冲突：主题 + 严重等级 + 一句话描述
+  - 对 verified/partial 的假设：解释、支撑证据摘要、置信度
+  - 对 rejected 的假设：推翻理由
+  - 对 unknown 的假设：标注信息缺口
+  - 若冲突与任何投资论点维度的判断方向矛盾，必须明确指出
+  无冲突时写'未检测到显著数据矛盾，多维度指标之间逻辑自洽。'",
     "investment_thesis": "各维度投资论点（每维度含判断、评分、置信度、证据、解释、审查状态）",
     "review_findings": "审查发现。blocking_issues 优先、warning_issues 其次。无 review 数据时写'未执行审查'",
     "risks": "主要风险列表（来自 thesis.primary_risks 和 review.blocking_issues）",
@@ -86,6 +94,11 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
 ### 弹性下调
 - 若 review.overall_status == "passed" 但信号中存在 high 风险且与维度 positive 判断形成明显矛盾，下调为 medium
 - 若整体信号 coverage 极低（≤ 2 条有效信号），无论 review 状态如何，上限为 medium
+
+### 冲突因子
+- 若 conflict_analysis 中存在 verified 或 partial 状态的 high/critical 严重度冲突，overall_confidence 下调一档（high→medium，medium→low），并在 executive_summary 中提及此冲突
+- 若 verified 冲突的解释与 investment_thesis 任一维度的判断方向直接矛盾，overall_confidence 下调一档
+- 冲突因子的下调与弹性下调可叠加（例如 high→medium→low），但下限不低于 low
 
 ## 硬约束
 

@@ -67,10 +67,14 @@ def _hr(char: str = "─", width: int = 70, color: str = _C.GRAY) -> str:
 # ---------------------------------------------------------------------------
 
 _STAGE_MAP: dict[str, tuple[str, str, str]] = {
-    "collect_facts":    ("📊", "事实采集与衍生计算", _C.CYAN),
-    "review_thesis":    ("🔍", "论点审查",            _C.MAGENTA),
-    "generate_report":  ("📝", "报告生成",            _C.BLUE),
-    "finalize_message": ("✅", "完成",                 _C.GREEN),
+    "collect_raw_facts":    ("📊", "事实采集",            _C.CYAN),
+    "run_analysis_engines": ("⚙️ ", "规则引擎计算",        _C.CYAN),
+    "explore_conflicts":    ("🔬", "冲突探索",            _C.MAGENTA),
+    "verify_hypotheses":    ("🧪", "假设验证",            _C.MAGENTA),
+    "run_thesis":           ("🏛 ", "投资论点生成",        _C.BLUE),
+    "review_thesis":        ("🔍", "论点审查",            _C.MAGENTA),
+    "generate_report":      ("📝", "报告生成",            _C.BLUE),
+    "finalize_message":     ("✅", "完成",                _C.GREEN),
 }
 
 
@@ -109,16 +113,15 @@ def _print_stage_start(node_name: str, elapsed: float) -> None:
     print()
 
 
-def _print_stage_done(node_name: str, elapsed: float, issues: int = 0) -> None:
-    """Print stage completion with issue count."""
+def _print_stage_done(node_name: str, elapsed: float) -> None:
+    """Print stage completion line."""
     info = _STAGE_MAP.get(node_name)
     if info is None:
         return
     icon, label, color = info
-    issue_str = f"  ⚠ {issues} 个问题" if issues else ""
-    if issue_str:
-        issue_str = _c(issue_str, _C.YELLOW)
-    print(f"  {icon}  {_c(label, _C.BOLD, color)} 完成  {_c(f'+{elapsed:.1f}s', _C.GRAY)}{issue_str}")
+    print(f"  {_c('─'*48, _C.GRAY)}")
+    print(f"  {icon}  {_c(label, _C.BOLD, color)} 完成  {_c(f'+{elapsed:.1f}s', _C.GRAY)}")
+    print()
 
 
 def _print_step_model_thinking(text: str, step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
@@ -195,6 +198,199 @@ def _print_step_tool_result(tool_name: str, content: str, status: str, step: int
 # ---------------------------------------------------------------------------
 # Report rendering
 # ---------------------------------------------------------------------------
+
+
+def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float) -> None:
+    """Print structured progress for each orchestrator node (depth==0 only).
+
+    Called every time a top-level node finishes and emits its state update.
+    `node_update` is the full state dict returned by the node (via `{**state, ...}`).
+    """
+    issues: list = node_update.get("issues", [])
+    issue_tag = _c(f"  ⚠ {len(issues)}", _C.YELLOW) if issues else ""
+
+    # ── Helper: last artifact of a given type ─────────────────────────
+    def _last_artifact(atype: str) -> dict | None:
+        for a in reversed(node_update.get("artifacts", []) or []):
+            if isinstance(a, dict) and a.get("type") == atype:
+                return a.get("value", {}) or {}
+            if hasattr(a, "type") and a.type == atype:
+                return a.value if isinstance(a.value, dict) else {}
+        return None
+
+    # ─────────────────────────────────────────────────────────────────
+    if node_name == "collect_raw_facts":
+        fin = node_update.get("financial_facts")
+        mkt = node_update.get("market_facts")
+        n_snaps = 0
+        symbol  = ""
+        if fin is not None:
+            snaps = getattr(fin, "snapshots", None) or fin.get("snapshots", []) if isinstance(fin, dict) else []
+            n_snaps = len(snaps)
+            symbol = getattr(fin, "symbol", None) or (fin.get("symbol", "") if isinstance(fin, dict) else "")
+        has_mkt = mkt is not None
+        print(
+            f"  📊 已采集 {_c(symbol, _C.BOLD, _C.WHITE) if symbol else ''}  "
+            f"财报快照 {_c(str(n_snaps), _C.BOLD)} 期  "
+            f"市值数据 {'✓' if has_mkt else '✗'}"
+            f"{issue_tag}"
+        )
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "run_analysis_engines":
+        signal_analysis = node_update.get("signal_analysis") or {}
+        anomaly_report  = node_update.get("anomaly_report")  or {}
+        derived_facts   = node_update.get("derived_facts")   or {}
+
+        results = signal_analysis.get("results", {}) if isinstance(signal_analysis, dict) else {}
+        # Count triggered signals by level
+        level_counts: dict[str, int] = {}
+        for sid, sval in results.items():
+            if isinstance(sval, dict):
+                lv = sval.get("level", "none")
+                if lv not in ("none", "unknown"):
+                    level_counts[lv] = level_counts.get(lv, 0) + 1
+
+        anomaly_count  = anomaly_report.get("anomaly_count", 0) if isinstance(anomaly_report, dict) else 0
+        pattern_count  = anomaly_report.get("pattern_count", 0) if isinstance(anomaly_report, dict) else 0
+        derived_count  = len(derived_facts) if derived_facts else 0
+
+        sig_parts = []
+        for lv in ("high", "medium", "low", "blocked"):
+            n = level_counts.get(lv, 0)
+            if n:
+                c = _C.RED if lv == "high" else _C.YELLOW if lv == "medium" else _C.DIM
+                sig_parts.append(_c(f"{lv} {n}", c))
+        sig_str = "  ".join(sig_parts) if sig_parts else _c("无触发信号", _C.DIM)
+
+        print(
+            f"  ⚙️  信号: {sig_str}"
+            f"  │ 异常: {_c(str(anomaly_count), _C.YELLOW if anomaly_count else _C.DIM)} 项"
+            f"  │ 模式: {pattern_count}"
+            f"  │ 衍生指标: {derived_count}"
+            f"{issue_tag}"
+        )
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "explore_conflicts":
+        cr = node_update.get("conflicts_result") or {}
+        conflicts = cr.get("conflicts", []) if isinstance(cr, dict) else []
+        if not conflicts:
+            print(f"  🔬 未发现显著冲突{issue_tag}")
+            return
+        n_hyp = sum(len(c.get("hypotheses", [])) for c in conflicts)
+        high_sev = [c for c in conflicts if c.get("severity") in ("critical", "high")]
+        sev_tag = _c(f"  {len(high_sev)} 高危", _C.RED) if high_sev else ""
+        print(
+            f"  🔬 {_c(str(len(conflicts)), _C.BOLD, _C.MAGENTA)} 个冲突"
+            f"  {_c(str(n_hyp), _C.BOLD)} 条假设"
+            f"{sev_tag}{issue_tag}"
+        )
+        for c in conflicts[:6]:
+            sev = c.get("severity", "")
+            sc = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.GRAY
+            n_h = len(c.get("hypotheses", []))
+            print(f"      {_c(f'[{sev}]', sc)} {c.get('theme','')}"
+                  f"  {_c(f'{n_h}条假设', _C.DIM)}")
+        if len(conflicts) > 6:
+            print(_c(f"      …共 {len(conflicts)} 个", _C.DIM))
+        print()
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "verify_hypotheses":
+        vr = node_update.get("verification_results") or []
+        if not vr:
+            print(f"  🧪 无假设待验证{issue_tag}")
+            return
+        verified = sum(1 for r in vr if r.get("status") in ("verified", "partial"))
+        rejected = sum(1 for r in vr if r.get("status") == "rejected")
+        unknown  = len(vr) - verified - rejected
+        parts = []
+        if verified: parts.append(_c(f"✓ {verified} 条支持", _C.GREEN))
+        if rejected: parts.append(_c(f"✗ {rejected} 条排除", _C.RED))
+        if unknown:  parts.append(_c(f"? {unknown} 条待定", _C.GRAY))
+        print(f"  🧪 假设验证完成 — " + "  ".join(parts) + issue_tag)
+        verified_items = [r for r in vr if r.get("status") in ("verified", "partial")]
+        for r in verified_items[:4]:
+            tag = _c("[partial]", _C.YELLOW) if r.get("status") == "partial" else _c("[✓]", _C.GREEN)
+            summary = r.get("summary", "")[:90]
+            print(f"      {tag} {summary}")
+        if len(verified_items) > 4:
+            print(_c(f"      …共 {len(verified_items)} 条被支持", _C.DIM))
+        print()
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "run_thesis":
+        av = _last_artifact("thesis_analysis")
+        if not av:
+            print(f"  🏛  论点未生成{issue_tag}")
+            return
+        thesis = av.get("thesis") or {}
+        conf   = thesis.get("overall_confidence", "unknown")
+        level  = thesis.get("overall_signal_level", "")
+        dims   = thesis.get("dimensions", [])
+        cc     = _C.GREEN if conf == "high" else _C.YELLOW if conf == "medium" else _C.RED
+        # Conflict data
+        cd         = av.get("conflict_data") or {}
+        verified_n = cd.get("verified_count", 0)
+        conflict_tag = (
+            _c(f"  │ {verified_n} 条验证假设纳入论点", _C.GREEN) if verified_n else ""
+        )
+        print(
+            f"  🏛  置信度: {_c(conf, _C.BOLD, cc)}"
+            f"  │ 综合信号: {_c(level, _C.BOLD) if level else _c('—', _C.DIM)}"
+            f"  │ 维度: {len(dims)}"
+            f"{conflict_tag}{issue_tag}"
+        )
+        # Show triggered dimensions
+        triggered = [d for d in dims if isinstance(d, dict) and d.get("level") not in ("none", "unknown", None)]
+        for d in triggered[:5]:
+            dlv = d.get("level", "")
+            dc  = _C.RED if dlv == "high" else _C.YELLOW if dlv == "medium" else _C.DIM
+            print(f"      {_c(f'[{dlv}]', dc)} {d.get('dimension_id','')}: {d.get('summary','')[:70]}")
+        if len(triggered) > 5:
+            print(_c(f"      …共 {len(triggered)} 个触发维度", _C.DIM))
+        print()
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "review_thesis":
+        av = _last_artifact("thesis_review")
+        if not av:
+            print(f"  🔍 审查未执行{issue_tag}")
+            return
+        overall = av.get("overall_status", av.get("review_overall_status", ""))
+        findings = av.get("findings", []) or []
+        n_warn   = sum(1 for f in findings if isinstance(f, dict) and f.get("severity") in ("high", "critical"))
+        oc = _C.GREEN if "pass" in overall.lower() else _C.YELLOW if "warn" in overall.lower() else _C.RED
+        print(
+            f"  🔍 审查结果: {_c(overall, _C.BOLD, oc) if overall else _c('—', _C.DIM)}"
+            f"  │ 发现 {len(findings)} 项"
+            f"  │ 高危 {_c(str(n_warn), _C.RED) if n_warn else '0'}"
+            f"{issue_tag}"
+        )
+        for f in findings[:3]:
+            if isinstance(f, dict):
+                fsev = f.get("severity", "")
+                fc   = _C.RED if fsev in ("high","critical") else _C.YELLOW if fsev == "medium" else _C.DIM
+                print(f"      {_c(f'[{fsev}]', fc)} {f.get('message','')[:80]}")
+        if len(findings) > 3:
+            print(_c(f"      …共 {len(findings)} 项审查发现", _C.DIM))
+        print()
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "generate_report":
+        av = _last_artifact("final_report")
+        if av:
+            title = av.get("title", "")
+            conf  = av.get("overall_confidence", "")
+            cc    = _C.GREEN if conf == "high" else _C.YELLOW if conf == "medium" else _C.RED
+            print(
+                f"  📝 {_c(title, _C.BOLD, _C.WHITE) if title else '报告已生成'}"
+                f"  置信度: {_c(conf, cc) if conf else ''}"
+                f"{issue_tag}"
+            )
+        else:
+            print(f"  📝 报告生成中{issue_tag}")
 
 def _render_final_report(final_payload: dict) -> None:
     """Parse and render the final JSON report payload in a readable format."""
@@ -290,6 +486,49 @@ def _render_final_report(final_payload: dict) -> None:
         print(_hr("─", 60, _C.CYAN))
         print(review_findings)
         print()
+
+    # Section: conflict_analysis — 冲突探索与假设验证
+    conflict_analysis = final_payload.get("conflict_analysis", {})
+    if conflict_analysis and conflict_analysis.get("conflict_count", 0) > 0:
+        verified = conflict_analysis.get("verified_count", 0)
+        rejected = conflict_analysis.get("rejected_count", 0)
+        total_h  = conflict_analysis.get("hypothesis_count", 0)
+        unknown  = total_h - verified - rejected
+
+        print(_hr("─", 60, _C.MAGENTA))
+        print(_c("  🔬 冲突探索 · 假设验证", _C.BOLD, _C.MAGENTA))
+        print(_hr("─", 60, _C.MAGENTA))
+        stats_parts = []
+        stats_parts.append(_c(f"冲突 {conflict_analysis['conflict_count']} 个", _C.WHITE))
+        stats_parts.append(_c(f"假设 {total_h} 条", _C.WHITE))
+        if verified:
+            stats_parts.append(_c(f"✓ 验证 {verified}", _C.GREEN))
+        if rejected:
+            stats_parts.append(_c(f"✗ 排除 {rejected}", _C.RED))
+        if unknown:
+            stats_parts.append(_c(f"? 待定 {unknown}", _C.GRAY))
+        print("  " + "  ".join(stats_parts))
+        print()
+
+        # Conflicts summary
+        for ci in conflict_analysis.get("conflicts_summary", []):
+            sev = ci.get("severity", "")
+            sev_color = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.GRAY
+            print(f"  {_c(f'[{sev}]', sev_color)} {_c(ci.get('theme',''), _C.BOLD, _C.WHITE)}")
+            desc = ci.get("description", "")
+            if desc:
+                print(f"        {_c(desc, _C.DIM)}")
+        print()
+
+        # Verified hypotheses
+        verified_hyps = conflict_analysis.get("verified_hypotheses", [])
+        if verified_hyps:
+            print(_c("  ✅ 被证实假设：", _C.BOLD, _C.GREEN))
+            for h in verified_hyps:
+                status = h.get("status", "")
+                status_tag = _c("[partial]", _C.YELLOW) if status == "partial" else _c("[verified]", _C.GREEN)
+                print(f"    {status_tag} {h.get('description', '')}")
+            print()
 
     # Section: risks
     risks = sections.get("risks", "")
@@ -497,13 +736,27 @@ async def run_query(
                         _print_stage_done(
                             active_stage,
                             time.monotonic() - stage_entry_ts,
-                            issues=len(node_update.get("issues", [])),
                         )
                     if active_stage != node_name:
                         _print_stage_start(node_name, elapsed)
                         active_stage = node_name
                         stage_entry_ts = time.monotonic()
 
+                if depth == 0:
+                    # Orchestrator node completed — print structured summary.
+                    # finalize_message is special: it embeds the final JSON payload
+                    # inside an AIMessage. Capture that before skipping message loop.
+                    if node_name == "finalize_message":
+                        for msg in node_update.get("messages", []):
+                            if isinstance(msg, AIMessage):
+                                text = _extract_text(msg.content)
+                                if text:
+                                    final_answer = text
+                                    break
+                    _print_node_update_summary(node_name, node_update, elapsed)
+                    continue
+
+                # depth > 0: messages from nested subagent graphs
                 messages: list = node_update.get("messages", [])
                 if not messages:
                     continue

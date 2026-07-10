@@ -231,6 +231,7 @@ async def web_search_guard(request: ToolCallRequest, handler):
             f"  • 股票价格 / 估值（PE/PB/市值）→ get_market_data（MarketAgent）\n"
             f"  • 财务数据（营收/利润/ROE/现金流）→ get_fundamentals（FundamentalAgent）\n"
             f"  • 行业估值与表现 → get_industry_fundamentals（IndustryAgent）\n\n"
+            f"  • 其他数据可以尝试使用 query_tushare 或 eastmoney 工具\n\n"
             f"原始 query：「{query}」"
         )
         return ToolMessage(
