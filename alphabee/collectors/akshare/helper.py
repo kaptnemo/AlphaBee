@@ -17,6 +17,24 @@ MONGO_DATABASE = "treasure_island"
 logger = get_logger(__name__)
 
 
+def _report_akshare_failure(api_name: str, exc: Exception, kwargs: dict) -> None:
+    """Record an AkShare API failure in the data_fetch event database."""
+    try:
+        from alphabee.data_fetch.integrations import _classify_error, capture_failure
+
+        symbol = kwargs.get("symbol", "")
+        capture_failure(
+            provider="akshare",
+            api_name=api_name,
+            symbol=symbol if symbol else None,
+            error_type=_classify_error(exc),
+            error_message=str(exc),
+            request_payload={k: v for k, v in kwargs.items()},
+        )
+    except Exception:
+        pass
+
+
 def get_mongo_database() -> Any:
     """Create the default MongoDB database handle lazily."""
     try:
@@ -109,6 +127,7 @@ class AkShareHelper:
                             attempts=max_retries,
                             error=str(e),
                         )
+                        _report_akshare_failure(name, e, kwargs)
                         raise
                     wait = attempt + 1
                     logger.warning(

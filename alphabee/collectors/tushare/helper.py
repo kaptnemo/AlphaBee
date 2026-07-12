@@ -14,6 +14,24 @@ from alphabee.adapters.tushare import TuShare_Adapter
 logger = get_logger(__name__)
 
 
+def _report_tushare_failure(api_name: str, exc: Exception, kwargs: dict) -> None:
+    """Record a Tushare API failure in the data_fetch event database."""
+    try:
+        from alphabee.data_fetch.integrations import _classify_error, capture_failure
+
+        symbol = kwargs.get("ts_code", "")
+        capture_failure(
+            provider="tushare",
+            api_name=api_name,
+            symbol=symbol if symbol else None,
+            error_type=_classify_error(exc),
+            error_message=str(exc),
+            request_payload={k: v for k, v in kwargs.items()},
+        )
+    except Exception:
+        pass  # never let failure recording break the caller
+
+
 class TuShareResult:
     """wrapper tushare result, add common operations"""
 
@@ -84,6 +102,7 @@ class TuShareHelper:
                             attempts=max_retries,
                             error=str(e),
                         )
+                        _report_tushare_failure(name, e, kwargs)
                         raise
                     wait = attempt ** 2  # 1s, 4s, 9s
                     logger.warning(
