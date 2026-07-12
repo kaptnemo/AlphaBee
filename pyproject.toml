@@ -37,6 +37,9 @@ markers = [
     "integration: marks tests that require external services (LLM, Tushare)",
 ]
 
+[project.scripts]
+alphabee-fetch = "alphabee.data_fetch.cli:main"
+
 
 [dependency-groups]
 dev = [
