@@ -1,0 +1,24 @@
+llm:
+  api_key: "${LLM_API_KEY}"
+  base_url: "${LLM_BASE_URL:https://api.deepseek.com}"
+  model: "${LLM_MODEL:deepseek-chat}"
+  # proxy_url: "${LLM_PROXY_URL:}"  # 可选：HTTP 代理
+
+web_search:
+  tavily:
+    api_key: "${TAVILY_API_KEY:}"
+    base_url: "https://api.tavily.com"
+    # proxy_url: "http://proxy.example.com:7890"
+    timeout: 15.0
+    max_results: 6
+  ddgs:
+    # proxy_url: "http://proxy.example.com:7890"
+    timeout: 20
+    region: "cn-zh"
+    max_results: 6
+
+tushare:
+  api_key: "${TUSHARE_TOKEN:}"
+
+data:
+  root_dir: "${DATA_ROOT:data}"

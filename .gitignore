@@ -17,6 +17,9 @@ pdfs/
 # env files
 .env
 
+# config (contains secrets, use config.yaml.example as template)
+config.yaml
+
 # python cache
 *.pyc
 *.pyo
