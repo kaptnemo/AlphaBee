@@ -20,3 +20,6 @@ web_search:
 
 tushare:
   api_key: "${TUSHARE_TOKEN:}"
+
+data:
+  root_dir: "${DATA_ROOT:data}"

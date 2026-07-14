@@ -11,9 +11,6 @@ from alphabee.core import Artifact, Decision, Issue, Observation, Run, Step
 
 class OrchestratorState(TypedDict, total=False):
     """Top-level orchestrator state, compatible with HarnessRuntime input.
-
-    Mirrors CrossAnalysisState from agents_legacy/cross/agent.py so the
-    harness can consume it without changes.
     """
 
     messages: list[AnyMessage]

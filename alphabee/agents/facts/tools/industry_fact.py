@@ -4,6 +4,7 @@ import datetime
 from typing import Any
 
 from alphabee.collectors.tushare.helper import TuShareHelper
+from alphabee.providers.industry import get_industry_daily
 from alphabee.tools.cache import SyncTTLCache
 from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 
@@ -28,9 +29,6 @@ def get_industry_fact(symbol: str) -> dict[str, Any]:
     ts_code = normalize_ts_code(symbol)
 
     def _compute() -> dict[str, Any]:
-        today = datetime.date.today().strftime("%Y%m%d")
-        lookback_90 = (datetime.date.today() - datetime.timedelta(days=90)).strftime("%Y%m%d")
-
         with TuShareHelper() as helper:
             basic_df = helper.stock_basic(
                 ts_code=ts_code,
@@ -63,21 +61,14 @@ def get_industry_fact(symbol: str) -> dict[str, Any]:
 
         sw_classes = sw_class_df.head(20).to_dict(orient="records") if not sw_class_df.empty else []
 
-        sw_daily: list[dict] = []
-        sw_daily_error: str | None = None
-
+        # Delegate to provider for industry daily data with fallback
         if matched_sw_code:
-            try:
-                with TuShareHelper() as helper:
-                    sw_daily_df = helper.sw_daily(
-                        ts_code=matched_sw_code,
-                        start_date=lookback_90,
-                        end_date=today,
-                        fields="ts_code,trade_date,close,pct_change,pe,pb,float_mv",
-                    ).data
-                sw_daily = sw_daily_df.head(10).to_dict(orient="records") if not sw_daily_df.empty else []
-            except Exception as e:
-                sw_daily_error = str(e)
+            result = get_industry_daily(sw_code=matched_sw_code, industry=industry)
+            sw_daily = result.daily
+            sw_daily_error = result.error
+        else:
+            sw_daily = []
+            sw_daily_error = "SW指数代码匹配失败"
 
         return {
             "stock_code": ts_code,

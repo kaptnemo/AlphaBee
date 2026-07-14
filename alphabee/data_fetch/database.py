@@ -8,12 +8,20 @@ from pathlib import Path
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-_DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "data" / "fetch_events.db"
+from alphabee.utils.storage import get_data_root
+
+_DEFAULT_DB_PATH = get_data_root() / "fetch_events.db"
+
+
+def _db_path() -> Path:
+    override = os.environ.get("DATA_FETCH_DB_PATH")
+    if override:
+        return Path(override)
+    return _DEFAULT_DB_PATH
 
 
 def _db_url() -> str:
-    path = os.environ.get("DATA_FETCH_DB_PATH", str(_DEFAULT_DB_PATH))
-    return f"sqlite:///{path}"
+    return f"sqlite:///{_db_path()}"
 
 
 _engine: Engine | None = None
@@ -40,6 +48,7 @@ def init_db() -> None:
     """Create all tables if they do not exist."""
     from alphabee.data_fetch.models import Base
 
+    _db_path().parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(get_engine())
 
 

@@ -18,6 +18,7 @@ from alphabee.data_fetch.models import (
     TaskStatus,
 )
 from alphabee.data_fetch.recorder import record_failure
+from alphabee.data_fetch.fix_executor import build_agent_prompt, prepare_fix, prepare_and_run_fix, verify_and_submit
 from alphabee.data_fetch.scanner import (
     get_open_tasks,
     mark_issue_fixed,
@@ -34,6 +35,9 @@ __all__ = [
     "get_open_tasks",
     "mark_task",
     "mark_issue_fixed",
+    "build_agent_prompt",
+    "prepare_fix",
+    "verify_and_submit",
     "DataFetchEvent",
     "DataFetchIssue",
     "DataFixTask",

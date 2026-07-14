@@ -140,7 +140,7 @@ class RuleDistiller:
 # ── 便捷函数 ──────────────────────────────────────────────────────
 
 
-def distill(store_dir: str = "outputs/task_records") -> str:
+def distill(store_dir: str | None = None) -> str:
     """一键蒸馏入口。"""
     store = TaskStore(store_dir)
     if store.count() == 0:

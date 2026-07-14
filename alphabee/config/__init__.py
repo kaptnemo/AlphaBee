@@ -30,9 +30,14 @@ class WebSearchConfig(BaseModel):
     ddgs: DDGSConfig = Field(default_factory=DDGSConfig)
 
 
+class DataConfig(BaseModel):
+    root_dir: str = Field(default="data", description="数据产物根目录")
+
+
 class Settings(BaseModel):
     llm: LLMConfig
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    data: DataConfig = Field(default_factory=DataConfig)
 
 
 def get_settings() -> Settings:

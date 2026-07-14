@@ -11,7 +11,10 @@ description: >
   说明财务报表中存在系统性而非偶然性问题。
   单条异常可能是数据噪音，多条同时触发则高度警示。
 
-required_facts: []
+required_facts:
+  - anomaly_triggered_count
+  - anomaly_high_count
+  - anomaly_pattern_count
 
 required_derived_facts: []
 

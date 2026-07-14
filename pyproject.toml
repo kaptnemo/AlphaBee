@@ -28,6 +28,7 @@ dependencies = [
     "jupyter (>=1.1.1,<2.0.0)",
     "json-repair (>=0.61.2,<0.62.0)",
     "sqlalchemy (>=2.0.0,<3.0.0)",
+    "claude-agent-sdk (>=0.2.116,<0.3.0)",
 ]
 
 

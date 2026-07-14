@@ -185,13 +185,8 @@ async def run_analysis_engines(
 
     Engines (each isolated with try/except — one failure does not block others):
     - DerivedFactsEngine  (21 YAML rules)
-    - SignalEngine         (3 signal rules)
-    - AnomalyEngine        (statistical cross-check, requires >=2 snapshots)
-
-    Note: AnomalyEngine currently runs *after* SignalEngine (preserving the
-    original pipeline order). The anomaly fact-values injection therefore has
-    no effect on the already-computed signal results. This ordering issue is
-    tracked separately and intentionally left unchanged here.
+    - AnomalyEngine        (statistical cross-check, injects anomaly facts)
+    - SignalEngine         (signal rules, including anomaly-aware rules)
     """
     run = state.get("run")
     symbol = run.context.get("symbol") if run else None
@@ -251,34 +246,9 @@ async def run_analysis_engines(
             )
         )
 
-    # ── SignalEngine ──────────────────────────────────────────────────
-    signal_analysis: dict[str, dict] = {}
-    try:
-        load_signal_rules()
-        signal_engine = SignalEngine()
-        all_signal_names = list(SIGNAL_RULES.keys())
-        signal_analysis = signal_engine.run(all_signal_names, fact_values)
-        new_artifacts.append(
-            Artifact(
-                id=_make_id("artifact"),
-                type="signal_analysis",
-                producer_step=step.id,
-                value={"results": signal_analysis, "rule_count": len(all_signal_names)},
-            )
-        )
-    except Exception as exc:
-        new_issues.append(
-            Issue(
-                id=_make_id("issue"),
-                severity=IssueSeverity.HIGH,
-                category="subagent_failure",
-                message=f"SignalEngine failed: {exc}",
-                related_step=step.id,
-            )
-        )
-
     # ── AnomalyEngine ─────────────────────────────────────────────────
     anomaly_report = None
+    anomaly_fact_values: dict[str, float] = _default_anomaly_fact_values()
     if financial_facts is not None and len(financial_facts.snapshots) >= 2:
         try:
             from alphabee.agents.anomaly.engine import AnomalyEngine
@@ -299,7 +269,7 @@ async def run_analysis_engines(
             anomaly_report = anomaly_engine.run(
                 financial_facts, extra_values=extra_vals or None,
             )
-            fact_values.update(anomaly_report.to_fact_values())
+            anomaly_fact_values.update(anomaly_report.to_fact_values())
             new_artifacts.append(
                 Artifact(
                     id=_make_id("artifact"),
@@ -319,6 +289,38 @@ async def run_analysis_engines(
                 )
             )
 
+    fact_values.update(anomaly_fact_values)
+
+    # ── SignalEngine ──────────────────────────────────────────────────
+    signal_analysis: dict[str, dict] = {}
+    try:
+        load_signal_rules()
+        signal_engine = SignalEngine()
+        all_signal_names = list(SIGNAL_RULES.keys())
+        signal_analysis = signal_engine.run(all_signal_names, fact_values)
+        new_artifacts.append(
+            Artifact(
+                id=_make_id("artifact"),
+                type="signal_analysis",
+                producer_step=step.id,
+                value={"results": signal_analysis, "rule_count": len(all_signal_names)},
+            )
+        )
+
+        # Record data-unavailable signals to the failure database
+        _record_signal_data_gaps(signal_analysis, fact_values, symbol)
+
+    except Exception as exc:
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="subagent_failure",
+                message=f"SignalEngine failed: {exc}",
+                related_step=step.id,
+            )
+        )
+
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
         **state,
@@ -329,6 +331,16 @@ async def run_analysis_engines(
         "derived_facts": derived_facts,
         "signal_analysis": signal_analysis,
         "anomaly_report": anomaly_report.to_dict() if anomaly_report else None,
+    }
+
+
+def _default_anomaly_fact_values() -> dict[str, float]:
+    """Return neutral anomaly facts so anomaly signal rules can evaluate."""
+    return {
+        "anomaly_triggered_count": 0.0,
+        "anomaly_pattern_count": 0.0,
+        "anomaly_max_zscore": 0.0,
+        "anomaly_high_count": 0.0,
     }
 
 
@@ -890,3 +902,67 @@ async def run_thesis(
         "artifacts": state.get("artifacts", []) + new_artifacts,
         "issues": state.get("issues", []) + new_issues,
     }
+
+
+# ── helper: record signal data gaps to failure database ────────────────
+
+
+def _record_signal_data_gaps(
+    signal_analysis: dict[str, dict],
+    fact_values: dict[str, float],
+    symbol: str | None,
+) -> None:
+    """Record blocked / missing_fact / invalid signals as failure events.
+
+    Signals with these levels indicate upstream data was unavailable —
+    the data source couldn't provide required canonical fields, so the
+    signal rule couldn't evaluate.  Recording them closes the loop:
+    the same auto-fix pipeline that handles API failures can also
+    handle missing-field gaps.
+    """
+    _DATA_UNAVAILABLE_LEVELS = {"blocked", "missing_fact", "invalid"}
+
+    for signal_id, result in signal_analysis.items():
+        level = result.get("level", "")
+        if level not in _DATA_UNAVAILABLE_LEVELS:
+            continue
+
+        error_msg = result.get("error", "")
+        rule = SIGNAL_RULES.get(signal_id)
+
+        # Collect all required fields declared by this signal rule
+        declared_fields: list[str] = []
+        if rule is not None:
+            declared_fields = list(rule.required_facts or []) + list(
+                rule.required_derived_facts or []
+            )
+
+        # Determine which declared fields are actually absent
+        missing = [f for f in declared_fields if f not in fact_values]
+
+        # For "blocked" signals, the blocked_by list names the derived
+        # facts that failed upstream
+        blocked_by = result.get("blocked_by", [])
+
+        # Map level to error_type for the failure record
+        if level == "missing_fact":
+            et = "missing_field"
+        elif level == "blocked":
+            et = "missing_field"
+        else:
+            et = "parse_error"  # invalid signals failed during formula eval
+
+        try:
+            from alphabee.data_fetch.recorder import record_failure
+
+            record_failure(
+                provider="signal_engine",
+                api_name=signal_id,
+                symbol=symbol,
+                error_type=et,
+                error_message=error_msg,
+                severity="medium" if level == "blocked" else "low",
+                missing_fields=missing or blocked_by or None,
+            )
+        except Exception:
+            pass  # never let failure recording break the signal pipeline

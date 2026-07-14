@@ -2,12 +2,17 @@
 
 Usage::
 
-    poetry run python -m alphabee.data_fetch        # show summary
-    poetry run python -m alphabee.data_fetch issues  # list open issues
-    poetry run python -m alphabee.data_fetch scan    # scan + create fix tasks
-    poetry run python -m alphabee.data_fetch tasks   # list pending fix tasks
-    poetry run python -m alphabee.data_fetch fix <issue_id> --note "..."  # mark fixed
-    poetry run python -m alphabee.data_fetch stats   # show statistics
+    poetry run python -m alphabee.data_fetch                        # show summary
+    poetry run python -m alphabee.data_fetch issues                 # list open issues
+    poetry run python -m alphabee.data_fetch scan [max_tasks]       # scan + create fix tasks
+    poetry run python -m alphabee.data_fetch auto-fix [max_tasks]   # scan + Claude agent + submit
+    poetry run python -m alphabee.data_fetch tasks                  # list pending fix tasks
+    poetry run python -m alphabee.data_fetch show <issue_id>        # show issue details
+    poetry run python -m alphabee.data_fetch fix <issue_id> [--note "..."]  # mark fixed
+    poetry run python -m alphabee.data_fetch run-fix <task_id>      # run Claude agent, then verify + submit
+    poetry run python -m alphabee.data_fetch verify <task_id>       # test, commit, push, create/update MR
+    poetry run python -m alphabee.data_fetch prompt <task_id>       # show agent prompt
+    poetry run python -m alphabee.data_fetch stats                  # show statistics
 """
 
 from __future__ import annotations
@@ -162,6 +167,30 @@ def _show_issue(issue_id: int) -> None:
         session.close()
 
 
+def _get_mr_url_for_branch(branch: str) -> str | None:
+    """Get MR creation URL for a branch."""
+    try:
+        from alphabee.data_fetch.fix_executor import _build_mr_url as _mr
+        from alphabee.data_fetch.fix_executor import _gather_context as _gc
+        # Hmm, this requires a task_id but we just want the URL
+        # Use dummy context just for the URL
+        import subprocess
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True,
+        )
+        remote = result.stdout.strip()
+        if "github.com:" in remote:
+            owner_repo = remote.split("github.com:")[1].replace(".git", "")
+        elif "github.com/" in remote:
+            owner_repo = remote.split("github.com/")[1].replace(".git", "")
+        else:
+            return None
+        return f"https://github.com/{owner_repo}/compare/main...{branch}?expand=1"
+    except Exception:
+        return None
+
+
 def main() -> None:
     init_db()
     args = sys.argv[1:]
@@ -198,6 +227,34 @@ def main() -> None:
         else:
             print("No new fix tasks created (all open issues already have pending tasks).")
 
+    elif cmd in ("auto-fix", "fix-all"):
+        import asyncio
+
+        from alphabee.data_fetch.fix_executor import prepare_and_run_fix
+        from alphabee.data_fetch.scanner import get_open_tasks, scan_and_create_tasks
+
+        max_tasks = int(args[1]) if len(args) > 1 else 10
+        created_tasks = scan_and_create_tasks(max_tasks=max_tasks)
+        tasks = list(get_open_tasks())
+        if not tasks:
+            print("No open fix tasks found.")
+            return
+
+        if created_tasks:
+            print(f"Created {len(created_tasks)} new fix task(s).")
+        print(f"Running {len(tasks)} open fix task(s) end-to-end...")
+        for task in tasks:
+            print(f"\nTask #{task.task_id} → issue #{task.issue_id}")
+            result = asyncio.run(prepare_and_run_fix(task.task_id))
+            if result.success:
+                print(f"SUCCESS: {result.message}")
+                if result.branch:
+                    print(f"Branch: {result.branch}")
+                if result.mr_url:
+                    print(f"MR: {result.mr_url}")
+            else:
+                print(f"FAILED: {result.message}")
+
     elif cmd == "show":
         if len(args) < 2:
             print("Usage: show <issue_id>")
@@ -219,9 +276,53 @@ def main() -> None:
         mark_issue_fixed(issue_id, resolution_note=note)
         print(f"Issue #{issue_id} marked as fixed.")
 
+    elif cmd in ("run-fix", "fix-task"):
+        if len(args) < 2:
+            print("Usage: run-fix <task_id>")
+            print("  Invokes Claude Agent SDK, then verifies and submits the fix.")
+            return
+        import asyncio
+        from alphabee.data_fetch.fix_executor import prepare_and_run_fix
+
+        task_id = int(args[1])
+        result = asyncio.run(prepare_and_run_fix(task_id))
+        if result.success:
+            print(f"SUCCESS: {result.message}")
+            if result.branch:
+                print(f"Branch: {result.branch}")
+            if result.mr_url:
+                print(f"MR: {result.mr_url}")
+        else:
+            print(f"Error: {result.message}")
+
+    elif cmd == "verify":
+        if len(args) < 2:
+            print("Usage: verify <task_id>")
+            print("  Runs tests, commits, pushes, and creates MR. Must be on the fix branch.")
+            return
+        from alphabee.data_fetch.fix_executor import verify_and_submit
+
+        task_id = int(args[1])
+        result = verify_and_submit(task_id)
+        if result.success:
+            print(f"SUCCESS: {result.message}")
+            if result.mr_url:
+                print(f"Create MR: {result.mr_url}")
+        else:
+            print(f"FAILED: {result.message}")
+
+    elif cmd in ("prompt", "show-prompt"):
+        if len(args) < 2:
+            print("Usage: prompt <task_id>")
+            return
+        from alphabee.data_fetch.fix_executor import build_agent_prompt
+
+        task_id = int(args[1])
+        print(build_agent_prompt(task_id))
+
     else:
         print(f"Unknown command: {cmd}")
-        print("Available: issues | tasks | stats | scan | show <id> | fix <id>")
+        print("Available: issues | tasks | stats | scan | auto-fix | show <id> | fix <id> | run-fix <task_id> | verify <task_id> | prompt <task_id>")
 
 
 if __name__ == "__main__":

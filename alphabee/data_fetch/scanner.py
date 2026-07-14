@@ -127,7 +127,12 @@ def get_open_tasks() -> Sequence[DataFixTask]:
         session.close()
 
 
-def mark_task(task_id: int, status: str, result_summary: str = "") -> None:
+def mark_task(
+    task_id: int,
+    status: str,
+    result_summary: str = "",
+    verification_result: str | None = None,
+) -> None:
     """Update a fix task's status and result."""
     init_db()
     session = get_session()
@@ -140,6 +145,8 @@ def mark_task(task_id: int, status: str, result_summary: str = "") -> None:
         except ValueError:
             task.status = TaskStatus.FAILED
         task.result_summary = result_summary
+        if verification_result is not None:
+            task.verification_result = verification_result
         task.updated_at = datetime.now()
         session.commit()
     except Exception:

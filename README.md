@@ -105,7 +105,7 @@ poetry run python main.py --no-color "分析 000858.SZ"
 ### 任务记录与分析
 
 ```bash
-# 每次运行自动保存记录到 outputs/task_records/
+# 每次运行自动保存记录到 data/task_records/<symbol>/
 
 # 查看统计摘要
 poetry run python main.py --task-stats
@@ -140,6 +140,9 @@ web_search:
 
 tushare:
   api_key: "${TUSHARE_TOKEN:}"
+
+data:
+  root_dir: "${DATA_ROOT:data}"
 ```
 
 | 环境变量 | 说明 | 必须 |
@@ -148,6 +151,7 @@ tushare:
 | `TUSHARE_TOKEN` | Tushare 数据 Token | ✅（大部分） |
 | `TAVILY_API_KEY` | Tavily 搜索 API 密钥 | 可选 |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse 可观测性 | 可选 |
+| `DATA_ROOT` | 产物根目录（默认 `data/`） | 可选 |
 
 ---
 
@@ -339,7 +343,7 @@ tests/                  测试套件
 
 ### 1. 完善任务记录与规则自蒸馏
 
-**现状**：`task_records/` 模块已实现基础采集（`TaskRecorder` — 包含完整报告 JSON `report_raw`）、存储（`TaskStore`）、确定性分析（`TaskAnalyzer`）和 LLM 蒸馏建议（`RuleDistiller`）。每次运行自动保存记录，通过 `--task-stats` / `--distill` 产出统计和蒸馏报告。
+**现状**：`task_records/` 模块已实现基础采集（`TaskRecorder` — 包含完整报告 JSON `report_raw`）、存储（`TaskStore`）、确定性分析（`TaskAnalyzer`）和 LLM 蒸馏建议（`RuleDistiller`）。每次运行自动保存记录到 `data/task_records/<symbol>/`，通过 `--task-stats` / `--distill` 产出统计和蒸馏报告。
 
 **后续**：
 
@@ -376,7 +380,7 @@ tests/                  测试套件
   - 报告中加入"与你投资风格的匹配度"视角
   - 多轮对话中主动提示"你上次关注的 XX 行业/公司有新财报"（如启用 Monitor）
   - `--task-stats` 中增加用户画像卡片
-- **存储**：`outputs/user_profile.json`，定期从 `task_records/` 重算更新
+- **存储**：`data/user_profile.json`，定期从 `data/task_records/` 重算更新
 
 ---
 

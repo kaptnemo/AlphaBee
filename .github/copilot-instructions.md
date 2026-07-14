@@ -23,7 +23,7 @@ There is currently no repository-defined lint command, test command, or `tests/`
 - Most business logic lives in `alphabee/tools/`, not in the agent files. Agents are mostly prompt + tool wiring.
 - The tool layer returns structured Pydantic models. `get_fundamentals` and `get_industry_fundamentals` also call the configured LLM to synthesize JSON summaries on top of raw market data.
 - Provider access is wrapped in `alphabee/collectors/*/helper.py`. Use these helpers instead of calling Tushare or AkShare directly so you keep the existing retry, result-wrapper, and export behavior.
-- The separate workflow path is `alphabee/workflow/framework_monitor.py`. It gathers fundamentals, market data, news, and web search results, asks the LLM for a structured monitoring report, then writes snapshots and reports under `outputs/monitor_snapshots/` and `outputs/monitor_reports/`.
+- The separate workflow path is `alphabee/workflow/framework_monitor.py`. It gathers fundamentals, market data, news, and web search results, asks the LLM for a structured monitoring report, then writes snapshots and reports under `data/<symbol>/monitor_snapshots/` and `data/<symbol>/monitor_reports/`.
 
 ## Key conventions
 

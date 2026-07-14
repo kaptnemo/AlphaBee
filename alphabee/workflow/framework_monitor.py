@@ -15,6 +15,7 @@ from alphabee.tools.market_data import get_market_data
 from alphabee.tools.news import get_stock_news_summary
 from alphabee.utils import tracked_chat_completion
 from alphabee.utils.paths import PROJECT_ROOT
+from alphabee.utils.storage import get_data_root, normalize_symbol
 
 
 class MonitorStage(BaseModel):
@@ -90,6 +91,13 @@ def _trim_news(text: str, max_lines: int = 20) -> str:
     if len(lines) <= max_lines:
         return "\n".join(lines)
     return "\n".join(lines[:max_lines]) + f"\n...(其余 {len(lines) - max_lines} 条省略)"
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def _load_previous_snapshot(path: Path) -> dict | None:
@@ -283,8 +291,9 @@ async def run_framework_monitor(
     )
 
     slug = _slugify(framework_file.stem)
-    snapshot_path = PROJECT_ROOT / "outputs" / "monitor_snapshots" / f"{slug}.json"
-    report_path = PROJECT_ROOT / "outputs" / "monitor_reports" / f"{slug}.md"
+    symbol_dir = get_data_root() / normalize_symbol(fundamentals.symbol)
+    snapshot_path = symbol_dir / "monitor_snapshots" / f"{slug}.json"
+    report_path = symbol_dir / "monitor_reports" / f"{slug}.md"
     previous_snapshot = _load_previous_snapshot(snapshot_path)
 
     report = await _call_monitor_llm(
@@ -309,8 +318,8 @@ async def run_framework_monitor(
     )
     result = MonitorExecutionResult(
         report=final_report,
-        snapshot_path=str(snapshot_path.relative_to(PROJECT_ROOT)),
-        report_path=str(report_path.relative_to(PROJECT_ROOT)),
+        snapshot_path=_display_path(snapshot_path),
+        report_path=_display_path(report_path),
     )
 
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)

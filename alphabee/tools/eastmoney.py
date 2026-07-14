@@ -7,8 +7,9 @@ import requests
 from pydantic import BaseModel, Field
 
 from alphabee.collectors.eastmoney.helper import EastmoneyHelper
+from alphabee.utils.storage import get_data_root
 
-DEFAULT_EASTMONEY_OUTPUT_DIR = Path("outputs/eastmoney_reports")
+DEFAULT_EASTMONEY_OUTPUT_DIR = get_data_root() / "eastmoney_reports"
 SKILLS_PATH = Path(__file__).resolve().parents[2] / "skills" /"eastmoney"
 
 class EastmoneyReportListOutput(BaseModel):

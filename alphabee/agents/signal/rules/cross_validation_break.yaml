@@ -11,7 +11,8 @@ description: >
   说明该项关联关系的本期值显著偏离历史模式。
   勾稽关系断裂是财务操纵的最早期预警信号之一。
 
-required_facts: []
+required_facts:
+  - anomaly_max_zscore
 
 required_derived_facts: []
 

@@ -71,6 +71,14 @@ class TuShareResult:
 class TuShareHelper:
     """Fetch data from tushare, and handler the result"""
 
+    # Error substrings that indicate a permanent failure (no retry will help)
+    _PERMANENT_ERROR_KEYWORDS: tuple[str, ...] = (
+        "权限",
+        "没有接口",
+        "token",
+        "认证",
+    )
+
     def __init__(self):
         self.tushare_api = ts.pro_api()
 
@@ -79,6 +87,11 @@ class TuShareHelper:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
+
+    @classmethod
+    def _is_permanent_error(cls, error_message: str) -> bool:
+        """Return True when an error is permanently non-retryable (permission, auth, etc.)."""
+        return any(kw in error_message for kw in cls._PERMANENT_ERROR_KEYWORDS)
 
     @staticmethod
     def wrap_tushare_result(func, name):
@@ -95,12 +108,23 @@ class TuShareHelper:
                 try:
                     return TuShareResult(func(*arg, **kwargs), name)
                 except Exception as e:
+                    err_msg = str(e)
+                    # Permission / auth errors are permanent — fail fast, no retry
+                    if TuShareHelper._is_permanent_error(err_msg):
+                        logger.error(
+                            "Tushare API permanent error (no retry)",
+                            api=name,
+                            error=err_msg,
+                        )
+                        _report_tushare_failure(name, e, kwargs)
+                        raise
+
                     if attempt == max_retries:
                         logger.error(
                             "Tushare API failed after max retries",
                             api=name,
                             attempts=max_retries,
-                            error=str(e),
+                            error=err_msg,
                         )
                         _report_tushare_failure(name, e, kwargs)
                         raise
@@ -110,7 +134,7 @@ class TuShareHelper:
                         api=name,
                         attempt=attempt,
                         wait_seconds=wait,
-                        error=str(e),
+                        error=err_msg,
                     )
                     time.sleep(wait)
             else:
