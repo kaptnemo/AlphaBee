@@ -201,12 +201,22 @@ async def generate_report(
     step = Step(
         id="generate_report",
         kind="generate_report",
-        inputs={"artifact_count": len(state.get("artifacts", []))},
+        inputs={
+            "artifact_count": len(state.get("artifacts", [])),
+            "rewrite_reason": state.get("report_rewrite_reason"),
+        },
         status=StepStatus.RUNNING,
     )
 
     payload = _build_report_payload(state)
     prompt_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    rewrite_reason = state.get("report_rewrite_reason")
+    prior_report = None
+    if rewrite_reason:
+        for artifact in reversed(state.get("artifacts", [])):
+            if artifact.type == "report" and isinstance(artifact.value, dict):
+                prior_report = artifact.value
+                break
 
     try:
         model = create_chat_model("agent.report")
@@ -214,8 +224,18 @@ async def generate_report(
             SystemMessage(content=REPORT_GENERATOR_PROMPT),
             HumanMessage(
                 content=(
-                    "请基于以下结构化数据生成财报质量体检报告。\n\n"
-                    f"```json\n{prompt_text}\n```"
+                    (
+                        "请基于以下结构化数据生成财报质量体检报告。\n\n"
+                        if not rewrite_reason else
+                        "这是一次基于质量 gate 的重写，请优先修复以下问题后再生成新报告：\n"
+                        f"- {rewrite_reason}\n\n"
+                        "请保持所有判断忠实于输入 JSON，不要新增分析，只修复结构覆盖、风险披露和冲突呈现。\n\n"
+                    )
+                    + (
+                        f"上一版报告：\n```json\n{json.dumps(prior_report, ensure_ascii=False, indent=2)}\n```\n\n"
+                        if rewrite_reason and prior_report else ""
+                    )
+                    + f"输入数据：\n```json\n{prompt_text}\n```"
                 )
             ),
         ])
@@ -253,4 +273,6 @@ async def generate_report(
         "steps": [*state.get("steps", []), completed_step],
         "artifacts": [*state.get("artifacts", []), report_artifact],
         "final_artifact_id": report_artifact.id,
+        "report_rewrite_needed": False,
+        "report_rewrite_reason": None,
     }

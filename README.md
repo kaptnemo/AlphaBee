@@ -405,7 +405,7 @@ tests/                  测试套件
 **设计方向**：
 
 - **分层压缩**：对 `fact_collection` artifact 的 raw_response 做结构化摘要提取（保留数值表格，压缩叙述文字）
-- **角色感知剪裁**：借鉴 `harness/state_compressor.py` 的 `NodeKind` 设计，不同节点接收不同粒度的上下文（如 report 生成需要完整数据，thesis 审查只需摘要）
+- **角色感知剪裁**：参考旧 harness 的 node-aware slicing 思路，不同节点接收不同粒度的上下文（如 report 生成需要完整数据，thesis 审查只需摘要）
 - **增量注入**：多轮对话中，前一轮的完整 report 压缩为结论 + 关键指标快照后再注入下一轮 context
 
 ### 3. 增加记忆力模块——用户投资画像

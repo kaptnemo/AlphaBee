@@ -74,6 +74,7 @@ _STAGE_MAP: dict[str, tuple[str, str, str]] = {
     "run_thesis":           ("🏛 ", "投资论点生成",        _C.BLUE),
     "review_thesis":        ("🔍", "论点审查",            _C.MAGENTA),
     "generate_report":      ("📝", "报告生成",            _C.BLUE),
+    "review_report":        ("🛡️", "报告质量门控",        _C.MAGENTA),
     "finalize_message":     ("✅", "完成",                _C.GREEN),
 }
 

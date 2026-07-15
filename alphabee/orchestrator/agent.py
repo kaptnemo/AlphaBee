@@ -6,7 +6,8 @@ Simplified pipeline:
 3. run_thesis             — ThesisEngine + optional LLM enhancement
 4. review_thesis          — ThesisReviewer (deterministic + optional LLM audit)
 5. generate_report        — Single LLM call: structured data → Markdown report
-6. finalize               — Merge all results into JSON AIMessage
+6. review_report          — Harness-as-library quality gate with optional rewrite
+7. finalize               — Merge all results into JSON AIMessage
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from alphabee.orchestrator.analyzers import (
     verify_hypotheses,
     run_thesis,
 )
+from alphabee.orchestrator.gates import review_report, route_after_report_review
 from alphabee.orchestrator.reporter import generate_report
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import make_id
@@ -339,6 +341,7 @@ _graph.add_node("verify_hypotheses", verify_hypotheses)
 _graph.add_node("run_thesis", run_thesis)
 _graph.add_node("review_thesis", review_thesis)
 _graph.add_node("generate_report", generate_report)
+_graph.add_node("review_report", review_report)
 _graph.add_node("finalize_message", finalize_message)
 
 _graph.add_edge(START, "collect_raw_facts")
@@ -348,7 +351,15 @@ _graph.add_edge("explore_conflicts", "verify_hypotheses")
 _graph.add_edge("verify_hypotheses", "run_thesis")
 _graph.add_edge("run_thesis", "review_thesis")
 _graph.add_edge("review_thesis", "generate_report")
-_graph.add_edge("generate_report", "finalize_message")
+_graph.add_edge("generate_report", "review_report")
+_graph.add_conditional_edges(
+    "review_report",
+    route_after_report_review,
+    {
+        "generate_report": "generate_report",
+        "finalize_message": "finalize_message",
+    },
+)
 _graph.add_edge("finalize_message", END)
 
 alphabee_agent = _graph.compile(store=InMemoryStore())

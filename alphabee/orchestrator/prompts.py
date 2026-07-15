@@ -1,8 +1,8 @@
 """Prompts for the orchestrator pipeline.
 
-The simplified pipeline no longer uses the harness (planner→reporter⇄critic→evaluator).
-Instead, a single report-generation LLM call consumes structured thesis + review
-data and produces a formatted Markdown report.
+The active pipeline uses the harness as a library rather than a separate runtime.
+Report generation stays in the orchestrator, and a later quality gate can request
+one rewrite when the final report under-expresses risks, conflicts, or gaps.
 """
 
 REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。

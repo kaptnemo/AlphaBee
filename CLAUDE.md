@@ -35,16 +35,20 @@ AlphaBee is a multi-agent investment analysis system for the A-share market, bui
 
 ### Active pipeline — `alphabee/orchestrator/`
 
-`main.py` uses the Harness-driven orchestrator at `alphabee/orchestrator/agent.py`, which compiles a LangGraph `StateGraph` with this flow:
+`main.py` uses the LangGraph orchestrator at `alphabee/orchestrator/agent.py`, which currently runs:
 
 ```
-START → collect_facts → run_harness → supplement_if_needed ⇄ run_harness → finalize_message → END
+START → collect_raw_facts → run_analysis_engines → explore_conflicts
+→ verify_hypotheses → run_thesis → review_thesis
+→ generate_report → review_report → finalize_message → END
 ```
 
-- **`collect_facts`** (`orchestrator/collectors.py`): Runs FactCollectorAgent + DerivedFactEngine + SignalEngine sequentially, wraps results as `Artifact`/`Observation` objects.
-- **`run_harness`**: Delegates to `HarnessRuntime` (planner → reporter ⇄ critic → evaluator).
-- **`supplement_if_needed`**: Detects high/critical `missing_data`/`data_gap` issues from harness critique and re-invokes FactCollectorAgent (max 1 round). On successful supplement, wipes harness-internal state and re-runs harness from scratch.
-- **`finalize_message`**: Merges all artifacts into a JSON `AIMessage` for streaming output.
+- **`collect_raw_facts`** (`orchestrator/collectors.py`): Runs FactCollectorAgent plus structured financial/market fact extraction.
+- **`run_analysis_engines`**: Runs DerivedFacts, AnomalyEngine, and SignalEngine on canonical facts.
+- **`explore_conflicts` / `verify_hypotheses`**: Use DeepAgents-based research nodes to surface and verify contradictions.
+- **`review_thesis`**: Audits thesis quality against signals, company context, and verified conflicts.
+- **`review_report`**: Uses harness prompts/schemas as a library-level quality gate to evaluate the generated report and request one rewrite when needed.
+- **`finalize_message`**: Merges artifacts into a JSON `AIMessage` for streaming output.
 
 ### Legacy agents — `alphabee/agents_legacy/`
 
@@ -59,15 +63,9 @@ Under active development, replacing the legacy subagents:
 3. **SignalAgent** (`agents/signal/`) — Takes derived facts and generates structured signals with risk levels (prototype, 3 rules).
 4. **FactAnalysisAgent** (`agents/fact_analysis/`) — Placeholder.
 
-### Harness Runtime — `alphabee/harness/`
+### Harness prompts — `alphabee/harness/`
 
-A reusable LangGraph execution harness providing:
-
-- **planner** → **reporter** ⇄ **critic** (iterative, up to 3 rounds) → **evaluator**
-- All nodes output **only** structured objects (`Artifact`, `Decision`, `Issue`) — no free text. The model is prompted with JSON output instructions and responses are parsed/coerced through `ThinkingNodeOutput`.
-- The `critic` triggers a reporter rewrite when it detects evidence gaps, conflicts, time mismatches, or numeric inconsistencies (controlled by `REWRITE_TRIGGER_CATEGORIES` and keyword matching).
-- `HarnessStateCompressor` provides role-aware context slicing (3 tiers: full content for the producing node, summaries for most nodes, claim→evidence maps for review/evaluation nodes). Two-stage pipeline: rule-based deterministic slicing first, then LLM summarization if still over threshold.
-- Supports custom prompts per instance (`reporter_prompt`, `critic_prompt`, `evaluator_prompt`).
+The old standalone Harness runtime has been removed. The remaining `alphabee/harness/` package keeps only reusable prompt assets that the active orchestrator can call as library components, such as the evaluator prompt consumed by `review_report`.
 
 ### Core data model — `alphabee/core/schemas.py`
 
@@ -88,7 +86,7 @@ Pydantic models that carry through the entire pipeline:
 
 - `config.yaml` at project root supports `${ENV_VAR}` and `${ENV_VAR:default}` placeholders.
 - `alphabee.config.get_settings()` returns a Pydantic `Settings` object.
-- All LLM instances are created through `alphabee.utils.create_chat_model(component_name)` which reads the shared LLM config and applies component-specific kwargs. Model components (`harness.planner`, `harness.reporter`, `agent.facts`, etc.) get dedicated `ChatOpenAI` instances cached via `@lru_cache`.
+- All LLM instances are created through `alphabee.utils.create_chat_model(component_name)` which reads the shared LLM config and applies component-specific kwargs. Model components (`harness.evaluator`, `agent.facts`, etc.) get dedicated `ChatOpenAI` instances cached via `@lru_cache`.
 
 ### Middleware
 
@@ -100,6 +98,5 @@ Pydantic models that carry through the entire pipeline:
 - **Factory functions**: Each agent is created via a factory (e.g., `fact_collector_agent_factory()`), NOT a module-level constant. This prevents state leakage and ensures fresh middleware/config per invocation.
 - **Subagents as CompiledSubAgent**: Subagents wrap factory-created runnables in `CompiledSubAgent(name=..., description=..., runnable=...)` registered on the parent `create_deep_agent`.
 - **YAML-driven rules**: Derived fact and signal rules live in `agents/derived_facts/rules/*.yaml` and `agents/signal/rules/*.yaml`. Each rule declares dependencies declaratively; the engine handles topological ordering and safe formula evaluation.
-- **`@lru_cache` for expensive construction**: `HarnessRuntime`, model instances, and compressor models use `@lru_cache` to amortize construction cost.
-- **State reset on supplement**: When supplement collects new data, the orchestrator clears `decisions`/`observations`/harness-internal `steps` and re-runs the full harness — DerivedFact/Signal engines are deterministic and re-execute automatically with fresh inputs.
+- **`@lru_cache` for expensive construction**: model instances use `@lru_cache` to amortize construction cost.
 - **Streaming with subgraphs**: `main.py` streams with `subgraphs=True` to capture events from both parent and child graphs. Namespace tuples are parsed (`_parse_namespace`) to display the agent hierarchy in the CLI.

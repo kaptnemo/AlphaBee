@@ -266,7 +266,13 @@ async def collect_raw_facts(
         "evaluation_artifact_id": None,
         "supplement_round": 0,
         "max_supplement_rounds": 1,
+        "report_review_round": 0,
+        "max_report_review_rounds": 2,
+        "report_rewrite_needed": False,
+        "report_rewrite_reason": None,
         "fact_values": fact_values,
         "financial_facts": financial_facts,
         "market_facts": market_facts,
+        "enhance": state.get("enhance", False),
+        "llm_review": state.get("llm_review", False),
     }
