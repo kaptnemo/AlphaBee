@@ -30,15 +30,13 @@ from alphabee.core import (
 from alphabee.orchestrator.collectors import (
     collect_raw_facts,
 )
-from alphabee.orchestrator.analyzers import (
-    _build_company_context,
-    run_analysis_engines,
-    explore_conflicts,
-    verify_hypotheses,
-    run_thesis,
-)
+from alphabee.orchestrator.nodes.analyze import run_analysis_engines
+from alphabee.orchestrator.nodes.conflicts import explore_conflicts
+from alphabee.orchestrator.nodes.thesis import run_thesis
+from alphabee.orchestrator.nodes.verification import verify_hypotheses
 from alphabee.orchestrator.gates import review_report, route_after_report_review
 from alphabee.orchestrator.reporter import generate_report
+from alphabee.orchestrator.services.company_context import build_company_context
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import make_id
 
@@ -101,7 +99,7 @@ async def review_thesis(
     # ── Get company context ──
     fact_val = _find_artifact_value(artifacts, "fact_collection")
     fact_text = fact_val.get("raw_response", "") if fact_val else ""
-    company_ctx = _build_company_context(
+    company_ctx = build_company_context(
         symbol=thesis.symbol if thesis else "",
         fact_text=fact_text,
         financial_facts=state.get("financial_facts"),

@@ -1,5 +1,5 @@
 from alphabee.core import Run, RunStatus
-from alphabee.orchestrator import analyzers
+from alphabee.orchestrator.nodes import analyze as analyze_node
 
 
 class _FakeFinancialFacts:
@@ -53,14 +53,14 @@ def test_run_analysis_engines_injects_anomaly_facts_before_signal(monkeypatch):
                 }
             }
 
-    monkeypatch.setattr(analyzers, "load_rules", lambda: None)
-    monkeypatch.setattr(analyzers, "RULES", {})
-    monkeypatch.setattr(analyzers, "DerivedFactsEngine", lambda: _FakeDerivedFactsEngine())
-    monkeypatch.setattr(analyzers, "load_signal_rules", lambda: None)
-    monkeypatch.setattr(analyzers, "SIGNAL_RULES", {"cross_validation_break": object()})
-    monkeypatch.setattr(analyzers, "SignalEngine", lambda: FakeSignalEngine())
-    monkeypatch.setattr(analyzers, "_record_signal_data_gaps", lambda *args, **kwargs: None)
-    monkeypatch.setattr(analyzers, "get_company_profile", lambda symbol: {})
+    monkeypatch.setattr(analyze_node, "load_rules", lambda: None)
+    monkeypatch.setattr(analyze_node, "RULES", {})
+    monkeypatch.setattr(analyze_node, "DerivedFactsEngine", lambda: _FakeDerivedFactsEngine())
+    monkeypatch.setattr(analyze_node, "load_signal_rules", lambda: None)
+    monkeypatch.setattr(analyze_node, "SIGNAL_RULES", {"cross_validation_break": object()})
+    monkeypatch.setattr(analyze_node, "SignalEngine", lambda: FakeSignalEngine())
+    monkeypatch.setattr(analyze_node, "record_signal_data_gaps", lambda *args, **kwargs: None)
+    monkeypatch.setattr(analyze_node, "get_company_profile", lambda symbol: {})
     monkeypatch.setattr(anomaly_engine_module, "AnomalyEngine", lambda: _FakeAnomalyEngine())
 
     state = {
@@ -77,10 +77,11 @@ def test_run_analysis_engines_injects_anomaly_facts_before_signal(monkeypatch):
         "financial_facts": _FakeFinancialFacts(),
     }
 
-    result = analyzers.asyncio.run(analyzers.run_analysis_engines(state, {}))
+    import asyncio
+
+    result = asyncio.run(analyze_node.run_analysis_engines(state, {}))
 
     assert captured_signal_facts["anomaly_max_zscore"] == 3.4
     assert captured_signal_facts["anomaly_pattern_count"] == 1.0
     assert result["fact_values"]["anomaly_triggered_count"] == 2.0
     assert result["signal_analysis"]["cross_validation_break"]["level"] == "high"
-

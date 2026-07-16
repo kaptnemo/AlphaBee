@@ -155,6 +155,24 @@ alphabee/orchestrator/
 
 每个 node 文件只暴露一个 LangGraph node 函数，复杂逻辑下沉到 service。
 
+当前已完成第一步拆分：
+
+```text
+alphabee/orchestrator/
+  analyzers.py                # 兼容 facade
+  nodes/
+    analyze.py
+    conflicts.py
+    verification.py
+    thesis.py
+  services/
+    company_context.py
+    gap_recorder.py
+    payload_builders.py
+```
+
+后续仍可继续把 `review_thesis` / `report gates` 也并入 `nodes/`，进一步收敛顶层编排文件。
+
 ---
 
 ## 3. 编排层直接 import 具体工具，依赖倒置不足
@@ -789,4 +807,3 @@ Sprint 4:
 Sprint 5:
   ExpectationFitAgent + CI/tooling hardening
 ```
-
