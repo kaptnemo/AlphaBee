@@ -11,12 +11,13 @@ _RULES_DIR = Path(__file__).resolve().parent
 CROSS_RULES: dict[str, CrossRule] = {}
 ANOMALY_PATTERNS: dict[str, AnomalyPattern] = {}
 
-_loaded = False
+_rules_loaded = False
+_patterns_loaded = False
 
 
 def load_rules() -> None:
     """从 rules.yaml 加载一阶勾稽关系规则。"""
-    global _loaded
+    global _rules_loaded
     import yaml
 
     rules_path = _RULES_DIR / "rules.yaml"
@@ -28,11 +29,12 @@ def load_rules() -> None:
         rule = CrossRule.from_dict(item)
         CROSS_RULES[rule.id] = rule
 
-    _loaded = True
+    _rules_loaded = True
 
 
 def load_patterns() -> None:
     """从 patterns.yaml 加载二阶异常模式。"""
+    global _patterns_loaded
     import yaml
 
     patterns_path = _RULES_DIR / "patterns.yaml"
@@ -44,9 +46,12 @@ def load_patterns() -> None:
         pattern = AnomalyPattern.from_dict(item)
         ANOMALY_PATTERNS[pattern.id] = pattern
 
+    _patterns_loaded = True
+
 
 def ensure_loaded() -> None:
     """确保规则和模式都已加载（幂等）。"""
-    if not _loaded:
+    if not _rules_loaded:
         load_rules()
+    if not _patterns_loaded:
         load_patterns()

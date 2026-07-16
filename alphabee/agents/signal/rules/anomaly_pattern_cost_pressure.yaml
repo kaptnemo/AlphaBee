@@ -1,0 +1,40 @@
+id: anomaly_pattern_cost_pressure
+
+name: 成本挤压异常模式
+
+category: anomaly
+
+dimension: financial_quality
+
+description: >
+  二阶异常模式命中“成本挤压”，说明毛利率异常下行已经形成财务质量压力证据。
+
+required_facts:
+  - anomaly_pattern_cost_pressure
+
+required_derived_facts: []
+
+trigger_rules:
+
+  medium:
+    condition: anomaly_pattern_cost_pressure >= 1
+
+interpretation_templates:
+
+  medium: >
+    毛利率显著弱于历史基线，可能受到原材料、人工或价格战挤压，
+    对财务质量和后续利润兑现形成压力。
+
+  none: >
+    未命中“成本挤压”二阶异常模式。
+
+critic_questions:
+  - 毛利率下降的主要驱动因素（原材料/人工/折旧/产品结构）？
+  - 是否已在报表中充分披露成本变动原因？
+  - 同行业可比公司的毛利率趋势如何（是行业性还是公司性）？
+
+thesis_impact:
+
+  financial_quality:
+    medium: slightly_negative
+    none: neutral

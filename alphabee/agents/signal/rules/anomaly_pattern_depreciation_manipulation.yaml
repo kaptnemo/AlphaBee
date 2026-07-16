@@ -1,0 +1,41 @@
+id: anomaly_pattern_depreciation_manipulation
+
+name: 折旧调节利润异常模式
+
+category: anomaly
+
+dimension: earnings_quality
+
+description: >
+  二阶异常模式命中“折旧调节利润嫌疑”，说明折旧政策变化已经形成盈利质量风险证据。
+
+required_facts:
+  - anomaly_pattern_depreciation_manipulation
+
+required_derived_facts: []
+
+trigger_rules:
+
+  medium:
+    condition: anomaly_pattern_depreciation_manipulation >= 1
+
+interpretation_templates:
+
+  medium: >
+    折旧摊销/固定资产比率显著下降，
+    可能通过延长折旧年限或调整折旧方法减少当期费用，从而抬高利润。
+
+  none: >
+    未命中“折旧调节利润嫌疑”二阶异常模式。
+
+critic_questions:
+  - 会计政策是否有变更（折旧方法、折旧年限、残值率）？
+  - 固定资产成新率是否支持当前的折旧率？
+  - 同行业可比公司的折旧政策是否可比？
+  - 若按行业平均折旧率重算，对利润影响多大？
+
+thesis_impact:
+
+  earnings_quality:
+    medium: slightly_negative
+    none: neutral

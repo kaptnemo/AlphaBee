@@ -1,0 +1,42 @@
+id: anomaly_pattern_high_cash_high_debt
+
+name: 大存大贷异常模式
+
+category: anomaly
+
+dimension: credit_risk
+
+description: >
+  二阶异常模式命中“大存大贷”，说明资金结构异常已形成独立证据，
+  应直接进入 thesis 的信用风险判断。
+
+required_facts:
+  - anomaly_pattern_high_cash_high_debt
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: anomaly_pattern_high_cash_high_debt >= 1
+
+interpretation_templates:
+
+  high: >
+    账上现金和有息负债同时显著偏高，不符合常规商业逻辑，
+    需重点排查受限资金、关联方占用或表外资金池问题。
+
+  none: >
+    未命中“大存大贷”二阶异常模式。
+
+critic_questions:
+  - 货币资金中受限资金（质押、保证金、冻结）的比例是多少？
+  - 利息收入/货币资金比例是否合理（应不低于活期利率）？
+  - 是否存在大股东占用或关联方资金拆借？
+  - 审计机构是否对货币资金存在性发表过保留意见？
+
+thesis_impact:
+
+  credit_risk:
+    high: negative
+    none: neutral

@@ -1,0 +1,42 @@
+id: anomaly_pattern_inventory_shenanigans
+
+name: 存货异常模式
+
+category: anomaly
+
+dimension: financial_quality
+
+description: >
+  二阶异常模式命中“存货异常”，说明库存与收入的背离已经形成组合证据，
+  应直接进入 thesis 的财务质量判断。
+
+required_facts:
+  - anomaly_pattern_inventory_shenanigans
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: anomaly_pattern_inventory_shenanigans >= 1
+
+interpretation_templates:
+
+  high: >
+    存货增速显著快于营收且偏离历史基线，
+    若没有毛利率或产销数据支持，可能指向库存积压、跌价风险或成本结转异常。
+
+  none: >
+    未命中“存货异常”二阶异常模式。
+
+critic_questions:
+  - 存货中原材料/在产品/产成品的比例是否发生突变？
+  - 存货跌价准备是否充足且计提政策连贯？
+  - 产能利用率和产销率数据是否支持存货增长？
+  - 同行业可比公司的存货周转天数变化趋势如何？
+
+thesis_impact:
+
+  financial_quality:
+    high: negative
+    none: neutral

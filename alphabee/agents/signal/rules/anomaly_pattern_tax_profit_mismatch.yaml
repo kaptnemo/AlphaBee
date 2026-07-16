@@ -1,0 +1,41 @@
+id: anomaly_pattern_tax_profit_mismatch
+
+name: 所得税与利润不匹配异常模式
+
+category: anomaly
+
+dimension: earnings_quality
+
+description: >
+  二阶异常模式命中“所得税与利润不匹配”，说明所得税口径已经形成调节利润的风险证据。
+
+required_facts:
+  - anomaly_pattern_tax_profit_mismatch
+
+required_derived_facts: []
+
+trigger_rules:
+
+  medium:
+    condition: anomaly_pattern_tax_profit_mismatch >= 1
+
+interpretation_templates:
+
+  medium: >
+    实际税率显著低于法定税率或历史基线，
+    可能通过税收优惠、利润转移或递延所得税确认来调节净利润。
+
+  none: >
+    未命中“所得税与利润不匹配”二阶异常模式。
+
+critic_questions:
+  - 有效税率下降的主要原因（税收优惠/亏损抵扣/递延税项）？
+  - 递延所得税资产的确认是否合理？可回收性如何？
+  - 是否存在大量未确认的递延所得税负债？
+  - 各子公司税率是否合理且与注册地匹配？
+
+thesis_impact:
+
+  earnings_quality:
+    medium: slightly_negative
+    none: neutral

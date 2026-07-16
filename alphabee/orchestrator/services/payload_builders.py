@@ -11,12 +11,18 @@ from alphabee.orchestrator.state import OrchestratorState
 
 def default_anomaly_fact_values() -> dict[str, float]:
     """Return neutral anomaly facts so anomaly signal rules can evaluate."""
-    return {
+    from alphabee.agents.anomaly.registry import ANOMALY_PATTERNS, ensure_loaded
+
+    ensure_loaded()
+    values = {
         "anomaly_triggered_count": 0.0,
         "anomaly_pattern_count": 0.0,
         "anomaly_max_zscore": 0.0,
         "anomaly_high_count": 0.0,
     }
+    for pattern_id in ANOMALY_PATTERNS:
+        values[f"anomaly_pattern_{pattern_id}"] = 0.0
+    return values
 
 
 def _build_key_signals(signal_analysis: dict) -> list[dict]:
@@ -155,4 +161,3 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
             ][:8],
         } if anomaly_report else {},
     }
-

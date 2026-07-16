@@ -1,0 +1,40 @@
+id: anomaly_pattern_efficiency_gain
+
+name: 运营效率提升异常模式
+
+category: anomaly
+
+dimension: financial_quality
+
+description: >
+  二阶异常模式命中“运营效率提升”，说明回款与现金转化改善已经形成正向财务质量证据。
+
+required_facts:
+  - anomaly_pattern_efficiency_gain
+
+required_derived_facts: []
+
+trigger_rules:
+
+  low:
+    condition: anomaly_pattern_efficiency_gain >= 1
+
+interpretation_templates:
+
+  low: >
+    应收压力缓解且现金流/利润比率改善，
+    指向回款效率提升和利润含金量增强，属于正面二阶异常模式。
+
+  none: >
+    未命中“运营效率提升”二阶异常模式。
+
+critic_questions:
+  - 回款改善是一次性事件还是趋势性变化？
+  - 是否有大客户付款节奏变化的特殊原因？
+  - 信用政策是否收紧导致部分客户流失？
+
+thesis_impact:
+
+  financial_quality:
+    low: slightly_positive
+    none: neutral

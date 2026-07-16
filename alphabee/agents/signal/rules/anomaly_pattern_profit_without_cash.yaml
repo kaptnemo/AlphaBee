@@ -1,0 +1,42 @@
+id: anomaly_pattern_profit_without_cash
+
+name: 利润含金量下降模式
+
+category: anomaly
+
+dimension: earnings_quality
+
+description: >
+  二阶异常模式命中“利润含金量下降”，说明利润与现金流背离已形成独立证据，
+  应直接进入 thesis 的盈利质量判断。
+
+required_facts:
+  - anomaly_pattern_profit_without_cash
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: anomaly_pattern_profit_without_cash >= 1
+
+interpretation_templates:
+
+  high: >
+    经营现金流/净利润比率显著低于历史基线，
+    利润更多停留在应收或存货中，纸面利润的可信度下降。
+
+  none: >
+    未命中“利润含金量下降”二阶异常模式。
+
+critic_questions:
+  - 经营现金流恶化是应收账款增加还是存货增加导致？
+  - 是否连续多期出现利润与现金流背离？
+  - 是否存在大额非经常性损益撑起利润？
+  - 是否有客户付款节奏或结算方式发生重大变化？
+
+thesis_impact:
+
+  earnings_quality:
+    high: negative
+    none: neutral

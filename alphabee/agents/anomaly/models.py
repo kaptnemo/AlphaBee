@@ -186,6 +186,9 @@ class AnomalyReport:
 
     def to_fact_values(self) -> dict[str, float]:
         """展平为 fact_values — 供信号规则引用。"""
+        from alphabee.agents.anomaly.registry import ANOMALY_PATTERNS, ensure_loaded
+
+        ensure_loaded()
         result: dict[str, float] = {}
 
         # 逐规则异常标志 + z-score
@@ -210,10 +213,7 @@ class AnomalyReport:
 
         # 模式标志
         match_ids = {pm.pattern.id for pm in self.pattern_matches}
-        for pid in {"inflated_revenue", "inventory_shenanigans", "profit_without_cash",
-                     "depreciation_manipulation", "high_cash_high_debt",
-                     "expense_capitalization", "tax_profit_mismatch",
-                     "cost_pressure", "efficiency_gain"}:
+        for pid in ANOMALY_PATTERNS:
             result[f"anomaly_pattern_{pid}"] = 1.0 if pid in match_ids else 0.0
 
         return result

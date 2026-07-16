@@ -1,0 +1,43 @@
+id: anomaly_pattern_inflated_revenue
+
+name: 虚增收入异常模式
+
+category: anomaly
+
+dimension: earnings_quality
+
+description: >
+  二阶异常模式命中“虚增收入嫌疑”，说明应收扩张与现金流背离共同指向
+  收入确认质量问题，应直接作为 thesis 的盈利质量证据。
+
+required_facts:
+  - anomaly_pattern_inflated_revenue
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: anomaly_pattern_inflated_revenue >= 1
+
+interpretation_templates:
+
+  high: >
+    应收增速高于营收增速且经营现金流弱于净利润，
+    属于“收入未被真实回款支撑”的经典二阶异常模式，
+    需重点排查信用政策放宽、提前确认收入或交易真实性问题。
+
+  none: >
+    未命中“虚增收入嫌疑”二阶异常模式。
+
+critic_questions:
+  - 前5大客户是否在报告期末集中确认大额收入？
+  - 应收账款账龄是否在恶化（1年以上占比是否上升）？
+  - 是否有客户既是客户又是供应商（循环交易）？
+  - 坏账计提是否充分且计提政策是否连续？
+
+thesis_impact:
+
+  earnings_quality:
+    high: negative
+    none: neutral

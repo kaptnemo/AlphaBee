@@ -14,6 +14,7 @@ class _FakeAnomalyReport:
             "anomaly_pattern_count": 1.0,
             "anomaly_max_zscore": 3.4,
             "anomaly_high_count": 1.0,
+            "anomaly_pattern_inflated_revenue": 1.0,
         }
 
     def to_dict(self):
@@ -83,5 +84,6 @@ def test_run_analysis_engines_injects_anomaly_facts_before_signal(monkeypatch):
 
     assert captured_signal_facts["anomaly_max_zscore"] == 3.4
     assert captured_signal_facts["anomaly_pattern_count"] == 1.0
+    assert captured_signal_facts["anomaly_pattern_inflated_revenue"] == 1.0
     assert result["fact_values"]["anomaly_triggered_count"] == 2.0
     assert result["signal_analysis"]["cross_validation_break"]["level"] == "high"
