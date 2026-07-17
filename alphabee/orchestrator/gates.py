@@ -79,6 +79,9 @@ def build_evidence_map(state: OrchestratorState) -> list[dict[str, Any]]:
     art_ids = set(art_by_id)
     obs_ids = set(obs_by_id)
 
+    # report gate 关注的不只是“报告有没有写完整”，
+    # 还关注中间结论能否回溯到 artifacts / observations。
+    # evidence_map 把 decision -> evidence 的链路压成轻量结构，供 deterministic / LLM gate 共用。
     evidence_map: list[dict[str, Any]] = []
     for decision in decisions:
         refs = decision.resolved_evidence(art_ids, obs_ids)
@@ -130,6 +133,8 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
     report_payload = report_value if isinstance(report_value, dict) else {}
     sections = report_payload.get("sections", {}) if isinstance(report_payload, dict) else {}
 
+    # 这些 section 对应 AlphaBee 最终交付物的业务契约：
+    # 缺任一关键章节，都意味着用户拿到的不是完整“财报质量体检”。
     expected_sections = {
         "executive_summary",
         "key_metrics",
@@ -158,6 +163,8 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
         else 0.0
     )
 
+    # gate 直接读取前面节点沉淀的 issues，
+    # 用来判断报告是否把“已知不确定性”如实暴露，而不是只看文案是否流畅。
     source_issues = _base_issues(state)
     issue_categories = {issue.category for issue in source_issues}
     numeric_consistency = not any(
@@ -241,6 +248,8 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
     weaknesses: list[str] = []
     strengths: list[str] = []
 
+    # deterministic gate 的定位是“最低交付标准守门员”：
+    # 哪怕 LLM 审查关闭或失败，它也要能稳定挡住缺章节、缺风险披露、强冲突未处理等问题。
     high_issues = [
         issue for issue in _base_issues(state)
         if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
@@ -375,6 +384,8 @@ async def review_report(
             "steps": [*steps, completed_step],
         }
 
+    # 先做结构化打分，再决定是否引入 LLM gate。
+    # 这样即使 LLM 不可用，最关键的交付约束仍然是可重复、可解释的。
     metrics = compute_report_metrics(state)
     use_llm = state.get("llm_review", False)
     try:
@@ -415,6 +426,8 @@ async def review_report(
         )
     )
 
+    # 只有“确实没过 gate 且存在明确阻断项”时才触发重写。
+    # 这避免因为轻微措辞问题反复重写，保持编排层对重试次数的可控性。
     rewrite_needed = not assessment.passed and bool(assessment.blocking_issues)
     rewrite_reason = "；".join(assessment.blocking_issues[:3]) if rewrite_needed else None
     retries_remaining = rewrite_needed and review_round < state.get("max_report_review_rounds", 2)
@@ -473,6 +486,9 @@ async def review_report(
 
 
 def route_after_report_review(state: OrchestratorState) -> str:
+    # report review 是图里唯一允许回环的节点：
+    # 若 gate 认为当前报告还能通过一次定向修补改善，就回到 generate_report；
+    # 否则直接结束，避免无限重写。
     if (
         state.get("report_rewrite_needed")
         and state.get("report_review_round", 0) < state.get("max_report_review_rounds", 2)

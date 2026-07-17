@@ -14,6 +14,9 @@ def default_anomaly_fact_values() -> dict[str, float]:
     from alphabee.agents.anomaly.registry import ANOMALY_PATTERNS, ensure_loaded
 
     ensure_loaded()
+    # 即使本轮没有足够历史数据跑出 anomaly_report，
+    # 也要补一组“中性异常事实”，这样依赖异常字段的 signal rules 仍能稳定执行，
+    # 而不是因为字段缺失把整条规则链打断。
     values = {
         "anomaly_triggered_count": 0.0,
         "anomaly_pattern_count": 0.0,
@@ -30,6 +33,8 @@ def _build_key_signals(signal_analysis: dict) -> list[dict]:
     for sig_id, result in signal_analysis.items():
         level = result.get("level", "")
         if level not in ("none", "unknown", ""):
+            # 冲突探索只需要“有信息量的信号”，
+            # 没命中的信号不带入 prompt，避免 agent 被大量无效规则噪声淹没。
             key.append({
                 "signal_id": sig_id,
                 "level": level,
@@ -45,6 +50,8 @@ def _build_key_derived(derived_facts: dict) -> dict:
         level = item.get("level", "")
         val = item.get(name)
         if level not in ("none", "") or val is not None:
+            # 与其把全部 derived facts 机械传给下游，
+            # 不如只保留“有值或有明显等级判断”的关键指标，提高 prompt 密度。
             result[name] = {
                 "value": round(float(val), 3) if isinstance(val, (int, float)) else val,
                 "level": level,
@@ -101,6 +108,9 @@ def generate_explore_conflicts_prompt(
             ][:3],
         }
 
+    # 冲突探索 prompt 只携带最能暴露背离关系的摘要层信息：
+    # 最新财务快照、估值、关键衍生指标、风险信号、异常模式。
+    # 这样 agent 会优先寻找“逻辑打架”的点，而不是泛泛复述公司概况。
     payload = {
         "symbol": symbol or "unknown",
         "query": query,
@@ -121,6 +131,8 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
     financial_facts: FinancialFacts | None = state.get("financial_facts")
     market_facts: MarketFacts | None = state.get("market_facts")
 
+    # 验证阶段比冲突探索更强调“证据链”，因此会给更多期历史快照，
+    # 让 agent 判断某个怀疑点到底是单期噪声还是持续模式。
     snapshots_summary = []
     if financial_facts and financial_facts.snapshots:
         for snapshot in financial_facts.snapshots[:4]:

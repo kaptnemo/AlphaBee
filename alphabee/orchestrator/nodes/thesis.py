@@ -34,6 +34,8 @@ async def run_thesis(
     new_artifacts: list[Artifact] = []
     new_issues: list[Issue] = []
 
+    # Thesis 层消费的是“已结构化、已归因”的中间结果：
+    # 信号提供方向性判断，事实摘要提供定性背景，异常/冲突提供反证和疑点。
     signal_av = _find_artifact(state.get("artifacts", []), "signal_analysis")
     signal_results: dict = signal_av.get("results", {}) if signal_av else {}
 
@@ -54,6 +56,9 @@ async def run_thesis(
         }
 
     if not signal_results:
+        # ThesisEngine 的输入核心是 signal_results。
+        # 没有信号就意味着无法把事实压缩成投资维度判断，
+        # 因而宁可跳过，也不制造主观结论。
         new_issues.append(
             Issue(
                 id=_make_id("issue"),
@@ -77,13 +82,8 @@ async def run_thesis(
             if snap_period:
                 period = snap_period
 
-        thesis_engine = ThesisEngine()
-        thesis = thesis_engine.run(
-            symbol=symbol or "unknown",
-            period=period,
-            signal_results=signal_results,
-        )
-
+        # CompanyContext 把公司所处行业、规模、生命周期等“解释框架”补齐，
+        # 避免 thesis 只看到孤立指标，却不知道这些指标在什么商业场景下成立。
         company_ctx = build_company_context(
             symbol=symbol,
             fact_text=fact_text,
@@ -91,9 +91,23 @@ async def run_thesis(
             market_facts=market_facts,
         )
 
+        thesis_engine = ThesisEngine()
+        thesis = thesis_engine.run(
+            symbol=symbol or "unknown",
+            period=period,
+            signal_results=signal_results,
+            anomaly_report=anomaly_av,
+            conflict_analysis=state.get("conflicts_result"),
+            verification_results=state.get("verification_results"),
+            company_context=company_ctx,
+        )
+
         enhanced = None
         if enhance:
             try:
+                # enhancer 是可选“表达增强层”：
+                # 它不改变底层确定性信号，只尝试补充跨信号模式和上下文化说明，
+                # 让最终论点更贴近真实投研表达。
                 enhancer = ThesisEnhancer()
                 enhanced = enhancer.enhance(
                     thesis=thesis,
@@ -111,6 +125,8 @@ async def run_thesis(
                 type="thesis_analysis",
                 producer_step=step.id,
                 value={
+                    # artifact 同时保留 thesis 主体、增强结果、行业语境、异常/冲突摘要，
+                    # 让 report 和 review 都能在一个对象里读取完整论点上下文。
                     "thesis": thesis.to_dict(),
                     "enhanced": enhanced.to_dict() if enhanced else None,
                     "industry_context": {
@@ -147,4 +163,3 @@ async def run_thesis(
         "artifacts": state.get("artifacts", []) + new_artifacts,
         "issues": state.get("issues", []) + new_issues,
     }
-

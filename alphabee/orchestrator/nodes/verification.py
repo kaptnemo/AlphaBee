@@ -29,11 +29,15 @@ async def _verify_single_conflict(
     if not conflict.hypotheses:
         return [], issues
 
+    # 每个 conflict 下面可能挂多个“可验证假设”，
+    # 这里按 conflict 为单位验证，保证同一主题的证据在一个局部上下文里被统一裁决。
     hypotheses_json = _json.dumps(
         [hypothesis.model_dump() for hypothesis in conflict.hypotheses],
         ensure_ascii=False,
         indent=2,
     )
+    # shared_context 提供财务快照、估值、异常等公共证据，
+    # conflict 自身再补主题与严重度，使验证 agent 明确自己要核实的矛盾点。
     ctx = {
         **shared_context,
         "conflict_theme": conflict.theme,
@@ -68,6 +72,7 @@ async def _verify_single_conflict(
     try:
         parsed = parse_json(raw_text)
         if isinstance(parsed, list):
+            # 兼容 agent 直接输出 list 的情况，避免因为包装层不一致损失验证结果。
             parsed = {"results": parsed}
         vlist = VerificationResultList.model_validate(parsed)
         return vlist.results, issues
@@ -127,6 +132,8 @@ async def verify_hypotheses(
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
         return {**state, "steps": state.get("steps", []) + [completed_step]}
 
+    # 第二阶段验证不是重新发现 conflict，而是尝试把每个假设落到证据层：
+    # verified/partial/rejected 的状态会直接影响 thesis 审查和最终 confidence。
     shared_context = build_verify_context(state, symbol)
     tasks = [
         _verify_single_conflict(conflict, shared_context, step.id, config)
@@ -146,6 +153,8 @@ async def verify_hypotheses(
     for conflict in conflicts_result.conflicts:
         for hypothesis in conflict.hypotheses:
             if hypothesis.id in result_by_hid:
+                # 回写 hypothesis.status，确保后续所有消费者只看 conflicts_result
+                # 就能知道验证后的真实状态，而不必再额外 join results artifact。
                 hypothesis.status = result_by_hid[hypothesis.id].status
 
     verified_ids = {hid for hid, result in result_by_hid.items() if result.status in ("verified", "partial")}
@@ -173,4 +182,3 @@ async def verify_hypotheses(
         "conflicts_result": conflicts_result.model_dump(),
         "verification_results": [result.model_dump() for result in all_results],
     }
-

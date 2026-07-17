@@ -36,6 +36,9 @@ async def explore_conflicts(
     raw_text = ""
 
     try:
+        # 冲突探索节点的职责不是再做一遍 thesis，
+        # 而是专门寻找“表面看起来不错，但内部逻辑互相打架”的地方。
+        # 输入只给结构化摘要，目的是让 agent 聚焦于背离/矛盾/缺口，而不是自由发散。
         content = generate_explore_conflicts_prompt(state, query, symbol)
         agent = explore_conflicts_agent_factory()
         raw_result = await agent.ainvoke(
@@ -78,6 +81,8 @@ async def explore_conflicts(
         "raw_text": raw_text[:4000] if raw_text else "",
     }
     if conflicts_result is not None:
+        # artifact 除了保存结构化结果，也保留基础计数，
+        # 方便后续 thesis / report / evaluation 快速判断冲突密度。
         artifact_value["conflicts"] = conflicts_result.model_dump()
         artifact_value["conflict_count"] = len(conflicts_result.conflicts)
         hypothesis_count = sum(len(item.hypotheses) for item in conflicts_result.conflicts)
@@ -95,6 +100,9 @@ async def explore_conflicts(
     if conflicts_result:
         for conflict in conflicts_result.conflicts:
             if conflict.severity in ("high", "critical"):
+                # 高严重度冲突立刻上升为 issue，
+                # 这样即使后面某个节点没显式消费冲突 artifact，
+                # quality gate 仍然能通过 issues 感知到“当前结论不稳定”。
                 new_issues.append(Issue(
                     id=_make_id("issue"),
                     severity=IssueSeverity.HIGH if conflict.severity == "high" else IssueSeverity.CRITICAL,
@@ -111,4 +119,3 @@ async def explore_conflicts(
         "artifacts": state.get("artifacts", []) + new_artifacts,
         "conflicts_result": conflicts_result.model_dump() if conflicts_result else None,
     }
-

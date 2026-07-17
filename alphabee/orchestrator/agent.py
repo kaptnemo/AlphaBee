@@ -76,6 +76,8 @@ async def review_thesis(
     )
 
     # ── Find thesis_analysis artifact ──
+    # review_thesis 不负责生成新观点，而是审计已有 thesis 是否站得住脚。
+    # 这里从 artifact 里拿到 thesis_analysis，确保审查面对的是编排层真正产出的正式结论。
     thesis_dict = _find_artifact_value(artifacts, "thesis_analysis")
     if thesis_dict is None:
         completed_step = step.model_copy(
@@ -93,12 +95,16 @@ async def review_thesis(
     thesis = _reconstruct_thesis(thesis_dict)
 
     # ── Get signal_results for detail-level review ──
+    # 维度审查需要回看 signal 粒度的细节：
+    # thesis 可能把多个信号压缩成一个维度判断，review 则要检查压缩后是否丢失关键反证。
     signal_val = _find_artifact_value(artifacts, "signal_analysis")
     signal_results = signal_val.get("results", {}) if signal_val else {}
 
     # ── Get company context ──
     fact_val = _find_artifact_value(artifacts, "fact_collection")
     fact_text = fact_val.get("raw_response", "") if fact_val else ""
+    # 审查阶段同样引入公司语境，避免机械地用统一阈值判断所有公司。
+    # 例如高成长行业的估值与成熟行业的估值，其审查口径不能完全一致。
     company_ctx = build_company_context(
         symbol=thesis.symbol if thesis else "",
         fact_text=fact_text,
@@ -117,6 +123,8 @@ async def review_thesis(
     )
 
     # ── Produce Decisions per dimension ──
+    # 维度 verdict 会沉淀为 Decision，便于最终报告和质量 gate 回溯：
+    # 每个维度到底是 confirmed、qualified 还是 contested，都有单独决策对象承载。
     for dim_id, verdict in review.dimension_verdicts.items():
         decisions.append(Decision(
             id=_make_id("decision"),
@@ -136,6 +144,8 @@ async def review_thesis(
         ))
 
     # ── Produce Issues ──
+    # 审查问题按严重度拆成 blocking / warning，
+    # 这样最终报告既能突出真正阻断结论的缺陷，也不会丢掉次级风险提示。
     for msg in review.blocking_issues:
         issues.append(Issue(
             id=_make_id("issue"),
@@ -173,6 +183,8 @@ async def review_thesis(
             "行业": ["growth_quality"],
         }
 
+        # 已验证冲突是 thesis review 最重要的反证来源之一：
+        # 它意味着“某个疑点不再只是怀疑，而是已经被额外证据部分或全部支持”。
         for conflict in conflicts_raw.get("conflicts", []):
             theme = conflict.get("theme", "")
             severity = conflict.get("severity", "")
@@ -205,8 +217,9 @@ async def review_thesis(
                     related_step=step.id,
                 ))
 
-                # Cross-reference: does verified conflict contradict a
-                # thesis dimension with positive judgment?
+                # 业务含义：如果 thesis 某维度仍然给出正向判断，
+                # 但 verified conflict 已经指出该方向存在反证，就要显式制造 thesis_conflict。
+                # 这样最终 confidence 会被压低，报告也必须把矛盾写出来。
                 for kw, dim_ids in _CONFLICT_DIM_KEYWORDS.items():
                     if kw not in theme:
                         continue
@@ -229,7 +242,8 @@ async def review_thesis(
                                 related_step=step.id,
                             ))
 
-        # Produce Decisions for rejected hypotheses (ruled-out findings)
+        # 对被推翻的假设也保留 decision，
+        # 这是为了告诉下游“哪些怀疑已经排除”，避免报告把所有疑点都写成悬而未决。
         for conflict in conflicts_raw.get("conflicts", []):
             for hyp in conflict.get("hypotheses", []):
                 if hyp.get("status") != "rejected":
@@ -287,6 +301,8 @@ def finalize_message(state: OrchestratorState) -> OrchestratorState:
             (a for a in reversed(artifacts) if a.type == "report"), None
         )
 
+    # finalize_message 的职责是把整条分析链压成一个统一 JSON 响应：
+    # 终端流式展示可以直接读取 final_report，而调试/审计端仍能拿到 artifacts / decisions / issues。
     payload = {
         "run": state["run"].model_dump(mode="json") if state.get("run") else None,
         "final_report": (
@@ -350,6 +366,9 @@ _graph.add_edge("verify_hypotheses", "run_thesis")
 _graph.add_edge("run_thesis", "review_thesis")
 _graph.add_edge("review_thesis", "generate_report")
 _graph.add_edge("generate_report", "review_report")
+# 整个主流程是单向串联，只有 report quality gate 允许一次受控回环。
+# 这样既能保留“先收集事实 → 再计算 → 再形成论点 → 再出报告”的业务顺序，
+# 又能在最终交付前对报告结构做一次纠偏。
 _graph.add_conditional_edges(
     "review_report",
     route_after_report_review,

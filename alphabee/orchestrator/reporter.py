@@ -32,6 +32,9 @@ def _build_report_payload(state: OrchestratorState) -> dict:
     issues = state.get("issues", [])
     run = state.get("run")
 
+    # 这里的 payload 不是“让 LLM 再分析一次”，
+    # 而是把整个管线已经产出的结构化结论压成一个稳定输入，
+    # 让报告生成只做转述、编排和风险显式化。
     payload: dict = {
         "company": {},
         "metrics": {},
@@ -44,6 +47,8 @@ def _build_report_payload(state: OrchestratorState) -> dict:
     # ── fact_collection → company context ──
     fact_val = _find_artifact(artifacts, "fact_collection")
     if fact_val:
+        # raw_response 只保留截断摘要，作用是给报告提供最小必要的业务背景，
+        # 避免过长 narrative 抢占 prompt，冲淡结构化结论。
         payload["company"] = {
             "symbol": fact_val.get("symbol", ""),
             "query": fact_val.get("query", ""),
@@ -58,6 +63,9 @@ def _build_report_payload(state: OrchestratorState) -> dict:
         for name, r in results.items():
             val = r.get(name)
             if val is not None:
+                # 报告层只暴露最重要的衍生指标与解释，
+                # 其目标是帮助用户理解“为什么会得出这些信号”，
+                # 而不是把规则引擎的全部内部字段原样倾倒出来。
                 top_metrics.append({
                     "name": name,
                     "value": round(float(val), 3),
@@ -93,6 +101,8 @@ def _build_report_payload(state: OrchestratorState) -> dict:
     # ── thesis_analysis → investment thesis ──
     thesis_val = _find_artifact(artifacts, "thesis_analysis")
     if thesis_val:
+        # thesis 是最终“维度化观点层”，报告中的执行摘要、风险列表、
+        # review findings 都会围绕它组织，因此这里直接作为主体载荷透传。
         payload["thesis"] = thesis_val.get("thesis", {})
         # If enhanced thesis exists, include cross-signal patterns
         enhanced = thesis_val.get("enhanced")
@@ -138,6 +148,8 @@ def _build_report_payload(state: OrchestratorState) -> dict:
             for h in c.get("hypotheses", []):
                 hid = h.get("id", "")
                 vr = verify_by_hid.get(hid, {})
+                # 将 conflict 与 verification 合并，是为了让报告直接看到：
+                # “一个疑点提出了什么假设、后来被什么证据支持/推翻、还剩哪些缺口”。
                 enriched_hyps.append({
                     "explanation": h.get("explanation", ""),
                     "predictions": h.get("predictions", []),
@@ -213,6 +225,8 @@ async def generate_report(
     rewrite_reason = state.get("report_rewrite_reason")
     prior_report = None
     if rewrite_reason:
+        # 质量 gate 触发重写时，会把上一版报告一并交给模型。
+        # 这样重写动作更像“定向修补”而不是完全重新生成，能减少风格漂移。
         for artifact in reversed(state.get("artifacts", [])):
             if artifact.type == "report" and isinstance(artifact.value, dict):
                 prior_report = artifact.value

@@ -82,6 +82,8 @@ def build_company_context(
     if not symbol:
         return ctx
 
+    # CompanyContext 的作用不是生成结论，而是给 thesis / review 提供“解释坐标系”：
+    # 同样的增速、估值、现金流表现，在大盘蓝筹与成长股上含义可能完全不同。
     ctx.name = symbol
     profile: dict = {}
 
@@ -105,6 +107,8 @@ def build_company_context(
         sw_daily = ind_fact.get("sw_daily", [])
         if sw_daily and isinstance(sw_daily[0], dict):
             item = sw_daily[0]
+            # 这里不直接下行业结论，只把行业估值语境压缩成短摘要，
+            # 让下游论点知道公司目前处在怎样的行业定价区间。
             ctx.business_model_summary = (
                 f"行业PE(TTM): {item.get('industry_pe_ttm', 'N/A')}, "
                 f"行业PB: {item.get('industry_pb', 'N/A')}"
@@ -115,6 +119,8 @@ def build_company_context(
     if not ctx.industry:
         ctx.industry = _keyword_extract_industry(fact_text.lower())
 
+    # 当结构化信息不足时，允许使用 fact_text 做弱推断，
+    # 但这里只提炼行业/市值/生命周期标签，不直接生成买卖判断。
     ctx.market_cap_category = _detect_market_cap(fact_text, market_facts)
     ctx.lifecycle_stage = _detect_lifecycle(fact_text, financial_facts)
 
@@ -125,9 +131,10 @@ def build_company_context(
             if isinstance(main_biz, dict):
                 biz_val = main_biz.get(0, "")
                 if biz_val:
+                    # 若行业估值摘要拿不到，则退回主营描述，
+                    # 至少让下游知道企业靠什么赚钱、属于哪类商业模式。
                     ctx.business_model_summary = str(biz_val)[:300]
     except Exception:
         pass
 
     return ctx
-

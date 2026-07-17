@@ -136,6 +136,10 @@ async def collect_raw_facts(
     - ``fact_values`` dict in state (canonical numeric facts for downstream engines)
     - ``financial_facts`` / ``market_facts`` Pydantic objects in state
     """
+    # 业务语义：
+    # 编排层首先只关心“这轮用户到底想分析谁、分析什么”。
+    # 后续所有节点都依赖这里抽取出的 query / symbol 作为统一上下文，
+    # 因此这里既要从消息历史里还原用户最新问题，也要尽早归一到股票标的。
     query = _latest_query(state.get("messages", []))
     symbol = _first_symbol(query)
 
@@ -163,6 +167,9 @@ async def collect_raw_facts(
 
     async def _run_fact_agent() -> str:
         try:
+            # FactCollector 负责补齐“定性叙述层”：
+            # 它会把公司、行业、经营、风险等离散信息整理成一段可读文本，
+            # 供后续 thesis / review / report 节点引用，但不直接作为数值真源。
             agent = fact_collector_agent_factory()
             result = await agent.ainvoke(
                 {"messages": [HumanMessage(content=query)]},
@@ -186,6 +193,9 @@ async def collect_raw_facts(
         if not symbol:
             return
         try:
+            # Structured model 负责补齐“定量事实层”：
+            # financial_facts 会被衍生指标、异常检测直接消费，
+            # 所以这里与 LLM narrative 并行拉取，尽量缩短首轮数据准备时间。
             financial_facts = await asyncio.to_thread(
                 get_financial_facts_model, symbol,
             )
@@ -200,6 +210,8 @@ async def collect_raw_facts(
                 )
             )
         try:
+            # market_facts 提供估值、总市值等市场维度事实，
+            # 它既参与信号计算，也会帮助 thesis 判断公司所处估值语境。
             market_facts = await asyncio.to_thread(
                 get_market_facts_model, symbol,
             )
@@ -219,6 +231,9 @@ async def collect_raw_facts(
         _run_structured_models(),
     )
 
+    # 无论定量数据是否齐全，都保留 fact_collection artifact：
+    # 它是整个编排链路里“用户问题 + 标的 + 事实摘要”的统一入口，
+    # 让后续节点不用再回头解析原始消息。
     artifacts.append(
         Artifact(
             id=_make_id("artifact"),
@@ -233,6 +248,9 @@ async def collect_raw_facts(
         )
     )
 
+    # fact_values 是后续所有规则引擎共享的 canonical numeric layer。
+    # 这里只有结构化模型里可安全计算的数字，故意不混入 narrative 文本推断，
+    # 以维持“数值必须来自结构化工具”的边界。
     fact_values: dict[str, float] = {}
     if financial_facts is not None:
         fact_values.update(financial_facts.to_fact_values())

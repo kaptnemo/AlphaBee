@@ -32,6 +32,8 @@ class CrossRule:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CrossRule:
+        # CrossRule 是 anomaly 领域的“规则契约”：
+        # YAML 负责声明业务知识，这里负责把声明装配成可执行对象。
         return cls(
             id=data["id"],
             name=data["name"],
@@ -64,6 +66,8 @@ class MetricAnomaly:
     verify_questions: list[str] = field(default_factory=list)  # 排查路径
 
     def to_dict(self) -> dict[str, Any]:
+        # 输出时做 round，是为了给报告/日志/前端稳定展示，
+        # 不改变内部判定逻辑使用的原始浮点值。
         return {
             "rule_id": self.rule_id,
             "rule_name": self.rule_name,
@@ -91,6 +95,8 @@ class AnomalyPattern:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AnomalyPattern:
+        # Pattern 的业务角色类似“审计经验模板”：
+        # 它把多个一阶异常组合成更接近真实经营/会计问题的解释框架。
         conditions = [
             AnomalyPatternCondition.from_dict(c)
             for c in data.get("conditions", [])
@@ -110,6 +116,8 @@ class AnomalyPattern:
         if not self.conditions:
             return False
         anomaly_map = {a.rule_id: a for a in anomalies}
+        # 这里使用 all，而不是按权重打分，
+        # 因为当前模式设计追求“高解释力的明确命中”，不是模糊相似。
         for cond in self.conditions:
             if not cond.matches(anomaly_map):
                 return False
@@ -138,6 +146,8 @@ class AnomalyPatternCondition:
             return False
         if abs(a.z_score) < self.min_zscore:
             return False
+        # direction 让一个模式能区分“指标升高型风险”和“指标下滑型风险”，
+        # 防止同一规则在相反方向上被错误复用。
         if self.direction == "spike" and a.z_score <= 0:
             return False
         if self.direction == "drop" and a.z_score >= 0:
@@ -153,6 +163,8 @@ class PatternMatch:
     triggering_anomalies: list[MetricAnomaly] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        # PatternMatch 输出的是“模式结论 + 触发证据”，
+        # 下游既能看到高层根因假设，也能追溯是哪几条底层异常共同触发。
         return {
             "pattern_id": self.pattern.id,
             "pattern_name": self.pattern.name,
@@ -175,6 +187,8 @@ class AnomalyReport:
     baseline_info: dict[str, dict] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        # 保留 anomalies + pattern_matches 两层结果，
+        # 让上层既能精确展示单点异常，也能展示“这些异常拼成了什么故事”。
         return {
             "symbol": self.symbol,
             "period": self.period,
@@ -191,17 +205,21 @@ class AnomalyReport:
         ensure_loaded()
         result: dict[str, float] = {}
 
+        # anomaly -> fact_values 是和 orchestrator 打通的关键接口：
+        # 只有展平成标准事实后，signal rules 才能像消费普通财务指标一样消费异常结果。
+        # 这实现了“异常检测不是终点，而是信号系统的上游事实层”。
         # 逐规则异常标志 + z-score
         for a in self.anomalies:
             result[f"anomaly_{a.rule_id}_zscore"] = a.z_score
             result[f"anomaly_{a.rule_id}_triggered"] = 1.0 if a.level != "none" else 0.0
 
-        # 汇总
+        # 汇总字段为下游提供全局强度感知：
+        # 比如“异常数量很多但单点不强”和“数量少但极端异常”是两类不同风险。
         triggered = [a for a in self.anomalies if a.level != "none"]
         result["anomaly_triggered_count"] = float(len(triggered))
         result["anomaly_pattern_count"] = float(len(self.pattern_matches))
 
-        # 最强异常
+        # 最强异常与 high_count 帮助信号层快速感知严重度上限和集中度。
         if triggered:
             max_a = max(triggered, key=lambda a: abs(a.z_score))
             result["anomaly_max_zscore"] = abs(max_a.z_score)
@@ -211,7 +229,8 @@ class AnomalyReport:
             result["anomaly_max_zscore"] = 0.0
             result["anomaly_high_count"] = 0.0
 
-        # 模式标志
+        # 模式标志把“是否命中某类根因假设”也转成二值事实，
+        # 便于 signal rules 直接引用某个模式是否成立。
         match_ids = {pm.pattern.id for pm in self.pattern_matches}
         for pid in ANOMALY_PATTERNS:
             result[f"anomaly_pattern_{pid}"] = 1.0 if pid in match_ids else 0.0
