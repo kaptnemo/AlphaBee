@@ -68,6 +68,9 @@ def synthesize_thesis(
     symbol: str,
     period: str,
     signal_results: dict[str, dict],
+    anomaly_report: dict | None = None,
+    conflict_analysis: dict | None = None,
+    verification_results: list[dict] | None = None,
     company_context: dict | None = None,
     user_intent: str = "",
     fact_summary: str = "",
@@ -88,6 +91,9 @@ def synthesize_thesis(
         symbol: 股票代码（Tushare 格式），如 ``"600519.SH"``。
         period: 分析周期描述，如 ``"2023年报"``、``"2024Q3"``。
         signal_results: SignalEngine.run() 的返回值。
+        anomaly_report: 可选的异常检测报告，命中的异常模式会直接进入 thesis 证据。
+        conflict_analysis: 可选的冲突分析结果，已验证高严重度冲突会下调相关维度。
+        verification_results: 可选的假设验证结果，rejected/unknown 会进入反证或缺失证据。
         company_context: 可选的公司背景字典，含 industry / lifecycle_stage /
             market_cap_category / business_model_summary。
         user_intent: 用户分析目标，如 "长期投资价值" / "短期风险排查"。
@@ -112,6 +118,10 @@ def synthesize_thesis(
             symbol=symbol,
             period=period,
             signal_results=signal_results,
+            anomaly_report=anomaly_report,
+            conflict_analysis=conflict_analysis,
+            verification_results=verification_results,
+            company_context=company_context,
         )
     except Exception as e:
         return f"> ❌ ThesisEngine 运行失败：{e}"
@@ -155,6 +165,12 @@ def _render_thesis(thesis) -> str:
     """将 InvestmentThesis 对象渲染为 Markdown 报告。"""
     overall_label = JUDGMENT_LABELS.get(thesis.overall_judgment, thesis.overall_judgment)
     sections: list[str] = []
+    source_labels = {
+        "signal": "信号",
+        "anomaly": "异常模式",
+        "conflict": "冲突验证",
+        "context": "语境校准",
+    }
 
     # ── 标题与摘要 ──────────────────────────────────────────────────
     sections.append(
@@ -185,10 +201,29 @@ def _render_thesis(thesis) -> str:
                 level_icon = {
                     "high": "🔴", "medium": "🟡", "low": "🟢", "none": "✅"
                 }.get(e.level, "⚪")
+                source_label = source_labels.get(getattr(e, "source_type", ""), "证据")
                 sections.append(
-                    f"  - {level_icon} `{e.signal_id}` → 影响：{e.impact}"
-                    + (f"（{e.interpretation[:60]}…」" if e.interpretation else "")
+                    f"  - {level_icon} `{e.signal_id}` [{source_label}] → 影响：{e.impact}"
+                    + (f"（{e.interpretation[:60]}…）" if e.interpretation else "")
                 )
+            sections.append("")
+
+        if dim.counter_evidence:
+            sections.append("**反向证据**：")
+            for item in dim.counter_evidence:
+                sections.append(f"  - {item}")
+            sections.append("")
+
+        if dim.missing_evidence:
+            sections.append("**缺失证据**：")
+            for item in dim.missing_evidence:
+                sections.append(f"  - {item}")
+            sections.append("")
+
+        if dim.context_notes:
+            sections.append("**语境说明**：")
+            for item in dim.context_notes:
+                sections.append(f"  - {item}")
             sections.append("")
 
     # ── 主要风险清单 ─────────────────────────────────────────────────

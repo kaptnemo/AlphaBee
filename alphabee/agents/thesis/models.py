@@ -82,6 +82,8 @@ class EvidenceItem:
     level: str                # high / medium / low / none
     impact: str               # negative / slightly_negative / neutral / ...
     interpretation: str = ""  # 信号解释文字
+    source_type: str = "signal"  # signal / anomaly / conflict / context
+    source_label: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvidenceItem:
@@ -91,6 +93,8 @@ class EvidenceItem:
             level=data.get("level", ""),
             impact=data.get("impact", ""),
             interpretation=data.get("interpretation", ""),
+            source_type=data.get("source_type", "signal"),
+            source_label=data.get("source_label", ""),
         )
 
 
@@ -103,6 +107,9 @@ class ThesisDimension:
     judgment: str             # strong_positive / positive / neutral / negative / strong_negative
     score: float              # 综合评分，[-1.0, 1.0]
     evidence: list[EvidenceItem] = field(default_factory=list)
+    counter_evidence: list[str] = field(default_factory=list)
+    missing_evidence: list[str] = field(default_factory=list)
+    context_notes: list[str] = field(default_factory=list)
     interpretation: str = ""
     confidence: float = 1.0   # 0-1，信号覆盖度越高置信度越高
 
@@ -114,6 +121,9 @@ class ThesisDimension:
             judgment=data.get("judgment", "neutral"),
             score=float(data.get("score", 0.0)),
             evidence=[EvidenceItem.from_dict(e) for e in data.get("evidence", [])],
+            counter_evidence=list(data.get("counter_evidence", [])),
+            missing_evidence=list(data.get("missing_evidence", [])),
+            context_notes=list(data.get("context_notes", [])),
             interpretation=data.get("interpretation", ""),
             confidence=float(data.get("confidence", 1.0)),
         )
@@ -176,9 +186,14 @@ class InvestmentThesis:
                             "level": e.level,
                             "impact": e.impact,
                             "interpretation": e.interpretation,
+                            "source_type": e.source_type,
+                            "source_label": e.source_label,
                         }
                         for e in d.evidence
                     ],
+                    "counter_evidence": d.counter_evidence,
+                    "missing_evidence": d.missing_evidence,
+                    "context_notes": d.context_notes,
                 }
                 for dim_id, d in self.dimensions.items()
             },

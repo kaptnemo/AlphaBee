@@ -99,6 +99,30 @@ class CriticEngine:
                 if not cq.trigger_on or judgment in cq.trigger_on:
                     raw.append((cq.question, dim_id, cq.category, cq.severity))
 
+            for item in getattr(dim_result, "missing_evidence", [])[:3]:
+                raw.append((
+                    f"当前{dim_result.name}判断仍缺少关键证据：{item}。补齐后该维度结论是否需要调整？",
+                    dim_id,
+                    "evidence_gap",
+                    "important",
+                ))
+
+            for item in getattr(dim_result, "counter_evidence", [])[:3]:
+                raw.append((
+                    f"如何解释当前{dim_result.name}的反向证据：{item}？若该反证成立，原判断是否需要下调？",
+                    dim_id,
+                    "counter_evidence",
+                    "important",
+                ))
+
+            for note in getattr(dim_result, "context_notes", [])[:2]:
+                raw.append((
+                    f"当前{dim_result.name}已做语境校准：{note}。是否有足够的行业或商业模式证据支持这一步校准？",
+                    dim_id,
+                    "industry_cycle",
+                    "minor",
+                ))
+
         # ── C. 系统级正向偏差追问 ──────────────────────────────────────
         if thesis.overall_judgment in ("positive", "strong_positive"):
             for item in _POSITIVE_BIAS_QUESTIONS:
