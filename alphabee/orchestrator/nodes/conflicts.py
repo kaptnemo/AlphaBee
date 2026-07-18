@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableConfig
 
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
+from alphabee.orchestrator.contracts import ConflictAnalysisArtifact
 from alphabee.orchestrator.services.payload_builders import generate_explore_conflicts_prompt
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import parse_json
@@ -76,25 +77,25 @@ async def explore_conflicts(
                 related_step=step.id,
             ))
 
-    artifact_value: dict = {
-        "symbol": symbol,
-        "raw_text": raw_text[:4000] if raw_text else "",
-    }
+    artifact_payload = ConflictAnalysisArtifact(
+        symbol=symbol,
+        raw_text=raw_text[:4000] if raw_text else "",
+    )
     if conflicts_result is not None:
         # artifact 除了保存结构化结果，也保留基础计数，
         # 方便后续 thesis / report / evaluation 快速判断冲突密度。
-        artifact_value["conflicts"] = conflicts_result.model_dump()
-        artifact_value["conflict_count"] = len(conflicts_result.conflicts)
+        artifact_payload.conflicts = list(conflicts_result.conflicts)
+        artifact_payload.conflict_count = len(conflicts_result.conflicts)
         hypothesis_count = sum(len(item.hypotheses) for item in conflicts_result.conflicts)
-        artifact_value["hypothesis_count"] = hypothesis_count
+        artifact_payload.hypothesis_count = hypothesis_count
     else:
-        artifact_value["parse_error"] = parse_error or "unknown"
+        artifact_payload.parse_error = parse_error or "unknown"
 
     new_artifacts.append(Artifact(
         id=_make_id("artifact"),
         type="conflict_analysis",
         producer_step=step.id,
-        value=artifact_value,
+        value=artifact_payload.model_dump(mode="json"),
     ))
 
     if conflicts_result:
@@ -117,5 +118,5 @@ async def explore_conflicts(
         "steps": state.get("steps", []) + [completed_step],
         "issues": state.get("issues", []) + new_issues,
         "artifacts": state.get("artifacts", []) + new_artifacts,
-        "conflicts_result": conflicts_result.model_dump() if conflicts_result else None,
+        "conflicts_result": conflicts_result,
     }

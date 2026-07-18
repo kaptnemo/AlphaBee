@@ -30,6 +30,14 @@ from alphabee.core import (
 from alphabee.orchestrator.collectors import (
     collect_raw_facts,
 )
+from alphabee.orchestrator.contracts import (
+    SignalAnalysisArtifact,
+    ThesisArtifact,
+    VerificationArtifact,
+    coerce_conflicts_result,
+    coerce_verification_artifact,
+    find_artifact_model,
+)
 from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.thesis import run_thesis
@@ -78,8 +86,8 @@ async def review_thesis(
     # ── Find thesis_analysis artifact ──
     # review_thesis 不负责生成新观点，而是审计已有 thesis 是否站得住脚。
     # 这里从 artifact 里拿到 thesis_analysis，确保审查面对的是编排层真正产出的正式结论。
-    thesis_dict = _find_artifact_value(artifacts, "thesis_analysis")
-    if thesis_dict is None:
+    thesis_payload = find_artifact_model(artifacts, "thesis_analysis", ThesisArtifact)
+    if thesis_payload is None:
         completed_step = step.model_copy(
             update={
                 "status": StepStatus.SKIPPED,
@@ -92,13 +100,13 @@ async def review_thesis(
         }
 
     # ── Reconstruct InvestmentThesis from artifact dict ──
-    thesis = _reconstruct_thesis(thesis_dict)
+    thesis = _reconstruct_thesis(thesis_payload.thesis)
 
     # ── Get signal_results for detail-level review ──
     # 维度审查需要回看 signal 粒度的细节：
     # thesis 可能把多个信号压缩成一个维度判断，review 则要检查压缩后是否丢失关键反证。
-    signal_val = _find_artifact_value(artifacts, "signal_analysis")
-    signal_results = signal_val.get("results", {}) if signal_val else {}
+    signal_val = find_artifact_model(artifacts, "signal_analysis", SignalAnalysisArtifact)
+    signal_results = signal_val.results if signal_val else {}
 
     # ── Get company context ──
     fact_val = _find_artifact_value(artifacts, "fact_collection")
@@ -164,32 +172,36 @@ async def review_thesis(
         ))
 
     # ── Inject verified conflicts as additional review evidence ──
-    conflicts_raw = state.get("conflicts_result")
+    conflicts_raw = coerce_conflicts_result(state.get("conflicts_result"))
     if conflicts_raw:
-        verification_results = state.get("verification_results") or []
+        verification_results = (
+            coerce_verification_artifact(state.get("verification_results"))
+            or VerificationArtifact()
+        )
         verify_by_hid: dict[str, dict] = {
-            vr.get("hypothesis_id", ""): vr for vr in verification_results
+            vr.hypothesis_id: vr.model_dump(mode="json")
+            for vr in verification_results.results
         }
 
         # 已验证冲突是 thesis review 最重要的反证来源之一：
         # 它意味着“某个疑点不再只是怀疑，而是已经被额外证据部分或全部支持”。
-        for conflict in conflicts_raw.get("conflicts", []):
-            theme = conflict.get("theme", "")
-            severity = conflict.get("severity", "")
-            related_dimensions = conflict.get("related_dimensions") or []
+        for conflict in conflicts_raw.conflicts:
+            theme = conflict.theme
+            severity = conflict.severity
+            related_dimensions = list(conflict.related_dimensions)
             conflict_severity = (
                 IssueSeverity.HIGH if severity in ("high", "critical")
                 else IssueSeverity.MEDIUM
             )
 
-            for hyp in conflict.get("hypotheses", []):
-                vstatus = hyp.get("status", "pending")
+            for hyp in conflict.hypotheses:
+                vstatus = hyp.status
                 if vstatus not in ("verified", "partial"):
                     continue
 
-                hid = hyp.get("id", "")
+                hid = hyp.id
                 vr = verify_by_hid.get(hid, {})
-                explanation = hyp.get("explanation", "")
+                explanation = hyp.explanation
                 gap_hint = (
                     f" 缺口: {', '.join(vr.get('gaps', [])[:3])}"
                     if vr.get("gaps") else ""
@@ -230,18 +242,18 @@ async def review_thesis(
 
         # 对被推翻的假设也保留 decision，
         # 这是为了告诉下游“哪些怀疑已经排除”，避免报告把所有疑点都写成悬而未决。
-        for conflict in conflicts_raw.get("conflicts", []):
-            for hyp in conflict.get("hypotheses", []):
-                if hyp.get("status") != "rejected":
+        for conflict in conflicts_raw.conflicts:
+            for hyp in conflict.hypotheses:
+                if hyp.status != "rejected":
                     continue
-                hid = hyp.get("id", "")
+                hid = hyp.id
                 vr = verify_by_hid.get(hid, {})
                 decisions.append(Decision(
                     id=_make_id("decision"),
                     maker="conflict_verifier",
                     rationale=(
-                        f"假设已排除: {conflict.get('theme', '')} — "
-                        f"{hyp.get('explanation', '')}. "
+                        f"假设已排除: {conflict.theme} — "
+                        f"{hyp.explanation}. "
                         f"推翻理由: {vr.get('summary', '')}"
                     ),
                     confidence=vr.get("contradiction_score", 0.7),

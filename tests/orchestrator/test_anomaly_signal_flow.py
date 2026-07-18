@@ -86,4 +86,4 @@ def test_run_analysis_engines_injects_anomaly_facts_before_signal(monkeypatch):
     assert captured_signal_facts["anomaly_pattern_count"] == 1.0
     assert captured_signal_facts["anomaly_pattern_inflated_revenue"] == 1.0
     assert result["fact_values"]["anomaly_triggered_count"] == 2.0
-    assert result["signal_analysis"]["cross_validation_break"]["level"] == "high"
+    assert result["signal_analysis"].results["cross_validation_break"]["level"] == "high"

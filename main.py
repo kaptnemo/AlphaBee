@@ -243,7 +243,10 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
         anomaly_report  = node_update.get("anomaly_report")  or {}
         derived_facts   = node_update.get("derived_facts")   or {}
 
-        results = signal_analysis.get("results", {}) if isinstance(signal_analysis, dict) else {}
+        if hasattr(signal_analysis, "results"):
+            results = signal_analysis.results
+        else:
+            results = signal_analysis.get("results", {}) if isinstance(signal_analysis, dict) else {}
         # Count triggered signals by level
         level_counts: dict[str, int] = {}
         for sid, sval in results.items():
@@ -252,9 +255,16 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
                 if lv not in ("none", "unknown"):
                     level_counts[lv] = level_counts.get(lv, 0) + 1
 
-        anomaly_count  = anomaly_report.get("anomaly_count", 0) if isinstance(anomaly_report, dict) else 0
-        pattern_count  = anomaly_report.get("pattern_count", 0) if isinstance(anomaly_report, dict) else 0
-        derived_count  = len(derived_facts) if derived_facts else 0
+        if hasattr(anomaly_report, "anomaly_count"):
+            anomaly_count = anomaly_report.anomaly_count
+            pattern_count = anomaly_report.pattern_count
+        else:
+            anomaly_count = anomaly_report.get("anomaly_count", 0) if isinstance(anomaly_report, dict) else 0
+            pattern_count = anomaly_report.get("pattern_count", 0) if isinstance(anomaly_report, dict) else 0
+        if hasattr(derived_facts, "results"):
+            derived_count = len(derived_facts.results)
+        else:
+            derived_count = len(derived_facts) if derived_facts else 0
 
         sig_parts = []
         for lv in ("high", "medium", "low", "blocked"):
@@ -275,12 +285,12 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "explore_conflicts":
         cr = node_update.get("conflicts_result") or {}
-        conflicts = cr.get("conflicts", []) if isinstance(cr, dict) else []
+        conflicts = cr.conflicts if hasattr(cr, "conflicts") else (cr.get("conflicts", []) if isinstance(cr, dict) else [])
         if not conflicts:
             print(f"  🔬 未发现显著冲突{issue_tag}")
             return
-        n_hyp = sum(len(c.get("hypotheses", [])) for c in conflicts)
-        high_sev = [c for c in conflicts if c.get("severity") in ("critical", "high")]
+        n_hyp = sum(len(c.hypotheses) if hasattr(c, "hypotheses") else len(c.get("hypotheses", [])) for c in conflicts)
+        high_sev = [c for c in conflicts if (c.severity if hasattr(c, "severity") else c.get("severity")) in ("critical", "high")]
         sev_tag = _c(f"  {len(high_sev)} 高危", _C.RED) if high_sev else ""
         print(
             f"  🔬 {_c(str(len(conflicts)), _C.BOLD, _C.MAGENTA)} 个冲突"
@@ -288,10 +298,11 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             f"{sev_tag}{issue_tag}"
         )
         for c in conflicts[:6]:
-            sev = c.get("severity", "")
+            sev = c.severity if hasattr(c, "severity") else c.get("severity", "")
             sc = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.GRAY
-            n_h = len(c.get("hypotheses", []))
-            print(f"      {_c(f'[{sev}]', sc)} {c.get('theme','')}"
+            n_h = len(c.hypotheses) if hasattr(c, "hypotheses") else len(c.get("hypotheses", []))
+            theme = c.theme if hasattr(c, "theme") else c.get("theme", "")
+            print(f"      {_c(f'[{sev}]', sc)} {theme}"
                   f"  {_c(f'{n_h}条假设', _C.DIM)}")
         if len(conflicts) > 6:
             print(_c(f"      …共 {len(conflicts)} 个", _C.DIM))
@@ -300,18 +311,22 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "verify_hypotheses":
         vr = node_update.get("verification_results") or []
-        if not vr:
+        if hasattr(vr, "results"):
+            vr_items = [item.model_dump(mode="json") for item in vr.results]
+        else:
+            vr_items = vr
+        if not vr_items:
             print(f"  🧪 无假设待验证{issue_tag}")
             return
-        verified = sum(1 for r in vr if r.get("status") in ("verified", "partial"))
-        rejected = sum(1 for r in vr if r.get("status") == "rejected")
-        unknown  = len(vr) - verified - rejected
+        verified = sum(1 for r in vr_items if r.get("status") in ("verified", "partial"))
+        rejected = sum(1 for r in vr_items if r.get("status") == "rejected")
+        unknown  = len(vr_items) - verified - rejected
         parts = []
         if verified: parts.append(_c(f"✓ {verified} 条支持", _C.GREEN))
         if rejected: parts.append(_c(f"✗ {rejected} 条排除", _C.RED))
         if unknown:  parts.append(_c(f"? {unknown} 条待定", _C.GRAY))
         print(f"  🧪 假设验证完成 — " + "  ".join(parts) + issue_tag)
-        verified_items = [r for r in vr if r.get("status") in ("verified", "partial")]
+        verified_items = [r for r in vr_items if r.get("status") in ("verified", "partial")]
         for r in verified_items[:4]:
             tag = _c("[partial]", _C.YELLOW) if r.get("status") == "partial" else _c("[✓]", _C.GREEN)
             summary = r.get("summary", "")[:90]

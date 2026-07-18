@@ -10,6 +10,11 @@ from alphabee.agents.facts.tools.company_profile import get_company_profile
 from alphabee.agents.signal.engine import SignalEngine
 from alphabee.agents.signal.registry import SIGNAL_RULES, load_signal_rules
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
+from alphabee.orchestrator.contracts import (
+    AnomalyReportArtifact,
+    DerivedFactsArtifact,
+    SignalAnalysisArtifact,
+)
 from alphabee.orchestrator.collectors import _finalize_step, _make_id
 from alphabee.orchestrator.services.gap_recorder import record_signal_data_gaps
 from alphabee.orchestrator.services.payload_builders import default_anomaly_fact_values
@@ -58,7 +63,7 @@ async def run_analysis_engines(
             "issues": state.get("issues", []) + new_issues,
         }
 
-    derived_facts: dict[str, dict] = {}
+    derived_facts_payload = DerivedFactsArtifact()
     try:
         # 第一层：把原始财务/市场字段转换成更贴近投资分析的话语单元，
         # 例如增长质量、盈利质量、现金流质量等中间指标。
@@ -66,13 +71,16 @@ async def run_analysis_engines(
         load_rules()
         df_engine = DerivedFactsEngine()
         all_rule_names = list(RULES.keys())
-        derived_facts = df_engine.run(all_rule_names, fact_values)
+        derived_facts_payload = DerivedFactsArtifact(
+            results=df_engine.run(all_rule_names, fact_values),
+            rule_count=len(all_rule_names),
+        )
         new_artifacts.append(
             Artifact(
                 id=_make_id("artifact"),
                 type="derived_facts",
                 producer_step=step.id,
-                value={"results": derived_facts, "rule_count": len(all_rule_names)},
+                value=derived_facts_payload.model_dump(mode="json"),
             )
         )
     except Exception as exc:
@@ -86,7 +94,7 @@ async def run_analysis_engines(
             )
         )
 
-    anomaly_report = None
+    anomaly_report_payload: AnomalyReportArtifact | None = None
     anomaly_fact_values: dict[str, float] = default_anomaly_fact_values()
     if financial_facts is not None and len(financial_facts.snapshots) >= 2:
         try:
@@ -114,12 +122,15 @@ async def run_analysis_engines(
             # 这样 signal rules 就能把“应收异常”“存货模式异常”当成标准事实处理，
             # 实现从原始报表 → 异常识别 → 风险信号的分层传导。
             anomaly_fact_values.update(anomaly_report.to_fact_values())
+            anomaly_report_payload = AnomalyReportArtifact.model_validate(
+                anomaly_report.to_dict()
+            )
             new_artifacts.append(
                 Artifact(
                     id=_make_id("artifact"),
                     type="anomaly_report",
                     producer_step=step.id,
-                    value=anomaly_report.to_dict(),
+                    value=anomaly_report_payload.model_dump(mode="json"),
                 )
             )
         except Exception as exc:
@@ -135,25 +146,28 @@ async def run_analysis_engines(
 
     fact_values.update(anomaly_fact_values)
 
-    signal_analysis: dict[str, dict] = {}
+    signal_analysis_payload = SignalAnalysisArtifact()
     try:
         # 第二层：SignalEngine 不重新理解报表，而是消费 fact_values /
         # derived facts / anomaly facts，统一输出可审计的风险或机会信号。
         load_signal_rules()
         signal_engine = SignalEngine()
         all_signal_names = list(SIGNAL_RULES.keys())
-        signal_analysis = signal_engine.run(all_signal_names, fact_values)
+        signal_analysis_payload = SignalAnalysisArtifact(
+            results=signal_engine.run(all_signal_names, fact_values),
+            rule_count=len(all_signal_names),
+        )
         new_artifacts.append(
             Artifact(
                 id=_make_id("artifact"),
                 type="signal_analysis",
                 producer_step=step.id,
-                value={"results": signal_analysis, "rule_count": len(all_signal_names)},
+                value=signal_analysis_payload.model_dump(mode="json"),
             )
         )
         # 对 blocked / missing_fact 信号单独落库，
         # 便于后续观察数据源缺口究竟阻塞了哪些业务规则。
-        record_signal_data_gaps(signal_analysis, fact_values, symbol)
+        record_signal_data_gaps(signal_analysis_payload.results, fact_values, symbol)
     except Exception as exc:
         new_issues.append(
             Issue(
@@ -172,7 +186,7 @@ async def run_analysis_engines(
         "artifacts": state.get("artifacts", []) + new_artifacts,
         "issues": state.get("issues", []) + new_issues,
         "fact_values": fact_values,
-        "derived_facts": derived_facts,
-        "signal_analysis": signal_analysis,
-        "anomaly_report": anomaly_report.to_dict() if anomaly_report else None,
+        "derived_facts": derived_facts_payload,
+        "signal_analysis": signal_analysis_payload,
+        "anomaly_report": anomaly_report_payload,
     }

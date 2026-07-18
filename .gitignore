@@ -9,6 +9,7 @@ __pycache__/
 
 # test outputs
 outputs/
+output/
 data/
 large_tool_results/
 pdfs/

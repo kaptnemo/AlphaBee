@@ -8,6 +8,11 @@ from alphabee.agents.thesis.engine import ThesisEngine
 from alphabee.agents.thesis.enhancer import ThesisEnhancer
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _build_conflict_data, _finalize_step, _find_artifact, _make_id
+from alphabee.orchestrator.contracts import ThesisArtifact, ThesisIndustryContext
+from alphabee.orchestrator.contracts import (
+    coerce_conflicts_result,
+    coerce_verification_artifact,
+)
 from alphabee.orchestrator.services.company_context import build_company_context
 from alphabee.orchestrator.state import OrchestratorState
 
@@ -42,7 +47,12 @@ async def run_thesis(
     fc_av = _find_artifact(state.get("artifacts", []), "fact_collection")
     fact_text: str = fc_av.get("raw_response", "") if fc_av else ""
 
-    anomaly_av = _find_artifact(state.get("artifacts", []), "anomaly_report")
+    anomaly_payload = state.get("anomaly_report")
+    anomaly_av = (
+        anomaly_payload.model_dump(mode="json")
+        if anomaly_payload is not None
+        else _find_artifact(state.get("artifacts", []), "anomaly_report")
+    )
     anomaly_data: dict = {}
     if anomaly_av:
         anomaly_data = {
@@ -97,8 +107,21 @@ async def run_thesis(
             period=period,
             signal_results=signal_results,
             anomaly_report=anomaly_av,
-            conflict_analysis=state.get("conflicts_result"),
-            verification_results=state.get("verification_results"),
+            conflict_analysis=(
+                coerce_conflicts_result(state.get("conflicts_result")).model_dump(mode="json")
+                if coerce_conflicts_result(state.get("conflicts_result")) is not None
+                else None
+            ),
+            verification_results=(
+                [
+                    item.model_dump(mode="json")
+                    for item in coerce_verification_artifact(
+                        state.get("verification_results")
+                    ).results
+                ]
+                if coerce_verification_artifact(state.get("verification_results")) is not None
+                else None
+            ),
             company_context=company_ctx,
         )
 
@@ -119,30 +142,29 @@ async def run_thesis(
             except Exception:
                 pass
 
+        thesis_artifact = ThesisArtifact(
+            thesis=thesis.to_dict(),
+            enhanced=enhanced.to_dict() if enhanced else None,
+            industry_context=ThesisIndustryContext(
+                industry=company_ctx.industry,
+                sub_industry=company_ctx.sub_industry,
+                market_cap_category=company_ctx.market_cap_category,
+                lifecycle_stage=company_ctx.lifecycle_stage,
+                business_model_summary=(
+                    company_ctx.business_model_summary[:300]
+                    if company_ctx.business_model_summary
+                    else ""
+                ),
+            ),
+            anomaly_data=anomaly_data,
+            conflict_data=_build_conflict_data(state),
+        )
         new_artifacts.append(
             Artifact(
                 id=_make_id("artifact"),
                 type="thesis_analysis",
                 producer_step=step.id,
-                value={
-                    # artifact 同时保留 thesis 主体、增强结果、行业语境、异常/冲突摘要，
-                    # 让 report 和 review 都能在一个对象里读取完整论点上下文。
-                    "thesis": thesis.to_dict(),
-                    "enhanced": enhanced.to_dict() if enhanced else None,
-                    "industry_context": {
-                        "industry": company_ctx.industry,
-                        "sub_industry": company_ctx.sub_industry,
-                        "market_cap_category": company_ctx.market_cap_category,
-                        "lifecycle_stage": company_ctx.lifecycle_stage,
-                        "business_model_summary": (
-                            company_ctx.business_model_summary[:300]
-                            if company_ctx.business_model_summary
-                            else ""
-                        ),
-                    },
-                    "anomaly_data": anomaly_data,
-                    "conflict_data": _build_conflict_data(state),
-                },
+                value=thesis_artifact.model_dump(mode="json"),
             )
         )
     except Exception as exc:

@@ -10,6 +10,10 @@ from langchain_core.runnables import RunnableConfig
 
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
+from alphabee.orchestrator.contracts import (
+    VerificationArtifact,
+    coerce_conflicts_result,
+)
 from alphabee.orchestrator.services.payload_builders import build_verify_context
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import parse_json
@@ -91,7 +95,7 @@ async def verify_hypotheses(
     state: OrchestratorState, config: RunnableConfig,
 ) -> OrchestratorState:
     """Verify hypotheses from explore_conflicts in parallel."""
-    from alphabee.agents.schemas import ConflictAnalysisResult, VerificationResultItem
+    from alphabee.agents.schemas import VerificationResultItem
 
     run = state.get("run")
     symbol = run.context.get("symbol") if run else None
@@ -105,27 +109,10 @@ async def verify_hypotheses(
     new_artifacts: list[Artifact] = []
     new_issues: list[Issue] = []
 
-    conflicts_raw = state.get("conflicts_result")
-    if not conflicts_raw:
+    conflicts_result = coerce_conflicts_result(state.get("conflicts_result"))
+    if not conflicts_result:
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
         return {**state, "steps": state.get("steps", []) + [completed_step]}
-
-    try:
-        conflicts_result = ConflictAnalysisResult.model_validate(conflicts_raw)
-    except Exception as exc:
-        new_issues.append(Issue(
-            id=_make_id("issue"),
-            severity=IssueSeverity.MEDIUM,
-            category="parse_error",
-            message=f"verify_hypotheses: conflicts_result parse failed: {exc}",
-            related_step=step.id,
-        ))
-        completed_step = _finalize_step(step, new_issues, new_artifacts)
-        return {
-            **state,
-            "steps": state.get("steps", []) + [completed_step],
-            "issues": state.get("issues", []) + new_issues,
-        }
 
     all_hypotheses = [hypothesis for conflict in conflicts_result.conflicts for hypothesis in conflict.hypotheses]
     if not all_hypotheses:
@@ -160,17 +147,19 @@ async def verify_hypotheses(
     verified_ids = {hid for hid, result in result_by_hid.items() if result.status in ("verified", "partial")}
     rejected_ids = {hid for hid, result in result_by_hid.items() if result.status == "rejected"}
 
+    verification_artifact = VerificationArtifact(
+        symbol=symbol,
+        results=all_results,
+        verified_count=len(verified_ids),
+        rejected_count=len(rejected_ids),
+        unknown_count=len(all_hypotheses) - len(verified_ids) - len(rejected_ids),
+    )
+
     new_artifacts.append(Artifact(
         id=_make_id("artifact"),
         type="verification_results",
         producer_step=step.id,
-        value={
-            "symbol": symbol,
-            "results": [result.model_dump() for result in all_results],
-            "verified_count": len(verified_ids),
-            "rejected_count": len(rejected_ids),
-            "unknown_count": len(all_hypotheses) - len(verified_ids) - len(rejected_ids),
-        },
+        value=verification_artifact.model_dump(mode="json"),
     ))
 
     completed_step = _finalize_step(step, new_issues, new_artifacts)
@@ -179,6 +168,6 @@ async def verify_hypotheses(
         "steps": state.get("steps", []) + [completed_step],
         "issues": state.get("issues", []) + new_issues,
         "artifacts": state.get("artifacts", []) + new_artifacts,
-        "conflicts_result": conflicts_result.model_dump(),
-        "verification_results": [result.model_dump() for result in all_results],
+        "conflicts_result": conflicts_result,
+        "verification_results": verification_artifact,
     }

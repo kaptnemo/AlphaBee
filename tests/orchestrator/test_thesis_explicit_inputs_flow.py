@@ -89,12 +89,30 @@ def test_run_thesis_passes_anomaly_conflict_verification_and_context(monkeypatch
                     "description": "利润增长未被现金流验证。",
                     "related_dimensions": ["earnings_quality", "financial_quality"],
                     "severity": "high",
-                    "hypotheses": [{"id": "h1", "explanation": "收入质量不足"}],
+                    "confidence": 0.9,
+                    "hypotheses": [
+                        {
+                            "id": "h1",
+                            "conflict_id": "c1",
+                            "explanation": "收入质量不足",
+                            "predictions": [],
+                            "required_evidence": [],
+                            "score": 0.8,
+                        }
+                    ],
                 }
             ]
         },
         "verification_results": [
-            {"hypothesis_id": "h1", "status": "verified", "summary": "现金流未验证利润增长。"}
+            {
+                "id": "v1",
+                "hypothesis_id": "h1",
+                "status": "verified",
+                "support_score": 0.9,
+                "contradiction_score": 0.1,
+                "confidence": 0.8,
+                "summary": "现金流未验证利润增长。",
+            }
         ],
     }
 

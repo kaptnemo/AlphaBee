@@ -26,6 +26,14 @@ from alphabee.core import (
     Step,
     StepStatus,
 )
+from alphabee.orchestrator.contracts import (
+    ConflictDataSummary,
+    ConflictSummary,
+    FactCollectionArtifact,
+    VerifiedHypothesisSummary,
+    coerce_conflicts_result,
+    coerce_verification_artifact,
+)
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.tools.common import extract_symbols_from_query
 from alphabee.utils.pipeline import extract_text, make_id
@@ -55,37 +63,45 @@ def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict | None
 
 def _build_conflict_data(state: OrchestratorState) -> dict:
     """Summarise conflict+verification results for downstream nodes."""
-    conflicts_raw = state.get("conflicts_result")
-    verification_results = state.get("verification_results") or []
+    conflicts_raw = coerce_conflicts_result(state.get("conflicts_result"))
+    verification_artifact = coerce_verification_artifact(
+        state.get("verification_results")
+    )
+    verification_results = verification_artifact.results if verification_artifact else []
 
     if not conflicts_raw:
         return {}
 
-    conflicts = conflicts_raw.get("conflicts", [])
-    all_hypotheses = [h for c in conflicts for h in c.get("hypotheses", [])]
+    conflicts = conflicts_raw.conflicts
+    all_hypotheses = [h for c in conflicts for h in c.hypotheses]
 
-    verified = [h for h in all_hypotheses if h.get("status") in ("verified", "partial")]
-    rejected = [h for h in all_hypotheses if h.get("status") == "rejected"]
+    verified = [h for h in all_hypotheses if h.status in ("verified", "partial")]
+    rejected = [h for h in all_hypotheses if h.status == "rejected"]
 
-    return {
-        "conflict_count": len(conflicts),
-        "hypothesis_count": len(all_hypotheses),
-        "verified_count": len(verified),
-        "rejected_count": len(rejected),
-        "verified_hypotheses": [
-            {"id": h.get("id"), "description": h.get("description"), "status": h.get("status")}
+    return ConflictDataSummary(
+        conflict_count=len(conflicts),
+        hypothesis_count=len(all_hypotheses),
+        verified_count=len(verified),
+        rejected_count=len(rejected),
+        verified_hypotheses=[
+            VerifiedHypothesisSummary(
+                id=h.id,
+                explanation=h.explanation,
+                status=h.status,
+            )
             for h in verified
         ],
-        "conflicts_summary": [
-            {
-                "theme": c.get("theme", ""),
-                "severity": c.get("severity", ""),
-                "description": c.get("description", "")[:200],
-            }
+        conflicts_summary=[
+            ConflictSummary(
+                theme=c.theme,
+                severity=c.severity,
+                description=c.description[:200],
+                related_dimensions=list(c.related_dimensions),
+            )
             for c in conflicts
         ],
-        "verification_results": verification_results,
-    }
+        verification_results=verification_results,
+    ).model_dump(mode="json")
 
 
 def _finalize_step(
@@ -239,12 +255,12 @@ async def collect_raw_facts(
             id=_make_id("artifact"),
             type="fact_collection",
             producer_step=step.id,
-            value={
-                "agent": "FactCollector",
-                "query": query,
-                "symbol": symbol,
-                "raw_response": fact_text,
-            },
+            value=FactCollectionArtifact(
+                agent="FactCollector",
+                query=query,
+                symbol=symbol,
+                raw_response=fact_text,
+            ).model_dump(mode="json"),
         )
     )
 
