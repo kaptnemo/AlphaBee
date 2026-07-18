@@ -62,6 +62,8 @@ class MetricAnomaly:
     baseline_mean: float
     baseline_std: float
     level: str = "none"                    # "high" | "medium" | "low" | "none"
+    baseline_mode: str = "same_period"     # "same_period" | "mixed_periods" | "statutory"
+    history_periods: list[str] = field(default_factory=list)
     book_ref: str = ""
     verify_questions: list[str] = field(default_factory=list)  # 排查路径
 
@@ -76,6 +78,8 @@ class MetricAnomaly:
             "baseline_mean": round(self.baseline_mean, 4),
             "baseline_std": round(self.baseline_std, 4),
             "level": self.level,
+            "baseline_mode": self.baseline_mode,
+            "history_periods": self.history_periods,
             "book_ref": self.book_ref,
             "verify_questions": self.verify_questions,
         }

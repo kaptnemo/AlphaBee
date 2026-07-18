@@ -244,7 +244,7 @@ def _extract_inventory_yoy(data: dict) -> float | None:
     return None
 
 
-def get_financial_facts_model(symbol: str, periods: int = 8) -> "FinancialFacts":
+def get_financial_facts_model(symbol: str, periods: int = 24) -> "FinancialFacts":
     """获取 A 股多期财务数据并返回 FinancialFacts Pydantic 模型。
 
     封装 get_financial_fact() 的返回值，将多期字典数据映射到类型化的
@@ -252,7 +252,7 @@ def get_financial_facts_model(symbol: str, periods: int = 8) -> "FinancialFacts"
 
     Args:
         symbol:  股票代码，支持多种格式，如 "600519"、"600519.SH"
-        periods: 返回报告期数量（默认8期；最多20期）
+        periods: 返回报告期数量（默认24期；最多24期）
 
     Returns:
         FinancialFacts 模型，含 snapshots 列表和跨期 computed_field。

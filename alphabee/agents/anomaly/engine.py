@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import structlog
-from dataclasses import dataclass
 from typing import Any
 
 from alphabee.agents.anomaly.models import (
@@ -40,12 +39,31 @@ _Z_LEVELS = [
     (1.5, "low"),
 ]
 
-
-@dataclass
-class _ComputedMetric:
-    """中间计算结果：一个字段的多期值序列。"""
-
-    values: list[float]  # [current, t-1, t-2, ...]
+# 利润表 / 现金流表中的累计口径流量项，进入异常检测前需要尽量还原为单季值。
+# 否则 Q1 / 中报 / 三季报 / 年报会因为统计窗口长度不同而天然不可比。
+_CUMULATIVE_FLOW_FIELDS = {
+    "revenue",
+    "operating_profit",
+    "net_profit",
+    "ebitda",
+    "interest_expense",
+    "income_tax_expense",
+    "total_profit",
+    "operating_cashflow",
+    "investing_cashflow",
+    "financing_cashflow",
+    "capex",
+    "dividends_paid",
+    "salary_paid",
+    "free_cashflow",
+    "depreciation_amortization",
+    "rd_expense",
+}
+_PREVIOUS_REPORT_SUFFIX = {
+    "0630": "0331",
+    "0930": "0630",
+    "1231": "0930",
+}
 
 
 class AnomalyEngine:
@@ -161,9 +179,21 @@ class AnomalyEngine:
             return self._evaluate_codir(rule, snapshots, extra)
 
         # ── 提取组合指标的多期值 ──
-        current_val, history = self._extract_rule_values(rule, snapshots, extra)
+        current_val, history, baseline_mode, history_periods = self._extract_rule_values(
+            rule, snapshots, extra,
+        )
         if current_val is None or len(history) < max(2, rule.baseline_periods // 2):
             # 业务上我们宁可“暂不评价”，也不在历史样本过薄时硬算异常。
+            logger.debug(
+                "anomaly_rule_skipped",
+                rule_id=rule.id,
+                current_period=snapshots[0].period if snapshots else "",
+                has_current=current_val is not None,
+                history_count=len(history),
+                required_history=max(2, rule.baseline_periods // 2),
+                baseline_mode=baseline_mode,
+                history_periods=history_periods,
+            )
             return None
 
         # ── 计算基线 ──
@@ -172,6 +202,8 @@ class AnomalyEngine:
             # 这里等价于把“制度常识”当基线，而不是把历史异常当正常。
             baseline_mean = rule.statutory_rate
             baseline_std = rule.statutory_rate * 0.05  # 法定税率 5% 波动区间
+            baseline_mode = "statutory"
+            history_periods = []
         else:
             baseline_mean, baseline_std = self._compute_baseline(history)
 
@@ -202,6 +234,8 @@ class AnomalyEngine:
             baseline_mean=baseline_mean,
             baseline_std=baseline_std,
             level=level,
+            baseline_mode=baseline_mode,
+            history_periods=history_periods,
             book_ref=rule.book_ref,
             verify_questions=rule.verify_questions,
         )
@@ -215,16 +249,60 @@ class AnomalyEngine:
         """处理 codir 类型规则：两指标各自算基线，同时高才触发。"""
         # codir 适用于“两个指标同向异动才有意义”的场景，
         # 单看任何一个都可能只是经营节奏波动，但同时抬升更像共同指向某个风险。
-        a_values = self._extract_field_values(rule.metric_a, snapshots, extra)
-        b_values = self._extract_field_values(rule.metric_b, snapshots, extra)
+        a_series = self._extract_field_series(rule.metric_a, snapshots, extra)
+        b_series = self._extract_field_series(rule.metric_b, snapshots, extra)
 
-        if len(a_values) < max(2, rule.baseline_periods // 2 + 1):
-            return None
-        if len(b_values) < max(2, rule.baseline_periods // 2 + 1):
+        if not a_series or not b_series:
             return None
 
-        a_cur, a_hist = a_values[0], a_values[1 : 1 + rule.baseline_periods]
-        b_cur, b_hist = b_values[0], b_values[1 : 1 + rule.baseline_periods]
+        current_period = snapshots[0].period
+        a_map = dict(a_series)
+        b_map = dict(b_series)
+        if current_period not in a_map or current_period not in b_map:
+            logger.debug(
+                "anomaly_codir_skipped_missing_current",
+                rule_id=rule.id,
+                current_period=current_period,
+                metric_a=rule.metric_a,
+                metric_a_has_current=current_period in a_map,
+                metric_b=rule.metric_b,
+                metric_b_has_current=current_period in b_map,
+            )
+            return None
+
+        a_cur = a_map[current_period]
+        b_cur = b_map[current_period]
+        a_hist, a_mode, a_history_periods = self._build_history_values(
+            a_series, current_period, rule.baseline_periods,
+        )
+        b_hist, b_mode, b_history_periods = self._build_history_values(
+            b_series, current_period, rule.baseline_periods,
+        )
+
+        if len(a_hist) < max(2, rule.baseline_periods // 2):
+            logger.debug(
+                "anomaly_codir_skipped_short_history",
+                rule_id=rule.id,
+                metric=rule.metric_a,
+                current_period=current_period,
+                history_count=len(a_hist),
+                required_history=max(2, rule.baseline_periods // 2),
+                baseline_mode=a_mode,
+                history_periods=a_history_periods,
+            )
+            return None
+        if len(b_hist) < max(2, rule.baseline_periods // 2):
+            logger.debug(
+                "anomaly_codir_skipped_short_history",
+                rule_id=rule.id,
+                metric=rule.metric_b,
+                current_period=current_period,
+                history_count=len(b_hist),
+                required_history=max(2, rule.baseline_periods // 2),
+                baseline_mode=b_mode,
+                history_periods=b_history_periods,
+            )
+            return None
 
         a_mean, a_std = self._compute_baseline(a_hist)
         b_mean, b_std = self._compute_baseline(b_hist)
@@ -243,6 +321,12 @@ class AnomalyEngine:
             z_score = (z_a + z_b) / 2.0
 
         level = self._classify_level(z_score, rule.threshold_sigma)
+        baseline_mode = (
+            "mixed_periods"
+            if "mixed_periods" in {a_mode, b_mode}
+            else "same_period"
+        )
+        history_periods = a_history_periods if len(a_history_periods) >= len(b_history_periods) else b_history_periods
 
         # current_value 用两个 z-score 和作为综合值
         return MetricAnomaly(
@@ -253,71 +337,207 @@ class AnomalyEngine:
             baseline_mean=rule.threshold_sigma * 2,  # 双阈值
             baseline_std=1.0,
             level=level,
+            baseline_mode=baseline_mode,
+            history_periods=history_periods,
             book_ref=rule.book_ref,
             verify_questions=rule.verify_questions,
         )
 
     # ── 数据提取 ──────────────────────────────────────────────────────
 
-    def _extract_field_values(
+    def _period_suffix(self, period: str) -> str:
+        return period[4:] if len(period) >= 8 else ""
+
+    def _is_cumulative_flow_field(self, field: str) -> bool:
+        return field in _CUMULATIVE_FLOW_FIELDS
+
+    def _series_suffixes(self, snapshot_by_period: dict[str, Any]) -> set[str]:
+        return {
+            self._period_suffix(period)
+            for period in snapshot_by_period
+            if self._period_suffix(period)
+        }
+
+    def _extract_raw_value(
+        self,
+        field: str,
+        snapshot: Any,
+    ) -> float | None:
+        val = getattr(snapshot, field, None)
+        if val is not None and not (isinstance(val, float) and val != val):
+            return float(val)
+        return None
+
+    def _single_quarter_value(
+        self,
+        field: str,
+        snapshot: Any,
+        snapshot_by_period: dict[str, Any],
+    ) -> float | None:
+        raw = self._extract_raw_value(field, snapshot)
+        if raw is None:
+            return None
+        if not self._is_cumulative_flow_field(field):
+            return raw
+
+        suffix = self._period_suffix(snapshot.period)
+        if suffix == "0331":
+            return raw
+
+        series_suffixes = self._series_suffixes(snapshot_by_period)
+        prev_suffix = _PREVIOUS_REPORT_SUFFIX.get(suffix)
+        if not prev_suffix:
+            return raw
+
+        prev_period = f"{snapshot.period[:4]}{prev_suffix}"
+        prev_snapshot = snapshot_by_period.get(prev_period)
+        if prev_snapshot is None:
+            if series_suffixes == {suffix}:
+                # 全序列都只有同一报告后缀时（如全是年报），累计值彼此仍然可比，
+                # 此时退回原累计口径比“整条规则失效”更稳妥。
+                return raw
+            logger.debug(
+                "anomaly_single_quarter_missing_prev_snapshot",
+                field=field,
+                period=snapshot.period,
+                expected_prev_period=prev_period,
+            )
+            return None
+
+        prev_raw = self._extract_raw_value(field, prev_snapshot)
+        if prev_raw is None:
+            if series_suffixes == {suffix}:
+                return raw
+            logger.debug(
+                "anomaly_single_quarter_missing_prev_value",
+                field=field,
+                period=snapshot.period,
+                expected_prev_period=prev_period,
+            )
+            return None
+        return raw - prev_raw
+
+    def _extract_field_series(
         self,
         field: str,
         snapshots: list,
         extra: dict[str, float],
-    ) -> list[float]:
-        """提取某个字段的多期值序列 [current, t-1, t-2, ...]。
-        优先从 snapshots 提取，fallback 到 extra_values。
+    ) -> list[tuple[str, float]]:
+        """提取字段序列 [(period, value), ...]。
+
+        对累计口径流量项优先还原为单季值；对时点项/同比项/比率项保持原值。
         """
-        values: list[float] = []
+        snapshot_by_period = {s.period: s for s in snapshots if getattr(s, "period", "")}
+        values: list[tuple[str, float]] = []
         for s in snapshots:
-            val = getattr(s, field, None)
-            if val is not None and not (isinstance(val, float) and val != val):  # NaN
-                values.append(float(val))
-            elif field in extra:
+            val = self._single_quarter_value(field, s, snapshot_by_period)
+            if val is not None:
+                values.append((s.period, float(val)))
+            elif field in extra and not values:
                 # extra_values 主要给“报表外但影响判断”的当前期字段兜底，
                 # 如员工数。它不是完整历史序列，所以只允许补当前期。
-                values.append(float(extra[field]))
+                values.append((getattr(s, "period", ""), float(extra[field])))
                 break
         return values
+
+    def _build_history_values(
+        self,
+        series: list[tuple[str, float]],
+        current_period: str,
+        baseline_periods: int,
+    ) -> tuple[list[float], str, list[str]]:
+        """构建历史基线窗口。
+
+        优先选择与当前期同报告后缀（Q1/中报/三季报/年报）的历史值；
+        若历史过短，再用其他期值补齐，兼顾可比性与可用性。
+        """
+        current_suffix = self._period_suffix(current_period)
+        same_period: list[tuple[str, float]] = []
+        other_periods: list[tuple[str, float]] = []
+
+        for period, value in series:
+            if period == current_period:
+                continue
+            if self._period_suffix(period) == current_suffix:
+                same_period.append((period, value))
+            else:
+                other_periods.append((period, value))
+
+        history_pairs = same_period[:baseline_periods]
+        if len(history_pairs) < baseline_periods:
+            history_pairs.extend(other_periods[: baseline_periods - len(history_pairs)])
+
+        history_values = [value for _, value in history_pairs]
+        history_periods = [period for period, _ in history_pairs]
+        baseline_mode = "same_period" if len(history_pairs) == len(same_period[:baseline_periods]) else "mixed_periods"
+        return history_values, baseline_mode, history_periods
 
     def _extract_rule_values(
         self,
         rule: CrossRule,
         snapshots: list,
         extra: dict[str, float],
-    ) -> tuple[float | None, list[float]]:
+    ) -> tuple[float | None, list[float], str, list[str]]:
         """提取组合指标的多期值。
 
         Returns:
             (current_value, history_list[baseline_periods])
         """
-        a_vals = self._extract_field_values(rule.metric_a, snapshots, extra)
-        b_vals = self._extract_field_values(rule.metric_b, snapshots, extra)
+        a_series = self._extract_field_series(rule.metric_a, snapshots, extra)
+        b_series = self._extract_field_series(rule.metric_b, snapshots, extra)
+        if not a_series or not b_series:
+            logger.debug(
+                "anomaly_rule_missing_series",
+                rule_id=rule.id,
+                metric_a=rule.metric_a,
+                metric_a_points=len(a_series),
+                metric_b=rule.metric_b,
+                metric_b_points=len(b_series),
+            )
+            return None, [], "same_period", []
 
-        min_len = min(len(a_vals), len(b_vals))
-        if min_len < 2:
-            return None, []
+        b_map = dict(b_series)
+        aligned: list[tuple[str, float]] = []
 
         # rule_type 决定我们观察的是“差值背离”还是“比例背离”：
         # gap 强调两个指标之间的绝对错位，ratio 强调相对效率或结构变化。
-        combined: list[float] = []
-        for i in range(min_len):
-            a = a_vals[i]
-            b = b_vals[i]
+        for period, a in a_series:
+            b = b_map.get(period)
+            if b is None:
+                continue
             if rule.rule_type == "gap":
-                combined.append(a - b)
+                aligned.append((period, a - b))
             elif rule.rule_type == "ratio":
                 if b != 0:
-                    combined.append(a / b)
+                    aligned.append((period, a / b))
             else:
-                return None, []
+                return None, [], "same_period", []
 
-        if not combined:
-            return None, []
+        if not aligned:
+            logger.debug(
+                "anomaly_rule_no_aligned_periods",
+                rule_id=rule.id,
+                metric_a=rule.metric_a,
+                metric_b=rule.metric_b,
+            )
+            return None, [], "same_period", []
 
-        current = combined[0]
-        history = combined[1 : 1 + rule.baseline_periods]
-        return current, history
+        current_period = snapshots[0].period
+        combined_map = dict(aligned)
+        current = combined_map.get(current_period)
+        if current is None:
+            logger.debug(
+                "anomaly_rule_missing_current_period_value",
+                rule_id=rule.id,
+                current_period=current_period,
+                aligned_periods=[period for period, _ in aligned],
+            )
+            return None, [], "same_period", []
+
+        history, baseline_mode, history_periods = self._build_history_values(
+            aligned, current_period, rule.baseline_periods,
+        )
+        return current, history, baseline_mode, history_periods
 
     # ── 统计计算 ──────────────────────────────────────────────────────
 
