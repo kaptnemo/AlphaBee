@@ -87,6 +87,7 @@ def test_run_thesis_passes_anomaly_conflict_verification_and_context(monkeypatch
                     "id": "c1",
                     "theme": "盈利增长但现金流恶化",
                     "description": "利润增长未被现金流验证。",
+                    "related_dimensions": ["earnings_quality", "financial_quality"],
                     "severity": "high",
                     "hypotheses": [{"id": "h1", "explanation": "收入质量不足"}],
                 }

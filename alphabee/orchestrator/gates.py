@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from alphabee.agents.schemas import ReportOutput
 from alphabee.core import (
     Artifact,
     Decision,
@@ -68,6 +69,35 @@ def _base_issues(state: OrchestratorState) -> list[Issue]:
         issue for issue in state.get("issues", [])
         if issue.category != "report_rewrite_needed"
     ]
+
+
+def _load_report_output(state: OrchestratorState) -> ReportOutput | None:
+    report_artifact = _find_latest_report_artifact(state)
+    if report_artifact is None or not isinstance(report_artifact.value, dict):
+        return None
+    try:
+        return ReportOutput.model_validate(report_artifact.value)
+    except Exception:
+        return None
+
+
+def _issue_disclosure_status(
+    state: OrchestratorState,
+) -> tuple[list[Issue], set[str], set[str], list[Issue]]:
+    source_issues = _base_issues(state)
+    report_output = _load_report_output(state)
+    disclosed_ids = set(report_output.disclosed_issue_ids) if report_output else set()
+    high_priority_issues = [
+        issue
+        for issue in source_issues
+        if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
+    ]
+    required_ids = {issue.id for issue in high_priority_issues}
+    undisclosed = [
+        issue for issue in high_priority_issues
+        if issue.id not in disclosed_ids
+    ]
+    return source_issues, disclosed_ids, required_ids, undisclosed
 
 
 def build_evidence_map(state: OrchestratorState) -> list[dict[str, Any]]:
@@ -130,7 +160,10 @@ def build_evidence_map(state: OrchestratorState) -> list[dict[str, Any]]:
 def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
     report_artifact = _find_latest_report_artifact(state)
     report_value = report_artifact.value if report_artifact is not None else None
-    report_payload = report_value if isinstance(report_value, dict) else {}
+    report_output = _load_report_output(state)
+    report_payload = report_output.model_dump(mode="json") if report_output else (
+        report_value if isinstance(report_value, dict) else {}
+    )
     sections = report_payload.get("sections", {}) if isinstance(report_payload, dict) else {}
 
     # 这些 section 对应 AlphaBee 最终交付物的业务契约：
@@ -165,7 +198,7 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
 
     # gate 直接读取前面节点沉淀的 issues，
     # 用来判断报告是否把“已知不确定性”如实暴露，而不是只看文案是否流畅。
-    source_issues = _base_issues(state)
+    source_issues, _, _, undisclosed = _issue_disclosure_status(state)
     issue_categories = {issue.category for issue in source_issues}
     numeric_consistency = not any(
         category in issue_categories
@@ -176,11 +209,7 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
         for category in {"cross_source_conflict", "conflict", "time_mismatch", "thesis_conflict"}
     )
 
-    report_text = _normalize_text_for_search(report_value).lower()
-    issue_handling = (
-        not source_issues
-        or any(token in report_text for token in ("风险", "缺口", "冲突", "异常", "risk", "gap", "conflict", "anomaly"))
-    )
+    issue_handling = not undisclosed
 
     freshness_values = {
         observation.freshness.value for observation in state.get("observations", [])
@@ -211,13 +240,18 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
     grounding_score = grounded_references / total_references if total_references else 0.0
 
     risk_count = report_payload.get("risk_count", {})
-    schema_validity = (
-        isinstance(report_payload, dict)
-        and isinstance(sections, dict)
-        and "summary" in report_payload
-        and "overall_confidence" in report_payload
-        and isinstance(risk_count, dict)
-    )
+    schema_validity = report_output is not None
+
+    overall_confidence = report_payload.get("overall_confidence", "unknown")
+    if undisclosed:
+        overconfidence_presence = "high" if overall_confidence == "high" else "medium"
+    elif any(
+        issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
+        for issue in source_issues
+    ) and overall_confidence == "high":
+        overconfidence_presence = "medium"
+    else:
+        overconfidence_presence = "low"
 
     return EvaluateMetrics(
         schema_validity=schema_validity,
@@ -232,9 +266,7 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
         cross_analysis_depth="good" if "conflict_analysis" in present_sections else "shallow",
         fact_inference_distinction="good" if evidence_coverage >= 0.3 else "weak",
         risk_warning_sufficiency="good" if "risks" in present_sections else "weak",
-        overconfidence_presence="low" if any(
-            token in report_text for token in ("不确定", "风险", "缺口", "冲突", "anomaly", "conflict")
-        ) else "medium",
+        overconfidence_presence=overconfidence_presence,
         user_usefulness="high" if schema_validity and artifact_coverage >= 0.8 else "medium",
     )
 
@@ -243,6 +275,7 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
     report_artifact = _find_latest_report_artifact(state)
     report_value = report_artifact.value if report_artifact is not None else {}
     report_payload = report_value if isinstance(report_value, dict) else {}
+    _, _, _, undisclosed = _issue_disclosure_status(state)
 
     blocking_issues: list[str] = []
     weaknesses: list[str] = []
@@ -262,7 +295,13 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
     if metrics.artifact_coverage < 0.8:
         blocking_issues.append("报告关键章节覆盖不足，无法完整表达主流程分析结果。")
     if not metrics.issue_handling:
-        blocking_issues.append("报告没有充分显式披露已知风险、冲突或数据缺口。")
+        missing = "；".join(
+            f"{issue.id}:{issue.category}"
+            for issue in undisclosed[:4]
+        )
+        blocking_issues.append(
+            f"报告没有充分显式披露高优先级问题，至少遗漏：{missing}。"
+        )
     if not metrics.cross_source_consistency:
         blocking_issues.append("当前结果存在跨来源或跨维度冲突，报告未形成稳定结论。")
 
@@ -279,6 +318,10 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
         weaknesses.append("部分结论的可追溯证据链仍然偏弱。")
     if report_payload.get("overall_confidence") == "high" and high_issues:
         weaknesses.append("存在高优先级问题时仍给出高置信度，容易显得过度自信。")
+    if undisclosed:
+        weaknesses.append(
+            "高优先级 issue 未全部进入 disclosed_issue_ids，报告的风险披露映射不完整。"
+        )
 
     passed = not blocking_issues
     recommendation = (

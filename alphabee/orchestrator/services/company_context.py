@@ -34,19 +34,19 @@ def _detect_market_cap(
     market_facts: MarketFacts | None = None,
 ) -> str:
     """Detect market cap category from structured data or text hints."""
-    text = fact_text.lower()
-    if "大盘" in text or "蓝筹" in text or "白马" in text:
-        return "large"
-    if "中小盘" in text or "中盘" in text:
-        return "mid"
-    if "小盘" in text or "创业板" in text or "微盘" in text:
-        return "small"
     if market_facts is not None and market_facts.market_cap is not None:
         mv = market_facts.market_cap / 1e8
         if mv >= 500:
             return "large"
         if mv >= 100:
             return "mid"
+        return "small"
+    text = fact_text.lower()
+    if "大盘" in text or "蓝筹" in text or "白马" in text:
+        return "large"
+    if "中小盘" in text or "中盘" in text:
+        return "mid"
+    if "小盘" in text or "创业板" in text or "微盘" in text:
         return "small"
     return ""
 
@@ -56,17 +56,17 @@ def _detect_lifecycle(
     financial_facts: FinancialFacts | None = None,
 ) -> str:
     """Detect lifecycle stage from text hints."""
-    text = fact_text.lower()
-    if "成熟" in text or "稳定" in text:
-        return "mature"
-    if "成长" in text or "高增长" in text:
-        return "growth"
     if financial_facts is not None and financial_facts.snapshots:
         yoy = financial_facts.snapshots[0].revenue_yoy or 0
         if yoy >= 20:
             return "growth"
         if yoy >= 5:
             return "mature"
+    text = fact_text.lower()
+    if "成熟" in text or "稳定" in text:
+        return "mature"
+    if "成长" in text or "高增长" in text:
+        return "growth"
     return ""
 
 
@@ -88,21 +88,8 @@ def build_company_context(
     profile: dict = {}
 
     try:
-        profile = get_company_profile(symbol)
-        basic = profile.get("basic", {})
-        if basic:
-            tushare_industry = basic.get("industry", {})
-            if isinstance(tushare_industry, dict):
-                val = tushare_industry.get(0, "")
-                if val:
-                    ctx.industry = str(val)
-    except Exception:
-        pass
-
-    try:
         ind_fact = get_industry_fact(symbol)
-        if not ctx.industry:
-            ctx.industry = ind_fact.get("industry", "")
+        ctx.industry = ind_fact.get("industry", "") or ctx.industry
         ctx.sub_industry = ind_fact.get("sw_code", "") or ""
         sw_daily = ind_fact.get("sw_daily", [])
         if sw_daily and isinstance(sw_daily[0], dict):
@@ -113,6 +100,18 @@ def build_company_context(
                 f"行业PE(TTM): {item.get('industry_pe_ttm', 'N/A')}, "
                 f"行业PB: {item.get('industry_pb', 'N/A')}"
             )
+    except Exception:
+        pass
+
+    try:
+        profile = get_company_profile(symbol)
+        basic = profile.get("basic", {})
+        if basic and not ctx.industry:
+            tushare_industry = basic.get("industry", {})
+            if isinstance(tushare_industry, dict):
+                val = tushare_industry.get(0, "")
+                if val:
+                    ctx.industry = str(val)
     except Exception:
         pass
 

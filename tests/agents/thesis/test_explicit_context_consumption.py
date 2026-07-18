@@ -29,6 +29,7 @@ def test_thesis_engine_explicitly_consumes_anomaly_conflict_and_verification():
                     "id": "c1",
                     "theme": "盈利增长但现金流恶化",
                     "description": "利润增长未被现金流验证。",
+                    "related_dimensions": ["earnings_quality", "financial_quality"],
                     "severity": "critical",
                     "confidence": 0.9,
                     "hypotheses": [

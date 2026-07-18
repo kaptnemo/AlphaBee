@@ -8,10 +8,11 @@ from datetime import datetime
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from alphabee.agents.schemas import ReportOutput
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT
 from alphabee.orchestrator.state import OrchestratorState
-from alphabee.utils import create_chat_model
+from alphabee.utils import create_chat_model, json_instruction
 from alphabee.utils.pipeline import extract_text, make_id, parse_json
 
 
@@ -42,6 +43,7 @@ def _build_report_payload(state: OrchestratorState) -> dict:
         "thesis": {},
         "review": None,
         "issues": [],
+        "required_issue_disclosures": [],
     }
 
     # ── fact_collection → company context ──
@@ -168,6 +170,7 @@ def _build_report_payload(state: OrchestratorState) -> dict:
                 "severity": c.get("severity", ""),
                 "description": c.get("description", ""),
                 "confidence": c.get("confidence", 0),
+                "related_dimensions": c.get("related_dimensions", []),
                 "hypotheses": enriched_hyps,
             })
 
@@ -192,14 +195,40 @@ def _build_report_payload(state: OrchestratorState) -> dict:
     # ── issues ──
     payload["issues"] = [
         {
+            "id": i.id,
             "severity": i.severity.value,
             "category": i.category,
             "message": i.message,
         }
         for i in issues
     ]
+    payload["required_issue_disclosures"] = [
+        item for item in payload["issues"]
+        if item["severity"] in {"high", "critical"}
+    ]
 
     return payload
+
+
+def _fallback_report(summary: str) -> dict:
+    return ReportOutput(
+        title="财报质量体检报告",
+        sections={
+            "executive_summary": summary,
+            "key_metrics": "",
+            "signal_analysis": "",
+            "anomaly_detection": "",
+            "conflict_analysis": "",
+            "investment_thesis": "",
+            "review_findings": "",
+            "risks": "",
+            "disclaimer": "",
+        },
+        summary=summary,
+        risk_count={},
+        overall_confidence="unknown",
+        disclosed_issue_ids=[],
+    ).model_dump(mode="json")
 
 
 async def generate_report(
@@ -223,6 +252,7 @@ async def generate_report(
     payload = _build_report_payload(state)
     prompt_text = json.dumps(payload, ensure_ascii=False, indent=2)
     rewrite_reason = state.get("report_rewrite_reason")
+    issues = list(state.get("issues", []))
     prior_report = None
     if rewrite_reason:
         # 质量 gate 触发重写时，会把上一版报告一并交给模型。
@@ -238,6 +268,9 @@ async def generate_report(
             SystemMessage(content=REPORT_GENERATOR_PROMPT),
             HumanMessage(
                 content=(
+                    json_instruction(ReportOutput)
+                    + "\n\n"
+                    +
                     (
                         "请基于以下结构化数据生成财报质量体检报告。\n\n"
                         if not rewrite_reason else
@@ -255,18 +288,31 @@ async def generate_report(
         ])
         raw_text = extract_text(response.content)
         try:
-            report_value = parse_json(raw_text)
-        except ValueError:
-            # If JSON parsing fails, use raw text as the report
-            report_value = {"raw_markdown": raw_text, "title": "财报质量体检报告"}
+            report_value = ReportOutput.model_validate(parse_json(raw_text)).model_dump(mode="json")
+        except Exception as exc:
+            issues.append(
+                Issue(
+                    id=_make_id("issue"),
+                    severity=IssueSeverity.MEDIUM,
+                    category="parse_error",
+                    message=f"ReportOutput parse failed: {exc}",
+                    related_step=step.id,
+                )
+            )
+            report_value = _fallback_report(
+                f"报告生成结果不符合结构化 schema，已降级保存错误信息。原始输出：{raw_text[:500]}"
+            )
     except Exception as exc:
-        report_value = {
-            "title": "财报质量体检报告",
-            "summary": f"报告生成失败: {exc}",
-            "sections": {},
-            "risk_count": {},
-            "overall_confidence": "unknown",
-        }
+        issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="subagent_failure",
+                message=f"Report generation failed: {exc}",
+                related_step=step.id,
+            )
+        )
+        report_value = _fallback_report(f"报告生成失败: {exc}")
 
     report_artifact = Artifact(
         id=_make_id("artifact"),
@@ -286,6 +332,7 @@ async def generate_report(
         **state,
         "steps": [*state.get("steps", []), completed_step],
         "artifacts": [*state.get("artifacts", []), report_artifact],
+        "issues": issues,
         "final_artifact_id": report_artifact.id,
         "report_rewrite_needed": False,
         "report_rewrite_reason": None,

@@ -19,8 +19,9 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
 - thesis: 投资论点（含 dimensions 各维度 judgment/score/confidence/evidence/interpretation）
 - review: 审查结果（可能为 null。含 dimension_verdicts/overall_status/blocking_issues/warning_issues）
 - anomaly: 勾稽关系异常检测结果（anomaly_count / pattern_count / anomalies + 每条 z-score/level + pattern_matches 含模式名/解释/拷问清单）
-- conflict_analysis: 数据矛盾探索与验证结果（conflict_count / verified_count / rejected_count / conflicts 列表，每条含 theme / severity / description / hypotheses，每条 hypothesis 含 explanation / verification_status / supporting_evidence / refuting_evidence / gaps / summary）
-- issues: 系统已知问题列表
+- conflict_analysis: 数据矛盾探索与验证结果（conflict_count / verified_count / rejected_count / conflicts 列表，每条含 theme / severity / description / related_dimensions / hypotheses，每条 hypothesis 含 explanation / verification_status / supporting_evidence / refuting_evidence / gaps / summary）
+- issues: 系统已知问题列表（每条含 id / severity / category / message）
+- required_issue_disclosures: 必须在报告中显式披露的高优先级问题列表（每条含 id / severity / category / message）
 
 ## 报告格式
 
@@ -53,7 +54,7 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
   - 对 verified/partial 的假设：解释、支撑证据摘要、置信度
   - 对 rejected 的假设：推翻理由
   - 对 unknown 的假设：标注信息缺口
-  - 若冲突与任何投资论点维度的判断方向矛盾，必须明确指出
+  - 若冲突与任何投资论点维度的判断方向矛盾，必须明确指出；维度归属只允许依据 related_dimensions
   无冲突时写'未检测到显著数据矛盾，多维度指标之间逻辑自洽。'",
     "investment_thesis": "各维度投资论点（每维度含判断、评分、置信度、证据、解释、审查状态）",
     "review_findings": "审查发现。blocking_issues 优先、warning_issues 其次。无 review 数据时写'未执行审查'",
@@ -62,7 +63,8 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
   },
   "summary": "一段话总结（2-3句）",
   "risk_count": {"high": N, "medium": N, "low": N, "blocked": N},
-  "overall_confidence": "high | medium | low"
+  "overall_confidence": "high | medium | low | unknown",
+  "disclosed_issue_ids": ["issue-1", "issue-2"]
 }
 ```
 
@@ -110,5 +112,6 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
 6. **不要编造任何输入中没有的行业对比、同行数据、市场观点**
 7. **对数据不可用的信号和维度，不要假装有分析——直接标注"数据不可用"**
 8. **信号列表按 risk_count 排序: high → medium → low。同级别按 signal_id 字母序**
-9. **报告语言: 简体中文**
+9. **`disclosed_issue_ids` 必须列出报告中明确披露到的 issue.id，且至少覆盖所有 required_issue_disclosures 的 id**
+10. **报告语言: 简体中文**
 """

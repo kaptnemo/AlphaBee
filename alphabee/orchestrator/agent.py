@@ -171,23 +171,12 @@ async def review_thesis(
             vr.get("hypothesis_id", ""): vr for vr in verification_results
         }
 
-        _CONFLICT_DIM_KEYWORDS: dict[str, list[str]] = {
-            "盈利": ["earnings_quality"],
-            "现金流": ["financial_quality", "earnings_quality"],
-            "估值": ["valuation"],
-            "成长": ["growth_quality"],
-            "负债": ["credit_risk"],
-            "应收": ["financial_quality"],
-            "存货": ["financial_quality"],
-            "三表": ["financial_quality"],
-            "行业": ["growth_quality"],
-        }
-
         # 已验证冲突是 thesis review 最重要的反证来源之一：
         # 它意味着“某个疑点不再只是怀疑，而是已经被额外证据部分或全部支持”。
         for conflict in conflicts_raw.get("conflicts", []):
             theme = conflict.get("theme", "")
             severity = conflict.get("severity", "")
+            related_dimensions = conflict.get("related_dimensions") or []
             conflict_severity = (
                 IssueSeverity.HIGH if severity in ("high", "critical")
                 else IssueSeverity.MEDIUM
@@ -220,27 +209,24 @@ async def review_thesis(
                 # 业务含义：如果 thesis 某维度仍然给出正向判断，
                 # 但 verified conflict 已经指出该方向存在反证，就要显式制造 thesis_conflict。
                 # 这样最终 confidence 会被压低，报告也必须把矛盾写出来。
-                for kw, dim_ids in _CONFLICT_DIM_KEYWORDS.items():
-                    if kw not in theme:
+                for dim_id in related_dimensions:
+                    dim = thesis.dimensions.get(dim_id)
+                    if dim is None:
                         continue
-                    for dim_id in dim_ids:
-                        dim = thesis.dimensions.get(dim_id)
-                        if dim is None:
-                            continue
-                        dim_name = dim.name if hasattr(dim, "name") else dim_id
-                        judgment = dim.judgment if hasattr(dim, "judgment") else ""
-                        if judgment in ("strong_positive", "positive"):
-                            issues.append(Issue(
-                                id=_make_id("issue"),
-                                severity=IssueSeverity.HIGH,
-                                category="thesis_conflict",
-                                message=(
-                                    f"[论点矛盾] 维度'{dim_name}'判断为{judgment}，"
-                                    f"但已验证冲突'{theme}'暗示相反方向. "
-                                    f"假设: {explanation}"
-                                ),
-                                related_step=step.id,
-                            ))
+                    dim_name = dim.name if hasattr(dim, "name") else dim_id
+                    judgment = dim.judgment if hasattr(dim, "judgment") else ""
+                    if judgment in ("strong_positive", "positive"):
+                        issues.append(Issue(
+                            id=_make_id("issue"),
+                            severity=IssueSeverity.HIGH,
+                            category="thesis_conflict",
+                            message=(
+                                f"[论点矛盾] 维度'{dim_name}'判断为{judgment}，"
+                                f"但已验证冲突'{theme}'暗示相反方向. "
+                                f"假设: {explanation}"
+                            ),
+                            related_step=step.id,
+                        ))
 
         # 对被推翻的假设也保留 decision，
         # 这是为了告诉下游“哪些怀疑已经排除”，避免报告把所有疑点都写成悬而未决。

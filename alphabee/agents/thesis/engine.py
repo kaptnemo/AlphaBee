@@ -51,26 +51,6 @@ _CONFLICT_PENALTY: dict[str, float] = {
 _POSITIVE_ANOMALY_PATTERNS = {"efficiency_gain"}
 _FINANCIAL_INDUSTRIES = {"银行", "证券", "保险"}
 _PROJECT_BASED_KEYWORDS = ("项目", "验收", "军工", "工程", "软件", "集成", "to_b")
-_DIMENSION_KEYWORD_MAP: dict[str, list[str]] = {
-    "盈利": ["earnings_quality"],
-    "利润": ["earnings_quality"],
-    "收入": ["earnings_quality", "growth_quality"],
-    "现金流": ["financial_quality", "earnings_quality"],
-    "回款": ["financial_quality", "earnings_quality"],
-    "估值": ["valuation_fit"],
-    "成长": ["growth_quality"],
-    "负债": ["credit_risk"],
-    "偿债": ["credit_risk"],
-    "应收": ["financial_quality", "operational_stability"],
-    "存货": ["financial_quality", "operational_stability"],
-    "三表": ["financial_quality"],
-    "资本开支": ["capital_efficiency"],
-    "周转": ["capital_efficiency", "operational_stability"],
-    "产能": ["operational_stability", "capital_efficiency"],
-    "行业": ["growth_quality", "competitive_moat"],
-    "竞争": ["competitive_moat"],
-    "护城河": ["competitive_moat"],
-}
 
 
 class ThesisEngine:
@@ -543,21 +523,14 @@ class ThesisEngine:
             dim.interpretation = interpretation
 
     def _map_conflict_dimensions(self, conflict: dict[str, Any]) -> list[str]:
-        search_text = " ".join([
-            str(conflict.get("theme", "") or ""),
-            str(conflict.get("description", "") or ""),
-            " ".join(
-                str(h.get("explanation", "") or "")
-                for h in conflict.get("hypotheses", [])
-            ),
-        ])
-        mapped: list[str] = []
-        for keyword, dim_ids in _DIMENSION_KEYWORD_MAP.items():
-            if keyword in search_text:
-                mapped.extend(dim_ids)
-        if not mapped and conflict.get("severity") in ("high", "critical"):
-            mapped.extend(["financial_quality", "operational_stability"])
-        return self._dedupe_preserve_order(mapped)
+        related_dimensions = conflict.get("related_dimensions") or []
+        return self._dedupe_preserve_order(
+            [
+                str(dim_id)
+                for dim_id in related_dimensions
+                if isinstance(dim_id, str) and dim_id in self.dimension_defs
+            ]
+        )
 
     def _resolve_hypothesis_status(
         self,

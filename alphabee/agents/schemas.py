@@ -1,5 +1,17 @@
-from pydantic import BaseModel, Field
 from typing import Literal
+
+from pydantic import BaseModel, Field
+
+ThesisDimensionId = Literal[
+    "financial_quality",
+    "operational_stability",
+    "earnings_quality",
+    "competitive_moat",
+    "valuation_fit",
+    "capital_efficiency",
+    "credit_risk",
+    "growth_quality",
+]
 
 
 class VerificationItem(BaseModel):
@@ -50,6 +62,7 @@ class ConflictItem(BaseModel):
     id: str
     theme: str                                   # 冲突主题，如"盈利增长但现金流恶化"
     description: str                             # 一句话描述
+    related_dimensions: list[ThesisDimensionId]
     supporting_claims: list[str] = Field(default_factory=list)
     contradicting_claims: list[str] = Field(default_factory=list)
     severity: Literal["low", "medium", "high", "critical"]
@@ -61,3 +74,24 @@ class ConflictItem(BaseModel):
 class ConflictAnalysisResult(BaseModel):
     """冲突分析结果"""
     conflicts: list[ConflictItem]
+
+
+class ReportSections(BaseModel):
+    executive_summary: str
+    key_metrics: str
+    signal_analysis: str
+    anomaly_detection: str
+    conflict_analysis: str
+    investment_thesis: str
+    review_findings: str
+    risks: str
+    disclaimer: str
+
+
+class ReportOutput(BaseModel):
+    title: str
+    sections: ReportSections
+    summary: str
+    risk_count: dict[str, int] = Field(default_factory=dict)
+    overall_confidence: Literal["high", "medium", "low", "unknown"]
+    disclosed_issue_ids: list[str]

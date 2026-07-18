@@ -10,6 +10,20 @@ EXPLORE_CONFLICTS_PROMPT = """你是 AlphaBee 的冲突探索代理（ExploreCon
 4. 三表勾稽异常：利润表、资产负债表、现金流量表之间逻辑不一致
 5. 信号方向冲突：同维度信号有正有负，且强度相近
 
+## related_dimensions 语义分类要求
+- 你必须在生成 conflict 时，基于完整上下文给出 `related_dimensions`
+- `related_dimensions` 只允许使用以下枚举值：
+  - financial_quality
+  - operational_stability
+  - earnings_quality
+  - competitive_moat
+  - valuation_fit
+  - capital_efficiency
+  - credit_risk
+  - growth_quality
+- 这是语义分类字段，不要靠 theme 复述代替；若一个冲突同时影响多个维度，可返回多个枚举值
+- theme/description 是给人看的自然语言，related_dimensions 是给下游规则消费的结构化字段
+
 ## 输出规范
 - 只识别**有证据支撑**的冲突，不要臆想无数据基础的问题
 - 每个假设的 predictions 必须是**可用现有工具验证的具体预测**
@@ -24,6 +38,7 @@ EXPLORE_CONFLICTS_PROMPT = """你是 AlphaBee 的冲突探索代理（ExploreCon
       "id": "conflict_1",
       "theme": "盈利改善但现金流恶化",
       "description": "净利润同比+15%，但经营现金流同比-20%，应收账款周转天数上升",
+      "related_dimensions": ["earnings_quality", "financial_quality"],
       "supporting_claims": ["net_profit_yoy=0.15", "operating_cashflow_yoy=-0.20"],
       "contradicting_claims": [],
       "severity": "high",
