@@ -698,6 +698,38 @@ def _append_turn_history(history: list[Any], query: str, answer: str) -> None:
         history.append(AIMessage(content=answer))
 
 
+def _langfuse_available(timeout: float = 2.0) -> bool:
+    """Check whether a Langfuse server is configured and reachable.
+
+    Returns False when the ``enable`` flag is off, API keys are missing,
+    or the server does not respond within *timeout* seconds.
+    """
+    import socket as _socket
+    from urllib.parse import urlparse as _urlparse
+
+    from alphabee.config import settings
+
+    cfg = settings.langfuse
+    if not cfg.enable:
+        return False
+    if not cfg.public_key or not cfg.secret_key:
+        return False
+    if not cfg.base_url:
+        return False
+
+    try:
+        parsed = _urlparse(cfg.base_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        sock = _socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        print(f"Langfuse server reachable at {host}:{port}")
+        return True
+    except Exception:
+        print(f"Langfuse server not reachable at {cfg.base_url}")
+        return False
+
+
 async def run_query(
     query: str,
     history: list[Any] | None = None,
@@ -729,13 +761,17 @@ async def run_query(
         llm_review=llm_review,
     )
 
-    # Create a fresh Langfuse handler per request
-    trace_handler = CallbackHandler()
+    callbacks = []
+    if _langfuse_available():
+        callbacks.append(CallbackHandler())
+    else:
+        logger.info("langfuse_disabled")
+        print(_c("  ⚠  Langfuse 未启用或不可达，禁用追踪日志", _C.BOLD, _C.YELLOW))
 
     try:
         async for namespace, chunk in alphabee_agent.astream(
             {"messages": conversation, "enhance": enhance, "llm_review": llm_review},
-            config={"callbacks": [trace_handler]},
+            config={"callbacks": callbacks} if callbacks else {},
             stream_mode="updates",
             subgraphs=True,
         ):

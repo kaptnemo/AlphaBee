@@ -1,3 +1,10 @@
+# 可选：Langfuse LLM 调用追踪（仅当 LANGFUSE_ENABLE=true 时生效）
+langfuse:
+  enable: "${LANGFUSE_ENABLE:false}"
+  public_key: "${LANGFUSE_PUBLIC_KEY:}"
+  secret_key: "${LANGFUSE_SECRET_KEY:}"
+  base_url: "${LANGFUSE_BASE_URL:http://localhost:3000}"
+
 llm:
   api_key: "${LLM_API_KEY}"
   base_url: "${LLM_BASE_URL:https://api.deepseek.com}"

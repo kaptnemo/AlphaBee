@@ -12,7 +12,6 @@ from langchain_core.outputs import LLMResult
 from langchain_openai import ChatOpenAI
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
-from langfuse.langchain import CallbackHandler
 
 from alphabee.config import settings
 
@@ -222,8 +221,6 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
             error=str(error),
             exc_info=(type(error), error, error.__traceback__),
         )
-
-langfuse_handler = CallbackHandler()
 
 
 def create_chat_model(component: str, **kwargs: Any) -> ChatOpenAI:

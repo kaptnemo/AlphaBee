@@ -30,12 +30,20 @@ class WebSearchConfig(BaseModel):
     ddgs: DDGSConfig = Field(default_factory=DDGSConfig)
 
 
+class LangfuseConfig(BaseModel):
+    enable: bool = False
+    public_key: str = ""
+    secret_key: str = ""
+    base_url: str = "http://localhost:3000"
+
+
 class DataConfig(BaseModel):
     root_dir: str = Field(default="data", description="数据产物根目录")
 
 
 class Settings(BaseModel):
     llm: LLMConfig
+    langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     data: DataConfig = Field(default_factory=DataConfig)
 
