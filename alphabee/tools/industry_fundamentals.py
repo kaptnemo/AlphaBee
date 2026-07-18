@@ -454,7 +454,7 @@ async def _generate_industry_summary(
 
 async def get_industry_fundamentals(
     industry: str,
-    periods: int = 8,
+    periods: int = 24,
 ) -> IndustryFundamentals:
     """获取指定A股行业的基本面数据，包括行情表现、估值历史和成分股分析。
 
@@ -466,7 +466,7 @@ async def get_industry_fundamentals(
         industry: 行业名称，支持申万/东方财富常见叫法，如：
                   "银行"、"医药生物"、"食品饮料"、"新能源"、"半导体"、
                   "计算机"、"白酒"、"电力设备"、"汽车"、"房地产" 等。
-        periods:  估值历史月数（默认8个月；设为 24 可查看约2年历史）
+        periods:  估值历史月数（默认24个月；设为 24 可查看约2年历史）
 
     Returns:
         IndustryFundamentals，包含：
