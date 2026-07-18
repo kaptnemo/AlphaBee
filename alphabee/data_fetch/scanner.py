@@ -11,8 +11,8 @@ Usage::
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Sequence
 
 from alphabee.data_fetch.database import get_session, init_db
 from alphabee.data_fetch.models import (
@@ -71,18 +71,16 @@ def scan_and_create_tasks(max_tasks: int = 10) -> Sequence[DataFixTask]:
 
             # Build rich context for the fix agent
             sample_event = (
-                session.query(DataFetchEvent)
-                .filter(DataFetchEvent.event_id == issue.sample_event_id)
-                .first()
-            ) if issue.sample_event_id else None
+                (session.query(DataFetchEvent).filter(DataFetchEvent.event_id == issue.sample_event_id).first())
+                if issue.sample_event_id
+                else None
+            )
 
             plan = recommend_fix(
                 provider=issue.provider,
                 api_name=issue.api_name,
                 error_type=issue.error_type.value,
-                error_message=(
-                    sample_event.error_message if sample_event else None
-                ),
+                error_message=(sample_event.error_message if sample_event else None),
             )
 
             prompt_context = _build_prompt_context(issue, sample_event, plan)
@@ -156,18 +154,12 @@ def mark_task(
         session.close()
 
 
-def mark_issue_fixed(
-    issue_id: int, resolution_note: str = "", verification_status: str = "passed"
-) -> None:
+def mark_issue_fixed(issue_id: int, resolution_note: str = "", verification_status: str = "passed") -> None:
     """Mark an issue as fixed with resolution notes."""
     init_db()
     session = get_session()
     try:
-        issue = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.issue_id == issue_id)
-            .first()
-        )
+        issue = session.query(DataFetchIssue).filter(DataFetchIssue.issue_id == issue_id).first()
         if issue is None:
             return
         issue.status = IssueStatus.FIXED
@@ -209,13 +201,9 @@ def _build_prompt_context(
         event_lines.append(f"- Symbol: {sample_event.symbol or 'N/A'}")
         event_lines.append(f"- Error: {sample_event.error_message or 'N/A'}")
         if sample_event.request_payload:
-            event_lines.append(
-                f"- Request: {json.dumps(sample_event.request_payload, ensure_ascii=False)}"
-            )
+            event_lines.append(f"- Request: {json.dumps(sample_event.request_payload, ensure_ascii=False)}")
         if sample_event.missing_fields:
-            event_lines.append(
-                f"- Missing fields: {', '.join(sample_event.missing_fields)}"
-            )
+            event_lines.append(f"- Missing fields: {', '.join(sample_event.missing_fields)}")
 
     parts = [
         f"## Issue: {issue.title}",
@@ -237,7 +225,7 @@ def _build_prompt_context(
         f"Strategy: {plan.strategy.value}",
         "",
         "## Recommended Actions",
-        *[f"{i+1}. {a}" for i, a in enumerate(plan.recommended_actions)],
+        *[f"{i + 1}. {a}" for i, a in enumerate(plan.recommended_actions)],
         "",
         "## Agent Instructions",
         plan.agent_instruction,

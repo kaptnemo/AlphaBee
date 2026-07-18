@@ -1,7 +1,6 @@
 from alphabee.collectors.akshare.helper import AkShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-
 _NEWS_CACHE = SyncTTLCache(ttl_seconds=300.0)
 
 
@@ -29,10 +28,9 @@ def get_stock_news_summary(symbol: str) -> str:
         if df.empty:
             return f"未找到股票 {normalized_symbol} 的相关新闻。"
 
-        lines = [
-            f"[{row['发布时间']}] {row['新闻标题']}"
-            for _, row in df.iterrows()
-        ]
+        lines = [f"[{row['发布时间']}] {row['新闻标题']}" for _, row in df.iterrows()]
         return "\n".join(lines)
 
-    return _NEWS_CACHE.get_or_compute(("stock_news_summary", normalized_symbol), _compute)
+    return _NEWS_CACHE.get_or_compute(
+        ("stock_news_summary", normalized_symbol), _compute
+    )

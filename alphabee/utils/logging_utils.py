@@ -1,11 +1,11 @@
 import logging
 import sys
 from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 import structlog
 
-from pathlib import Path
 from alphabee.utils.paths import PROJECT_ROOT
 
 _IS_CONFIGURED = False

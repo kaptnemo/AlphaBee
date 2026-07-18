@@ -3,25 +3,43 @@
 from __future__ import annotations
 
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
-from alphabee.agents.thesis.models import CompanyContext
 from alphabee.agents.facts.tools.company_profile import get_company_profile
 from alphabee.agents.facts.tools.industry_fact import get_industry_fact
+from alphabee.agents.thesis.models import CompanyContext
 
 
 def _keyword_extract_industry(text: str) -> str:
     """Fallback: extract industry from free text using keyword matching."""
     industry_keywords: list[tuple[str, str]] = [
-        ("白酒", "白酒"), ("银行", "银行"), ("证券", "证券"),
-        ("保险", "保险"), ("房地产", "房地产"),
-        ("半导体", "半导体"), ("芯片", "半导体"),
-        ("新能源汽车", "新能源汽车"), ("光伏", "光伏"),
-        ("医药", "医药"), ("消费电子", "消费电子"),
-        ("钢铁", "钢铁"), ("煤炭", "煤炭"), ("电力", "电力"),
-        ("化工", "化工"), ("机械", "机械"), ("军工", "军工"),
-        ("农林", "农林牧渔"), ("食品", "食品饮料"), ("家电", "家电"),
-        ("纺织", "纺织服装"), ("建材", "建材"), ("建筑", "建筑装饰"),
-        ("传媒", "传媒"), ("计算机", "计算机"), ("通信", "通信"),
-        ("环保", "环保"), ("公用", "公用事业"), ("交通", "交通运输"),
+        ("白酒", "白酒"),
+        ("银行", "银行"),
+        ("证券", "证券"),
+        ("保险", "保险"),
+        ("房地产", "房地产"),
+        ("半导体", "半导体"),
+        ("芯片", "半导体"),
+        ("新能源汽车", "新能源汽车"),
+        ("光伏", "光伏"),
+        ("医药", "医药"),
+        ("消费电子", "消费电子"),
+        ("钢铁", "钢铁"),
+        ("煤炭", "煤炭"),
+        ("电力", "电力"),
+        ("化工", "化工"),
+        ("机械", "机械"),
+        ("军工", "军工"),
+        ("农林", "农林牧渔"),
+        ("食品", "食品饮料"),
+        ("家电", "家电"),
+        ("纺织", "纺织服装"),
+        ("建材", "建材"),
+        ("建筑", "建筑装饰"),
+        ("传媒", "传媒"),
+        ("计算机", "计算机"),
+        ("通信", "通信"),
+        ("环保", "环保"),
+        ("公用", "公用事业"),
+        ("交通", "交通运输"),
     ]
     for kw, industry in industry_keywords:
         if kw in text:
@@ -97,8 +115,7 @@ def build_company_context(
             # 这里不直接下行业结论，只把行业估值语境压缩成短摘要，
             # 让下游论点知道公司目前处在怎样的行业定价区间。
             ctx.business_model_summary = (
-                f"行业PE(TTM): {item.get('industry_pe_ttm', 'N/A')}, "
-                f"行业PB: {item.get('industry_pb', 'N/A')}"
+                f"行业PE(TTM): {item.get('industry_pe_ttm', 'N/A')}, 行业PB: {item.get('industry_pb', 'N/A')}"
             )
     except Exception:
         pass

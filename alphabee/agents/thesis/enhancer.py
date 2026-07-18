@@ -141,9 +141,7 @@ class ThesisEnhancer:
     ) -> dict:
         thesis_json = json.dumps(thesis.to_dict(), ensure_ascii=False, indent=2)
         signal_json = json.dumps(signal_details, ensure_ascii=False, indent=2)
-        context_json = json.dumps(
-            company_context.to_dict(), ensure_ascii=False, indent=2
-        )
+        context_json = json.dumps(company_context.to_dict(), ensure_ascii=False, indent=2)
 
         prompt = ENHANCER_USER_TEMPLATE.format(
             thesis_json=thesis_json,
@@ -153,10 +151,12 @@ class ThesisEnhancer:
             fact_summary=fact_summary or "无",
         )
 
-        response = self._llm.invoke([
-            SystemMessage(content=ENHANCER_SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
-        ])
+        response = self._llm.invoke(
+            [
+                SystemMessage(content=ENHANCER_SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ]
+        )
 
         raw_text = self._extract_text(response.content)
         return self._parse_json(raw_text)

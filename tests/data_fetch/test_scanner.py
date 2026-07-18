@@ -74,11 +74,7 @@ class TestScanAndCreateTasks:
 
         # Re-read from DB — scan updates in a different session
         session = db_mod.get_session()
-        updated = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.issue_id == issue.issue_id)
-            .first()
-        )
+        updated = session.query(DataFetchIssue).filter(DataFetchIssue.issue_id == issue.issue_id).first()
         assert updated is not None
         assert updated.status == IssueStatus.ACTIVE
 
@@ -184,7 +180,9 @@ class TestMarkTask:
 
     def test_mark_task_invalid_status_falls_back_to_failed(self):
         _, issue = record_failure(
-            provider="tushare", api_name="income", error_type="timeout",
+            provider="tushare",
+            api_name="income",
+            error_type="timeout",
         )
         tasks = scan_and_create_tasks(max_tasks=10)
         mark_task(tasks[0].task_id, "garbage_status")
@@ -197,33 +195,29 @@ class TestMarkTask:
 class TestMarkIssueFixed:
     def test_mark_issue_fixed(self):
         _, issue = record_failure(
-            provider="tushare", api_name="income", error_type="timeout",
+            provider="tushare",
+            api_name="income",
+            error_type="timeout",
         )
         mark_issue_fixed(issue.issue_id, "Switched to AkShare fallback")
 
         session = db_mod.get_session()
-        updated = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.issue_id == issue.issue_id)
-            .first()
-        )
+        updated = session.query(DataFetchIssue).filter(DataFetchIssue.issue_id == issue.issue_id).first()
         assert updated is not None
         assert updated.status == IssueStatus.FIXED
         assert "AkShare" in (updated.resolution_note or "")
 
     def test_mark_issue_fixed_closes_tasks(self):
         _, issue = record_failure(
-            provider="tushare", api_name="income", error_type="timeout",
+            provider="tushare",
+            api_name="income",
+            error_type="timeout",
         )
         scan_and_create_tasks(max_tasks=10)
         mark_issue_fixed(issue.issue_id)
 
         session = db_mod.get_session()
-        tasks = (
-            session.query(DataFixTask)
-            .filter(DataFixTask.issue_id == issue.issue_id)
-            .all()
-        )
+        tasks = session.query(DataFixTask).filter(DataFixTask.issue_id == issue.issue_id).all()
         for t in tasks:
             assert t.status == TaskStatus.DONE
 
@@ -231,7 +225,9 @@ class TestMarkIssueFixed:
 class TestGetOpenTasks:
     def test_returns_only_pending_and_running(self):
         _, issue = record_failure(
-            provider="tushare", api_name="income", error_type="timeout",
+            provider="tushare",
+            api_name="income",
+            error_type="timeout",
         )
         result = scan_and_create_tasks(max_tasks=10)
         task = result[0]

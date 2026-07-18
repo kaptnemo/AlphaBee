@@ -1,7 +1,5 @@
 """Unit tests for data_fetch.strategies."""
 
-import pytest
-
 from alphabee.data_fetch.models import FixStrategy
 from alphabee.data_fetch.strategies import recommend_fix
 
@@ -55,8 +53,16 @@ class TestRecommendFix:
         # Should still produce actions and instruction
 
     def test_all_plans_have_instructions(self):
-        for et in ["permission", "missing_field", "timeout", "network",
-                    "rate_limit", "parse_error", "empty_response", "unknown"]:
+        for et in [
+            "permission",
+            "missing_field",
+            "timeout",
+            "network",
+            "rate_limit",
+            "parse_error",
+            "empty_response",
+            "unknown",
+        ]:
             plan = recommend_fix("tushare", "test_api", et)
             assert plan.agent_instruction, f"Missing instruction for {et}"
             assert plan.recommended_actions, f"Missing actions for {et}"

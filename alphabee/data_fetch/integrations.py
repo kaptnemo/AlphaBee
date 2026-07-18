@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import functools
 import logging
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from alphabee.data_fetch.recorder import record_failure
 
@@ -125,6 +126,7 @@ def tracked(
                 raise
 
         import asyncio
+
         if asyncio.iscoroutinefunction(func):
             return async_wrapper  # type: ignore[return-value]
         return wrapper  # type: ignore[return-value]
@@ -156,9 +158,7 @@ def _classify_error(exc: BaseException) -> str:
     return "unknown"
 
 
-def _lookup_severity(
-    exc: BaseException, severity_map: dict[type[BaseException], str]
-) -> str:
+def _lookup_severity(exc: BaseException, severity_map: dict[type[BaseException], str]) -> str:
     for exc_type, sev in severity_map.items():
         if isinstance(exc, exc_type):
             return sev

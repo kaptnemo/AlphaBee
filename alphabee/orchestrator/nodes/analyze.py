@@ -10,19 +10,20 @@ from alphabee.agents.facts.tools.company_profile import get_company_profile
 from alphabee.agents.signal.engine import SignalEngine
 from alphabee.agents.signal.registry import SIGNAL_RULES, load_signal_rules
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
+from alphabee.orchestrator.collectors import _finalize_step, _make_id
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
     DerivedFactsArtifact,
     SignalAnalysisArtifact,
 )
-from alphabee.orchestrator.collectors import _finalize_step, _make_id
 from alphabee.orchestrator.services.gap_recorder import record_signal_data_gaps
 from alphabee.orchestrator.services.payload_builders import default_anomaly_fact_values
 from alphabee.orchestrator.state import OrchestratorState
 
 
 async def run_analysis_engines(
-    state: OrchestratorState, config: RunnableConfig,
+    state: OrchestratorState,
+    config: RunnableConfig,
 ) -> OrchestratorState:
     """Run deterministic analysis engines on the structured fact values."""
     del config
@@ -116,15 +117,14 @@ async def run_analysis_engines(
 
             anomaly_engine = AnomalyEngine()
             anomaly_report = anomaly_engine.run(
-                financial_facts, extra_values=extra_vals or None,
+                financial_facts,
+                extra_values=extra_vals or None,
             )
             # 关键设计：异常结果会再投影回 fact_values。
             # 这样 signal rules 就能把“应收异常”“存货模式异常”当成标准事实处理，
             # 实现从原始报表 → 异常识别 → 风险信号的分层传导。
             anomaly_fact_values.update(anomaly_report.to_fact_values())
-            anomaly_report_payload = AnomalyReportArtifact.model_validate(
-                anomaly_report.to_dict()
-            )
+            anomaly_report_payload = AnomalyReportArtifact.model_validate(anomaly_report.to_dict())
             new_artifacts.append(
                 Artifact(
                     id=_make_id("artifact"),

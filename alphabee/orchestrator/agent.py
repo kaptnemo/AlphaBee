@@ -38,11 +38,11 @@ from alphabee.orchestrator.contracts import (
     coerce_verification_artifact,
     find_artifact_model,
 )
+from alphabee.orchestrator.gates import review_report, route_after_report_review
 from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.thesis import run_thesis
 from alphabee.orchestrator.nodes.verification import verify_hypotheses
-from alphabee.orchestrator.gates import review_report, route_after_report_review
 from alphabee.orchestrator.reporter import generate_report
 from alphabee.orchestrator.services.company_context import build_company_context
 from alphabee.orchestrator.state import OrchestratorState
@@ -57,14 +57,14 @@ def _make_id(prefix: str) -> str:
 
 
 async def review_thesis(
-    state: OrchestratorState, config: RunnableConfig,
+    state: OrchestratorState,
+    config: RunnableConfig,
 ) -> OrchestratorState:
     """Audit the thesis_analysis artifact for analytical quality.
 
     Runs the ThesisReviewer (Layer 1 deterministic + optional Layer 2 LLM)
     and produces Decisions and Issues for each dimension verdict.
     """
-    from alphabee.agents.thesis.models import InvestmentThesis
     from alphabee.agents.thesis.registry import load_dimension_defs
     from alphabee.agents.thesis.reviewer import ThesisReviewer
 
@@ -74,7 +74,6 @@ async def review_thesis(
     issues = list(state.get("issues", []))
     decisions = list(state.get("decisions", []))
     steps = list(state.get("steps", []))
-    run = state.get("run")
 
     step = Step(
         id="review_thesis",
@@ -134,53 +133,56 @@ async def review_thesis(
     # 维度 verdict 会沉淀为 Decision，便于最终报告和质量 gate 回溯：
     # 每个维度到底是 confirmed、qualified 还是 contested，都有单独决策对象承载。
     for dim_id, verdict in review.dimension_verdicts.items():
-        decisions.append(Decision(
-            id=_make_id("decision"),
-            maker="thesis_reviewer",
-            rationale=(
-                f"{verdict.dimension_name}: {verdict.status}. "
-                f"证据数={verdict.evidence_count}, "
-                f"建议={verdict.suggested_action}. "
-                + "; ".join(verdict.issues) if verdict.issues else ""
-            ),
-            confidence={
-                "confirmed": 0.9,
-                "qualified": 0.7,
-                "insufficient": 0.3,
-                "contested": 0.2,
-            }.get(verdict.status, 0.5),
-        ))
+        decisions.append(
+            Decision(
+                id=_make_id("decision"),
+                maker="thesis_reviewer",
+                rationale=(
+                    f"{verdict.dimension_name}: {verdict.status}. "
+                    f"证据数={verdict.evidence_count}, "
+                    f"建议={verdict.suggested_action}. " + "; ".join(verdict.issues)
+                    if verdict.issues
+                    else ""
+                ),
+                confidence={
+                    "confirmed": 0.9,
+                    "qualified": 0.7,
+                    "insufficient": 0.3,
+                    "contested": 0.2,
+                }.get(verdict.status, 0.5),
+            )
+        )
 
     # ── Produce Issues ──
     # 审查问题按严重度拆成 blocking / warning，
     # 这样最终报告既能突出真正阻断结论的缺陷，也不会丢掉次级风险提示。
     for msg in review.blocking_issues:
-        issues.append(Issue(
-            id=_make_id("issue"),
-            severity=IssueSeverity.HIGH,
-            category="thesis_gap",
-            message=msg,
-            related_step=step.id,
-        ))
+        issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="thesis_gap",
+                message=msg,
+                related_step=step.id,
+            )
+        )
     for msg in review.warning_issues:
-        issues.append(Issue(
-            id=_make_id("issue"),
-            severity=IssueSeverity.MEDIUM,
-            category="thesis_warning",
-            message=msg,
-            related_step=step.id,
-        ))
+        issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.MEDIUM,
+                category="thesis_warning",
+                message=msg,
+                related_step=step.id,
+            )
+        )
 
     # ── Inject verified conflicts as additional review evidence ──
     conflicts_raw = coerce_conflicts_result(state.get("conflicts_result"))
     if conflicts_raw:
-        verification_results = (
-            coerce_verification_artifact(state.get("verification_results"))
-            or VerificationArtifact()
-        )
+        verification_results = coerce_verification_artifact(state.get("verification_results")) or VerificationArtifact()
         verify_by_hid: dict[str, dict] = {
-            vr.hypothesis_id: vr.model_dump(mode="json")
-            for vr in verification_results.results
+            vr.hypothesis_id: vr.model_dump(mode="json") for vr in verification_results.results
         }
 
         # 已验证冲突是 thesis review 最重要的反证来源之一：
@@ -189,10 +191,7 @@ async def review_thesis(
             theme = conflict.theme
             severity = conflict.severity
             related_dimensions = list(conflict.related_dimensions)
-            conflict_severity = (
-                IssueSeverity.HIGH if severity in ("high", "critical")
-                else IssueSeverity.MEDIUM
-            )
+            conflict_severity = IssueSeverity.HIGH if severity in ("high", "critical") else IssueSeverity.MEDIUM
 
             for hyp in conflict.hypotheses:
                 vstatus = hyp.status
@@ -202,21 +201,17 @@ async def review_thesis(
                 hid = hyp.id
                 vr = verify_by_hid.get(hid, {})
                 explanation = hyp.explanation
-                gap_hint = (
-                    f" 缺口: {', '.join(vr.get('gaps', [])[:3])}"
-                    if vr.get("gaps") else ""
-                )
+                gap_hint = f" 缺口: {', '.join(vr.get('gaps', [])[:3])}" if vr.get("gaps") else ""
 
-                issues.append(Issue(
-                    id=_make_id("issue"),
-                    severity=conflict_severity,
-                    category="verified_conflict",
-                    message=(
-                        f"[冲突已验证] {theme}: {explanation}. "
-                        f"结论: {vr.get('summary', '')}" + gap_hint
-                    ),
-                    related_step=step.id,
-                ))
+                issues.append(
+                    Issue(
+                        id=_make_id("issue"),
+                        severity=conflict_severity,
+                        category="verified_conflict",
+                        message=(f"[冲突已验证] {theme}: {explanation}. 结论: {vr.get('summary', '')}" + gap_hint),
+                        related_step=step.id,
+                    )
+                )
 
                 # 业务含义：如果 thesis 某维度仍然给出正向判断，
                 # 但 verified conflict 已经指出该方向存在反证，就要显式制造 thesis_conflict。
@@ -228,17 +223,19 @@ async def review_thesis(
                     dim_name = dim.name if hasattr(dim, "name") else dim_id
                     judgment = dim.judgment if hasattr(dim, "judgment") else ""
                     if judgment in ("strong_positive", "positive"):
-                        issues.append(Issue(
-                            id=_make_id("issue"),
-                            severity=IssueSeverity.HIGH,
-                            category="thesis_conflict",
-                            message=(
-                                f"[论点矛盾] 维度'{dim_name}'判断为{judgment}，"
-                                f"但已验证冲突'{theme}'暗示相反方向. "
-                                f"假设: {explanation}"
-                            ),
-                            related_step=step.id,
-                        ))
+                        issues.append(
+                            Issue(
+                                id=_make_id("issue"),
+                                severity=IssueSeverity.HIGH,
+                                category="thesis_conflict",
+                                message=(
+                                    f"[论点矛盾] 维度'{dim_name}'判断为{judgment}，"
+                                    f"但已验证冲突'{theme}'暗示相反方向. "
+                                    f"假设: {explanation}"
+                                ),
+                                related_step=step.id,
+                            )
+                        )
 
         # 对被推翻的假设也保留 decision，
         # 这是为了告诉下游“哪些怀疑已经排除”，避免报告把所有疑点都写成悬而未决。
@@ -248,16 +245,16 @@ async def review_thesis(
                     continue
                 hid = hyp.id
                 vr = verify_by_hid.get(hid, {})
-                decisions.append(Decision(
-                    id=_make_id("decision"),
-                    maker="conflict_verifier",
-                    rationale=(
-                        f"假设已排除: {conflict.theme} — "
-                        f"{hyp.explanation}. "
-                        f"推翻理由: {vr.get('summary', '')}"
-                    ),
-                    confidence=vr.get("contradiction_score", 0.7),
-                ))
+                decisions.append(
+                    Decision(
+                        id=_make_id("decision"),
+                        maker="conflict_verifier",
+                        rationale=(
+                            f"假设已排除: {conflict.theme} — {hyp.explanation}. 推翻理由: {vr.get('summary', '')}"
+                        ),
+                        confidence=vr.get("contradiction_score", 0.7),
+                    )
+                )
 
     # ── Produce thesis_review Artifact ──
     review_artifact = Artifact(
@@ -291,37 +288,23 @@ def finalize_message(state: OrchestratorState) -> OrchestratorState:
     artifacts = state.get("artifacts", [])
     final_artifact_id = state.get("final_artifact_id")
 
-    final_artifact = next(
-        (a for a in artifacts if a.id == final_artifact_id), None
-    )
+    final_artifact = next((a for a in artifacts if a.id == final_artifact_id), None)
     if final_artifact is None:
-        final_artifact = next(
-            (a for a in reversed(artifacts) if a.type == "report"), None
-        )
+        final_artifact = next((a for a in reversed(artifacts) if a.type == "report"), None)
 
     # finalize_message 的职责是把整条分析链压成一个统一 JSON 响应：
     # 终端流式展示可以直接读取 final_report，而调试/审计端仍能拿到 artifacts / decisions / issues。
     payload = {
         "run": state["run"].model_dump(mode="json") if state.get("run") else None,
-        "final_report": (
-            final_artifact.value if final_artifact is not None else None
-        ),
+        "final_report": (final_artifact.value if final_artifact is not None else None),
         "artifacts": [a.model_dump(mode="json") for a in artifacts],
-        "decisions": [
-            d.model_dump(mode="json") for d in state.get("decisions", [])
-        ],
-        "issues": [
-            i.model_dump(mode="json") for i in state.get("issues", [])
-        ],
+        "decisions": [d.model_dump(mode="json") for d in state.get("decisions", [])],
+        "issues": [i.model_dump(mode="json") for i in state.get("issues", [])],
     }
 
     return {
         **state,
-        "messages": [
-            AIMessage(
-                content=json.dumps(payload, ensure_ascii=False, indent=2)
-            )
-        ],
+        "messages": [AIMessage(content=json.dumps(payload, ensure_ascii=False, indent=2))],
     }
 
 
@@ -338,6 +321,7 @@ def _find_artifact_value(artifacts: list, artifact_type: str) -> dict | None:
 def _reconstruct_thesis(thesis_dict: dict):
     """Reconstruct an InvestmentThesis from the dict stored in the artifact."""
     from alphabee.agents.thesis.models import InvestmentThesis
+
     return InvestmentThesis.from_dict(thesis_dict)
 
 

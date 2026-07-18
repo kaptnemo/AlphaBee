@@ -1,8 +1,10 @@
 """Unit tests for _utils.py — shared helper functions used by all fact tools."""
 
 import math
+
 import pytest
-from alphabee.agents.facts.tools._utils import normalize_ts_code, to_pure_code, safe_float, safe_str
+
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str, to_pure_code
 
 
 class TestNormalizeTsCode:

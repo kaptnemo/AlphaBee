@@ -22,7 +22,6 @@ from alphabee.task_records.models import (
     DimensionVerdictSummary,
     IssueRecord,
     SignalResult,
-    StageTiming,
     TaskRecord,
 )
 
@@ -134,9 +133,7 @@ class TaskRecorder:
     def _count_triggered_anomalies(self, anomaly_val: AnomalyReportArtifact | None) -> int:
         if not anomaly_val:
             return 0
-        return sum(
-            1 for anomaly in anomaly_val.anomalies if anomaly.get("level") != "none"
-        )
+        return sum(1 for anomaly in anomaly_val.anomalies if anomaly.get("level") != "none")
 
     def _extract_anomalies(self, anomaly_val: AnomalyReportArtifact | None) -> list[AnomalyResult]:
         if not anomaly_val:

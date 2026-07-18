@@ -1,10 +1,12 @@
 """CompanyProfile tool — 公司基本信息与股东结构。"""
 
+from typing import Any
+
+from pandas import DataFrame
+
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_str, safe_float
-from pandas import DataFrame
-from typing import Any
 
 _CACHE = SyncTTLCache(ttl_seconds=3600.0)
 
@@ -35,7 +37,7 @@ def get_company_profile(symbol: str) -> dict[str, Any]:
             company_df = helper.stock_company(
                 ts_code=ts_code,
                 fields="ts_code,chairman,manager,secretary,reg_capital,province,city,"
-                       "introduction,website,email,tel,employees,main_business,business_scope",
+                "introduction,website,email,tel,employees,main_business,business_scope",
             ).data
             holders_df = helper.top10_holders(
                 ts_code=ts_code, fields="ts_code,ann_date,end_date,holder_name,hold_amount,hold_ratio"

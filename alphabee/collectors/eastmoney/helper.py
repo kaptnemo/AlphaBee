@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Eastmoney Research Reports Ingest (MongoDB)
 - Fetch from: https://reportapi.eastmoney.com/report/list (JSONP)
@@ -8,18 +7,16 @@ Eastmoney Research Reports Ingest (MongoDB)
 
 from __future__ import annotations
 
-import os
-import re
 import json
+import re
 import time
-import requests
-import argparse
-from datetime import date, timedelta
-from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
+from typing import Any
+
+import requests
 
 try:
-    from mongoclient import mongo_client, MONGO_DATABASE  # type: ignore[import-untyped]
+    from mongoclient import MONGO_DATABASE, mongo_client  # type: ignore[import-untyped]
 except ImportError:
     mongo_client = None  # type: ignore[assignment]
     MONGO_DATABASE = None  # type: ignore[assignment]
@@ -39,38 +36,43 @@ EASTMONEY_REPORT_INFO_DETAIL_URL = "https://data.eastmoney.com/report/zw_stock.j
 # ----------------------------
 # Helpers
 # ----------------------------
-def jsonp_to_json(text: str) -> Dict[str, Any]:
+def jsonp_to_json(text: str) -> dict[str, Any]:
     """Extract JSON object from JSONP."""
     m = re.search(r"\((.*)\)\s*;?\s*$", text, re.S)
     if not m:
         raise ValueError("JSONP parse failed: cannot find '(...)' wrapper")
     return json.loads(m.group(1))
 
+
 def _none_if_blank(v: Any) -> Any:
     return None if v in ("", None) else v
 
-def safe_float(v: Any) -> Optional[float]:
+
+def safe_float(v: Any) -> float | None:
     v = _none_if_blank(v)
     try:
         return float(v) if v is not None else None
     except Exception:
         return None
 
-def safe_int(v: Any) -> Optional[int]:
+
+def safe_int(v: Any) -> int | None:
     v = _none_if_blank(v)
     try:
         return int(v) if v is not None else None
     except Exception:
         return None
 
-def to_json_str(v: Any) -> Optional[str]:
+
+def to_json_str(v: Any) -> str | None:
     if v is None:
         return None
     if isinstance(v, (dict, list)):
         return json.dumps(v, ensure_ascii=False)
     return str(v)
 
-def split_researcher_list(researcher_raw: Any) -> Optional[List[str]]:
+
+def split_researcher_list(researcher_raw: Any) -> list[str] | None:
     """
     Split:
       '林子健,任春阳' / '林子健，任春阳' / '林子健 任春阳' / '林子健、任春阳'
@@ -85,7 +87,8 @@ def split_researcher_list(researcher_raw: Any) -> Optional[List[str]]:
     parts = [p.strip() for p in parts if p.strip()]
     return parts or None
 
-def choose_industry(x: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+
+def choose_industry(x: dict[str, Any]) -> tuple[str | None, str | None]:
     """Industry fallback: indvIndu > industry."""
     code = _none_if_blank(x.get("indvInduCode")) or _none_if_blank(x.get("industryCode"))
     name = _none_if_blank(x.get("indvInduName")) or _none_if_blank(x.get("industryName"))
@@ -96,13 +99,14 @@ class EastmoneyReportResult:
     """A class to encapsulate the result of an Eastmoney Research Report query.
     This class holds the data and provides a method to save the result to MongoDB.
     """
-    def __init__(self, data: List[Dict[str, Any]], page_num: int, page_size: int, has_next: bool):
+
+    def __init__(self, data: list[dict[str, Any]], page_num: int, page_size: int, has_next: bool):
         self.data = self.process_data(data)
         self.page_num = page_num
         self.page_size = page_size
         self.has_next = has_next
 
-    def process_data(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def process_data(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         保留所有字段，仅对需要转换的字段通过配置统一转换，字段名不变。
         参考upsert_reports的字段和转换逻辑。
@@ -183,8 +187,7 @@ class EastmoneyReportResult:
                 self._save_to_mongo(collection_name, replace, client)
         else:
             raise RuntimeError(
-                "mongoclient is not available. "
-                "Provide a pymongo.MongoClient instance via the 'client' parameter."
+                "mongoclient is not available. Provide a pymongo.MongoClient instance via the 'client' parameter."
             )
 
     def _save_to_mongo(self, collection_name: str, replace: bool, client: MongoClient):
@@ -199,11 +202,22 @@ class EastmoneyReportResult:
 class EastmoneyReportDetail:
     """Encapsulates the detailed content of a single Eastmoney research report."""
 
-    def __init__(self, info_code: str, title: str, publish_date: str, org_name: str,
-                 researcher: str, stock_name: str, stock_code: str, content: str,
-                 rating: Optional[str] = None, attach_url: Optional[str] = None,
-                 industry_code: Optional[str] = None, industry_name: Optional[str] = None,
-                 raw_json: Optional[str] = None):
+    def __init__(
+        self,
+        info_code: str,
+        title: str,
+        publish_date: str,
+        org_name: str,
+        researcher: str,
+        stock_name: str,
+        stock_code: str,
+        content: str,
+        rating: str | None = None,
+        attach_url: str | None = None,
+        industry_code: str | None = None,
+        industry_name: str | None = None,
+        raw_json: str | None = None,
+    ):
         self.info_code = info_code
         self.title = title
         self.publish_date = publish_date
@@ -218,7 +232,7 @@ class EastmoneyReportDetail:
         self.industry_name = industry_name
         self.raw_json = raw_json
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "info_code": self.info_code,
             "title": self.title,
@@ -235,7 +249,7 @@ class EastmoneyReportDetail:
             "raw_json": self.raw_json,
         }
 
-    def save_to_mongo(self, collection_name: str, client: Optional[MongoClient] = None):
+    def save_to_mongo(self, collection_name: str, client: MongoClient | None = None):
         if not self.info_code:
             raise ValueError("Cannot save report detail without info_code")
         doc = self.to_dict()
@@ -252,8 +266,7 @@ class EastmoneyReportDetail:
                 print(f"Saved report detail '{self.info_code}' to MongoDB collection '{collection_name}'.")
         else:
             raise RuntimeError(
-                "mongoclient is not available. "
-                "Provide a pymongo.MongoClient instance via the 'client' parameter."
+                "mongoclient is not available. Provide a pymongo.MongoClient instance via the 'client' parameter."
             )
 
 
@@ -261,6 +274,7 @@ class EastmoneyHelper:
     """A helper class for interacting with the Eastmoney Research Report API.
     This class provides methods for querying research reports and saving results to MongoDB.
     """
+
     def __init__(self):
         pass
 
@@ -313,16 +327,20 @@ class EastmoneyHelper:
         data = jsonp_to_json(r.text)
         total_hits = data.get("hits")
         total_pages = data.get("TotalPage") or data.get("totalPages")
-        print(f"Fetched page {page_num}/{total_pages} with {len(data.get('data', []))} records (total hits: {total_hits}).")
+        print(
+            f"Fetched page {page_num}/{total_pages} with {len(data.get('data', []))} records (total hits: {total_hits})."
+        )
         has_next = page_num < total_pages if total_pages is not None else False
-        return EastmoneyReportResult(data=jsonp_to_json(r.text).get("data", []), page_num=page_num, page_size=page_size, has_next=has_next)
+        return EastmoneyReportResult(
+            data=jsonp_to_json(r.text).get("data", []), page_num=page_num, page_size=page_size, has_next=has_next
+        )
 
     def fetch_report_content_by_encoded_url(
         self,
         session: requests.Session,
         encoded_url: str,
         timeout: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch report metadata from the content API using encodeUrl.
 
         Args:
@@ -413,7 +431,7 @@ class EastmoneyHelper:
         session: requests.Session,
         info_code: str,
         timeout: int = 20,
-    ) -> Optional[EastmoneyReportDetail]:
+    ) -> EastmoneyReportDetail | None:
         """Fetch report detail by infoCode without needing encodeUrl.
 
         First tries the content API with the infoCode to retrieve metadata,
@@ -477,7 +495,7 @@ class EastmoneyHelper:
         code: str = "*",
         qtype: int = 0,
         timeout: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch all report info for a given industry code.
 
         Returns the first page of reports filtered by industry_code together with
@@ -516,7 +534,7 @@ class EastmoneyHelper:
         session: requests.Session,
         info_code: str,
         timeout: int = 20,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Fetch industry info for a report by infoCode."""
         detail = self._fetch_detail_page_by_info_code(session, info_code, timeout)
         if detail and (detail.industry_code or detail.industry_name):
@@ -537,7 +555,7 @@ class EastmoneyHelper:
         session: requests.Session,
         info_code: str,
         timeout: int = 20,
-    ) -> Optional[EastmoneyReportDetail]:
+    ) -> EastmoneyReportDetail | None:
         params = {"infocode": info_code}
         headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
@@ -581,15 +599,13 @@ class EastmoneyHelper:
         session: requests.Session,
         encoded_url: str,
         timeout: int = 20,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Resolve the PDF download URL for a report.
 
         Tries content API first, then falls back to HTML detail page.
         """
         try:
-            content_data = self.fetch_report_content_by_encoded_url(
-                session, encoded_url, timeout
-            )
+            content_data = self.fetch_report_content_by_encoded_url(session, encoded_url, timeout)
             attach_url = content_data.get("attachUrl")
             if attach_url:
                 return self._normalize_pdf_url(attach_url)
@@ -610,10 +626,10 @@ class EastmoneyHelper:
         session: requests.Session,
         encoded_url: str,
         save_dir: str | Path = ".",
-        filename: Optional[str] = None,
+        filename: str | None = None,
         timeout: int = 30,
         chunk_size: int = 8192,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """Download the PDF of a research report.
 
         Args:
@@ -630,9 +646,7 @@ class EastmoneyHelper:
         """
         pdf_url = self._resolve_pdf_url(session, encoded_url, timeout=timeout // 2)
         if not pdf_url:
-            raise ValueError(
-                f"Could not resolve PDF URL for encoded_url: {encoded_url}"
-            )
+            raise ValueError(f"Could not resolve PDF URL for encoded_url: {encoded_url}")
 
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -668,10 +682,10 @@ class EastmoneyHelper:
         session: requests.Session,
         info_code: str,
         save_dir: str | Path = ".",
-        filename: Optional[str] = None,
+        filename: str | None = None,
         timeout: int = 30,
         chunk_size: int = 8192,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """Download the PDF of a research report using infoCode.
 
         Args:
@@ -690,9 +704,7 @@ class EastmoneyHelper:
 
         pdf_url = self._resolve_pdf_url_by_info_code(session, info_code, timeout=timeout // 2)
         if not pdf_url:
-            raise ValueError(
-                f"Could not resolve PDF URL for info_code: {info_code}"
-            )
+            raise ValueError(f"Could not resolve PDF URL for info_code: {info_code}")
 
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -720,7 +732,7 @@ class EastmoneyHelper:
         session: requests.Session,
         info_code: str,
         timeout: int = 20,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Resolve PDF URL using infoCode via content API."""
         content_data = self._fetch_content_api_by_info_code(session, info_code, timeout)
         if content_data:
@@ -742,14 +754,14 @@ class EastmoneyHelper:
         """Ensure PDF URL uses HTTPS and strip unnecessary query params."""
         url = url.strip()
         if url.startswith("http://"):
-            url = "https://" + url[len("http://"):]
+            url = "https://" + url[len("http://") :]
         qpos = url.find("?")
         if qpos > 0:
             url = url[:qpos]
         return url
 
     @staticmethod
-    def _extract_zwinfo(html: str) -> Dict[str, Any]:
+    def _extract_zwinfo(html: str) -> dict[str, Any]:
         m = re.search(r"var zwinfo\s*=\s*(\{.*?\});", html, re.DOTALL)
         if m:
             try:
@@ -767,7 +779,7 @@ class EastmoneyHelper:
                 text = p.get_text(strip=True)
                 if text:
                     content_parts.append(text)
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "info_code": "",
             "notice_title": title_el.get_text(strip=True) if title_el else "",
             "notice_content": "\n".join(content_parts),
@@ -795,7 +807,7 @@ class EastmoneyHelper:
         session: requests.Session,
         info_code: str,
         timeout: int = 20,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         params = {
             "cb": "callback",
             "infoCode": info_code,
@@ -817,6 +829,7 @@ class EastmoneyHelper:
         except Exception:
             return None
         return None
+
 
 if __name__ == "__main__":
     # Example usage
@@ -861,7 +874,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Failed to download PDF for infoCode {test_info_code}: {e}")
 
-
         try:
             pdf_path = helper.download_report_pdf(
                 session=session,
@@ -897,7 +909,6 @@ if __name__ == "__main__":
                 print(f"No report detail found for infoCode {test_info_code}.")
         except Exception as e:
             print(f"Failed to fetch report detail for infoCode {test_info_code}: {e}")
-
 
         # test fetch report industry info by infoCode
         try:

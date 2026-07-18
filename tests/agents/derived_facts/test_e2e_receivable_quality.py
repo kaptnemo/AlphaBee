@@ -28,6 +28,7 @@ QUESTION = "茅台集团的应收账款质量怎么样？"
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
 
+
 def _tool_calls(messages: list) -> list[dict]:
     """提取所有 tool_call 记录（name + args）。"""
     result = []
@@ -40,10 +41,7 @@ def _tool_calls(messages: list) -> list[dict]:
 
 def _tool_responses(messages: list, tool_name: str) -> list[str]:
     """提取指定工具的所有 ToolMessage 内容。"""
-    return [
-        m.content for m in messages
-        if isinstance(m, ToolMessage) and tool_name in str(m.content)
-    ]
+    return [m.content for m in messages if isinstance(m, ToolMessage) and tool_name in str(m.content)]
 
 
 def _extract_ar_from_financial_fact(messages: list) -> tuple[float, float] | None:
@@ -60,9 +58,7 @@ def _extract_ar_from_financial_fact(messages: list) -> tuple[float, float] | Non
             continue
         balance = data.get("balance", [])
         annual = [
-            r for r in balance
-            if str(r.get("period", "")).endswith("1231")
-            and r.get("accounts_receivable") is not None
+            r for r in balance if str(r.get("period", "")).endswith("1231") and r.get("accounts_receivable") is not None
         ]
         if len(annual) >= 2:
             return float(annual[0]["accounts_receivable"]), float(annual[1]["accounts_receivable"])
@@ -73,6 +69,7 @@ def _extract_ar_from_financial_fact(messages: list) -> tuple[float, float] | Non
 # Stage 1：fact_collector_agent 获取应收账款事实
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.integration
 class TestFactCollectorStage:
     """验证 fact_collector_agent 能根据应收账款质量问题获取正确财务数据。"""
@@ -80,22 +77,27 @@ class TestFactCollectorStage:
     @pytest.fixture(scope="class")
     async def fact_result(self):
         from alphabee.agents.facts.agent import fact_collector_agent_factory
+
         agent = fact_collector_agent_factory()
-        result = await agent.ainvoke({
-            "messages": [HumanMessage(content=(
-                f"请获取{TS_CODE}贵州茅台最近几期（至少两期年报）的财务数据，"
-                "重点需要包含应收账款（accounts_receivable）数据。"
-            ))]
-        })
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            f"请获取{TS_CODE}贵州茅台最近几期（至少两期年报）的财务数据，"
+                            "重点需要包含应收账款（accounts_receivable）数据。"
+                        )
+                    )
+                ]
+            }
+        )
         return result
 
     def test_fact_collector_called_get_financial_fact(self, fact_result):
         """fact_collector_agent 应调用 get_financial_fact 工具。"""
         calls = _tool_calls(fact_result["messages"])
         names = [c["name"] for c in calls]
-        assert "get_financial_fact" in names, (
-            f"预期调用 get_financial_fact，实际调用了：{names}"
-        )
+        assert "get_financial_fact" in names, f"预期调用 get_financial_fact，实际调用了：{names}"
 
     def test_get_financial_fact_queried_correct_symbol(self, fact_result):
         """get_financial_fact 的 symbol 参数应包含 600519。"""
@@ -139,14 +141,13 @@ class TestFactCollectorStage:
     def test_final_response_mentions_receivable(self, fact_result):
         """fact_collector_agent 的最终回复应提及应收账款相关内容。"""
         final = fact_result["messages"][-1].content
-        assert any(kw in final for kw in ["应收账款", "accounts_receivable"]), (
-            f"最终回复未提及应收账款：{final[:300]}"
-        )
+        assert any(kw in final for kw in ["应收账款", "accounts_receivable"]), f"最终回复未提及应收账款：{final[:300]}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Stage 2：derived_fact_agent 计算 accounts_receivable_yoy
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 @pytest.mark.integration
 class TestDerivedFactStage:
@@ -155,13 +156,20 @@ class TestDerivedFactStage:
     @pytest.fixture(scope="class")
     async def fact_result(self):
         from alphabee.agents.facts.agent import fact_collector_agent_factory
+
         agent = fact_collector_agent_factory()
-        result = await agent.ainvoke({
-            "messages": [HumanMessage(content=(
-                f"请获取{TS_CODE}贵州茅台最近几期（至少两期年报）的财务数据，"
-                "重点需要包含应收账款（accounts_receivable）数据。"
-            ))]
-        })
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            f"请获取{TS_CODE}贵州茅台最近几期（至少两期年报）的财务数据，"
+                            "重点需要包含应收账款（accounts_receivable）数据。"
+                        )
+                    )
+                ]
+            }
+        )
         return result
 
     @pytest.fixture(scope="class")
@@ -182,34 +190,37 @@ class TestDerivedFactStage:
     @pytest.fixture(scope="class")
     async def derived_result(self, ar_facts):
         from alphabee.agents.derived_facts.agent import derived_fact_agent_factory
+
         ar_current, ar_prev = ar_facts
         agent = derived_fact_agent_factory()
-        result = await agent.ainvoke({
-            "messages": [HumanMessage(content=(
-                f"基于以下事实数据，请计算贵州茅台的应收账款同比增速并给出质量评估：\n\n"
-                f"- 当期应收账款（accounts_receivable）：{ar_current} 元\n"
-                f"- 上期应收账款（accounts_receivable_prev）：{ar_prev} 元\n\n"
-                "请调用 evaluate_derived_facts，计算 accounts_receivable_yoy，"
-                "并根据档位给出应收账款质量判断。"
-            ))]
-        })
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            f"基于以下事实数据，请计算贵州茅台的应收账款同比增速并给出质量评估：\n\n"
+                            f"- 当期应收账款（accounts_receivable）：{ar_current} 元\n"
+                            f"- 上期应收账款（accounts_receivable_prev）：{ar_prev} 元\n\n"
+                            "请调用 evaluate_derived_facts，计算 accounts_receivable_yoy，"
+                            "并根据档位给出应收账款质量判断。"
+                        )
+                    )
+                ]
+            }
+        )
         return result
 
     def test_derived_agent_called_evaluate_derived_facts(self, derived_result):
         calls = _tool_calls(derived_result["messages"])
         names = [c["name"] for c in calls]
-        assert "evaluate_derived_facts" in names, (
-            f"derived_fact_agent 应调用 evaluate_derived_facts，实际：{names}"
-        )
+        assert "evaluate_derived_facts" in names, f"derived_fact_agent 应调用 evaluate_derived_facts，实际：{names}"
 
     def test_derived_agent_used_correct_rule(self, derived_result):
         calls = _tool_calls(derived_result["messages"])
         for c in calls:
             if c["name"] == "evaluate_derived_facts":
                 rules = c["args"].get("rule_names", [])
-                assert "accounts_receivable_yoy" in rules, (
-                    f"rule_names 应包含 accounts_receivable_yoy，实际：{rules}"
-                )
+                assert "accounts_receivable_yoy" in rules, f"rule_names 应包含 accounts_receivable_yoy，实际：{rules}"
                 return
         pytest.fail("未找到 evaluate_derived_facts 调用")
 
@@ -249,17 +260,25 @@ class TestDerivedFactStage:
         """最终回复应给出应收账款质量相关的判断。"""
         final = derived_result["messages"][-1].content
         quality_keywords = [
-            "应收账款", "账款质量", "回款", "增速", "同比",
-            "fast", "slow", "moderate", "high_risk", "healthy", "low_risk",
+            "应收账款",
+            "账款质量",
+            "回款",
+            "增速",
+            "同比",
+            "fast",
+            "slow",
+            "moderate",
+            "high_risk",
+            "healthy",
+            "low_risk",
         ]
-        assert any(kw in final for kw in quality_keywords), (
-            f"最终回复应包含质量判断，实际：{final[:300]}"
-        )
+        assert any(kw in final for kw in quality_keywords), f"最终回复应包含质量判断，实际：{final[:300]}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Stage 3：全链路断言——两段输出的一致性
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 @pytest.mark.integration
 class TestEndToEndConsistency:
@@ -268,17 +287,18 @@ class TestEndToEndConsistency:
     @pytest.fixture(scope="class")
     async def full_chain(self):
         """运行完整链路，返回 (fact_result, derived_result, ar_facts)。"""
-        from alphabee.agents.facts.agent import fact_collector_agent_factory
         from alphabee.agents.derived_facts.agent import derived_fact_agent_factory
+        from alphabee.agents.facts.agent import fact_collector_agent_factory
 
         # Stage 1
         fact_agent = fact_collector_agent_factory()
-        fact_result = await fact_agent.ainvoke({
-            "messages": [HumanMessage(content=(
-                f"请分析{TS_CODE}贵州茅台的应收账款情况，"
-                "获取至少两期年报的应收账款数据。"
-            ))]
-        })
+        fact_result = await fact_agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(content=(f"请分析{TS_CODE}贵州茅台的应收账款情况，获取至少两期年报的应收账款数据。"))
+                ]
+            }
+        )
 
         ar_facts = _extract_ar_from_financial_fact(fact_result["messages"])
         if ar_facts is None:
@@ -288,15 +308,21 @@ class TestEndToEndConsistency:
 
         # Stage 2（用 QUESTION 作为起点，注入 Stage 1 取到的数据）
         derived_agent = derived_fact_agent_factory()
-        derived_result = await derived_agent.ainvoke({
-            "messages": [HumanMessage(content=(
-                f"用户问题：{QUESTION}\n\n"
-                f"事实收集员已获取贵州茅台（{TS_CODE}）的应收账款数据：\n"
-                f"- 当期应收账款：{ar_current} 元\n"
-                f"- 上期应收账款：{ar_prev} 元\n\n"
-                "请计算 accounts_receivable_yoy，并结合档位判断给出应收账款质量结论。"
-            ))]
-        })
+        derived_result = await derived_agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            f"用户问题：{QUESTION}\n\n"
+                            f"事实收集员已获取贵州茅台（{TS_CODE}）的应收账款数据：\n"
+                            f"- 当期应收账款：{ar_current} 元\n"
+                            f"- 上期应收账款：{ar_prev} 元\n\n"
+                            "请计算 accounts_receivable_yoy，并结合档位判断给出应收账款质量结论。"
+                        )
+                    )
+                ]
+            }
+        )
 
         return fact_result, derived_result, ar_facts
 
@@ -312,14 +338,11 @@ class TestEndToEndConsistency:
                     fv.get("accounts_receivable")
                     or fv.get("accounts_receivable_current")
                     or next(
-                        (v for k, v in fv.items()
-                         if "receivable" in k and "prev" not in k and "prior" not in k),
+                        (v for k, v in fv.items() if "receivable" in k and "prev" not in k and "prior" not in k),
                         None,
                     )
                 )
-                assert ar_val is not None, (
-                    f"fact_values 中未找到 accounts_receivable 相关键，实际键：{list(fv.keys())}"
-                )
+                assert ar_val is not None, f"fact_values 中未找到 accounts_receivable 相关键，实际键：{list(fv.keys())}"
                 assert math.isclose(float(ar_val), ar_current, rel_tol=1e-3), (
                     f"两段链路的 accounts_receivable 值不一致：{ar_val} vs {ar_current}"
                 )

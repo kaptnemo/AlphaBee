@@ -14,7 +14,8 @@ from alphabee.utils.pipeline import parse_json
 
 
 async def explore_conflicts(
-    state: OrchestratorState, config: RunnableConfig,
+    state: OrchestratorState,
+    config: RunnableConfig,
 ) -> OrchestratorState:
     """Run the ConflictExplorer agent to identify gaps and conflicts."""
     from alphabee.agents.explore_conflicts.agent import explore_conflicts_agent_factory
@@ -48,13 +49,15 @@ async def explore_conflicts(
         )
         raw_text = _extract_final_text(raw_result)
     except Exception as exc:
-        new_issues.append(Issue(
-            id=_make_id("issue"),
-            severity=IssueSeverity.HIGH,
-            category="subagent_failure",
-            message=f"ExploreConflicts agent failed: {exc}",
-            related_step=step.id,
-        ))
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="subagent_failure",
+                message=f"ExploreConflicts agent failed: {exc}",
+                related_step=step.id,
+            )
+        )
         completed_step = _finalize_step(step, new_issues, new_artifacts)
         return {
             **state,
@@ -69,13 +72,15 @@ async def explore_conflicts(
             conflicts_result = ConflictAnalysisResult.model_validate(parsed_dict)
         except Exception as exc:
             parse_error = str(exc)
-            new_issues.append(Issue(
-                id=_make_id("issue"),
-                severity=IssueSeverity.MEDIUM,
-                category="parse_error",
-                message=f"ConflictAnalysisResult parse failed: {exc} — raw_text saved in artifact",
-                related_step=step.id,
-            ))
+            new_issues.append(
+                Issue(
+                    id=_make_id("issue"),
+                    severity=IssueSeverity.MEDIUM,
+                    category="parse_error",
+                    message=f"ConflictAnalysisResult parse failed: {exc} — raw_text saved in artifact",
+                    related_step=step.id,
+                )
+            )
 
     artifact_payload = ConflictAnalysisArtifact(
         symbol=symbol,
@@ -91,12 +96,14 @@ async def explore_conflicts(
     else:
         artifact_payload.parse_error = parse_error or "unknown"
 
-    new_artifacts.append(Artifact(
-        id=_make_id("artifact"),
-        type="conflict_analysis",
-        producer_step=step.id,
-        value=artifact_payload.model_dump(mode="json"),
-    ))
+    new_artifacts.append(
+        Artifact(
+            id=_make_id("artifact"),
+            type="conflict_analysis",
+            producer_step=step.id,
+            value=artifact_payload.model_dump(mode="json"),
+        )
+    )
 
     if conflicts_result:
         for conflict in conflicts_result.conflicts:
@@ -104,13 +111,15 @@ async def explore_conflicts(
                 # 高严重度冲突立刻上升为 issue，
                 # 这样即使后面某个节点没显式消费冲突 artifact，
                 # quality gate 仍然能通过 issues 感知到“当前结论不稳定”。
-                new_issues.append(Issue(
-                    id=_make_id("issue"),
-                    severity=IssueSeverity.HIGH if conflict.severity == "high" else IssueSeverity.CRITICAL,
-                    category="conflict",
-                    message=f"[冲突] {conflict.theme}: {conflict.description}",
-                    related_step=step.id,
-                ))
+                new_issues.append(
+                    Issue(
+                        id=_make_id("issue"),
+                        severity=IssueSeverity.HIGH if conflict.severity == "high" else IssueSeverity.CRITICAL,
+                        category="conflict",
+                        message=f"[冲突] {conflict.theme}: {conflict.description}",
+                        related_step=step.id,
+                    )
+                )
 
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {

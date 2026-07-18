@@ -1,11 +1,15 @@
 """MarketFact tool — 股票行情、资金流向与技术均线数据。"""
 
 import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
+
+if TYPE_CHECKING:
+    from alphabee.agents.facts.models import MarketFacts
 
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 
 _CACHE = SyncTTLCache(ttl_seconds=300.0)
 
@@ -31,27 +35,22 @@ def get_market_fact(symbol: str) -> dict[str, Any]:
     def _compute() -> dict[str, Any]:
         today = datetime.date.today().strftime("%Y%m%d")
         lookback = (datetime.date.today() - datetime.timedelta(days=180)).strftime("%Y%m%d")
-        lookback_5y = (datetime.date.today() - datetime.timedelta(days=5*365)).strftime("%Y%m%d")
+        lookback_5y = (datetime.date.today() - datetime.timedelta(days=5 * 365)).strftime("%Y%m%d")
         lookback_10 = (datetime.date.today() - datetime.timedelta(days=10)).strftime("%Y%m%d")
 
         with TuShareHelper() as helper:
-            daily_df = helper.daily(
-                ts_code=ts_code, start_date=lookback_10, end_date=today
-            ).data
-            daily_basic_df = helper.daily_basic(
-                ts_code=ts_code, start_date=lookback_10, end_date=today
-            ).data
+            daily_df = helper.daily(ts_code=ts_code, start_date=lookback_10, end_date=today).data
+            daily_basic_df = helper.daily_basic(ts_code=ts_code, start_date=lookback_10, end_date=today).data
             # 5年历史 PE/PB，用于计算 pe_ttm_5y_avg
             daily_basic_history_df = helper.daily_basic(
-                ts_code=ts_code, start_date=lookback_5y, end_date=today,
+                ts_code=ts_code,
+                start_date=lookback_5y,
+                end_date=today,
                 fields="ts_code,trade_date,pe_ttm,pb",
             ).data
-            moneyflow_df = helper.moneyflow(
-                ts_code=ts_code, start_date=lookback_10, end_date=today
-            ).data
+            moneyflow_df = helper.moneyflow(ts_code=ts_code, start_date=lookback_10, end_date=today).data
             hist_df = helper.daily(
-                ts_code=ts_code, start_date=lookback, end_date=today,
-                fields="ts_code,trade_date,close"
+                ts_code=ts_code, start_date=lookback, end_date=today, fields="ts_code,trade_date,close"
             ).data
             stock_basic_df = helper.stock_basic(ts_code=ts_code, fields="ts_code,name").data
 
@@ -182,7 +181,7 @@ def _compute_pe_ttm_5y_avg(daily_basic_history_df: Any) -> float | None:
     return float(sum(pe_values) / len(pe_values))
 
 
-def get_market_facts_model(symbol: str) -> "MarketFacts":
+def get_market_facts_model(symbol: str) -> MarketFacts:
     """获取 A 股行情数据并返回 MarketFacts Pydantic 模型。
 
     封装 get_market_fact() 的返回值，将行情字典映射到类型化的
@@ -262,8 +261,7 @@ def render(data: dict[str, Any]) -> str:
 
     prev_close = safe_float(d.get("prev_close_price"))
     amplitude = (
-        (safe_float(d.get("high_price")) - safe_float(d.get("low_price"))) / prev_close * 100
-        if prev_close else 0.0
+        (safe_float(d.get("high_price")) - safe_float(d.get("low_price"))) / prev_close * 100 if prev_close else 0.0
     )
 
     lines += [
@@ -277,8 +275,8 @@ def render(data: dict[str, Any]) -> str:
         f"| 最高价（元） | {safe_float(d.get('high_price')):.2f} |",
         f"| 最低价（元） | {safe_float(d.get('low_price')):.2f} |",
         f"| 昨收价（元） | {prev_close:.2f} |",
-        f"| 成交量（万手） | {safe_float(d.get('volume'))/10000:.2f} |",
-        f"| 成交额（亿元） | {safe_float(d.get('turnover_amount'))*1000/1e8:.2f} |",
+        f"| 成交量（万手） | {safe_float(d.get('volume')) / 10000:.2f} |",
+        f"| 成交额（亿元） | {safe_float(d.get('turnover_amount')) * 1000 / 1e8:.2f} |",
         f"| 振幅（%） | {amplitude:.2f} |",
     ]
 
@@ -287,8 +285,8 @@ def render(data: dict[str, Any]) -> str:
             f"| 换手率（%） | {safe_float(db.get('turnover_rate')):.2f} |",
             f"| 市盈率PE(TTM) | {safe_float(db.get('pe_ttm')):.2f} |",
             f"| 市净率PB | {safe_float(db.get('pb_ratio')):.2f} |",
-            f"| 总市值（亿元） | {safe_float(db.get('market_cap'))/10000:.2f} |",
-            f"| 流通市值（亿元） | {safe_float(db.get('circulating_market_cap'))/10000:.2f} |",
+            f"| 总市值（亿元） | {safe_float(db.get('market_cap')) / 10000:.2f} |",
+            f"| 流通市值（亿元） | {safe_float(db.get('circulating_market_cap')) / 10000:.2f} |",
         ]
     lines.append("")
 
@@ -323,7 +321,7 @@ def render(data: dict[str, Any]) -> str:
             f"| {safe_str(row.get('trade_date'))} "
             f"| {safe_float(row.get('close_price')):.2f} "
             f"| {safe_float(row.get('price_change_pct')):.2f} "
-            f"| {safe_float(row.get('volume'))/10000:.2f} |"
+            f"| {safe_float(row.get('volume')) / 10000:.2f} |"
         )
     lines.append("")
 

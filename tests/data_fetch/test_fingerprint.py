@@ -1,6 +1,5 @@
 """Unit tests for data_fetch.fingerprint."""
 
-import pytest
 from alphabee.data_fetch.fingerprint import compute_fingerprint
 
 
@@ -21,32 +20,24 @@ class TestComputeFingerprint:
         assert fp1 != fp2
 
     def test_missing_fields_affect_fingerprint(self):
-        fp1 = compute_fingerprint("tushare", "income", "missing_field",
-                                  missing_fields=["revenue", "profit"])
-        fp2 = compute_fingerprint("tushare", "income", "missing_field",
-                                  missing_fields=["profit", "revenue"])
+        fp1 = compute_fingerprint("tushare", "income", "missing_field", missing_fields=["revenue", "profit"])
+        fp2 = compute_fingerprint("tushare", "income", "missing_field", missing_fields=["profit", "revenue"])
         assert fp1 == fp2  # sorted → same
 
     def test_different_missing_fields_different_fingerprint(self):
-        fp1 = compute_fingerprint("tushare", "income", "missing_field",
-                                  missing_fields=["revenue"])
-        fp2 = compute_fingerprint("tushare", "income", "missing_field",
-                                  missing_fields=["profit"])
+        fp1 = compute_fingerprint("tushare", "income", "missing_field", missing_fields=["revenue"])
+        fp2 = compute_fingerprint("tushare", "income", "missing_field", missing_fields=["profit"])
         assert fp1 != fp2
 
     def test_error_prefix_affects_fingerprint(self):
-        fp1 = compute_fingerprint("tushare", "income", "timeout",
-                                  error_prefix="Connection timed out")
-        fp2 = compute_fingerprint("tushare", "income", "timeout",
-                                  error_prefix="Read timed out")
+        fp1 = compute_fingerprint("tushare", "income", "timeout", error_prefix="Connection timed out")
+        fp2 = compute_fingerprint("tushare", "income", "timeout", error_prefix="Read timed out")
         assert fp1 != fp2
 
     def test_error_prefix_truncated(self):
         long_prefix = "x" * 200
-        fp1 = compute_fingerprint("tushare", "income", "timeout",
-                                  error_prefix=long_prefix)
-        fp2 = compute_fingerprint("tushare", "income", "timeout",
-                                  error_prefix=long_prefix[:80])
+        fp1 = compute_fingerprint("tushare", "income", "timeout", error_prefix=long_prefix)
+        fp2 = compute_fingerprint("tushare", "income", "timeout", error_prefix=long_prefix[:80])
         assert fp1 == fp2
 
     def test_fingerprint_length(self):

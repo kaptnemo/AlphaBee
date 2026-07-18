@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from alphabee.orchestrator.contracts import ConflictItem, VerificationResultItem
+    from alphabee.orchestrator.state import OrchestratorState
+
 import asyncio
 import json as _json
 
@@ -20,12 +26,12 @@ from alphabee.utils.pipeline import parse_json
 
 
 async def _verify_single_conflict(
-    conflict: "ConflictItem",
+    conflict: ConflictItem,
     shared_context: dict,
     step_id: str,
     config: RunnableConfig,
-) -> "tuple[list[VerificationResultItem], list[Issue]]":
-    from alphabee.agents.schemas import VerificationResultList, VerificationResultItem
+) -> tuple[list[VerificationResultItem], list[Issue]]:
+    from alphabee.agents.schemas import VerificationResultList
     from alphabee.agents.verify_hypotheses.agent import verify_hypotheses_agent_factory
     from alphabee.agents.verify_hypotheses.prompts import VERIFY_HYPOTHESES_USER_TEMPLATE
 
@@ -61,13 +67,15 @@ async def _verify_single_conflict(
         )
         raw_text = _extract_final_text(raw_result)
     except Exception as exc:
-        issues.append(Issue(
-            id=_make_id("issue"),
-            severity=IssueSeverity.HIGH,
-            category="subagent_failure",
-            message=f"VerifyHypotheses agent failed for conflict '{conflict.theme}': {exc}",
-            related_step=step_id,
-        ))
+        issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category="subagent_failure",
+                message=f"VerifyHypotheses agent failed for conflict '{conflict.theme}': {exc}",
+                related_step=step_id,
+            )
+        )
         return [], issues
 
     if not raw_text:
@@ -81,21 +89,23 @@ async def _verify_single_conflict(
         vlist = VerificationResultList.model_validate(parsed)
         return vlist.results, issues
     except Exception as exc:
-        issues.append(Issue(
-            id=_make_id("issue"),
-            severity=IssueSeverity.MEDIUM,
-            category="parse_error",
-            message=f"VerificationResultList parse failed for conflict '{conflict.theme}': {exc}",
-            related_step=step_id,
-        ))
+        issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.MEDIUM,
+                category="parse_error",
+                message=f"VerificationResultList parse failed for conflict '{conflict.theme}': {exc}",
+                related_step=step_id,
+            )
+        )
         return [], issues
 
 
 async def verify_hypotheses(
-    state: OrchestratorState, config: RunnableConfig,
+    state: OrchestratorState,
+    config: RunnableConfig,
 ) -> OrchestratorState:
     """Verify hypotheses from explore_conflicts in parallel."""
-    from alphabee.agents.schemas import VerificationResultItem
 
     run = state.get("run")
     symbol = run.context.get("symbol") if run else None
@@ -127,9 +137,7 @@ async def verify_hypotheses(
         for conflict in conflicts_result.conflicts
         if conflict.hypotheses
     ]
-    task_results: list[tuple[list[VerificationResultItem], list[Issue]]] = (
-        await asyncio.gather(*tasks)
-    )
+    task_results: list[tuple[list[VerificationResultItem], list[Issue]]] = await asyncio.gather(*tasks)
 
     all_results: list[VerificationResultItem] = []
     for results, issues in task_results:
@@ -155,12 +163,14 @@ async def verify_hypotheses(
         unknown_count=len(all_hypotheses) - len(verified_ids) - len(rejected_ids),
     )
 
-    new_artifacts.append(Artifact(
-        id=_make_id("artifact"),
-        type="verification_results",
-        producer_step=step.id,
-        value=verification_artifact.model_dump(mode="json"),
-    ))
+    new_artifacts.append(
+        Artifact(
+            id=_make_id("artifact"),
+            type="verification_results",
+            producer_step=step.id,
+            value=verification_artifact.model_dump(mode="json"),
+        )
+    )
 
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {

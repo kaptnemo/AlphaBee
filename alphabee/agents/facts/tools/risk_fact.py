@@ -3,10 +3,10 @@
 import datetime
 from typing import Any
 
-from alphabee.collectors.tushare.helper import TuShareHelper
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str, to_pure_code
 from alphabee.collectors.akshare.helper import AkShareHelper
+from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.agents.facts.tools._utils import normalize_ts_code, to_pure_code, safe_float, safe_str
 
 _CACHE = SyncTTLCache(ttl_seconds=300.0)
 
@@ -42,10 +42,12 @@ def get_risk_fact(symbol: str) -> dict[str, Any]:
             news = []
             if not news_df.empty:
                 for _, row in news_df.head(20).iterrows():
-                    news.append({
-                        "news_publish_time": safe_str(row.get("发布时间", row.get("publish_time", ""))),
-                        "news_title": safe_str(row.get("新闻标题", row.get("title", ""))),
-                    })
+                    news.append(
+                        {
+                            "news_publish_time": safe_str(row.get("发布时间", row.get("publish_time", ""))),
+                            "news_title": safe_str(row.get("新闻标题", row.get("title", ""))),
+                        }
+                    )
             result["news"] = news
             result["news_error"] = None
         except Exception as e:
@@ -57,8 +59,7 @@ def get_risk_fact(symbol: str) -> dict[str, Any]:
             with TuShareHelper() as helper:
                 pledge_df = helper.pledge_stat(
                     ts_code=ts_code,
-                    fields="ts_code,end_date,pledge_count,unrest_pledge,rest_pledge,"
-                           "total_share,pledge_ratio",
+                    fields="ts_code,end_date,pledge_count,unrest_pledge,rest_pledge,total_share,pledge_ratio",
                 ).data
             result["pledge"] = pledge_df.head(5).to_dict(orient="records") if not pledge_df.empty else []
             result["pledge_error"] = None
@@ -72,8 +73,7 @@ def get_risk_fact(symbol: str) -> dict[str, Any]:
                 repurchase_df = helper.repurchase(
                     ts_code=ts_code,
                     start_date=lookback_365,
-                    fields="ts_code,ann_date,end_date,proc,exp_date,vol,amount,high_limit,"
-                           "low_limit",
+                    fields="ts_code,ann_date,end_date,proc,exp_date,vol,amount,high_limit,low_limit",
                 ).data
             result["repurchase"] = repurchase_df.head(5).to_dict(orient="records") if not repurchase_df.empty else []
             result["repurchase_error"] = None
@@ -140,8 +140,8 @@ def render(data: dict[str, Any]) -> str:
                 f"| {safe_str(row.get('period'))} "
                 f"| {safe_float(row.get('pledge_count')):.0f} "
                 f"| {safe_float(row.get('pledge_ratio')):.2f} "
-                f"| {safe_float(row.get('released_pledge'))/10000:.2f} "
-                f"| {safe_float(row.get('unreleased_pledge'))/10000:.2f} |"
+                f"| {safe_float(row.get('released_pledge')) / 10000:.2f} "
+                f"| {safe_float(row.get('unreleased_pledge')) / 10000:.2f} |"
             )
         if latest_pledge_ratio > 30:
             lines.append(
@@ -165,8 +165,8 @@ def render(data: dict[str, Any]) -> str:
                 f"| {safe_str(row.get('ann_date'))} "
                 f"| {safe_str(row.get('period'))} "
                 f"| {safe_str(row.get('repurchase_progress'))} "
-                f"| {safe_float(row.get('repurchase_volume'))/10000:.2f} "
-                f"| {safe_float(row.get('repurchase_amount'))/10000:.2f} |"
+                f"| {safe_float(row.get('repurchase_volume')) / 10000:.2f} "
+                f"| {safe_float(row.get('repurchase_amount')) / 10000:.2f} |"
             )
         lines.append("")
     else:

@@ -9,7 +9,6 @@
 import datetime
 import json
 import math
-from typing import Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -18,13 +17,14 @@ from alphabee.collectors.akshare.helper import AkShareHelper
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.utils import tracked_chat_completion
 
-
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 
+
 class IndustryValuation(BaseModel):
     """行业估值（单期）"""
+
     date: str = Field(description="日期（YYYYMMDD）")
     pe_ttm: float = Field(description="行业整体市盈率 TTM（倍）")
     pb: float = Field(description="行业整体市净率（倍）")
@@ -33,6 +33,7 @@ class IndustryValuation(BaseModel):
 
 class IndustryPerformance(BaseModel):
     """行业价格表现"""
+
     current_price: float = Field(description="行业指数最新价格（点）")
     change_pct_today: float = Field(description="今日涨跌幅（%）")
     change_pct_1w: float = Field(description="近1周涨跌幅（%）")
@@ -48,6 +49,7 @@ class IndustryPerformance(BaseModel):
 
 class ConstituentStock(BaseModel):
     """行业成分股"""
+
     code: str = Field(description="股票代码")
     name: str = Field(description="股票名称")
     change_pct: float = Field(description="今日涨跌幅（%）")
@@ -59,8 +61,11 @@ class ConstituentStock(BaseModel):
 
 class IndustrySummary(BaseModel):
     """行业基本面分析摘要（大模型生成）"""
+
     overview: str = Field(description="行业整体状况概述（2-3句）")
-    valuation_comment: str = Field(description="当前估值水平评价（偏高/合理/偏低）及依据")
+    valuation_comment: str = Field(
+        description="当前估值水平评价（偏高/合理/偏低）及依据"
+    )
     strengths: list[str] = Field(description="行业主要优势或机会")
     risks: list[str] = Field(description="行业主要风险或挑战")
     outlook: str = Field(description="基于近期走势和估值的投资展望（1-2句）")
@@ -68,9 +73,12 @@ class IndustrySummary(BaseModel):
 
 class IndustryFundamentals(BaseModel):
     """行业基本面数据汇总"""
+
     industry_name: str = Field(description="行业名称（东方财富板块）")
     industry_code: str = Field(description="东方财富行业板块代码")
-    sw_code: Optional[str] = Field(default=None, description="申万行业指数代码（如 801020.SI），用于估值查询")
+    sw_code: str | None = Field(
+        default=None, description="申万行业指数代码（如 801020.SI），用于估值查询"
+    )
     performance: IndustryPerformance = Field(description="行业价格表现")
     valuation_history: list[IndustryValuation] = Field(
         description="历史估值数据（PE/PB/市值），来自申万行业指数，按时间倒序"
@@ -84,6 +92,7 @@ class IndustryFundamentals(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _safe_float(value, default: float = 0.0) -> float:
     try:
@@ -108,7 +117,7 @@ def _col(df: pd.DataFrame, *candidates: str, default=None):
     return default
 
 
-def _find_em_board(boards_df: pd.DataFrame, industry: str) -> Optional[pd.Series]:
+def _find_em_board(boards_df: pd.DataFrame, industry: str) -> pd.Series | None:
     """Fuzzy-match ``industry`` against EM board names (板块名称 column)."""
     name_col = _col(boards_df, "板块名称", "name")
     if name_col is None or boards_df.empty:
@@ -125,10 +134,7 @@ def _find_em_board(boards_df: pd.DataFrame, industry: str) -> Optional[pd.Series
     # Partial match: any common character sequence ≥ 2 chars
     for _, row in boards_df.iterrows():
         board_name = str(row[name_col])
-        if any(
-            industry[i: i + 2] in board_name
-            for i in range(len(industry) - 1)
-        ):
+        if any(industry[i : i + 2] in board_name for i in range(len(industry) - 1)):
             return row
     return None
 
@@ -168,7 +174,9 @@ def _compute_perf_from_hist(hist_df: pd.DataFrame, today_change_pct: float) -> d
         else:
             past_price = _safe_float(past.iloc[0][close_col])
             result[label] = (
-                round((current_price / past_price - 1) * 100, 2) if past_price != 0 else 0.0
+                round((current_price / past_price - 1) * 100, 2)
+                if past_price != 0
+                else 0.0
             )
     return result
 
@@ -177,7 +185,8 @@ def _compute_perf_from_hist(hist_df: pd.DataFrame, today_change_pct: float) -> d
 # Data fetchers
 # ---------------------------------------------------------------------------
 
-def _fetch_em_snapshot(helper: AkShareHelper) -> Optional[pd.DataFrame]:
+
+def _fetch_em_snapshot(helper: AkShareHelper) -> pd.DataFrame | None:
     """Fetch East Money industry board snapshot (all boards)."""
     try:
         return helper.stock_board_industry_name_em().data
@@ -185,7 +194,9 @@ def _fetch_em_snapshot(helper: AkShareHelper) -> Optional[pd.DataFrame]:
         return None
 
 
-def _fetch_em_history(helper: AkShareHelper, board_name: str, start_date: str) -> Optional[pd.DataFrame]:
+def _fetch_em_history(
+    helper: AkShareHelper, board_name: str, start_date: str
+) -> pd.DataFrame | None:
     """Fetch historical daily price for an EM board."""
     try:
         end_date = datetime.date.today().strftime("%Y%m%d")
@@ -200,7 +211,9 @@ def _fetch_em_history(helper: AkShareHelper, board_name: str, start_date: str) -
         return None
 
 
-def _fetch_em_constituents(helper: AkShareHelper, board_name: str) -> Optional[pd.DataFrame]:
+def _fetch_em_constituents(
+    helper: AkShareHelper, board_name: str
+) -> pd.DataFrame | None:
     """Fetch constituent stocks for an EM board."""
     try:
         return helper.stock_board_industry_cons_em(symbol=board_name).data
@@ -208,7 +221,7 @@ def _fetch_em_constituents(helper: AkShareHelper, board_name: str) -> Optional[p
         return None
 
 
-def _find_sw_code(ts_helper: TuShareHelper, industry_name: str) -> Optional[str]:
+def _find_sw_code(ts_helper: TuShareHelper, industry_name: str) -> str | None:
     """Find Shenwan L1 industry index code that matches ``industry_name``."""
     try:
         df = ts_helper.index_classify(level="L1", src="SW2021").data
@@ -263,7 +276,9 @@ def _fetch_sw_valuation_history(
                     date=str(row[date_col]),
                     pe_ttm=_safe_float(row[pe_col]) if pe_col else 0.0,
                     pb=_safe_float(row[pb_col]) if pb_col else 0.0,
-                    total_mv=round(_safe_float(row[mv_col]) / 1e4, 2) if mv_col else 0.0,
+                    total_mv=round(_safe_float(row[mv_col]) / 1e4, 2)
+                    if mv_col
+                    else 0.0,
                 )
             )
         return result[:24]  # cap at 24 data points (≈2 years monthly)
@@ -305,7 +320,9 @@ def _parse_em_snapshot_row(row: pd.Series) -> dict:
     )
 
 
-def _parse_constituents(cons_df: pd.DataFrame, max_stocks: int = 50) -> list[ConstituentStock]:
+def _parse_constituents(
+    cons_df: pd.DataFrame, max_stocks: int = 50
+) -> list[ConstituentStock]:
     """Parse EM constituent stock DataFrame into ConstituentStock list."""
     if cons_df is None or cons_df.empty:
         return []
@@ -352,6 +369,7 @@ def _parse_constituents(cons_df: pd.DataFrame, max_stocks: int = 50) -> list[Con
 # ---------------------------------------------------------------------------
 # LLM summary generation
 # ---------------------------------------------------------------------------
+
 
 async def _generate_industry_summary(
     industry_name: str,
@@ -408,7 +426,9 @@ async def _generate_industry_summary(
         f"价格表现：\n{json.dumps(perf_dict, ensure_ascii=False, indent=2)}\n\n"
     )
     if val_dict:
-        prompt += f"估值数据：\n{json.dumps(val_dict, ensure_ascii=False, indent=2)}\n\n"
+        prompt += (
+            f"估值数据：\n{json.dumps(val_dict, ensure_ascii=False, indent=2)}\n\n"
+        )
     if top10:
         prompt += f"行业龙头股（按市值排序）：\n{json.dumps(top10, ensure_ascii=False, indent=2)}\n\n"
 
@@ -452,6 +472,7 @@ async def _generate_industry_summary(
 # Main tool function
 # ---------------------------------------------------------------------------
 
+
 async def get_industry_fundamentals(
     industry: str,
     periods: int = 24,
@@ -483,14 +504,16 @@ async def get_industry_fundamentals(
         datetime.date.today() - datetime.timedelta(days=periods * 30 + 30)
     ).strftime("%Y%m%d")
     # For 1-year performance we need at least 400 days of price history
-    hist_start = (
-        datetime.date.today() - datetime.timedelta(days=400)
-    ).strftime("%Y%m%d")
+    hist_start = (datetime.date.today() - datetime.timedelta(days=400)).strftime(
+        "%Y%m%d"
+    )
 
     with AkShareHelper() as ak_helper, TuShareHelper() as ts_helper:
         # ── 1. Get EM board snapshot ─────────────────────────────────────────
         boards_df = _fetch_em_snapshot(ak_helper)
-        board_row = _find_em_board(boards_df, industry) if boards_df is not None else None
+        board_row = (
+            _find_em_board(boards_df, industry) if boards_df is not None else None
+        )
 
         if board_row is None:
             raise ValueError(
@@ -527,7 +550,9 @@ async def get_industry_fundamentals(
         sw_code = _find_sw_code(ts_helper, matched_name)
         valuation_history: list[IndustryValuation] = []
         if sw_code:
-            valuation_history = _fetch_sw_valuation_history(ts_helper, sw_code, start_date)
+            valuation_history = _fetch_sw_valuation_history(
+                ts_helper, sw_code, start_date
+            )
 
     # ── 5. AI summary ────────────────────────────────────────────────────────
     summary = await _generate_industry_summary(

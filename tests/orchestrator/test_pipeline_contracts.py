@@ -44,9 +44,7 @@ class _FakeAnomalyReport:
             "period": "2024Q4",
             "anomaly_count": 1,
             "pattern_count": 1,
-            "anomalies": [
-                {"rule_id": "receivable_gap", "level": "high", "z_score": 2.8}
-            ],
+            "anomalies": [{"rule_id": "receivable_gap", "level": "high", "z_score": 2.8}],
             "pattern_matches": [
                 {
                     "pattern_id": "inflated_revenue",
@@ -188,9 +186,7 @@ def test_conflict_and_verification_nodes_emit_typed_contracts(monkeypatch):
     )
 
     assert isinstance(conflict_state["conflicts_result"], ConflictAnalysisResult)
-    assert find_artifact_model(
-        conflict_state["artifacts"], "conflict_analysis", ConflictAnalysisArtifact
-    )
+    assert find_artifact_model(conflict_state["artifacts"], "conflict_analysis", ConflictAnalysisArtifact)
 
     async def fake_verify_single_conflict(conflict, shared_context, step_id, config):
         return (
@@ -212,14 +208,10 @@ def test_conflict_and_verification_nodes_emit_typed_contracts(monkeypatch):
     monkeypatch.setattr(verification_node, "_verify_single_conflict", fake_verify_single_conflict)
     monkeypatch.setattr(verification_node, "build_verify_context", lambda state, symbol: {})
 
-    verification_state = asyncio.run(
-        verification_node.verify_hypotheses(conflict_state, {})
-    )
+    verification_state = asyncio.run(verification_node.verify_hypotheses(conflict_state, {}))
 
     assert isinstance(verification_state["verification_results"], VerificationArtifact)
-    assert (
-        verification_state["verification_results"].results[0].status == "verified"
-    )
+    assert verification_state["verification_results"].results[0].status == "verified"
     assert find_artifact_model(
         verification_state["artifacts"],
         "verification_results",
@@ -361,9 +353,7 @@ def test_report_generation_payload_is_typed_and_tracks_required_disclosures():
     assert payload.company.symbol == "600519.SH"
     assert payload.required_issue_disclosures[0].id == "issue-1"
     assert payload.conflict_analysis is not None
-    assert payload.conflict_analysis.conflicts[0].related_dimensions == [
-        "earnings_quality"
-    ]
+    assert payload.conflict_analysis.conflicts[0].related_dimensions == ["earnings_quality"]
 
 
 def test_task_recorder_reads_typed_artifact_payloads():

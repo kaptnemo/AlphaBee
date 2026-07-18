@@ -38,7 +38,6 @@ from alphabee.orchestrator.state import OrchestratorState
 from alphabee.tools.common import extract_symbols_from_query
 from alphabee.utils.pipeline import extract_text, make_id
 
-
 # ── shared helpers ────────────────────────────────────────────────────
 
 
@@ -64,9 +63,7 @@ def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict | None
 def _build_conflict_data(state: OrchestratorState) -> dict:
     """Summarise conflict+verification results for downstream nodes."""
     conflicts_raw = coerce_conflicts_result(state.get("conflicts_result"))
-    verification_artifact = coerce_verification_artifact(
-        state.get("verification_results")
-    )
+    verification_artifact = coerce_verification_artifact(state.get("verification_results"))
     verification_results = verification_artifact.results if verification_artifact else []
 
     if not conflicts_raw:
@@ -104,9 +101,7 @@ def _build_conflict_data(state: OrchestratorState) -> dict:
     ).model_dump(mode="json")
 
 
-def _finalize_step(
-    step: Step, issues: list[Issue], artifacts: list[Artifact]
-) -> Step:
+def _finalize_step(step: Step, issues: list[Issue], artifacts: list[Artifact]) -> Step:
     """Return a copy of *step* with status and outputs set."""
     if issues and not artifacts:
         status = StepStatus.FAILED
@@ -114,9 +109,7 @@ def _finalize_step(
         status = StepStatus.PARTIAL
     else:
         status = StepStatus.SUCCEEDED
-    return step.model_copy(
-        update={"status": status, "outputs": [a.id for a in artifacts]}
-    )
+    return step.model_copy(update={"status": status, "outputs": [a.id for a in artifacts]})
 
 
 # ── data collection helpers ───────────────────────────────────────────
@@ -143,7 +136,8 @@ def _first_symbol(query: str) -> str | None:
 
 
 async def collect_raw_facts(
-    state: OrchestratorState, config: RunnableConfig,
+    state: OrchestratorState,
+    config: RunnableConfig,
 ) -> OrchestratorState:
     """Concurrently run FactCollector LLM agent and structured model extraction.
 
@@ -213,7 +207,8 @@ async def collect_raw_facts(
             # financial_facts 会被衍生指标、异常检测直接消费，
             # 所以这里与 LLM narrative 并行拉取，尽量缩短首轮数据准备时间。
             financial_facts = await asyncio.to_thread(
-                get_financial_facts_model, symbol,
+                get_financial_facts_model,
+                symbol,
             )
         except Exception as exc:
             issues.append(
@@ -229,7 +224,8 @@ async def collect_raw_facts(
             # market_facts 提供估值、总市值等市场维度事实，
             # 它既参与信号计算，也会帮助 thesis 判断公司所处估值语境。
             market_facts = await asyncio.to_thread(
-                get_market_facts_model, symbol,
+                get_market_facts_model,
+                symbol,
             )
         except Exception as exc:
             issues.append(

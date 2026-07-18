@@ -13,8 +13,8 @@ from typing import Any
 
 import baostock as bs  # type: ignore[import-untyped]
 import pandas as pd
-from pymongo import MongoClient
 from alpha_arena.utils import get_logger
+from pymongo import MongoClient
 
 MONGO_HOST = "mongodb://root:cyw271828@localhost:27017/"
 MONGO_DATABASE = "prosera"
@@ -66,9 +66,7 @@ class BaostockResult:
             mongo_collection = client[MONGO_DATABASE][collection_name]
             mongo_collection.insert_many(self.data.to_dict("records"))
         else:
-            logger.warning(
-                "No data to save to MongoDB", collection_name=collection_name
-            )
+            logger.warning("No data to save to MongoDB", collection_name=collection_name)
 
     def save_to_mongo(
         self,
@@ -171,9 +169,7 @@ class BaostockHelper:
         else:
             df = pd.DataFrame()
 
-        return BaostockResult(
-            df, table_name="stock_ohlcv", tag_columns=["code", "frequency", "date"]
-        )
+        return BaostockResult(df, table_name="stock_ohlcv", tag_columns=["code", "frequency", "date"])
 
     def minute(
         self,
@@ -206,9 +202,7 @@ class BaostockHelper:
         else:
             df = pd.DataFrame()
 
-        return BaostockResult(
-            df, table_name="stock_ohlcv", tag_columns=["code", "frequency", "date"]
-        )
+        return BaostockResult(df, table_name="stock_ohlcv", tag_columns=["code", "frequency", "date"])
 
     def all_stocks(self) -> BaostockResult:
         """Fetch all stock codes available in Baostock."""

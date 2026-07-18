@@ -22,9 +22,7 @@ def record_signal_data_gaps(
         rule = SIGNAL_RULES.get(signal_id)
         declared_fields: list[str] = []
         if rule is not None:
-            declared_fields = list(rule.required_facts or []) + list(
-                rule.required_derived_facts or []
-            )
+            declared_fields = list(rule.required_facts or []) + list(rule.required_derived_facts or [])
 
         missing = [field for field in declared_fields if field not in fact_values]
         blocked_by = result.get("blocked_by", [])
@@ -48,4 +46,3 @@ def record_signal_data_gaps(
             )
         except Exception:
             pass
-

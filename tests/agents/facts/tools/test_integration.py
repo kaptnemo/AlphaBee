@@ -17,10 +17,10 @@ Key verification points:
 from __future__ import annotations
 
 import os
+
 import pytest
 
 from alphabee.agents.facts.tools._utils import normalize_ts_code, to_pure_code
-
 
 # ──────────────────────────────────────────────────────────────────────
 # Helpers
@@ -47,6 +47,7 @@ def _clear_caches():
         "alphabee.agents.facts.tools.risk_fact",
     ]
     import importlib
+
     for mod_path in modules_to_clear:
         try:
             mod = importlib.import_module(mod_path)
@@ -105,12 +106,12 @@ class TestUtilsIntegration:
 
 
 class TestCompanyProfileIntegration:
-
     @tushare_required
     def test_fetches_moutai_data(self):
         """贵州茅台 — well-known blue chip with complete data."""
         from alphabee.agents.facts.tools.company_profile import (
-            get_company_profile, render,
+            get_company_profile,
+            render,
         )
 
         data = get_company_profile(_KWEICHOW_MOUTAI)
@@ -146,7 +147,8 @@ class TestCompanyProfileIntegration:
     def test_render_contains_expected_sections(self):
         """render must show all key sections from real data."""
         from alphabee.agents.facts.tools.company_profile import (
-            get_company_profile, render,
+            get_company_profile,
+            render,
         )
 
         data = get_company_profile(_KWEICHOW_MOUTAI)
@@ -163,7 +165,6 @@ class TestCompanyProfileIntegration:
 
 
 class TestFinancialFactIntegration:
-
     @tushare_required
     def test_fetches_multi_period_and_adapter_works(self):
         """Full pipeline: API → adapter → dedup → canonical fields."""
@@ -208,7 +209,8 @@ class TestFinancialFactIntegration:
     def test_extract_financial_facts_feeds_engines(self):
         """extract_financial_facts output is used by DerivedFacts/Signal."""
         from alphabee.agents.facts.tools.financial_fact import (
-            get_financial_fact, extract_financial_facts,
+            extract_financial_facts,
+            get_financial_fact,
         )
 
         data = get_financial_fact(_KWEICHOW_MOUTAI, periods=4)
@@ -223,7 +225,8 @@ class TestFinancialFactIntegration:
     def test_render_produces_all_tables(self):
         """render generates all expected Markdown tables."""
         from alphabee.agents.facts.tools.financial_fact import (
-            get_financial_fact, render,
+            get_financial_fact,
+            render,
         )
 
         data = get_financial_fact(_KWEICHOW_MOUTAI, periods=4)
@@ -247,7 +250,6 @@ class TestFinancialFactIntegration:
 
 
 class TestMarketFactIntegration:
-
     @tushare_required
     def test_fetches_latest_market_and_adapter_works(self):
         from alphabee.agents.facts.tools.market_fact import get_market_fact
@@ -269,7 +271,8 @@ class TestMarketFactIntegration:
     @tushare_required
     def test_extract_market_facts_for_engines(self):
         from alphabee.agents.facts.tools.market_fact import (
-            get_market_fact, extract_market_facts,
+            extract_market_facts,
+            get_market_fact,
         )
 
         data = get_market_fact(_KWEICHOW_MOUTAI)
@@ -283,7 +286,8 @@ class TestMarketFactIntegration:
     @tushare_required
     def test_render_has_sections(self):
         from alphabee.agents.facts.tools.market_fact import (
-            get_market_fact, render,
+            get_market_fact,
+            render,
         )
 
         data = get_market_fact(_KWEICHOW_MOUTAI)
@@ -300,7 +304,6 @@ class TestMarketFactIntegration:
 
 
 class TestOperationFactIntegration:
-
     @tushare_required
     def test_adapter_renames_correctly(self):
         """After fix: adapted names present, raw names absent."""
@@ -324,7 +327,8 @@ class TestOperationFactIntegration:
     def test_render_uses_adapted_names(self):
         """render must find adapted field names in data."""
         from alphabee.agents.facts.tools.operation_fact import (
-            get_operation_fact, render,
+            get_operation_fact,
+            render,
         )
 
         data = get_operation_fact(_KWEICHOW_MOUTAI)
@@ -338,7 +342,6 @@ class TestOperationFactIntegration:
 
 
 class TestIndustryFactIntegration:
-
     @tushare_required
     def test_sw_classification_found(self):
         """贵州茅台 should match 白酒 SW industry."""
@@ -370,7 +373,8 @@ class TestIndustryFactIntegration:
     @tushare_required
     def test_render_renders(self):
         from alphabee.agents.facts.tools.industry_fact import (
-            get_industry_fact, render,
+            get_industry_fact,
+            render,
         )
 
         data = get_industry_fact(_KWEICHOW_MOUTAI)
@@ -384,7 +388,6 @@ class TestIndustryFactIntegration:
 
 
 class TestCompetitionFactIntegration:
-
     def test_local_csv_peer_list_works(self):
         """Basic peer info comes from local CSV — works without Tushare."""
         from alphabee.agents.facts.tools.competition_fact import get_competition_fact
@@ -399,7 +402,8 @@ class TestCompetitionFactIntegration:
     def test_render_with_local_data(self):
         """render works even without Tushare market data."""
         from alphabee.agents.facts.tools.competition_fact import (
-            get_competition_fact, render,
+            get_competition_fact,
+            render,
         )
 
         data = get_competition_fact("600519.SH", max_peers=3)
@@ -421,8 +425,11 @@ class TestCompetitionFactIntegration:
         from alphabee.agents.facts.tools.competition_fact import render
 
         data = {
-            "stock_code": "999999.SH", "company_name": "",
-            "industry": "", "total_peers": 0, "peers": [],
+            "stock_code": "999999.SH",
+            "company_name": "",
+            "industry": "",
+            "total_peers": 0,
+            "peers": [],
         }
         output = render(data)
         assert len(output) > 0
@@ -452,7 +459,6 @@ class TestCompetitionFactIntegration:
 
 
 class TestExpectationFactIntegration:
-
     @tushare_required
     def test_adapter_renames_correctly(self):
         """After fix: forecast/express use adapted field names."""
@@ -481,7 +487,8 @@ class TestExpectationFactIntegration:
     @tushare_required
     def test_render_all_paths_work(self):
         from alphabee.agents.facts.tools.expectation_fact import (
-            get_expectation_fact, render,
+            get_expectation_fact,
+            render,
         )
 
         data = get_expectation_fact(_KWEICHOW_MOUTAI)
@@ -495,7 +502,6 @@ class TestExpectationFactIntegration:
 
 
 class TestRiskFactIntegration:
-
     def test_akshare_news_without_tushare(self):
         """AkShare news works without Tushare token."""
         from alphabee.agents.facts.tools.risk_fact import get_risk_fact
@@ -514,7 +520,8 @@ class TestRiskFactIntegration:
 
     def test_render_with_real_data(self):
         from alphabee.agents.facts.tools.risk_fact import (
-            get_risk_fact, render,
+            get_risk_fact,
+            render,
         )
 
         data = get_risk_fact(_KWEICHOW_MOUTAI)
@@ -563,7 +570,6 @@ class TestRiskFactIntegration:
 
 
 class TestModelExtraction:
-
     @tushare_required
     def test_financial_facts_model(self):
         from alphabee.agents.facts.tools.financial_fact import get_financial_facts_model
@@ -607,15 +613,14 @@ class TestCollectFactsPipeline:
     @pytest.mark.asyncio
     async def test_collect_facts_full_pipeline(self):
         """Run the complete collect_facts node with real data."""
-        from alphabee.orchestrator.collectors import collect_facts
-        from alphabee.orchestrator.state import OrchestratorState
-        from alphabee.core import RunStatus
         from langchain_core.messages import HumanMessage
 
+        from alphabee.core import RunStatus
+        from alphabee.orchestrator.collectors import collect_facts
+        from alphabee.orchestrator.state import OrchestratorState
+
         state: OrchestratorState = {
-            "messages": [
-                HumanMessage(content="帮我分析一下贵州茅台(600519)的投资价值")
-            ],
+            "messages": [HumanMessage(content="帮我分析一下贵州茅台(600519)的投资价值")],
         }
 
         result = await collect_facts(state, {})
@@ -627,7 +632,9 @@ class TestCollectFactsPipeline:
 
         run_obj = result["run"]
         assert run_obj.status in {
-            RunStatus.RUNNING, RunStatus.SUCCEEDED, RunStatus.PARTIAL,
+            RunStatus.RUNNING,
+            RunStatus.SUCCEEDED,
+            RunStatus.PARTIAL,
         }
 
         steps = result["steps"]
@@ -639,13 +646,9 @@ class TestCollectFactsPipeline:
 
         # DerivedFacts and Signal engines should produce output
         if "derived_facts" in artifact_types:
-            df_artifact = next(
-                a for a in artifacts if a.type == "derived_facts"
-            )
+            df_artifact = next(a for a in artifacts if a.type == "derived_facts")
             assert df_artifact.value.get("rule_count", 0) > 0
 
         if "signal_analysis" in artifact_types:
-            sig_artifact = next(
-                a for a in artifacts if a.type == "signal_analysis"
-            )
+            sig_artifact = next(a for a in artifacts if a.type == "signal_analysis")
             assert sig_artifact.value.get("rule_count", 0) > 0

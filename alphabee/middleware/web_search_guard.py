@@ -18,7 +18,8 @@
 
 import re
 from dataclasses import dataclass
-from langchain.agents.middleware import wrap_tool_call, ToolCallRequest
+
+from langchain.agents.middleware import ToolCallRequest, wrap_tool_call
 from langchain_core.messages import ToolMessage
 
 # ---------------------------------------------------------------------------
@@ -27,10 +28,10 @@ from langchain_core.messages import ToolMessage
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("股票价格/涨跌",   re.compile(r"(股价|现价|最新价|收盘价|开盘价|涨跌幅|涨停|跌停|今日.*价|当前.*价|price)", re.I)),
-    ("市值/估值指标",   re.compile(r"(pe|pb|ps|市盈率|市净率|市销率|总市值|流通市值|估值)", re.I)),
-    ("财务数字",        re.compile(r"(营收|净利润|毛利率|roe|roa|eps|每股收益|现金流|负债率|利润率)", re.I)),
-    ("行业行情数据",    re.compile(r"(行业.*涨跌|板块.*涨幅|行业.*pe|行业.*估值|板块.*市值)", re.I)),
+    ("股票价格/涨跌", re.compile(r"(股价|现价|最新价|收盘价|开盘价|涨跌幅|涨停|跌停|今日.*价|当前.*价|price)", re.I)),
+    ("市值/估值指标", re.compile(r"(pe|pb|ps|市盈率|市净率|市销率|总市值|流通市值|估值)", re.I)),
+    ("财务数字", re.compile(r"(营收|净利润|毛利率|roe|roa|eps|每股收益|现金流|负债率|利润率)", re.I)),
+    ("行业行情数据", re.compile(r"(行业.*涨跌|板块.*涨幅|行业.*pe|行业.*估值|板块.*市值)", re.I)),
 ]
 
 # 结果末尾追加的免责声明
@@ -46,6 +47,7 @@ _RESULT_DISCLAIMER = (
 # Post-call：数值型数据扫描规则
 # 每条规则：(分类标签, 正则, 推荐工具函数名, 推荐 Agent 名)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _ScanRule:
@@ -157,12 +159,14 @@ def _scan_numeric_hits(content: str) -> list[dict]:
                 break
         if snippets:
             seen.add(rule.category)
-            hits.append({
-                "category": rule.category,
-                "snippets": snippets,
-                "tool": rule.tool,
-                "agent": rule.agent,
-            })
+            hits.append(
+                {
+                    "category": rule.category,
+                    "snippets": snippets,
+                    "tool": rule.tool,
+                    "agent": rule.agent,
+                }
+            )
 
     return hits
 
@@ -205,6 +209,7 @@ def _build_verify_directive(hits: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 # Middleware：pre-call 拦截 + post-call 声明 + post-call 数值扫描
 # ---------------------------------------------------------------------------
+
 
 @wrap_tool_call
 async def web_search_guard(request: ToolCallRequest, handler):
@@ -255,4 +260,3 @@ async def web_search_guard(request: ToolCallRequest, handler):
         content=content,
         tool_call_id=result.tool_call_id,
     )
-

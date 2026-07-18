@@ -1,7 +1,7 @@
-from pathlib import Path
-from functools import singledispatchmethod
 import ast
 import operator as op
+from functools import singledispatchmethod
+from pathlib import Path
 from typing import Any
 
 RULES_DIR = Path(__file__).resolve().parent / "rules"
@@ -106,7 +106,7 @@ class DerivedFactRule:
     @singledispatchmethod
     def __init__(self, fact_name: str):
         raise NotImplementedError("Unsupported type for fact_name")
-    
+
     @__init__.register(str)
     def _from_fact_name(self, fact_name: str):
         self.name = fact_name
@@ -124,7 +124,7 @@ class DerivedFactRule:
     def load_definition(self):
         import yaml
 
-        with open(self.fact_definition_file, "r", encoding="utf-8") as f:
+        with open(self.fact_definition_file, encoding="utf-8") as f:
             data = yaml.safe_load(f)
             self.description = data.get("description", "")
             self.formula = data.get("formula", "")
@@ -133,7 +133,6 @@ class DerivedFactRule:
             self.required_facts = data.get("required_facts", [])
             self.required_derived_facts = data.get("required_derived_facts", [])
 
-    
     def compute(
         self,
         fact_values: dict[str, float],
@@ -190,6 +189,8 @@ class DerivedFactRule:
 
 
 RULES = {}
+
+
 def load_rules():
     for rule_file in RULES_DIR.glob("*.yaml"):
         rule = DerivedFactRule(rule_file)
@@ -200,5 +201,5 @@ if __name__ == "__main__":
     load_rules()
     print(RULES)
     asset_turnover = RULES["asset_turnover"]
-    fact_values = {'revenue': 100000, 'total_assets': 78888}
+    fact_values = {"revenue": 100000, "total_assets": 78888}
     print(asset_turnover.compute(fact_values))

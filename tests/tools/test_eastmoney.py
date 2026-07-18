@@ -1,7 +1,4 @@
 from types import SimpleNamespace
-from pathlib import Path
-
-import pytest
 
 import alphabee.tools.eastmoney as eastmoney_tools
 
@@ -43,9 +40,7 @@ def test_get_eastmoney_report_list(monkeypatch):
 
 
 def test_get_eastmoney_report_detail_by_info_code(monkeypatch):
-    detail = SimpleNamespace(
-        to_dict=lambda: {"info_code": "AP001", "industry_code": "1033"}
-    )
+    detail = SimpleNamespace(to_dict=lambda: {"info_code": "AP001", "industry_code": "1033"})
 
     def fake_fetch_report_detail_by_info_code(self, session, info_code, timeout=20):
         return detail

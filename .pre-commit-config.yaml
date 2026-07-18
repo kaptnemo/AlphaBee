@@ -1,0 +1,43 @@
+default_stages:
+  - pre-commit
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: debug-statements
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: pyupgrade
+        name: pyupgrade (local)
+        entry: poetry run pyupgrade
+        language: system
+        types: [python]
+        args: ["--py313-plus"]
+        pass_filenames: true
+      - id: mypy
+        name: mypy
+        entry: poetry run mypy alphabee
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: pytest-non-integration
+        name: pytest (not integration)
+        entry: poetry run pytest -m "not integration"
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

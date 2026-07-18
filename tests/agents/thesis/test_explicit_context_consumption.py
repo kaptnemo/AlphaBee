@@ -66,8 +66,7 @@ def test_thesis_engine_explicitly_consumes_anomaly_conflict_and_verification():
 
     assert dim.judgment in ("negative", "strong_negative")
     assert any(
-        item.source_type == "anomaly" and item.signal_id == "anomaly_pattern:inflated_revenue"
-        for item in dim.evidence
+        item.source_type == "anomaly" and item.signal_id == "anomaly_pattern:inflated_revenue" for item in dim.evidence
     )
     assert any(item.source_type == "conflict" for item in dim.evidence)
     assert "行业因素解释不成立。" in dim.counter_evidence

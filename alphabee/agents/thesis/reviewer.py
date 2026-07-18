@@ -142,16 +142,11 @@ class ThesisReviewer:
                 elif impact == "slightly_negative":
                     negative += 1
             if positive > 0 and negative > 0:
-                issues.append(
-                    f"信号方向冲突：{positive} 条正面 vs {negative} 条负面"
-                )
+                issues.append(f"信号方向冲突：{positive} 条正面 vs {negative} 条负面")
                 # Severe conflict: strong-vs-strong or multi-signal clashes.
                 # Note: none-level "positive" evidence is NOT counted as strong_positive
                 # because it represents absence-of-risk, not an affirmative positive finding.
-                is_severe = (
-                    (strong_positive >= 1 and strong_negative >= 1)
-                    or (positive >= 2 and negative >= 2)
-                )
+                is_severe = (strong_positive >= 1 and strong_negative >= 1) or (positive >= 2 and negative >= 2)
                 if is_severe:
                     if status != "insufficient":
                         status = "contested"
@@ -167,9 +162,11 @@ class ThesisReviewer:
         if status == "contested" and evidence and confidence > 0:
             # Count direction and severity of evidence vs thesis judgment
             _JUDGMENT_DIRECTION: dict[str, str] = {
-                "strong_positive": "positive", "positive": "positive",
+                "strong_positive": "positive",
+                "positive": "positive",
                 "neutral": "neutral",
-                "strong_negative": "negative", "negative": "negative",
+                "strong_negative": "negative",
+                "negative": "negative",
             }
             thesis_dir = _JUDGMENT_DIRECTION.get(judgment, "neutral")
             thesis_is_extreme = judgment.startswith("strong_")
@@ -179,17 +176,13 @@ class ThesisReviewer:
                 (thesis_dir == "positive" and strong_negative >= 1)
                 or (thesis_dir == "negative" and strong_positive >= 1)
             ):
-                issues.append(
-                    f"thesis 判断为{judgment}但存在较强反向信号，评分与证据方向存在结构性矛盾"
-                )
+                issues.append(f"thesis 判断为{judgment}但存在较强反向信号，评分与证据方向存在结构性矛盾")
 
             # Thesis neutral → conflict already priced in via weighted avg
             elif thesis_dir == "neutral":
                 status = "qualified"
                 suggested_action = "downgrade_confidence"
-                issues.append(
-                    "信号方向虽有分歧但综合评分已给出中性判断，分歧已在加权平均中消化"
-                )
+                issues.append("信号方向虽有分歧但综合评分已给出中性判断，分歧已在加权平均中消化")
 
             # Thesis negative but negative signals dominate → thesis aligned
             elif thesis_dir == "negative" and negative >= positive:
@@ -203,15 +196,11 @@ class ThesisReviewer:
             elif thesis_dir == "positive" and positive >= negative:
                 status = "qualified"
                 suggested_action = "downgrade_confidence"
-                issues.append(
-                    "多空信号并存但 positive 方向占优，与 thesis 判断一致，仅需关注负面信号的后续演变"
-                )
+                issues.append("多空信号并存但 positive 方向占优，与 thesis 判断一致，仅需关注负面信号的后续演变")
 
             # Surviving contested: thesis direction contradicts evidence majority
             else:
-                issues.append(
-                    f"thesis 判断方向与证据多数方向不一致，存在结构性矛盾"
-                )
+                issues.append("thesis 判断方向与证据多数方向不一致，存在结构性矛盾")
 
         # ── Rule 4: industry-context-aware calibration ──
         _HIGH_LEVERAGE_INDUSTRIES = {"银行", "证券", "保险", "房地产", "建筑装饰"}
@@ -222,32 +211,20 @@ class ThesisReviewer:
             if not ctx.industry:
                 issues.append("缺少行业负债率基准，杠杆判断可能需要校准")
             elif ctx.industry in _HIGH_LEVERAGE_INDUSTRIES:
-                issues.append(
-                    f"{ctx.industry}行业天然高杠杆，负债率较高可能属于正常经营特征"
-                )
+                issues.append(f"{ctx.industry}行业天然高杠杆，负债率较高可能属于正常经营特征")
 
         if dim_id == "earnings_quality" and ctx.industry:
-            if ctx.industry in _HIGH_RD_INDUSTRIES and (
-                judgment in ("negative", "strong_negative")
-            ):
-                issues.append(
-                    f"{ctx.industry}行业研发投入高，短期盈利弱化可能是战略投入而非经营恶化"
-                )
+            if ctx.industry in _HIGH_RD_INDUSTRIES and (judgment in ("negative", "strong_negative")):
+                issues.append(f"{ctx.industry}行业研发投入高，短期盈利弱化可能是战略投入而非经营恶化")
                 if status == "contested":
                     status = "qualified"
                     suggested_action = "reconsider_with_context"
 
         if dim_id == "financial_quality" and ctx.industry:
             if ctx.industry in _FINANCIAL_INDUSTRIES:
-                issues.append(
-                    f"{ctx.industry}行业财务报表结构与一般企业不同，部分通用财务指标适用性有限"
-                )
-            if ctx.lifecycle_stage == "growth" and (
-                judgment in ("negative", "strong_negative")
-            ):
-                issues.append(
-                    "成长期公司盈利指标偏低可能是加速扩张的正常代价"
-                )
+                issues.append(f"{ctx.industry}行业财务报表结构与一般企业不同，部分通用财务指标适用性有限")
+            if ctx.lifecycle_stage == "growth" and (judgment in ("negative", "strong_negative")):
+                issues.append("成长期公司盈利指标偏低可能是加速扩张的正常代价")
                 if status == "contested":
                     status = "qualified"
                     suggested_action = "reconsider_with_context"
@@ -258,10 +235,7 @@ class ThesisReviewer:
             dimension_name=dim_name,
             status=status,
             evidence_count=len(evidence),
-            key_evidence=[
-                e.signal_id if hasattr(e, "signal_id") else str(e)
-                for e in evidence[:3]
-            ],
+            key_evidence=[e.signal_id if hasattr(e, "signal_id") else str(e) for e in evidence[:3]],
             missing_evidence=[],
             conflicting_signals=[],
             conflict_description="",
@@ -298,10 +272,12 @@ class ThesisReviewer:
             company_context_json=context_json,
         )
 
-        response = self._llm.invoke([
-            SystemMessage(content=REVIEWER_SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
-        ])
+        response = self._llm.invoke(
+            [
+                SystemMessage(content=REVIEWER_SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ]
+        )
         raw_text = self._extract_text(response.content)
         return self._parse_json(raw_text)
 
@@ -331,9 +307,7 @@ class ThesisReviewer:
                 v.conflict_description = review.get("consistency_rationale", "")
 
             if not review.get("context_appropriate", True):
-                v.issues.append(
-                    "语境不适配：" + review.get("context_rationale", "需结合行业背景校准")
-                )
+                v.issues.append("语境不适配：" + review.get("context_rationale", "需结合行业背景校准"))
 
             missing = review.get("missing_checks", [])
             if missing:
@@ -382,10 +356,7 @@ class ThesisReviewer:
             period=thesis.period,
             dimension_verdicts=verdicts,
             overall_status=overall_status,
-            overall_rationale=(
-                f"最差维度状态: {worst_status}。"
-                f"{len(blocking)} 项阻断性问题, {len(warnings)} 项警告。"
-            ),
+            overall_rationale=(f"最差维度状态: {worst_status}。{len(blocking)} 项阻断性问题, {len(warnings)} 项警告。"),
             blocking_issues=blocking,
             warning_issues=warnings,
             llm_review_applied=llm_applied,

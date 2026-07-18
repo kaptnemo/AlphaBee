@@ -15,6 +15,7 @@ def _ensure_loaded() -> None:
         load_signal_rules()
         _initialized = True
 
+
 # 档位中文映射
 _LEVEL_LABELS: dict[str, str] = {
     "high": "🔴 高风险",
@@ -56,9 +57,7 @@ def list_signal_rules() -> str:
     for rule_id, rule in sorted(SIGNAL_RULES.items()):
         facts_str = ", ".join(f"`{f}`" for f in rule.required_facts) or "—"
         derived_str = ", ".join(f"`{f}`" for f in rule.required_derived_facts) or "—"
-        lines.append(
-            f"| `{rule_id}` | {rule.name} | {rule.category} | {facts_str} | {derived_str} |"
-        )
+        lines.append(f"| `{rule_id}` | {rule.name} | {rule.category} | {facts_str} | {derived_str} |")
 
     return "\n".join(lines)
 
@@ -99,9 +98,7 @@ def evaluate_signals(
     sections: list[str] = []
 
     if unknown_rules:
-        sections.append(
-            f"> ⚠️ 未知规则（已跳过）：{', '.join(f'`{r}`' for r in unknown_rules)}\n"
-        )
+        sections.append(f"> ⚠️ 未知规则（已跳过）：{', '.join(f'`{r}`' for r in unknown_rules)}\n")
 
     if not valid_rules:
         sections.append("没有可评估的规则，请检查规则 ID 和字段输入。")
@@ -152,10 +149,7 @@ def _format_signal_result(name: str, result: dict) -> str:
         block.append(f"\n**解释**：{interpretation}")
 
     if thesis_impact:
-        impact_lines = [
-            f"  - {dim}：{_IMPACT_LABELS.get(impact, impact)}"
-            for dim, impact in thesis_impact.items()
-        ]
+        impact_lines = [f"  - {dim}：{_IMPACT_LABELS.get(impact, impact)}" for dim, impact in thesis_impact.items()]
         block.append("\n**Thesis 影响**：\n" + "\n".join(impact_lines))
 
     if critic_questions:

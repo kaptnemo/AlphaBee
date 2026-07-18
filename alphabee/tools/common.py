@@ -1,14 +1,13 @@
 """Common tools — general-purpose utilities available to all agents."""
 
-import re
 import asyncio
+import re
+from pathlib import Path
 from typing import Literal
 
-from pathlib import Path
-
 import structlog
-from pydantic import BaseModel, Field
 from opencc import OpenCC
+from pydantic import BaseModel, Field
 
 from alphabee.config import settings
 
@@ -19,8 +18,10 @@ logger = structlog.get_logger(__name__)
 # Result models
 # ---------------------------------------------------------------------------
 
+
 class SearchResult(BaseModel):
     """单条搜索结果"""
+
     title: str = Field(description="结果标题")
     url: str = Field(description="来源 URL")
     snippet: str = Field(description="摘要内容")
@@ -29,6 +30,7 @@ class SearchResult(BaseModel):
 
 class WebSearchResponse(BaseModel):
     """网络搜索结果汇总"""
+
     query: str = Field(description="搜索查询词")
     answer: str = Field(default="", description="AI 生成的综合摘要（仅 Tavily 提供）")
     results: list[SearchResult] = Field(description="搜索结果列表")
@@ -38,6 +40,7 @@ class WebSearchResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------
+
 
 def _format_response(resp: WebSearchResponse) -> str:
     """Convert WebSearchResponse to a concise LLM-readable string."""
@@ -56,6 +59,7 @@ def _format_response(resp: WebSearchResponse) -> str:
 # Tavily backend
 # ---------------------------------------------------------------------------
 
+
 async def _search_tavily(
     query: str,
     topic: str,
@@ -64,7 +68,7 @@ async def _search_tavily(
 ) -> WebSearchResponse:
     cfg = settings.web_search.tavily
     if not cfg.api_key:
-        raise EnvironmentError("Tavily API key not configured (TAVILY_API_KEY or config.yaml)")
+        raise OSError("Tavily API key not configured (TAVILY_API_KEY or config.yaml)")
 
     from tavily import AsyncTavilyClient
 
@@ -87,7 +91,7 @@ async def _search_tavily(
     if days is not None:
         search_kwargs["days"] = days
 
-    cc = OpenCC('t2s')
+    cc = OpenCC("t2s")
 
     raw: dict = await client.search(**search_kwargs)
 
@@ -112,6 +116,7 @@ async def _search_tavily(
 # DDGS fallback backend (ddgs package, sync → asyncio.to_thread)
 # ---------------------------------------------------------------------------
 
+
 def _search_ddg_sync(
     query: str,
     max_results: int,
@@ -123,13 +128,16 @@ def _search_ddg_sync(
 
     def _run(tl: str | None) -> list[dict]:
         with DDGS(proxy=cfg.proxy_url, timeout=cfg.timeout) as ddgs:
-            return ddgs.text(
-                query,
-                region=cfg.region,
-                safesearch="off",
-                timelimit=tl,
-                max_results=max_results,
-            ) or []
+            return (
+                ddgs.text(
+                    query,
+                    region=cfg.region,
+                    safesearch="off",
+                    timelimit=tl,
+                    max_results=max_results,
+                )
+                or []
+            )
 
     raw: list[dict] = []
     try:
@@ -179,6 +187,7 @@ async def _search_ddgs(
 # Public tool function
 # ---------------------------------------------------------------------------
 
+
 async def web_search(
     query: str,
     topic: Literal["general", "news", "finance"] = "general",
@@ -218,7 +227,7 @@ async def web_search(
         resp = await _search_tavily(query, topic, n, days)
         logger.info("web_search.tavily_ok", query=query, n=len(resp.results))
         return _format_response(resp)
-    except EnvironmentError as exc:
+    except OSError as exc:
         logger.info("web_search.tavily_skip", reason=str(exc))
     except Exception as exc:
         logger.warning("web_search.tavily_failed", error=str(exc), query=query)
@@ -237,10 +246,7 @@ async def web_search(
         return _format_response(resp)
     except Exception as exc:
         logger.error("web_search.ddg_failed", error=str(exc), query=query)
-        return (
-            f"搜索失败（查询: {query}）：{exc}\n"
-            "提示：在 config.yaml 中配置 TAVILY_API_KEY 可获得更稳定的搜索结果。"
-        )
+        return f"搜索失败（查询: {query}）：{exc}\n提示：在 config.yaml 中配置 TAVILY_API_KEY 可获得更稳定的搜索结果。"
 
 
 def extract_symbols_from_query(query: str) -> dict[str, str]:
@@ -257,10 +263,13 @@ def extract_symbols_from_query(query: str) -> dict[str, str]:
 
     if all_stocks_path.exists():
         import pandas as pd
+
         df = pd.read_csv(all_stocks_path)
         company_map = dict(zip(df["company_name"], df["stock_code"]))
     else:
-        raise FileNotFoundError(f"Stock list not found at {all_stocks_path}. Please run the tushare collector to generate it.")
+        raise FileNotFoundError(
+            f"Stock list not found at {all_stocks_path}. Please run the tushare collector to generate it."
+        )
 
     symbols = []
     for name, code in company_map.items():

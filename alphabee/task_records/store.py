@@ -31,9 +31,7 @@ class TaskStore:
     """
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
-        self.base_dir = (
-            Path(base_dir) if base_dir is not None else get_data_root() / "task_records"
-        )
+        self.base_dir = Path(base_dir) if base_dir is not None else get_data_root() / "task_records"
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     # ── 写入 ──────────────────────────────────────────────────────────
@@ -66,9 +64,7 @@ class TaskStore:
             return None
         for filepath in self.base_dir.rglob(f"{task_id}.json"):
             if filepath.is_file():
-                return TaskRecord.model_validate_json(
-                    filepath.read_text(encoding="utf-8")
-                )
+                return TaskRecord.model_validate_json(filepath.read_text(encoding="utf-8"))
         return None
 
     def load_all(self, limit: int = 100) -> list[TaskRecord]:
@@ -76,11 +72,7 @@ class TaskStore:
         records: list[TaskRecord] = []
         for filepath in self.list_files(limit):
             try:
-                records.append(
-                    TaskRecord.model_validate_json(
-                        filepath.read_text(encoding="utf-8")
-                    )
-                )
+                records.append(TaskRecord.model_validate_json(filepath.read_text(encoding="utf-8")))
             except Exception:
                 continue
         return records

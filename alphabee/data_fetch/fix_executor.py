@@ -18,7 +18,6 @@ Workflow::
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
@@ -100,10 +99,10 @@ async def prepare_and_run_fix(task_id: int) -> FixResult:
     )
 
     # ── invoke Claude agent ───────────────────────────────────────────
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Claude Agent is fixing: {issue['title']}")
     print(f"Branch: {fix_branch}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     try:
         full_output: list[str] = []
@@ -124,11 +123,13 @@ async def prepare_and_run_fix(task_id: int) -> FixResult:
         # ── check for CANNOT_FIX marker ────────────────────────────────
         if "CANNOT_FIX" in combined:
             _update_task_status(task_id, TaskStatus.FAILED)
-            reason = combined.split("CANNOT_FIX:", 1)[1].split("\n")[0].strip() if "CANNOT_FIX:" in combined else "unknown"
-            print(f"\n{'='*60}")
+            reason = (
+                combined.split("CANNOT_FIX:", 1)[1].split("\n")[0].strip() if "CANNOT_FIX:" in combined else "unknown"
+            )
+            print(f"\n{'=' * 60}")
             print(f"Agent cannot fix this issue: {reason}")
             print(f"Task #{task_id} marked as FAILED.")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             return FixResult(
                 success=False,
                 message=f"CANNOT_FIX: {reason}",
@@ -137,11 +138,11 @@ async def prepare_and_run_fix(task_id: int) -> FixResult:
 
         verify_result = verify_and_submit(task_id)
         if verify_result.success:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print("Agent fix completed and submitted.")
             if verify_result.mr_url:
                 print(f"MR: {verify_result.mr_url}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             return verify_result
 
         return verify_result
@@ -191,9 +192,7 @@ def verify_and_submit(task_id: int) -> FixResult:
         base_branch = _get_default_base_branch()
         ahead_count = 0
         try:
-            ahead_count = int(
-                _run_git("rev-list", "--count", f"{base_branch}..HEAD").strip() or "0"
-            )
+            ahead_count = int(_run_git("rev-list", "--count", f"{base_branch}..HEAD").strip() or "0")
         except RuntimeError:
             ahead_count = 0
 
@@ -320,27 +319,19 @@ def _load_task(task_id: int) -> dict | None:
     init_db()
     session = get_session()
     try:
-        task = (
-            session.query(DataFixTask)
-            .filter(DataFixTask.task_id == task_id)
-            .first()
-        )
+        task = session.query(DataFixTask).filter(DataFixTask.task_id == task_id).first()
         if task is None:
             return None
 
-        issue = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.issue_id == task.issue_id)
-            .first()
-        )
+        issue = session.query(DataFetchIssue).filter(DataFetchIssue.issue_id == task.issue_id).first()
         if issue is None:
             return None
 
         sample_event = (
-            session.query(DataFetchEvent)
-            .filter(DataFetchEvent.event_id == issue.sample_event_id)
-            .first()
-        ) if issue.sample_event_id else None
+            (session.query(DataFetchEvent).filter(DataFetchEvent.event_id == issue.sample_event_id).first())
+            if issue.sample_event_id
+            else None
+        )
 
         return {
             "task_status": task.status.value,
@@ -364,7 +355,9 @@ def _load_task(task_id: int) -> dict | None:
                 "severity": sample_event.severity.value if sample_event else "N/A",
                 "request_payload": sample_event.request_payload if sample_event else None,
                 "missing_fields": sample_event.missing_fields if sample_event else None,
-            } if sample_event else None,
+            }
+            if sample_event
+            else None,
             "task_context": task.prompt_context,
             "fix_branch": f"fix/data-fetch-{issue.issue_id}",
         }
@@ -391,7 +384,7 @@ def _build_prompt(
     parts = [
         "# Auto-Fix Data Fetch Failure",
         "",
-        f"You are fixing a data fetch failure in the AlphaBee project.",
+        "You are fixing a data fetch failure in the AlphaBee project.",
         f"You are on git branch `{fix_branch}`.",
         f"You are working on task #{task_id}.",
         "",
@@ -407,20 +400,18 @@ def _build_prompt(
     ]
 
     if sample_event:
-        parts.extend([
-            "## Sample Failure",
-            f"- **Symbol**: {sample_event.get('symbol') or 'N/A'}",
-            f"- **Error**: {sample_event.get('error_message') or 'N/A'}",
-            f"- **Severity**: {sample_event.get('severity')}",
-        ])
+        parts.extend(
+            [
+                "## Sample Failure",
+                f"- **Symbol**: {sample_event.get('symbol') or 'N/A'}",
+                f"- **Error**: {sample_event.get('error_message') or 'N/A'}",
+                f"- **Severity**: {sample_event.get('severity')}",
+            ]
+        )
         if sample_event.get("request_payload"):
-            parts.append(
-                f"- **Request**: {json.dumps(sample_event['request_payload'], ensure_ascii=False)}"
-            )
+            parts.append(f"- **Request**: {json.dumps(sample_event['request_payload'], ensure_ascii=False)}")
         if sample_event.get("missing_fields"):
-            parts.append(
-                f"- **Missing fields**: {', '.join(sample_event['missing_fields'])}"
-            )
+            parts.append(f"- **Missing fields**: {', '.join(sample_event['missing_fields'])}")
         parts.append("")
 
     if task_context:
@@ -429,306 +420,314 @@ def _build_prompt(
     # ── core: layered fallback strategy ────────────────────────────────
     src = _datasource_guidance(provider, api_name)
 
-    parts.extend([
-        "## Data Source Fallback Strategy",
-        "",
-        "When the current data source cannot provide the required business data, "
-        "try alternatives in this **strict priority order**:",
-        "",
-        "| Priority | Source  | Module |",
-        "|----------|---------|--------|",
-        "| 1 (highest) | Tushare  | `alphabee/collectors/tushare/helper.py` |",
-        "| 2          | AkShare  | `alphabee/collectors/akshare/helper.py` |",
-        "| 3          | Baostock | `alphabee/collectors/baostock/helper.py` |",
-        "| 4 (lowest) | Eastmoney | `alphabee/collectors/eastmoney/helper.py` |",
-        "",
-    ])
+    parts.extend(
+        [
+            "## Data Source Fallback Strategy",
+            "",
+            "When the current data source cannot provide the required business data, "
+            "try alternatives in this **strict priority order**:",
+            "",
+            "| Priority | Source  | Module |",
+            "|----------|---------|--------|",
+            "| 1 (highest) | Tushare  | `alphabee/collectors/tushare/helper.py` |",
+            "| 2          | AkShare  | `alphabee/collectors/akshare/helper.py` |",
+            "| 3          | Baostock | `alphabee/collectors/baostock/helper.py` |",
+            "| 4 (lowest) | Eastmoney | `alphabee/collectors/eastmoney/helper.py` |",
+            "",
+        ]
+    )
 
     if src:
         parts.extend(src)
     else:
-        parts.extend([
-            "### How to add a fallback",
+        parts.extend(
+            [
+                "### How to add a fallback",
+                "",
+                "Create a new provider module under `alphabee/providers/<domain>.py` following",
+                "the reference implementation in `alphabee/providers/industry.py`.  Then update",
+                "the fact tool to delegate one line to the provider.  Example:",
+                "",
+                "```python",
+                "# 1. Create alphabee/providers/financial.py",
+                "from dataclasses import dataclass, field",
+                "",
+                "@dataclass",
+                "class FinancialResult:",
+                "    data: list[dict] = field(default_factory=list)",
+                "    error: str | None = None",
+                '    source: str = ""',
+                "",
+                "def get_income(symbol: str, periods: int = 8) -> FinancialResult:",
+                "    result = _try_tushare_income(symbol, periods)",
+                "    if result is not None:",
+                "        return result",
+                "    result = _try_akshare_income(symbol, periods)",
+                "    if result is not None:",
+                "        return result",
+                '    return FinancialResult(source="none", error="All sources exhausted")',
+                "",
+                "# 2. In the fact tool (e.g. financial_fact.py):",
+                "from alphabee.providers.financial import get_income",
+                "result = get_income(symbol)",
+                "data = result.data",
+                "error = result.error",
+                "```",
+                "",
+            ]
+        )
+
+    parts.extend(
+        [
+            "### Degradation: use related available data",
             "",
-            "Create a new provider module under `alphabee/providers/<domain>.py` following",
-            "the reference implementation in `alphabee/providers/industry.py`.  Then update",
-            "the fact tool to delegate one line to the provider.  Example:",
+            "If NO alternative source works, check if related fields can substitute:",
+            "- `roe` unavailable → try `roe_ttm` or compute from `net_profit / equity`",
+            "- `pe_ttm` unavailable → try `pe` or compute from `market_cap / net_profit`",
+            "- `gross_margin` unavailable → compute from `(revenue - cost) / revenue`",
+            "- `operating_cashflow` unavailable → check `net_cashflow` as approximation",
+            "",
+            "### Give up gracefully",
+            "",
+            "If ALL sources fail and no degradation works:",
+            "1. Do NOT make up data or force an incorrect fix.",
+            "2. Leave the code as-is (the failure will continue to be recorded).",
+            "3. Output a message: `CANNOT_FIX: <reason>`.",
+            "4. The issue stays open and will accumulate more events for later analysis.",
+            "",
+            "## Analysis Methodology — how to decide between switching vs degrading",
+            "",
+            "Before making changes, apply this decision framework.  Use the concrete ",
+            "example of `sw_daily` failure (industry daily行情 data) as a reference.",
+            "",
+            "### Step 1: Trace downstream consumers",
+            "",
+            "Read the code that consumes the failing API's output to understand which ",
+            "**canonical fields** are required and HOW they are used.",
+            "",
+            "Example: `sw_daily` → traced downstream:",
+            "- `_build_company_context()` (`analyzers.py:181-184`) reads `industry_pe_ttm` / `industry_pb`",
+            "- `render()` in the fact tool outputs PE(TTM) / PB columns",
+            "- **Conclusion**: PE and PB are HARD requirements, not optional",
+            "",
+            "### Step 2: Build a capability matrix for candidate alternatives",
+            "",
+            "For each candidate data source, list which canonical fields it CAN provide:",
+            "",
+            "| Candidate | close | pct_chg | PE | PB | Time series |",
+            "|-----------|-------|---------|----|----|-------------|",
+            "| sw_daily (current) | ✓ | ✓ | ✓ | ✓ | 90 days |",
+            "| index_daily (Tushare) | ✓ | ✓ | ✗ | ✗ | 90 days |",
+            "| board_hist (AkShare) | ✓ | ✓ | ✗ | ✗ | 90 days |",
+            "| board_snapshot (AkShare) | ✓ | - | ✓ | ✓ | Snapshot only |",
+            "",
+            "**Key insight**: NO single alternative source provides all fields.  The best ",
+            "solution is often a **combination**: `index_daily` (trend) + AkShare snapshot (PE/PB).",
+            "",
+            "### Step 3: Evaluate data consistency risk",
+            "",
+            "- Same classification system? (e.g. both use 申万2021 codes → low risk)",
+            "- Different classification? (e.g. 申万 vs 东方财富 industry names → matching risk)",
+            "- Need name-based matching? (fuzzy match on industry name → added complexity)",
+            "",
+            "**Principle**: prefer solutions that reuse the SAME identifier (e.g. SW code) ",
+            "across sources to avoid fuzzy matching errors.",
+            "",
+            "### Step 4: Choose the minimal combination",
+            "",
+            "The winning solution is the combination of sources that:",
+            "1. Covers ALL downstream-required fields",
+            "2. Minimizes cross-source matching risk",
+            "3. Adds the fewest new dependencies",
+            "",
+            "Example outcome for sw_daily:",
+            "  ✓ Tushare index_daily (close + pct_chg, same SW code)",
+            "  ✓ AkShare board_snapshot (PE/PB, by industry name match)",
+            "  ✗ Full switch to AkShare board_hist (no PE/PB, different classification)",
+            "",
+            "## Providers Layer — implement fallback in a clean provider module",
+            "",
+            "Do NOT scatter try/except blocks in business logic files (fact tools).",
+            "Instead, extract the fallback chain into a dedicated provider module ",
+            "under `alphabee/providers/`.",
+            "",
+            "### Pattern",
+            "",
+            "```",
+            "alphabee/providers/",
+            "└── <domain>.py          # One file per data domain (industry, financial, market, ...)",
+            "```",
+            "",
+            "Each provider module exposes functions named by data domain (e.g. ",
+            "`get_industry_daily()`), with the fallback chain inside, returning a ",
+            "consistent dataclass regardless of which source succeeded.",
+            "",
+            "Reference implementation: `alphabee/providers/industry.py`",
+            "",
+            "### Provider function signature pattern",
             "",
             "```python",
-            "# 1. Create alphabee/providers/financial.py",
             "from dataclasses import dataclass, field",
             "",
             "@dataclass",
-            "class FinancialResult:",
-            "    data: list[dict] = field(default_factory=list)",
+            "class <Domain>Result:",
+            "    daily: list[dict] = field(default_factory=list)",
             "    error: str | None = None",
-            "    source: str = \"\"",
+            '    source: str = ""   # which path succeeded',
             "",
-            "def get_income(symbol: str, periods: int = 8) -> FinancialResult:",
-            "    result = _try_tushare_income(symbol, periods)",
+            "def get_<domain>_<data>(...) -> <Domain>Result:",
+            "    # Priority 1: best source",
+            "    result = _try_primary(...)",
             "    if result is not None:",
             "        return result",
-            "    result = _try_akshare_income(symbol, periods)",
+            "    ",
+            "    # Priority 2: fallback combination",
+            "    result = _try_fallback_combo(...)",
             "    if result is not None:",
             "        return result",
-            "    return FinancialResult(source=\"none\", error=\"All sources exhausted\")",
+            "    ",
+            '    return <Domain>Result(source="none", error="All sources exhausted")',
+            "```",
             "",
-            "# 2. In the fact tool (e.g. financial_fact.py):",
-            "from alphabee.providers.financial import get_income",
-            "result = get_income(symbol)",
-            "data = result.data",
+            "### How to integrate in the fact tool",
+            "",
+            "The fact tool (e.g. `industry_fact.py`) changes from:",
+            "",
+            "```python",
+            "# BEFORE: inline try/except mess",
+            "try:",
+            "    df = helper.sw_daily(...).data",
+            "except Exception as e1:",
+            "    try:",
+            "        df = helper.index_daily(...).data",
+            "    except Exception as e2:",
+            "        ...",
+            "```",
+            "",
+            "To:",
+            "",
+            "```python",
+            "# AFTER: clean delegation to provider",
+            "from alphabee.providers.<domain> import get_<domain>_<data>",
+            "",
+            "result = get_<domain>_<data>(required_params)",
+            "data = result.daily",
             "error = result.error",
             "```",
             "",
-        ])
+            "### Benefits",
+            "- Business logic stays clean — one line of delegation",
+            "- Fallback chain is testable independently of business code",
+            "- New data sources can be added to the provider without touching tool code",
+            "- Consistent error/source tracking for debugging",
+            "",
+            "## Adapter Layer — unify output to AlphaBee canonical fields",
+            "",
+            "When switching data sources, you MUST add a field-name adapter so the ",
+            "new source's raw field names are translated to AlphaBee canonical names ",
+            "before reaching downstream consumers.",
+            "",
+            "### Architecture",
+            "",
+            "```",
+            "Source API (raw names)",
+            "  → Adapter YAML (source_name → canonical_name)",
+            "  → Adapter class (loads YAML, applies rename)",
+            "  → TuShareResult / AkShareResult (wraps DataFrame)",
+            "  → Downstream agents (expect canonical names)",
+            "```",
+            "",
+            "### Existing adapters",
+            "",
+            "| Source   | Adapter file | Mapping dir |",
+            "|----------|-------------|-------------|",
+            "| Tushare  | `alphabee/adapters/tushare.py` | `alphabee/adapters/tushare/*.yaml` |",
+            "| AkShare  | n/a (applied in tool code) | `alphabee/adapters/akshare/*.yaml` |",
+            "",
+            "### How to add a mapping for a new source",
+            "",
+            "1. **Find canonical field names** — read `alphabee/schemas/INDEX.yaml` to see",
+            "   which domain the data belongs to, then open the domain schema file",
+            "   (e.g. `alphabee/schemas/financial.yaml`) to see all canonical field names.",
+            "",
+            "2. **Create a mapping YAML** in `alphabee/adapters/<source>/`:",
+            "```yaml",
+            "  # alphabee/adapters/baostock/financial_mapping.yaml",
+            "  query_profit_data:",
+            "    roeAvg:         roe",
+            "    npMargin:       net_margin",
+            "    grossProfit:    gross_profit",
+            "    ...",
+            "```",
+            "   - The top-level key is the API method name.",
+            "   - Each mapping is `source_field: canonical_field`.",
+            "",
+            "3. **Create or update the adapter class** following `adapters/tushare.py`:",
+            "```python",
+            "  class BaostockAdapter:",
+            "      def __init__(self):",
+            "          self.config = self._load_yaml_dir('alphabee/adapters/baostock/')",
+            "",
+            "      def adapt(self, method_name: str, df: DataFrame) -> DataFrame:",
+            "          if method_name not in self.config:",
+            "              return df",
+            "          return df.rename(columns=self.config[method_name], errors='ignore')",
+            "```",
+            "",
+            "4. **Apply the adapter** where the result is constructed (e.g., in the helper's",
+            "   result wrapper or the tool function itself). Follow the pattern in",
+            "   `TuShareResult.__init__` or `AkShareResult.to_dataframe()`.",
+            "",
+            "### Key rule",
+            "The canonical field names are the **contract** between data sources and agents.",
+            "If you add a new data source without an adapter, downstream agents will fail",
+            "because they expect canonical names (roe, net_margin, revenue_yoy, ...),",
+            "not source-specific names (roeAvg, npMargin, total_revenue, ...).",
+            "",
+        ]
+    )
 
-    parts.extend([
-        "### Degradation: use related available data",
-        "",
-        "If NO alternative source works, check if related fields can substitute:",
-        "- `roe` unavailable → try `roe_ttm` or compute from `net_profit / equity`",
-        "- `pe_ttm` unavailable → try `pe` or compute from `market_cap / net_profit`",
-        "- `gross_margin` unavailable → compute from `(revenue - cost) / revenue`",
-        "- `operating_cashflow` unavailable → check `net_cashflow` as approximation",
-        "",
-        "### Give up gracefully",
-        "",
-        "If ALL sources fail and no degradation works:",
-        "1. Do NOT make up data or force an incorrect fix.",
-        "2. Leave the code as-is (the failure will continue to be recorded).",
-        "3. Output a message: `CANNOT_FIX: <reason>`.",
-        "4. The issue stays open and will accumulate more events for later analysis.",
-        "",
-        "## Analysis Methodology — how to decide between switching vs degrading",
-        "",
-        "Before making changes, apply this decision framework.  Use the concrete ",
-        "example of `sw_daily` failure (industry daily行情 data) as a reference.",
-        "",
-        "### Step 1: Trace downstream consumers",
-        "",
-        "Read the code that consumes the failing API's output to understand which ",
-        "**canonical fields** are required and HOW they are used.",
-        "",
-        "Example: `sw_daily` → traced downstream:",
-        "- `_build_company_context()` (`analyzers.py:181-184`) reads `industry_pe_ttm` / `industry_pb`",
-        "- `render()` in the fact tool outputs PE(TTM) / PB columns",
-        "- **Conclusion**: PE and PB are HARD requirements, not optional",
-        "",
-        "### Step 2: Build a capability matrix for candidate alternatives",
-        "",
-        "For each candidate data source, list which canonical fields it CAN provide:",
-        "",
-        "| Candidate | close | pct_chg | PE | PB | Time series |",
-        "|-----------|-------|---------|----|----|-------------|",
-        "| sw_daily (current) | ✓ | ✓ | ✓ | ✓ | 90 days |",
-        "| index_daily (Tushare) | ✓ | ✓ | ✗ | ✗ | 90 days |",
-        "| board_hist (AkShare) | ✓ | ✓ | ✗ | ✗ | 90 days |",
-        "| board_snapshot (AkShare) | ✓ | - | ✓ | ✓ | Snapshot only |",
-        "",
-        "**Key insight**: NO single alternative source provides all fields.  The best ",
-        "solution is often a **combination**: `index_daily` (trend) + AkShare snapshot (PE/PB).",
-        "",
-        "### Step 3: Evaluate data consistency risk",
-        "",
-        "- Same classification system? (e.g. both use 申万2021 codes → low risk)",
-        "- Different classification? (e.g. 申万 vs 东方财富 industry names → matching risk)",
-        "- Need name-based matching? (fuzzy match on industry name → added complexity)",
-        "",
-        "**Principle**: prefer solutions that reuse the SAME identifier (e.g. SW code) ",
-        "across sources to avoid fuzzy matching errors.",
-        "",
-        "### Step 4: Choose the minimal combination",
-        "",
-        "The winning solution is the combination of sources that:",
-        "1. Covers ALL downstream-required fields",
-        "2. Minimizes cross-source matching risk",
-        "3. Adds the fewest new dependencies",
-        "",
-        "Example outcome for sw_daily:",
-        "  ✓ Tushare index_daily (close + pct_chg, same SW code)",
-        "  ✓ AkShare board_snapshot (PE/PB, by industry name match)",
-        "  ✗ Full switch to AkShare board_hist (no PE/PB, different classification)",
-        "",
-        "## Providers Layer — implement fallback in a clean provider module",
-        "",
-        "Do NOT scatter try/except blocks in business logic files (fact tools).",
-        "Instead, extract the fallback chain into a dedicated provider module ",
-        "under `alphabee/providers/`.",
-        "",
-        "### Pattern",
-        "",
-        "```",
-        "alphabee/providers/",
-        "└── <domain>.py          # One file per data domain (industry, financial, market, ...)",
-        "```",
-        "",
-        "Each provider module exposes functions named by data domain (e.g. ",
-        "`get_industry_daily()`), with the fallback chain inside, returning a ",
-        "consistent dataclass regardless of which source succeeded.",
-        "",
-        "Reference implementation: `alphabee/providers/industry.py`",
-        "",
-        "### Provider function signature pattern",
-        "",
-        "```python",
-        "from dataclasses import dataclass, field",
-        "",
-        "@dataclass",
-        "class <Domain>Result:",
-        "    daily: list[dict] = field(default_factory=list)",
-        "    error: str | None = None",
-        "    source: str = \"\"   # which path succeeded",
-        "",
-        "def get_<domain>_<data>(...) -> <Domain>Result:",
-        "    # Priority 1: best source",
-        "    result = _try_primary(...)",
-        "    if result is not None:",
-        "        return result",
-        "    ",
-        "    # Priority 2: fallback combination",
-        "    result = _try_fallback_combo(...)",
-        "    if result is not None:",
-        "        return result",
-        "    ",
-        "    return <Domain>Result(source=\"none\", error=\"All sources exhausted\")",
-        "```",
-        "",
-        "### How to integrate in the fact tool",
-        "",
-        "The fact tool (e.g. `industry_fact.py`) changes from:",
-        "",
-        "```python",
-        "# BEFORE: inline try/except mess",
-        "try:",
-        "    df = helper.sw_daily(...).data",
-        "except Exception as e1:",
-        "    try:",
-        "        df = helper.index_daily(...).data",
-        "    except Exception as e2:",
-        "        ...",
-        "```",
-        "",
-        "To:",
-        "",
-        "```python",
-        "# AFTER: clean delegation to provider",
-        "from alphabee.providers.<domain> import get_<domain>_<data>",
-        "",
-        "result = get_<domain>_<data>(required_params)",
-        "data = result.daily",
-        "error = result.error",
-        "```",
-        "",
-        "### Benefits",
-        "- Business logic stays clean — one line of delegation",
-        "- Fallback chain is testable independently of business code",
-        "- New data sources can be added to the provider without touching tool code",
-        "- Consistent error/source tracking for debugging",
-        "",
-        "## Adapter Layer — unify output to AlphaBee canonical fields",
-        "",
-        "When switching data sources, you MUST add a field-name adapter so the ",
-        "new source's raw field names are translated to AlphaBee canonical names ",
-        "before reaching downstream consumers.",
-        "",
-        "### Architecture",
-        "",
-        "```",
-        "Source API (raw names)",
-        "  → Adapter YAML (source_name → canonical_name)",
-        "  → Adapter class (loads YAML, applies rename)",
-        "  → TuShareResult / AkShareResult (wraps DataFrame)",
-        "  → Downstream agents (expect canonical names)",
-        "```",
-        "",
-        "### Existing adapters",
-        "",
-        "| Source   | Adapter file | Mapping dir |",
-        "|----------|-------------|-------------|",
-        "| Tushare  | `alphabee/adapters/tushare.py` | `alphabee/adapters/tushare/*.yaml` |",
-        "| AkShare  | n/a (applied in tool code) | `alphabee/adapters/akshare/*.yaml` |",
-        "",
-        "### How to add a mapping for a new source",
-        "",
-        "1. **Find canonical field names** — read `alphabee/schemas/INDEX.yaml` to see",
-        "   which domain the data belongs to, then open the domain schema file",
-        "   (e.g. `alphabee/schemas/financial.yaml`) to see all canonical field names.",
-        "",
-        "2. **Create a mapping YAML** in `alphabee/adapters/<source>/`:",
-        "```yaml",
-        "  # alphabee/adapters/baostock/financial_mapping.yaml",
-        "  query_profit_data:",
-        "    roeAvg:         roe",
-        "    npMargin:       net_margin",
-        "    grossProfit:    gross_profit",
-        "    ...",
-        "```",
-        "   - The top-level key is the API method name.",
-        "   - Each mapping is `source_field: canonical_field`.",
-        "",
-        "3. **Create or update the adapter class** following `adapters/tushare.py`:",
-        "```python",
-        "  class BaostockAdapter:",
-        "      def __init__(self):",
-        "          self.config = self._load_yaml_dir('alphabee/adapters/baostock/')",
-        "",
-        "      def adapt(self, method_name: str, df: DataFrame) -> DataFrame:",
-        "          if method_name not in self.config:",
-        "              return df",
-        "          return df.rename(columns=self.config[method_name], errors='ignore')",
-        "```",
-        "",
-        "4. **Apply the adapter** where the result is constructed (e.g., in the helper's",
-        "   result wrapper or the tool function itself). Follow the pattern in",
-        "   `TuShareResult.__init__` or `AkShareResult.to_dataframe()`.",
-        "",
-        "### Key rule",
-        "The canonical field names are the **contract** between data sources and agents.",
-        "If you add a new data source without an adapter, downstream agents will fail",
-        "because they expect canonical names (roe, net_margin, revenue_yoy, ...),",
-        "not source-specific names (roeAvg, npMargin, total_revenue, ...).",
-        "",
-    ])
-
-    parts.extend([
-        "## Instructions",
-        "",
-        f"1. **Trace downstream consumers** — read the code that uses the failing API's",
-        f"   output to understand which canonical fields are required.  See `Analysis Methodology` above.",
-        f"2. **Build a capability matrix** for candidate alternative sources — list which",
-        f"   canonical fields each source can provide.  Prefer combinations that cover ALL fields.",
-        f"3. Follow the **Data Source Fallback Strategy** to try alternatives in priority order.",
-        f"4. **Implement the fix in a provider module** under `alphabee/providers/<domain>.py`,",
-        f"   NOT as inline try/except in the fact tool.  See `Providers Layer` above for the pattern.",
-        f"5. If all sources fail, try degradation (use related available fields).",
-        f"6. If nothing works, output EXACTLY `CANNOT_FIX: <reason>` as your final message and stop.",
-        f"   Your task will be automatically marked as FAILED and remain open for later analysis.",
-        f"7. Update the fact tool to delegate to the new provider function (one line of delegation).",
-        f"8. After the code change is complete, run the verification command from the repo root:",
-        f"   `poetry run alphabee-fetch verify {task_id}`",
-        f"   It will run tests, commit, push, and create or update the MR.",
-        f"9. Do not stop at code edits; finish only after verification succeeds and the MR URL is available.",
-        "",
-        "## Key Files",
-        f"- Primary source (failed): `alphabee/collectors/{provider}/helper.py`",
-        "- Fact tools (where API calls happen): `alphabee/agents/facts/tools/*.py`",
-        "- **Providers layer** (where fallback chains live): `alphabee/providers/*.py`",
-        "- Reference provider: `alphabee/providers/industry.py`",
-        "- Canonical schema: `alphabee/schemas/INDEX.yaml` + domain files",
-        "- Adapter mappings: `alphabee/adapters/tushare/*.yaml`, `alphabee/adapters/akshare/*.yaml`",
-        "",
-        "## Rules",
-        "- **Always apply the Analysis Methodology before coding** — do not jump to implementation.",
-        "- **Extract fallback logic into `alphabee/providers/`, NOT into business code.**",
-        "- Follow existing code conventions and patterns (reference `providers/industry.py`).",
-        "- Use existing utilities (TuShareHelper, AkShareHelper, retry wrappers).",
-        "- **When switching data sources, ALWAYS create an adapter mapping YAML**",
-        "  in `alphabee/adapters/<source>/` to translate raw fields → canonical names.",
-        "- Reference `alphabee/schemas/INDEX.yaml` for the authoritative canonical field list.",
-        "- Do NOT modify files unrelated to this fix.",
-        "- If the error is `permission`, the API token is the root cause — check `config.yaml`.",
-        "- If the error is `timeout` or `network`, add retry logic BEFORE trying fallback sources.",
-    ])
+    parts.extend(
+        [
+            "## Instructions",
+            "",
+            "1. **Trace downstream consumers** — read the code that uses the failing API's",
+            "   output to understand which canonical fields are required.  See `Analysis Methodology` above.",
+            "2. **Build a capability matrix** for candidate alternative sources — list which",
+            "   canonical fields each source can provide.  Prefer combinations that cover ALL fields.",
+            "3. Follow the **Data Source Fallback Strategy** to try alternatives in priority order.",
+            "4. **Implement the fix in a provider module** under `alphabee/providers/<domain>.py`,",
+            "   NOT as inline try/except in the fact tool.  See `Providers Layer` above for the pattern.",
+            "5. If all sources fail, try degradation (use related available fields).",
+            "6. If nothing works, output EXACTLY `CANNOT_FIX: <reason>` as your final message and stop.",
+            "   Your task will be automatically marked as FAILED and remain open for later analysis.",
+            "7. Update the fact tool to delegate to the new provider function (one line of delegation).",
+            "8. After the code change is complete, run the verification command from the repo root:",
+            f"   `poetry run alphabee-fetch verify {task_id}`",
+            "   It will run tests, commit, push, and create or update the MR.",
+            "9. Do not stop at code edits; finish only after verification succeeds and the MR URL is available.",
+            "",
+            "## Key Files",
+            f"- Primary source (failed): `alphabee/collectors/{provider}/helper.py`",
+            "- Fact tools (where API calls happen): `alphabee/agents/facts/tools/*.py`",
+            "- **Providers layer** (where fallback chains live): `alphabee/providers/*.py`",
+            "- Reference provider: `alphabee/providers/industry.py`",
+            "- Canonical schema: `alphabee/schemas/INDEX.yaml` + domain files",
+            "- Adapter mappings: `alphabee/adapters/tushare/*.yaml`, `alphabee/adapters/akshare/*.yaml`",
+            "",
+            "## Rules",
+            "- **Always apply the Analysis Methodology before coding** — do not jump to implementation.",
+            "- **Extract fallback logic into `alphabee/providers/`, NOT into business code.**",
+            "- Follow existing code conventions and patterns (reference `providers/industry.py`).",
+            "- Use existing utilities (TuShareHelper, AkShareHelper, retry wrappers).",
+            "- **When switching data sources, ALWAYS create an adapter mapping YAML**",
+            "  in `alphabee/adapters/<source>/` to translate raw fields → canonical names.",
+            "- Reference `alphabee/schemas/INDEX.yaml` for the authoritative canonical field list.",
+            "- Do NOT modify files unrelated to this fix.",
+            "- If the error is `permission`, the API token is the root cause — check `config.yaml`.",
+            "- If the error is `timeout` or `network`, add retry logic BEFORE trying fallback sources.",
+        ]
+    )
 
     return "\n".join(parts)
 
@@ -846,9 +845,7 @@ def _run_git(*args: str) -> str:
         )
         return result.stdout
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"git {' '.join(args)} failed: {e.stderr.strip()}"
-        ) from e
+        raise RuntimeError(f"git {' '.join(args)} failed: {e.stderr.strip()}") from e
 
 
 def _get_git_remote_owner_repo() -> tuple[str, str]:
@@ -967,9 +964,7 @@ def _create_or_get_pull_request(branch: str, title: str, body: str) -> str:
             if existing:
                 return existing[0]["html_url"]
 
-    raise RuntimeError(
-        f"Unable to create pull request: {create_body.strip() or 'unknown error'}"
-    )
+    raise RuntimeError(f"Unable to create pull request: {create_body.strip() or 'unknown error'}")
 
 
 # ── test runner ────────────────────────────────────────────────────────
@@ -999,11 +994,7 @@ def _run_tests() -> FixResult:
 def _update_task_status(task_id: int, status: TaskStatus) -> None:
     session = get_session()
     try:
-        task = (
-            session.query(DataFixTask)
-            .filter(DataFixTask.task_id == task_id)
-            .first()
-        )
+        task = session.query(DataFixTask).filter(DataFixTask.task_id == task_id).first()
         if task:
             task.status = status
             task.updated_at = datetime.now()
@@ -1017,11 +1008,7 @@ def _update_task_status(task_id: int, status: TaskStatus) -> None:
 def _update_task_verification_result(task_id: int, verification_result: str) -> None:
     session = get_session()
     try:
-        task = (
-            session.query(DataFixTask)
-            .filter(DataFixTask.task_id == task_id)
-            .first()
-        )
+        task = session.query(DataFixTask).filter(DataFixTask.task_id == task_id).first()
         if task:
             task.verification_result = verification_result
             task.updated_at = datetime.now()
@@ -1040,8 +1027,6 @@ def _render_message(msg) -> str:
 
     Returns the text that was rendered (for CANNOT_FIX detection).
     """
-    tname = type(msg).__name__
-
     if not hasattr(msg, "content"):
         return ""
 

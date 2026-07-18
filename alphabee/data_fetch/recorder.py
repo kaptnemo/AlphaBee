@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 from alphabee.data_fetch.database import get_session, init_db
 from alphabee.data_fetch.fingerprint import compute_fingerprint
@@ -124,11 +123,7 @@ def record_failure(
         session.flush()
 
         # ── upsert issue ───────────────────────────────────────────────
-        issue = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.fingerprint == fp)
-            .first()
-        )
+        issue = session.query(DataFetchIssue).filter(DataFetchIssue.fingerprint == fp).first()
         if issue is None:
             title = _build_title(provider, api_name, et.value, missing_fields)
             issue = DataFetchIssue(

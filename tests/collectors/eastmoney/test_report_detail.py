@@ -1,7 +1,7 @@
 """Unit & integration tests for Eastmoney report detail fetching."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -32,12 +32,14 @@ _ZWINFO_JSON = {
     "page_size": 1,
     "rating": "A",
     "researcher": "曾朵红,阮巧燕,朱家佟",
-    "security": [{
-        "market_uni": "0",
-        "publish_relation": [{"originalCode": "1033", "publishName": "电池"}],
-        "short_name": "蔚蓝锂芯",
-        "stock": "002245",
-    }],
+    "security": [
+        {
+            "market_uni": "0",
+            "publish_relation": [{"originalCode": "1033", "publishName": "电池"}],
+            "short_name": "蔚蓝锂芯",
+            "stock": "002245",
+        }
+    ],
     "short_name": "蔚蓝锂芯",
     "source_sample_name": "东吴证券",
     "star": "3",
@@ -85,6 +87,7 @@ def _make_mock_session(text: str):
 # 1. jsonp_to_json helper
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestJsonpToJson:
     def test_normal_jsonp(self):
         result = jsonp_to_json(_CONTENT_API_RESPONSE)
@@ -107,6 +110,7 @@ class TestJsonpToJson:
 # ══════════════════════════════════════════════════════════════════════
 # 2. EastmoneyReportDetail — value object
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestEastmoneyReportDetail:
     def test_construction_with_all_fields(self):
@@ -171,6 +175,7 @@ class TestEastmoneyReportDetail:
 # 3. _extract_zwinfo — HTML parsing
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestExtractZwinfo:
     def test_extract_from_valid_html(self):
         result = EastmoneyHelper._extract_zwinfo(_HTML_WITH_ZWINFO)
@@ -225,8 +230,8 @@ class TestExtractZwinfo:
 # 4. fetch_report_detail — full pipeline (unit, mocked)
 # ══════════════════════════════════════════════════════════════════════
 
-class TestFetchReportDetailUnit:
 
+class TestFetchReportDetailUnit:
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -311,8 +316,8 @@ class TestFetchReportDetailUnit:
 # 5. fetch_report_content_by_encoded_url — unit (mocked)
 # ══════════════════════════════════════════════════════════════════════
 
-class TestFetchReportContentUnit:
 
+class TestFetchReportContentUnit:
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -352,8 +357,8 @@ class TestFetchReportContentUnit:
 # 6. fetch_report_detail_by_info_code — unit (mocked)
 # ══════════════════════════════════════════════════════════════════════
 
-class TestFetchReportDetailByInfoCodeUnit:
 
+class TestFetchReportDetailByInfoCodeUnit:
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -374,9 +379,7 @@ class TestFetchReportDetailByInfoCodeUnit:
         session = MagicMock()
         session.get.side_effect = [first_detail_resp, content_resp, second_detail_resp]
 
-        detail = helper.fetch_report_detail_by_info_code(
-            session, "AP202607101826864211"
-        )
+        detail = helper.fetch_report_detail_by_info_code(session, "AP202607101826864211")
         assert detail is not None
         assert detail.title == "印尼拟扩建5GWh小圆柱"
         assert detail.content
@@ -391,19 +394,26 @@ class TestFetchReportDetailByInfoCodeUnit:
     def test_content_api_success_full_content(self, helper):
         full_content_json = {
             "hits": 1,
-            "data": [{
-                "infoCode": "AP001", "title": "T",
-                "publishDate": "2026-07-10", "orgName": "O",
-                "stockName": "S", "stockCode": "000001",
-                "researcher": "R", "emRatingName": "买入",
-                "attachUrl": "http://a",
-                "indvInduCode": "1033", "indvInduName": "电池",
-                "encodeUrl": "",
-                "contentInfoBodyContent": "报告全文内容",
-            }],
+            "data": [
+                {
+                    "infoCode": "AP001",
+                    "title": "T",
+                    "publishDate": "2026-07-10",
+                    "orgName": "O",
+                    "stockName": "S",
+                    "stockCode": "000001",
+                    "researcher": "R",
+                    "emRatingName": "买入",
+                    "attachUrl": "http://a",
+                    "indvInduCode": "1033",
+                    "indvInduName": "电池",
+                    "encodeUrl": "",
+                    "contentInfoBodyContent": "报告全文内容",
+                }
+            ],
         }
         resp = MagicMock()
-        resp.text = f'callback({json.dumps(full_content_json, ensure_ascii=False)})'
+        resp.text = f"callback({json.dumps(full_content_json, ensure_ascii=False)})"
         resp.raise_for_status = lambda: None
 
         session = MagicMock()
@@ -419,8 +429,8 @@ class TestFetchReportDetailByInfoCodeUnit:
 # 7. fetch_report_industry_info_by_info_code — unit (mocked)
 # ══════════════════════════════════════════════════════════════════════
 
-class TestFetchReportIndustryInfoByInfoCodeUnit:
 
+class TestFetchReportIndustryInfoByInfoCodeUnit:
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -482,8 +492,8 @@ class TestFetchReportIndustryInfoByInfoCodeUnit:
 # 8. fetch_industry_info_by_code — unit (mocked)
 # ══════════════════════════════════════════════════════════════════════
 
-class TestFetchIndustryInfoByCodeUnit:
 
+class TestFetchIndustryInfoByCodeUnit:
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -521,29 +531,22 @@ class TestFetchIndustryInfoByCodeUnit:
 # 9. _normalize_pdf_url — static helper
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestNormalizePdfUrl:
     def test_http_to_https(self):
-        result = EastmoneyHelper._normalize_pdf_url(
-            "http://pdf.dfcfw.com/pdf/H3_AP001_1.pdf"
-        )
+        result = EastmoneyHelper._normalize_pdf_url("http://pdf.dfcfw.com/pdf/H3_AP001_1.pdf")
         assert result == "https://pdf.dfcfw.com/pdf/H3_AP001_1.pdf"
 
     def test_already_https(self):
-        result = EastmoneyHelper._normalize_pdf_url(
-            "https://pdf.dfcfw.com/pdf/H3_AP001_1.pdf"
-        )
+        result = EastmoneyHelper._normalize_pdf_url("https://pdf.dfcfw.com/pdf/H3_AP001_1.pdf")
         assert result == "https://pdf.dfcfw.com/pdf/H3_AP001_1.pdf"
 
     def test_strips_query_params(self):
-        result = EastmoneyHelper._normalize_pdf_url(
-            "https://pdf.dfcfw.com/pdf/H3_AP001_1.pdf?1783680740000.pdf"
-        )
+        result = EastmoneyHelper._normalize_pdf_url("https://pdf.dfcfw.com/pdf/H3_AP001_1.pdf?1783680740000.pdf")
         assert result == "https://pdf.dfcfw.com/pdf/H3_AP001_1.pdf"
 
     def test_strips_trailing_whitespace(self):
-        result = EastmoneyHelper._normalize_pdf_url(
-            "  https://pdf.dfcfw.com/pdf/test.pdf  "
-        )
+        result = EastmoneyHelper._normalize_pdf_url("  https://pdf.dfcfw.com/pdf/test.pdf  ")
         assert result == "https://pdf.dfcfw.com/pdf/test.pdf"
 
 
@@ -551,8 +554,8 @@ class TestNormalizePdfUrl:
 # 8. _resolve_pdf_url — unit (mocked)
 # ══════════════════════════════════════════════════════════════════════
 
-class TestResolvePdfUrl:
 
+class TestResolvePdfUrl:
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -611,7 +614,6 @@ _PDF_BYTES = b"%PDF-1.4 test content"
 
 
 class TestDownloadReportPdf:
-
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -623,14 +625,16 @@ class TestDownloadReportPdf:
     def _make_pdf_session(self, pdf_url="http://pdf.dfcfw.com/pdf/H3_AP202607101826864211_1.pdf"):
         content_data = {
             "hits": 1,
-            "data": [{
-                "infoCode": "AP202607101826864211",
-                "title": "T",
-                "attachUrl": pdf_url,
-            }],
+            "data": [
+                {
+                    "infoCode": "AP202607101826864211",
+                    "title": "T",
+                    "attachUrl": pdf_url,
+                }
+            ],
         }
         content_resp = MagicMock()
-        content_resp.text = f'callback({json.dumps(content_data, ensure_ascii=False)})'
+        content_resp.text = f"callback({json.dumps(content_data, ensure_ascii=False)})"
         content_resp.raise_for_status = lambda: None
 
         pdf_resp = MagicMock()
@@ -649,17 +653,13 @@ class TestDownloadReportPdf:
 
     def test_custom_filename(self, helper, tmpdir):
         session = self._make_pdf_session()
-        filepath = helper.download_report_pdf(
-            session, _ENCODED_URL, save_dir=tmpdir, filename="custom_name"
-        )
+        filepath = helper.download_report_pdf(session, _ENCODED_URL, save_dir=tmpdir, filename="custom_name")
         assert filepath.name == "custom_name.pdf"
 
     def test_custom_save_dir(self, helper, tmpdir):
         session = self._make_pdf_session()
         subdir = tmpdir / "sub" / "reports"
-        filepath = helper.download_report_pdf(
-            session, _ENCODED_URL, save_dir=subdir
-        )
+        filepath = helper.download_report_pdf(session, _ENCODED_URL, save_dir=subdir)
         assert filepath.parent == subdir.resolve()
         assert filepath.exists()
 
@@ -674,12 +674,14 @@ class TestDownloadReportPdf:
         content_resp = MagicMock()
         content_data = {
             "hits": 1,
-            "data": [{
-                "infoCode": "AP202607101826864211",
-                "attachUrl": "http://pdf.dfcfw.com/pdf/H3_AP202607101826864211_1.pdf",
-            }],
+            "data": [
+                {
+                    "infoCode": "AP202607101826864211",
+                    "attachUrl": "http://pdf.dfcfw.com/pdf/H3_AP202607101826864211_1.pdf",
+                }
+            ],
         }
-        content_resp.text = f'callback({json.dumps(content_data, ensure_ascii=False)})'
+        content_resp.text = f"callback({json.dumps(content_data, ensure_ascii=False)})"
         content_resp.raise_for_status = lambda: None
 
         pdf_resp = MagicMock()
@@ -696,8 +698,8 @@ class TestDownloadReportPdf:
 # 10. download_report_pdf_by_info_code — unit (mocked)
 # ══════════════════════════════════════════════════════════════════════
 
-class TestDownloadReportPdfByInfoCode:
 
+class TestDownloadReportPdfByInfoCode:
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()
@@ -710,12 +712,14 @@ class TestDownloadReportPdfByInfoCode:
         content_resp = MagicMock()
         content_data = {
             "hits": 1,
-            "data": [{
-                "infoCode": "AP001",
-                "attachUrl": "http://pdf.dfcfw.com/pdf/H3_AP001_1.pdf",
-            }],
+            "data": [
+                {
+                    "infoCode": "AP001",
+                    "attachUrl": "http://pdf.dfcfw.com/pdf/H3_AP001_1.pdf",
+                }
+            ],
         }
-        content_resp.text = f'callback({json.dumps(content_data, ensure_ascii=False)})'
+        content_resp.text = f"callback({json.dumps(content_data, ensure_ascii=False)})"
         content_resp.raise_for_status = lambda: None
 
         pdf_resp = MagicMock()
@@ -724,9 +728,7 @@ class TestDownloadReportPdfByInfoCode:
         session = MagicMock()
         session.get.side_effect = [content_resp, pdf_resp]
 
-        filepath = helper.download_report_pdf_by_info_code(
-            session, "AP001", save_dir=tmpdir
-        )
+        filepath = helper.download_report_pdf_by_info_code(session, "AP001", save_dir=tmpdir)
         assert filepath.exists()
         assert filepath.name == "AP001.pdf"
         assert filepath.read_bytes() == _PDF_BYTES
@@ -737,7 +739,7 @@ class TestDownloadReportPdfByInfoCode:
             "hits": 1,
             "data": [{"infoCode": "AP001", "attachUrl": "http://pdf.dfcfw.com/pdf/1.pdf"}],
         }
-        content_resp.text = f'callback({json.dumps(content_data, ensure_ascii=False)})'
+        content_resp.text = f"callback({json.dumps(content_data, ensure_ascii=False)})"
         content_resp.raise_for_status = lambda: None
 
         pdf_resp = MagicMock()
@@ -746,21 +748,21 @@ class TestDownloadReportPdfByInfoCode:
         session = MagicMock()
         session.get.side_effect = [content_resp, pdf_resp]
 
-        filepath = helper.download_report_pdf_by_info_code(
-            session, "AP001", save_dir=tmpdir, filename="my_report"
-        )
+        filepath = helper.download_report_pdf_by_info_code(session, "AP001", save_dir=tmpdir, filename="my_report")
         assert filepath.name == "my_report.pdf"
 
     def test_falls_back_to_detail_page_when_attach_url_missing(self, helper, tmpdir):
         content_resp = MagicMock()
         content_data = {
             "hits": 1,
-            "data": [{
-                "infoCode": "AP001",
-                "encodeUrl": "ENCODED001",
-            }],
+            "data": [
+                {
+                    "infoCode": "AP001",
+                    "encodeUrl": "ENCODED001",
+                }
+            ],
         }
-        content_resp.text = f'callback({json.dumps(content_data, ensure_ascii=False)})'
+        content_resp.text = f"callback({json.dumps(content_data, ensure_ascii=False)})"
         content_resp.raise_for_status = lambda: None
 
         detail_resp = MagicMock()
@@ -769,7 +771,7 @@ class TestDownloadReportPdfByInfoCode:
             '"notice_title":"T","notice_content":"C","notice_date":"",'
             '"source_sample_name":"","researcher":"","short_name":"",'
             '"star":"","attach_url":"http://pdf.dfcfw.com/pdf/H3_AP001_1.pdf?abc"};'
-            '</script></html>'
+            "</script></html>"
         )
         detail_resp.raise_for_status = lambda: None
 
@@ -790,12 +792,14 @@ class TestDownloadReportPdfByInfoCode:
         content_resp = MagicMock()
         content_data = {
             "hits": 1,
-            "data": [{
-                "infoCode": "AP001",
-                "attachUrl": "http://pdf.dfcfw.com/pdf/1.pdf?token=abc",
-            }],
+            "data": [
+                {
+                    "infoCode": "AP001",
+                    "attachUrl": "http://pdf.dfcfw.com/pdf/1.pdf?token=abc",
+                }
+            ],
         }
-        content_resp.text = f'callback({json.dumps(content_data, ensure_ascii=False)})'
+        content_resp.text = f"callback({json.dumps(content_data, ensure_ascii=False)})"
         content_resp.raise_for_status = lambda: None
 
         pdf_resp = MagicMock()
@@ -805,9 +809,7 @@ class TestDownloadReportPdfByInfoCode:
         session.get.side_effect = [content_resp, pdf_resp]
 
         subdir = tmpdir / "sub" / "reports"
-        filepath = helper.download_report_pdf_by_info_code(
-            session, "AP001", save_dir=subdir
-        )
+        filepath = helper.download_report_pdf_by_info_code(session, "AP001", save_dir=subdir)
         assert filepath.parent == subdir.resolve()
         assert filepath.exists()
         assert filepath.read_bytes() == _PDF_BYTES
@@ -818,9 +820,7 @@ class TestDownloadReportPdfByInfoCode:
         session.get.side_effect = Exception("network error")
 
         with pytest.raises(ValueError, match="Could not resolve PDF URL"):
-            helper.download_report_pdf_by_info_code(
-                session, "AP001", save_dir=tmpdir
-            )
+            helper.download_report_pdf_by_info_code(session, "AP001", save_dir=tmpdir)
 
 
 class TestEastmoneyReportDetailMongoSafety:
@@ -846,9 +846,9 @@ class TestEastmoneyReportDetailMongoSafety:
 # 11. Integration tests (real network calls)
 # ══════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.integration
 class TestEastmoneyReportDetailIntegration:
-
     @pytest.fixture
     def helper(self):
         return EastmoneyHelper()

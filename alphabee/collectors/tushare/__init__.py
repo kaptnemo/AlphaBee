@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import tushare as ts  # type: ignore[import-untyped]
 

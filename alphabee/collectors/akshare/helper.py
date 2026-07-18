@@ -1,5 +1,5 @@
-import time
 import logging
+import time
 from typing import Any
 
 from pandas import DataFrame
@@ -9,8 +9,10 @@ from alphabee.collectors.akshare import ak
 try:
     from alphabee.utils import get_logger
 except ModuleNotFoundError:
+
     def get_logger(name: str) -> logging.Logger:
         return logging.getLogger(name)
+
 
 MONGO_URI = "mongodb://root:cyw271828@localhost:27017/"
 MONGO_DATABASE = "treasure_island"
@@ -40,9 +42,7 @@ def get_mongo_database() -> Any:
     try:
         import pymongo
     except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "pymongo is required to save AkShare results to MongoDB."
-        ) from exc
+        raise ModuleNotFoundError("pymongo is required to save AkShare results to MongoDB.") from exc
     return pymongo.MongoClient(MONGO_URI)[MONGO_DATABASE]
 
 

@@ -13,12 +13,13 @@ collectors 负责填充这些模型，derived_facts 引擎通过 .to_fact_values
 from __future__ import annotations
 
 import math
-from pydantic import BaseModel, Field, computed_field
 
+from pydantic import BaseModel, Field, computed_field
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Financial
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class FinancialSnapshot(BaseModel):
     """单期财务快照 — 合并利润表、资产负债表、现金流量表和财务比率，统一使用 canonical 字段名。
@@ -30,20 +31,20 @@ class FinancialSnapshot(BaseModel):
     period: str  # 报告期截止日，如 "20231231"
 
     # ── 利润表 ─────────────────────────────────────────────────────────────
-    revenue: float | None = None            # 营业总收入
+    revenue: float | None = None  # 营业总收入
     operating_profit: float | None = None  # 营业利润
-    net_profit: float | None = None        # 归母净利润
+    net_profit: float | None = None  # 归母净利润
     ebitda: float | None = None
     interest_expense: float | None = None
-    basic_eps: float | None = None         # 基本每股收益
+    basic_eps: float | None = None  # 基本每股收益
     income_tax_expense: float | None = None  # 所得税费用
-    total_profit: float | None = None        # 利润总额
+    total_profit: float | None = None  # 利润总额
 
     # ── 资产负债表 ─────────────────────────────────────────────────────────
     total_assets: float | None = None
     total_liabilities: float | None = None
-    shareholders_equity: float | None = None   # 归母净资产
-    cash: float | None = None                  # 货币资金
+    shareholders_equity: float | None = None  # 归母净资产
+    cash: float | None = None  # 货币资金
     current_assets: float | None = None
     current_liabilities: float | None = None
     accounts_receivable: float | None = None
@@ -54,32 +55,32 @@ class FinancialSnapshot(BaseModel):
     operating_cashflow: float | None = None
     investing_cashflow: float | None = None
     financing_cashflow: float | None = None
-    capex: float | None = None             # 资本支出（取绝对值）
+    capex: float | None = None  # 资本支出（取绝对值）
     dividends_paid: float | None = None
-    salary_paid: float | None = None       # 支付给职工以及为职工支付的现金
+    salary_paid: float | None = None  # 支付给职工以及为职工支付的现金
 
     # ── 财务比率 ───────────────────────────────────────────────────────────
-    roe: float | None = None               # 净资产收益率（%）
+    roe: float | None = None  # 净资产收益率（%）
     roa: float | None = None
-    gross_margin: float | None = None      # 毛利率（%）
-    net_margin: float | None = None        # 净利率（%）
+    gross_margin: float | None = None  # 毛利率（%）
+    net_margin: float | None = None  # 净利率（%）
     current_ratio: float | None = None
     quick_ratio: float | None = None
-    debt_to_assets: float | None = None    # 资产负债率（%）
-    revenue_yoy: float | None = None       # 营收同比增速（%）
-    net_profit_yoy: float | None = None    # 净利润同比增速（%）
-    eps_growth_yoy: float | None = None    # EPS 同比增速（%）
-    free_cashflow: float | None = None     # 自由现金流（tushare fcff）
-    interest_bearing_debt: float | None = None      # 有息负债
+    debt_to_assets: float | None = None  # 资产负债率（%）
+    revenue_yoy: float | None = None  # 营收同比增速（%）
+    net_profit_yoy: float | None = None  # 净利润同比增速（%）
+    eps_growth_yoy: float | None = None  # EPS 同比增速（%）
+    free_cashflow: float | None = None  # 自由现金流（tushare fcff）
+    interest_bearing_debt: float | None = None  # 有息负债
     depreciation_amortization: float | None = None  # 折旧与摊销
-    fixed_assets_total: float | None = None         # 固定资产合计
-    sales_expense_ratio: float | None = None        # 销售费用率（%）
-    admin_expense_ratio: float | None = None        # 管理费用率（%）
-    finance_expense_ratio: float | None = None      # 财务费用率（%）
-    rd_expense: float | None = None                 # 研发费用
+    fixed_assets_total: float | None = None  # 固定资产合计
+    sales_expense_ratio: float | None = None  # 销售费用率（%）
+    admin_expense_ratio: float | None = None  # 管理费用率（%）
+    finance_expense_ratio: float | None = None  # 财务费用率（%）
+    rd_expense: float | None = None  # 研发费用
     # ── 跨期衍生（桥接 AnomalyEngine）─────────────────────────────────────
     accounts_receivable_yoy: float | None = None  # 应收账款同比增速（%）
-    inventory_yoy: float | None = None            # 存货同比增速（%）
+    inventory_yoy: float | None = None  # 存货同比增速（%）
 
 
 class FinancialFacts(BaseModel):
@@ -189,15 +190,16 @@ class FinancialFacts(BaseModel):
 # Market
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class MoneyFlow(BaseModel):
     """单日资金流向快照（所有金额单位：万元）。"""
 
     trade_date: str = ""
-    super_large_order_flow: float | None = None   # 超大单净流入
-    large_order_flow: float | None = None          # 大单净流入
-    medium_order_flow: float | None = None         # 中单净流入
-    retail_flow: float | None = None               # 小单（散户）净流入
-    main_force_inflow: float | None = None         # 主力净流入 = 超大单 + 大单
+    super_large_order_flow: float | None = None  # 超大单净流入
+    large_order_flow: float | None = None  # 大单净流入
+    medium_order_flow: float | None = None  # 中单净流入
+    retail_flow: float | None = None  # 小单（散户）净流入
+    main_force_inflow: float | None = None  # 主力净流入 = 超大单 + 大单
 
 
 class MarketFacts(BaseModel):
@@ -217,16 +219,16 @@ class MarketFacts(BaseModel):
     low_price: float | None = None
     prev_close_price: float | None = None
     price_change: float | None = None
-    price_change_pct: float | None = None          # 涨跌幅（%）
-    volume: float | None = None                    # 成交量（手）
-    turnover_amount: float | None = None           # 成交额（千元）
+    price_change_pct: float | None = None  # 涨跌幅（%）
+    volume: float | None = None  # 成交量（手）
+    turnover_amount: float | None = None  # 成交额（千元）
 
     # ── 估值 ───────────────────────────────────────────────────────────────
     pe_ttm: float | None = None
     pb_ratio: float | None = None
-    market_cap: float | None = None                # 总市值（万元）
-    circulating_market_cap: float | None = None    # 流通市值（万元）
-    turnover_rate: float | None = None             # 换手率（%）
+    market_cap: float | None = None  # 总市值（万元）
+    circulating_market_cap: float | None = None  # 流通市值（万元）
+    turnover_rate: float | None = None  # 换手率（%）
 
     # ── 5年PE均值（历史序列计算）──────────────────────────────────────────
     pe_ttm_5y_avg: float | None = None

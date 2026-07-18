@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ── 档位与评分映射 ──────────────────────────────────────────────────────
 
 # 信号档位 → 风险触发强度（0.0=无风险，1.0=最高风险）
@@ -20,7 +19,7 @@ SIGNAL_LEVEL_TO_SCORE: dict[str, float] = {
     "high": 1.0,
     "medium": 0.6,
     "low": 0.3,
-    "none": 0.2,   # absence of risk is mild positive evidence (non-zero so thesis_impact.none:positive is reflected)
+    "none": 0.2,  # absence of risk is mild positive evidence (non-zero so thesis_impact.none:positive is reflected)
 }
 
 # thesis_impact 方向 → 方向分值（负=负面，正=正面）
@@ -79,8 +78,8 @@ class EvidenceItem:
 
     signal_id: str
     signal_name: str
-    level: str                # high / medium / low / none
-    impact: str               # negative / slightly_negative / neutral / ...
+    level: str  # high / medium / low / none
+    impact: str  # negative / slightly_negative / neutral / ...
     interpretation: str = ""  # 信号解释文字
     source_type: str = "signal"  # signal / anomaly / conflict / context
     source_label: str = ""
@@ -104,14 +103,14 @@ class ThesisDimension:
 
     id: str
     name: str
-    judgment: str             # strong_positive / positive / neutral / negative / strong_negative
-    score: float              # 综合评分，[-1.0, 1.0]
+    judgment: str  # strong_positive / positive / neutral / negative / strong_negative
+    score: float  # 综合评分，[-1.0, 1.0]
     evidence: list[EvidenceItem] = field(default_factory=list)
     counter_evidence: list[str] = field(default_factory=list)
     missing_evidence: list[str] = field(default_factory=list)
     context_notes: list[str] = field(default_factory=list)
     interpretation: str = ""
-    confidence: float = 1.0   # 0-1，信号覆盖度越高置信度越高
+    confidence: float = 1.0  # 0-1，信号覆盖度越高置信度越高
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], dim_id: str = "") -> ThesisDimension:
@@ -134,9 +133,9 @@ class CriticQuestion:
     """单条质疑追问。"""
 
     question: str
-    source: str               # 来源：信号 ID 或维度 ID
-    category: str             # evidence_gap / counter_evidence / industry_cycle / comparison / accounting_policy / general
-    severity: str             # critical / important / minor
+    source: str  # 来源：信号 ID 或维度 ID
+    category: str  # evidence_gap / counter_evidence / industry_cycle / comparison / accounting_policy / general
+    severity: str  # critical / important / minor
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CriticQuestion:
@@ -153,7 +152,7 @@ class InvestmentThesis:
     """投资论点综合结构 — ThesisEngine 的最终输出。"""
 
     symbol: str
-    period: str               # 分析周期，如 "2023年报"
+    period: str  # 分析周期，如 "2023年报"
     dimensions: dict[str, ThesisDimension] = field(default_factory=dict)
     primary_risks: list[str] = field(default_factory=list)
     overall_judgment: str = "neutral"
@@ -232,13 +231,9 @@ class InvestmentThesis:
             data = data["thesis"]
 
         dimensions = {
-            dim_id: ThesisDimension.from_dict(d, dim_id=dim_id)
-            for dim_id, d in data.get("dimensions", {}).items()
+            dim_id: ThesisDimension.from_dict(d, dim_id=dim_id) for dim_id, d in data.get("dimensions", {}).items()
         }
-        critic_questions = [
-            CriticQuestion.from_dict(cq)
-            for cq in data.get("critic_questions", [])
-        ]
+        critic_questions = [CriticQuestion.from_dict(cq) for cq in data.get("critic_questions", [])]
 
         return cls(
             symbol=data.get("symbol", ""),
@@ -355,10 +350,10 @@ class EnhancedThesis:
 class DimensionVerdict:
     """Single-dimension review verdict from ``ThesisReviewer``."""
 
-    dimension_id: str          # "financial_quality" / "earnings_quality" / "credit_risk"
-    dimension_name: str        # "财务质量" / "盈利质量" / "信用风险"
+    dimension_id: str  # "financial_quality" / "earnings_quality" / "credit_risk"
+    dimension_name: str  # "财务质量" / "盈利质量" / "信用风险"
 
-    status: str                # confirmed | qualified | insufficient | contested
+    status: str  # confirmed | qualified | insufficient | contested
     evidence_count: int
     key_evidence: list[str] = field(default_factory=list)
     missing_evidence: list[str] = field(default_factory=list)

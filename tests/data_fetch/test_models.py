@@ -1,15 +1,11 @@
 """Unit tests for data_fetch.models."""
 
 import pytest
-from datetime import datetime
 
 from alphabee.data_fetch.models import (
     ErrorSeverity,
     ErrorType,
     IssueStatus,
-    TaskStatus,
-    VerificationStatus,
-    FixStrategy,
 )
 
 

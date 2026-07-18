@@ -45,9 +45,7 @@ class Engine:
 
         def dfs(name: str) -> None:
             if name in in_stack:
-                raise CyclicDependencyError(
-                    f"检测到循环依赖，规则链中包含：'{name}'"
-                )
+                raise CyclicDependencyError(f"检测到循环依赖，规则链中包含：'{name}'")
             if name in visited:
                 return
 
@@ -56,9 +54,7 @@ class Engine:
             if rule is not None:
                 for dep in rule.required_derived_facts:
                     if dep not in self.rules:
-                        raise ValueError(
-                            f"规则 '{name}' 声明了未知的衍生事实依赖：'{dep}'"
-                        )
+                        raise ValueError(f"规则 '{name}' 声明了未知的衍生事实依赖：'{dep}'")
                     dfs(dep)
             in_stack.discard(name)
             visited.add(name)
@@ -127,13 +123,9 @@ class Engine:
                 continue
 
             # 检查上游衍生依赖是否有失败
-            blocked_by = [
-                dep for dep in rule.required_derived_facts if dep in failed
-            ]
+            blocked_by = [dep for dep in rule.required_derived_facts if dep in failed]
             if blocked_by:
-                root_errors = "; ".join(
-                    f"{dep}: {failed[dep]}" for dep in blocked_by
-                )
+                root_errors = "; ".join(f"{dep}: {failed[dep]}" for dep in blocked_by)
                 err = f"上游衍生事实计算失败 — {root_errors}"
                 results[name] = {
                     name: None,

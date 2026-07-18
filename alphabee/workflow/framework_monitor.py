@@ -280,9 +280,7 @@ async def run_framework_monitor(
         asyncio.to_thread(get_stock_news_summary, _digits_only(symbol)),
     )
 
-    search_query = (
-        f"{fundamentals.name or symbol} 集采 中标 订单 海外 毛利率 最新进展"
-    )
+    search_query = f"{fundamentals.name or symbol} 集采 中标 订单 海外 毛利率 最新进展"
     search_text = await web_search(
         query=search_query,
         topic="finance",

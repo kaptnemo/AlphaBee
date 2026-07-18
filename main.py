@@ -9,8 +9,6 @@ Usage:
     python main.py --no-color                           # 禁用终端颜色
     python main.py --log-dir ./logs                     # 指定日志目录
 """
-from dotenv import load_dotenv
-load_dotenv()
 
 import argparse
 import asyncio
@@ -22,31 +20,35 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langfuse.langchain import CallbackHandler
 
 from alphabee.orchestrator.agent import alphabee_agent
+from alphabee.tools.common import extract_symbols_from_query
 from alphabee.utils import configure_logging, get_logger
 from alphabee.workflow import render_monitor_report, run_framework_monitor
-from alphabee.tools.common import extract_symbols_from_query
-
 
 # ---------------------------------------------------------------------------
 # Terminal colors (ANSI, no extra dependency)
 # ---------------------------------------------------------------------------
 
+
 class _C:
-    RESET   = "\033[0m"
-    BOLD    = "\033[1m"
-    DIM     = "\033[2m"
-    RED     = "\033[31m"
-    GREEN   = "\033[32m"
-    YELLOW  = "\033[33m"
-    BLUE    = "\033[34m"
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
     MAGENTA = "\033[35m"
-    CYAN    = "\033[36m"
-    GRAY    = "\033[90m"
-    WHITE   = "\033[97m"
+    CYAN = "\033[36m"
+    GRAY = "\033[90m"
+    WHITE = "\033[97m"
 
 
 _USE_COLOR = True
@@ -67,21 +69,22 @@ def _hr(char: str = "─", width: int = 70, color: str = _C.GRAY) -> str:
 # ---------------------------------------------------------------------------
 
 _STAGE_MAP: dict[str, tuple[str, str, str]] = {
-    "collect_raw_facts":    ("📊", "事实采集",            _C.CYAN),
-    "run_analysis_engines": ("⚙️ ", "规则引擎计算",        _C.CYAN),
-    "explore_conflicts":    ("🔬", "冲突探索",            _C.MAGENTA),
-    "verify_hypotheses":    ("🧪", "假设验证",            _C.MAGENTA),
-    "run_thesis":           ("🏛 ", "投资论点生成",        _C.BLUE),
-    "review_thesis":        ("🔍", "论点审查",            _C.MAGENTA),
-    "generate_report":      ("📝", "报告生成",            _C.BLUE),
-    "review_report":        ("🛡️", "报告质量门控",        _C.MAGENTA),
-    "finalize_message":     ("✅", "完成",                _C.GREEN),
+    "collect_raw_facts": ("📊", "事实采集", _C.CYAN),
+    "run_analysis_engines": ("⚙️ ", "规则引擎计算", _C.CYAN),
+    "explore_conflicts": ("🔬", "冲突探索", _C.MAGENTA),
+    "verify_hypotheses": ("🧪", "假设验证", _C.MAGENTA),
+    "run_thesis": ("🏛 ", "投资论点生成", _C.BLUE),
+    "review_thesis": ("🔍", "论点审查", _C.MAGENTA),
+    "generate_report": ("📝", "报告生成", _C.BLUE),
+    "review_report": ("🛡️", "报告质量门控", _C.MAGENTA),
+    "finalize_message": ("✅", "完成", _C.GREEN),
 }
 
 
 # ---------------------------------------------------------------------------
 # Pretty console helpers
 # ---------------------------------------------------------------------------
+
 
 def _print_header(query: str, enhance: bool, llm_review: bool) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -120,7 +123,7 @@ def _print_stage_done(node_name: str, elapsed: float) -> None:
     if info is None:
         return
     icon, label, color = info
-    print(f"  {_c('─'*48, _C.GRAY)}")
+    print(f"  {_c('─' * 48, _C.GRAY)}")
     print(f"  {icon}  {_c(label, _C.BOLD, color)} 完成  {_c(f'+{elapsed:.1f}s', _C.GRAY)}")
     print()
 
@@ -155,7 +158,9 @@ def _classify_call(tool_name: str, args: dict[str, Any]) -> tuple[str, str, dict
     return ("tool", tool_name, args)
 
 
-def _print_step_tool_call(tool_name: str, args: dict[str, Any], step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
+def _print_step_tool_call(
+    tool_name: str, args: dict[str, Any], step: int, elapsed: float, agent_path: str = "", depth: int = 0
+) -> None:
     """LLM 决定调用某个工具/子代理。"""
     indent = "  " * depth
     kind, display_name, display_args = _classify_call(tool_name, args)
@@ -170,7 +175,9 @@ def _print_step_tool_call(tool_name: str, args: dict[str, Any], step: int, elaps
     print()
 
 
-def _print_step_tool_result(tool_name: str, content: str, status: str, step: int, elapsed: float, agent_path: str = "", depth: int = 0) -> None:
+def _print_step_tool_result(
+    tool_name: str, content: str, status: str, step: int, elapsed: float, agent_path: str = "", depth: int = 0
+) -> None:
     """工具调用结果返回（精简输出）。"""
     indent = "  " * depth
     is_subagent = tool_name.endswith("Agent")
@@ -224,7 +231,7 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
         fin = node_update.get("financial_facts")
         mkt = node_update.get("market_facts")
         n_snaps = 0
-        symbol  = ""
+        symbol = ""
         if fin is not None:
             snaps = getattr(fin, "snapshots", None) or fin.get("snapshots", []) if isinstance(fin, dict) else []
             n_snaps = len(snaps)
@@ -240,8 +247,8 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "run_analysis_engines":
         signal_analysis = node_update.get("signal_analysis") or {}
-        anomaly_report  = node_update.get("anomaly_report")  or {}
-        derived_facts   = node_update.get("derived_facts")   or {}
+        anomaly_report = node_update.get("anomaly_report") or {}
+        derived_facts = node_update.get("derived_facts") or {}
 
         if hasattr(signal_analysis, "results"):
             results = signal_analysis.results
@@ -285,12 +292,18 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "explore_conflicts":
         cr = node_update.get("conflicts_result") or {}
-        conflicts = cr.conflicts if hasattr(cr, "conflicts") else (cr.get("conflicts", []) if isinstance(cr, dict) else [])
+        conflicts = (
+            cr.conflicts if hasattr(cr, "conflicts") else (cr.get("conflicts", []) if isinstance(cr, dict) else [])
+        )
         if not conflicts:
             print(f"  🔬 未发现显著冲突{issue_tag}")
             return
         n_hyp = sum(len(c.hypotheses) if hasattr(c, "hypotheses") else len(c.get("hypotheses", [])) for c in conflicts)
-        high_sev = [c for c in conflicts if (c.severity if hasattr(c, "severity") else c.get("severity")) in ("critical", "high")]
+        high_sev = [
+            c
+            for c in conflicts
+            if (c.severity if hasattr(c, "severity") else c.get("severity")) in ("critical", "high")
+        ]
         sev_tag = _c(f"  {len(high_sev)} 高危", _C.RED) if high_sev else ""
         print(
             f"  🔬 {_c(str(len(conflicts)), _C.BOLD, _C.MAGENTA)} 个冲突"
@@ -302,8 +315,7 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             sc = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.GRAY
             n_h = len(c.hypotheses) if hasattr(c, "hypotheses") else len(c.get("hypotheses", []))
             theme = c.theme if hasattr(c, "theme") else c.get("theme", "")
-            print(f"      {_c(f'[{sev}]', sc)} {theme}"
-                  f"  {_c(f'{n_h}条假设', _C.DIM)}")
+            print(f"      {_c(f'[{sev}]', sc)} {theme}  {_c(f'{n_h}条假设', _C.DIM)}")
         if len(conflicts) > 6:
             print(_c(f"      …共 {len(conflicts)} 个", _C.DIM))
         print()
@@ -320,12 +332,15 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             return
         verified = sum(1 for r in vr_items if r.get("status") in ("verified", "partial"))
         rejected = sum(1 for r in vr_items if r.get("status") == "rejected")
-        unknown  = len(vr_items) - verified - rejected
+        unknown = len(vr_items) - verified - rejected
         parts = []
-        if verified: parts.append(_c(f"✓ {verified} 条支持", _C.GREEN))
-        if rejected: parts.append(_c(f"✗ {rejected} 条排除", _C.RED))
-        if unknown:  parts.append(_c(f"? {unknown} 条待定", _C.GRAY))
-        print(f"  🧪 假设验证完成 — " + "  ".join(parts) + issue_tag)
+        if verified:
+            parts.append(_c(f"✓ {verified} 条支持", _C.GREEN))
+        if rejected:
+            parts.append(_c(f"✗ {rejected} 条排除", _C.RED))
+        if unknown:
+            parts.append(_c(f"? {unknown} 条待定", _C.GRAY))
+        print("  🧪 假设验证完成 — " + "  ".join(parts) + issue_tag)
         verified_items = [r for r in vr_items if r.get("status") in ("verified", "partial")]
         for r in verified_items[:4]:
             tag = _c("[partial]", _C.YELLOW) if r.get("status") == "partial" else _c("[✓]", _C.GREEN)
@@ -342,16 +357,14 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             print(f"  🏛  论点未生成{issue_tag}")
             return
         thesis = av.get("thesis") or {}
-        conf   = thesis.get("overall_confidence", "unknown")
-        level  = thesis.get("overall_signal_level", "")
-        dims   = thesis.get("dimensions", [])
-        cc     = _C.GREEN if conf == "high" else _C.YELLOW if conf == "medium" else _C.RED
+        conf = thesis.get("overall_confidence", "unknown")
+        level = thesis.get("overall_signal_level", "")
+        dims = thesis.get("dimensions", [])
+        cc = _C.GREEN if conf == "high" else _C.YELLOW if conf == "medium" else _C.RED
         # Conflict data
-        cd         = av.get("conflict_data") or {}
+        cd = av.get("conflict_data") or {}
         verified_n = cd.get("verified_count", 0)
-        conflict_tag = (
-            _c(f"  │ {verified_n} 条验证假设纳入论点", _C.GREEN) if verified_n else ""
-        )
+        conflict_tag = _c(f"  │ {verified_n} 条验证假设纳入论点", _C.GREEN) if verified_n else ""
         print(
             f"  🏛  置信度: {_c(conf, _C.BOLD, cc)}"
             f"  │ 综合信号: {_c(level, _C.BOLD) if level else _c('—', _C.DIM)}"
@@ -362,8 +375,8 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
         triggered = [d for d in dims if isinstance(d, dict) and d.get("level") not in ("none", "unknown", None)]
         for d in triggered[:5]:
             dlv = d.get("level", "")
-            dc  = _C.RED if dlv == "high" else _C.YELLOW if dlv == "medium" else _C.DIM
-            print(f"      {_c(f'[{dlv}]', dc)} {d.get('dimension_id','')}: {d.get('summary','')[:70]}")
+            dc = _C.RED if dlv == "high" else _C.YELLOW if dlv == "medium" else _C.DIM
+            print(f"      {_c(f'[{dlv}]', dc)} {d.get('dimension_id', '')}: {d.get('summary', '')[:70]}")
         if len(triggered) > 5:
             print(_c(f"      …共 {len(triggered)} 个触发维度", _C.DIM))
         print()
@@ -376,7 +389,7 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             return
         overall = av.get("overall_status", av.get("review_overall_status", ""))
         findings = av.get("findings", []) or []
-        n_warn   = sum(1 for f in findings if isinstance(f, dict) and f.get("severity") in ("high", "critical"))
+        n_warn = sum(1 for f in findings if isinstance(f, dict) and f.get("severity") in ("high", "critical"))
         oc = _C.GREEN if "pass" in overall.lower() else _C.YELLOW if "warn" in overall.lower() else _C.RED
         print(
             f"  🔍 审查结果: {_c(overall, _C.BOLD, oc) if overall else _c('—', _C.DIM)}"
@@ -387,8 +400,8 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
         for f in findings[:3]:
             if isinstance(f, dict):
                 fsev = f.get("severity", "")
-                fc   = _C.RED if fsev in ("high","critical") else _C.YELLOW if fsev == "medium" else _C.DIM
-                print(f"      {_c(f'[{fsev}]', fc)} {f.get('message','')[:80]}")
+                fc = _C.RED if fsev in ("high", "critical") else _C.YELLOW if fsev == "medium" else _C.DIM
+                print(f"      {_c(f'[{fsev}]', fc)} {f.get('message', '')[:80]}")
         if len(findings) > 3:
             print(_c(f"      …共 {len(findings)} 项审查发现", _C.DIM))
         print()
@@ -398,8 +411,8 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
         av = _last_artifact("final_report")
         if av:
             title = av.get("title", "")
-            conf  = av.get("overall_confidence", "")
-            cc    = _C.GREEN if conf == "high" else _C.YELLOW if conf == "medium" else _C.RED
+            conf = av.get("overall_confidence", "")
+            cc = _C.GREEN if conf == "high" else _C.YELLOW if conf == "medium" else _C.RED
             print(
                 f"  📝 {_c(title, _C.BOLD, _C.WHITE) if title else '报告已生成'}"
                 f"  置信度: {_c(conf, cc) if conf else ''}"
@@ -407,6 +420,7 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             )
         else:
             print(f"  📝 报告生成中{issue_tag}")
+
 
 def _render_final_report(final_payload: dict) -> None:
     """Parse and render the final JSON report payload in a readable format."""
@@ -508,8 +522,8 @@ def _render_final_report(final_payload: dict) -> None:
     if conflict_analysis and conflict_analysis.get("conflict_count", 0) > 0:
         verified = conflict_analysis.get("verified_count", 0)
         rejected = conflict_analysis.get("rejected_count", 0)
-        total_h  = conflict_analysis.get("hypothesis_count", 0)
-        unknown  = total_h - verified - rejected
+        total_h = conflict_analysis.get("hypothesis_count", 0)
+        unknown = total_h - verified - rejected
 
         print(_hr("─", 60, _C.MAGENTA))
         print(_c("  🔬 冲突探索 · 假设验证", _C.BOLD, _C.MAGENTA))
@@ -530,7 +544,7 @@ def _render_final_report(final_payload: dict) -> None:
         for ci in conflict_analysis.get("conflicts_summary", []):
             sev = ci.get("severity", "")
             sev_color = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.GRAY
-            print(f"  {_c(f'[{sev}]', sev_color)} {_c(ci.get('theme',''), _C.BOLD, _C.WHITE)}")
+            print(f"  {_c(f'[{sev}]', sev_color)} {_c(ci.get('theme', ''), _C.BOLD, _C.WHITE)}")
             desc = ci.get("description", "")
             if desc:
                 print(f"        {_c(desc, _C.DIM)}")
@@ -584,6 +598,7 @@ def _render_final_report(final_payload: dict) -> None:
 # Footer
 # ---------------------------------------------------------------------------
 
+
 def _print_footer(total_steps: int, total_time: float, enhance: bool, llm_review: bool) -> None:
     print(_hr("═", 70, _C.CYAN))
     print(
@@ -621,6 +636,7 @@ def _print_chat_help() -> None:
 # ---------------------------------------------------------------------------
 # Message content extractor
 # ---------------------------------------------------------------------------
+
 
 def _extract_text(content: Any) -> str:
     """Extract plain text from a message content (str or list of blocks)."""
@@ -691,6 +707,7 @@ def _parse_report_payload(content: Any) -> dict | None:
 # ---------------------------------------------------------------------------
 # Core streaming runner
 # ---------------------------------------------------------------------------
+
 
 def _append_turn_history(history: list[Any], query: str, answer: str) -> None:
     history.append(HumanMessage(content=query))
@@ -875,9 +892,7 @@ async def run_query(
                             result_length=len(content_text),
                             elapsed=round(elapsed, 2),
                         )
-                        _print_step_tool_result(
-                            tname, content_text, status, step, elapsed, agent_path, depth
-                        )
+                        _print_step_tool_result(tname, content_text, status, step, elapsed, agent_path, depth)
 
     except KeyboardInterrupt:
         print()
@@ -925,6 +940,7 @@ async def run_query(
     if report_payload:
         try:
             from alphabee.task_records import TaskRecorder, TaskStore
+
             symbols = extract_symbols_from_query(query)
             symbol = list(symbols.values())[0] if symbols else None
             artifacts_list = report_payload.get("artifacts", [])
@@ -1140,16 +1156,20 @@ def _handle_task_cli(args: argparse.Namespace) -> None:
         print(_c("  📡 信号触发率", _C.BOLD, _C.WHITE))
         print(f"  {'信号':30s} {'触发率':>6s}  {'High%':>6s}  {'Med%':>6s}  {'Low%':>6s}  {'Block%':>6s}")
         for sid, stats in summary["signal_trigger_rates"].items():
-            print(f"  {sid:30s} {stats['triggered_pct']:5.0f}%  "
-                  f"{stats['high_pct']:5.0f}%  {stats['medium_pct']:5.0f}%  "
-                  f"{stats['low_pct']:5.0f}%  {stats['blocked_pct']:5.0f}%")
+            print(
+                f"  {sid:30s} {stats['triggered_pct']:5.0f}%  "
+                f"{stats['high_pct']:5.0f}%  {stats['medium_pct']:5.0f}%  "
+                f"{stats['low_pct']:5.0f}%  {stats['blocked_pct']:5.0f}%"
+            )
 
         print()
         print(_c("  🎯 Flag 影响 (overall_confidence) ", _C.BOLD, _C.WHITE))
         fi = summary["flag_impact"]
         for group, data in fi.items():
             if data.get("count", 0) > 0:
-                print(f"  {group:20s}: H={data['high_pct']:5.1f}% M={data['medium_pct']:5.1f}% L={data['low_pct']:5.1f}% ({data['count']}次)")
+                print(
+                    f"  {group:20s}: H={data['high_pct']:5.1f}% M={data['medium_pct']:5.1f}% L={data['low_pct']:5.1f}% ({data['count']}次)"
+                )
 
         print()
         print(_c("  ⚠ 单证据维度", _C.BOLD, _C.WHITE))
@@ -1183,11 +1203,13 @@ def _handle_task_cli(args: argparse.Namespace) -> None:
         print(_c(f"  📋 {target} 历史记录 ({len(records)} 条)", _C.BOLD, _C.WHITE))
         print()
         print(f"  {'时间':22s} {'置信度':8s} {'审查':14s} {'异常':4s} {'问题':4s} {'耗时'}")
-        print(f"  {'-'*22} {'-'*8} {'-'*14} {'-'*4} {'-'*4} {'-'*6}")
+        print(f"  {'-' * 22} {'-' * 8} {'-' * 14} {'-' * 4} {'-' * 4} {'-' * 6}")
         for r in records:
-            print(f"  {r.timestamp[:19]:22s} {r.overall_confidence:8s} "
-                  f"{r.review_overall_status:14s} {r.anomaly_triggered_count:4d} "
-                  f"{len(r.issues):4d} {r.total_duration_s:5.0f}s")
+            print(
+                f"  {r.timestamp[:19]:22s} {r.overall_confidence:8s} "
+                f"{r.review_overall_status:14s} {r.anomaly_triggered_count:4d} "
+                f"{len(r.issues):4d} {r.total_duration_s:5.0f}s"
+            )
 
     if args.task_record:
         tid = args.task_record.strip()
@@ -1196,6 +1218,7 @@ def _handle_task_cli(args: argparse.Namespace) -> None:
             print(_c(f"  ❌ 未找到记录: {tid}", _C.RED))
             return
         import json as _json
+
         print(_json.dumps(record.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
     print()
@@ -1222,9 +1245,7 @@ def main() -> None:
     # Keep file logging but suppress the console handler so it doesn't
     # mix with our pretty-printed output.
     for handler in logging.getLogger().handlers:
-        if isinstance(handler, logging.StreamHandler) and not isinstance(
-            handler, logging.FileHandler
-        ):
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
             handler.setLevel(logging.WARNING)
 
     if args.monitor_framework:
@@ -1252,18 +1273,22 @@ def main() -> None:
         return
 
     if args.chat or not args.query:
-        asyncio.run(run_chat_session(
+        asyncio.run(
+            run_chat_session(
+                args.query,
+                enhance=args.enhance,
+                llm_review=args.llm_review,
+            )
+        )
+        return
+
+    asyncio.run(
+        run_query(
             args.query,
             enhance=args.enhance,
             llm_review=args.llm_review,
-        ))
-        return
-
-    asyncio.run(run_query(
-        args.query,
-        enhance=args.enhance,
-        llm_review=args.llm_review,
-    ))
+        )
+    )
 
 
 if __name__ == "__main__":

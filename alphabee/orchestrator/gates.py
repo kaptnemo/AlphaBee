@@ -17,9 +17,9 @@ from alphabee.core import (
     EvaluationAssessment,
     EvaluationReport,
     Issue,
-    IssueStatus,
     IssueScope,
     IssueSeverity,
+    IssueStatus,
     RunStatus,
     Step,
     StepStatus,
@@ -65,10 +65,7 @@ def _truncate(value: str, limit: int = 200) -> str:
 
 
 def _base_issues(state: OrchestratorState) -> list[Issue]:
-    return [
-        issue for issue in state.get("issues", [])
-        if issue.category != "report_rewrite_needed"
-    ]
+    return [issue for issue in state.get("issues", []) if issue.category != "report_rewrite_needed"]
 
 
 def _load_report_output(state: OrchestratorState) -> ReportOutput | None:
@@ -88,15 +85,10 @@ def _issue_disclosure_status(
     report_output = _load_report_output(state)
     disclosed_ids = set(report_output.disclosed_issue_ids) if report_output else set()
     high_priority_issues = [
-        issue
-        for issue in source_issues
-        if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
+        issue for issue in source_issues if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
     ]
     required_ids = {issue.id for issue in high_priority_issues}
-    undisclosed = [
-        issue for issue in high_priority_issues
-        if issue.id not in disclosed_ids
-    ]
+    undisclosed = [issue for issue in high_priority_issues if issue.id not in disclosed_ids]
     return source_issues, disclosed_ids, required_ids, undisclosed
 
 
@@ -137,9 +129,7 @@ def build_evidence_map(state: OrchestratorState) -> list[dict[str, Any]]:
                     {
                         "observation_id": ref.ref_id,
                         "source": observation.source,
-                        "payload_preview": _truncate(
-                            json.dumps(observation.payload, ensure_ascii=False)
-                        ),
+                        "payload_preview": _truncate(json.dumps(observation.payload, ensure_ascii=False)),
                     }
                 )
             elif ref.ref_type == "decision":
@@ -161,8 +151,10 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
     report_artifact = _find_latest_report_artifact(state)
     report_value = report_artifact.value if report_artifact is not None else None
     report_output = _load_report_output(state)
-    report_payload = report_output.model_dump(mode="json") if report_output else (
-        report_value if isinstance(report_value, dict) else {}
+    report_payload = (
+        report_output.model_dump(mode="json")
+        if report_output
+        else (report_value if isinstance(report_value, dict) else {})
     )
     sections = report_payload.get("sections", {}) if isinstance(report_payload, dict) else {}
 
@@ -201,8 +193,7 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
     source_issues, _, _, undisclosed = _issue_disclosure_status(state)
     issue_categories = {issue.category for issue in source_issues}
     numeric_consistency = not any(
-        category in issue_categories
-        for category in {"numeric_inconsistency", "conflict", "cross_source_conflict"}
+        category in issue_categories for category in {"numeric_inconsistency", "conflict", "cross_source_conflict"}
     )
     cross_source_consistency = not any(
         category in issue_categories
@@ -211,9 +202,7 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
 
     issue_handling = not undisclosed
 
-    freshness_values = {
-        observation.freshness.value for observation in state.get("observations", [])
-    }
+    freshness_values = {observation.freshness.value for observation in state.get("observations", [])}
     if not freshness_values:
         freshness_score = 0.5
     elif freshness_values <= {"realtime", "recent"}:
@@ -239,16 +228,15 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
         grounded_references += sum(1 for item in refs if item in valid_ids)
     grounding_score = grounded_references / total_references if total_references else 0.0
 
-    risk_count = report_payload.get("risk_count", {})
     schema_validity = report_output is not None
 
     overall_confidence = report_payload.get("overall_confidence", "unknown")
     if undisclosed:
         overconfidence_presence = "high" if overall_confidence == "high" else "medium"
-    elif any(
-        issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
-        for issue in source_issues
-    ) and overall_confidence == "high":
+    elif (
+        any(issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL} for issue in source_issues)
+        and overall_confidence == "high"
+    ):
         overconfidence_presence = "medium"
     else:
         overconfidence_presence = "low"
@@ -284,8 +272,7 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
     # deterministic gate 的定位是“最低交付标准守门员”：
     # 哪怕 LLM 审查关闭或失败，它也要能稳定挡住缺章节、缺风险披露、强冲突未处理等问题。
     high_issues = [
-        issue for issue in _base_issues(state)
-        if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
+        issue for issue in _base_issues(state) if issue.severity in {IssueSeverity.HIGH, IssueSeverity.CRITICAL}
     ]
     for issue in high_issues[:4]:
         blocking_issues.append(issue.message)
@@ -295,13 +282,8 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
     if metrics.artifact_coverage < 0.8:
         blocking_issues.append("报告关键章节覆盖不足，无法完整表达主流程分析结果。")
     if not metrics.issue_handling:
-        missing = "；".join(
-            f"{issue.id}:{issue.category}"
-            for issue in undisclosed[:4]
-        )
-        blocking_issues.append(
-            f"报告没有充分显式披露高优先级问题，至少遗漏：{missing}。"
-        )
+        missing = "；".join(f"{issue.id}:{issue.category}" for issue in undisclosed[:4])
+        blocking_issues.append(f"报告没有充分显式披露高优先级问题，至少遗漏：{missing}。")
     if not metrics.cross_source_consistency:
         blocking_issues.append("当前结果存在跨来源或跨维度冲突，报告未形成稳定结论。")
 
@@ -319,21 +301,13 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
     if report_payload.get("overall_confidence") == "high" and high_issues:
         weaknesses.append("存在高优先级问题时仍给出高置信度，容易显得过度自信。")
     if undisclosed:
-        weaknesses.append(
-            "高优先级 issue 未全部进入 disclosed_issue_ids，报告的风险披露映射不完整。"
-        )
+        weaknesses.append("高优先级 issue 未全部进入 disclosed_issue_ids，报告的风险披露映射不完整。")
 
     passed = not blocking_issues
     recommendation = (
-        "可以继续交付当前报告。"
-        if passed
-        else "请根据阻断问题重写报告，优先修复风险披露、冲突呈现和结构覆盖。"
+        "可以继续交付当前报告。" if passed else "请根据阻断问题重写报告，优先修复风险披露、冲突呈现和结构覆盖。"
     )
-    summary = (
-        "报告已达到基本交付标准。"
-        if passed
-        else "报告尚未达到交付标准，需要一次面向问题的重写。"
-    )
+    summary = "报告已达到基本交付标准。" if passed else "报告尚未达到交付标准，需要一次面向问题的重写。"
 
     return EvaluationAssessment(
         summary=summary,
@@ -345,7 +319,9 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
         improvement_actions=[
             "补全缺失章节并保持与 thesis / anomaly / conflict 结果一致。",
             "显式呈现高优先级问题，不要把 unresolved gap 隐藏在弱措辞里。",
-        ] if not passed else [],
+        ]
+        if not passed
+        else [],
     )
 
 
@@ -419,9 +395,7 @@ async def review_report(
 
     report_artifact = _find_latest_report_artifact(state)
     if report_artifact is None:
-        completed_step = step.model_copy(
-            update={"status": StepStatus.SKIPPED, "outputs": []}
-        )
+        completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
         return {
             **state,
             "steps": [*steps, completed_step],
@@ -479,7 +453,9 @@ async def review_report(
             issue.model_copy(
                 update={
                     "status": IssueStatus.RESOLVED if issue.category == "report_rewrite_needed" else issue.status,
-                    "resolution_evidence": report_artifact.id if issue.category == "report_rewrite_needed" else issue.resolution_evidence,
+                    "resolution_evidence": report_artifact.id
+                    if issue.category == "report_rewrite_needed"
+                    else issue.resolution_evidence,
                 }
             )
             if issue.category == "report_rewrite_needed" and issue.status == IssueStatus.OPEN
@@ -532,9 +508,8 @@ def route_after_report_review(state: OrchestratorState) -> str:
     # report review 是图里唯一允许回环的节点：
     # 若 gate 认为当前报告还能通过一次定向修补改善，就回到 generate_report；
     # 否则直接结束，避免无限重写。
-    if (
-        state.get("report_rewrite_needed")
-        and state.get("report_review_round", 0) < state.get("max_report_review_rounds", 2)
+    if state.get("report_rewrite_needed") and state.get("report_review_round", 0) < state.get(
+        "max_report_review_rounds", 2
     ):
         return "generate_report"
     return "finalize_message"

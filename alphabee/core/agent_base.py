@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -16,14 +17,16 @@ class AgentResult(BaseModel):
     confidence: float = Field(..., description="The confidence score of the agent's execution.")
     error: str | None = Field(default=None, description="An error message if the agent's execution failed.")
     elapsed_ms: int = Field(default=0, description="The time taken for the agent's execution in milliseconds.")
-    
+
 
 class AgentContext(BaseModel):
     """AgentContext is the context in which an agent operates."""
 
     user_id: str = Field(..., description="The ID of the user for whom the agent is operating.")
     trace_id: str = Field(..., description="The trace ID for tracking the agent's execution.")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata related to the agent's execution.")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata related to the agent's execution."
+    )
 
 
 ToolFn = Callable[..., Any]
@@ -70,7 +73,7 @@ class AgentBase(ABC):
                 confidence=0.0,
                 error=str(e),
             )
-    
+
     @abstractmethod
     async def run(
         self,
@@ -87,7 +90,7 @@ class AgentBase(ABC):
             AgentResult: The result of the agent's execution.
         """
         raise NotImplementedError("The run method must be implemented by subclasses of AgentBase.")
-    
+
     def register_tool(self, name: str, tool_fn: ToolFn) -> None:
         self.tools[name] = tool_fn
 
@@ -95,15 +98,15 @@ class AgentBase(ABC):
         if name not in self.tools:
             raise ValueError(f"Tool '{name}' is not registered.")
         return self.tools.get(name)
-    
+
     async def call_tool(self, name: str, **kwargs: Any) -> Any:
         tool_fn = self.get_tool(name)
-        
+
         result = tool_fn(**kwargs)
 
         if hasattr(result, "__await__"):
             result = await result
-        
+
         return result
 
     def read_state(
@@ -118,7 +121,7 @@ class AgentBase(ABC):
             return state.get(key, default)
         else:
             raise ValueError("State must be a BaseModel or a dict.")
-        
+
     def success(self, summary: str, data: dict[str, Any] | None = None, confidence: float = 1.0) -> AgentResult:
         return AgentResult(
             agent_name=self.name,
@@ -127,7 +130,7 @@ class AgentBase(ABC):
             data=data or {},
             confidence=confidence,
         )
-    
+
     def failure(self, summary: str, error: str | None = None) -> AgentResult:
         return AgentResult(
             agent_name=self.name,

@@ -45,7 +45,8 @@ def _fallback_report(summary: str) -> dict:
 
 
 async def generate_report(
-    state: OrchestratorState, config: RunnableConfig,
+    state: OrchestratorState,
+    config: RunnableConfig,
 ) -> OrchestratorState:
     """Generate the final report from structured thesis, review, and data artifacts.
 
@@ -77,28 +78,30 @@ async def generate_report(
 
     try:
         model = create_chat_model("agent.report")
-        response = model.invoke([
-            SystemMessage(content=REPORT_GENERATOR_PROMPT),
-            HumanMessage(
-                content=(
-                    json_instruction(ReportOutput)
-                    + "\n\n"
-                    +
-                    (
-                        "请基于以下结构化数据生成财报质量体检报告。\n\n"
-                        if not rewrite_reason else
-                        "这是一次基于质量 gate 的重写，请优先修复以下问题后再生成新报告：\n"
-                        f"- {rewrite_reason}\n\n"
-                        "请保持所有判断忠实于输入 JSON，不要新增分析，只修复结构覆盖、风险披露和冲突呈现。\n\n"
+        response = model.invoke(
+            [
+                SystemMessage(content=REPORT_GENERATOR_PROMPT),
+                HumanMessage(
+                    content=(
+                        json_instruction(ReportOutput)
+                        + "\n\n"
+                        + (
+                            "请基于以下结构化数据生成财报质量体检报告。\n\n"
+                            if not rewrite_reason
+                            else "这是一次基于质量 gate 的重写，请优先修复以下问题后再生成新报告：\n"
+                            f"- {rewrite_reason}\n\n"
+                            "请保持所有判断忠实于输入 JSON，不要新增分析，只修复结构覆盖、风险披露和冲突呈现。\n\n"
+                        )
+                        + (
+                            f"上一版报告：\n```json\n{json.dumps(prior_report, ensure_ascii=False, indent=2)}\n```\n\n"
+                            if rewrite_reason and prior_report
+                            else ""
+                        )
+                        + f"输入数据：\n```json\n{prompt_text}\n```"
                     )
-                    + (
-                        f"上一版报告：\n```json\n{json.dumps(prior_report, ensure_ascii=False, indent=2)}\n```\n\n"
-                        if rewrite_reason and prior_report else ""
-                    )
-                    + f"输入数据：\n```json\n{prompt_text}\n```"
-                )
-            ),
-        ])
+                ),
+            ]
+        )
         raw_text = extract_text(response.content)
         try:
             report_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")

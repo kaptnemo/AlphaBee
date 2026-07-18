@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from threading import Lock
-from typing import Any, Sequence
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -23,9 +24,7 @@ def _require_llm_api_key() -> str:
     api_key = raw_api_key.strip()
     normalized = api_key.lower()
     if not api_key or normalized in {"none", "null"} or api_key.startswith("${"):
-        raise EnvironmentError(
-            "LLM API key is not configured. Set LLM_API_KEY or provide llm.api_key in config.yaml."
-        )
+        raise OSError("LLM API key is not configured. Set LLM_API_KEY or provide llm.api_key in config.yaml.")
     return api_key
 
 
@@ -119,16 +118,8 @@ def _extract_usage_from_langchain_result(response: LLMResult) -> dict[str, Any]:
 
         response_metadata = getattr(message, "response_metadata", None)
         if isinstance(response_metadata, dict):
-            model_name = (
-                model_name
-                or response_metadata.get("model_name")
-                or response_metadata.get("model")
-            )
-            request_id = (
-                request_id
-                or response_metadata.get("id")
-                or response_metadata.get("request_id")
-            )
+            model_name = model_name or response_metadata.get("model_name") or response_metadata.get("model")
+            request_id = request_id or response_metadata.get("id") or response_metadata.get("request_id")
 
     return {
         "model": model_name or settings.llm.model,
@@ -263,7 +254,7 @@ async def tracked_chat_completion(
             messages=list(messages),
             **kwargs,
         )
-    except Exception as exc:
+    except Exception:
         logger.exception(
             "llm.error",
             component=component,

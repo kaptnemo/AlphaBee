@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import enum
 from datetime import datetime
-from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class RunStatus(str, Enum):
+class RunStatus(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -16,7 +16,7 @@ class RunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class StepStatus(str, Enum):
+class StepStatus(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -26,7 +26,7 @@ class StepStatus(str, Enum):
     BLOCKED = "blocked"
 
 
-class ObservationFreshness(str, Enum):
+class ObservationFreshness(enum.StrEnum):
     REALTIME = "realtime"
     RECENT = "recent"
     HISTORICAL = "historical"
@@ -34,7 +34,7 @@ class ObservationFreshness(str, Enum):
     UNKNOWN = "unknown"
 
 
-class ArtifactRoleGroup(str, Enum):
+class ArtifactRoleGroup(enum.StrEnum):
     """Coarse role classification used for per-node context slicing.
 
     DATA       – raw outputs from external tools / sub-agents (inputs to reporting)
@@ -44,6 +44,7 @@ class ArtifactRoleGroup(str, Enum):
     EVALUATION – evaluator-produced assessment and scoring
     OTHER      – anything that does not fit the above categories
     """
+
     DATA = "data"
     PLAN = "plan"
     NARRATIVE = "narrative"
@@ -77,26 +78,27 @@ _ARTIFACT_TYPE_TO_ROLE_GROUP: dict[str, ArtifactRoleGroup] = {
 }
 
 
-class IssueSeverity(str, Enum):
+class IssueSeverity(enum.StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
 
-class IssueStatus(str, Enum):
+class IssueStatus(enum.StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
     IGNORED = "ignored"
     DEFERRED = "deferred"
 
 
-class IssueScope(str, Enum):
+class IssueScope(enum.StrEnum):
     """Which pipeline stage produced this issue.
 
     Used by the compressor to surface relevant issues to each node without
     handing every node the full issue list.
     """
+
     PLANNING = "planning"
     DATA = "data"
     REPORT = "report"
@@ -327,7 +329,6 @@ class Issue(BaseModel):
         default=IssueScope.REPORT,
         description="Pipeline stage that produced this issue (planning/data/report/review/evaluation).",
     )
-
 
 
 class EvaluateMetrics(BaseModel):

@@ -18,7 +18,6 @@ Usage::
 from __future__ import annotations
 
 import sys
-from datetime import datetime
 
 from alphabee.data_fetch.database import get_session, init_db
 from alphabee.data_fetch.models import (
@@ -26,16 +25,13 @@ from alphabee.data_fetch.models import (
     DataFetchIssue,
     DataFixTask,
     IssueStatus,
-    TaskStatus,
 )
 
 
 def _print_issues(status_filter: tuple[str, ...] | None = None) -> None:
     session = get_session()
     try:
-        q = session.query(DataFetchIssue).order_by(
-            DataFetchIssue.occurrence_count.desc()
-        )
+        q = session.query(DataFetchIssue).order_by(DataFetchIssue.occurrence_count.desc())
         if status_filter:
             q = q.filter(DataFetchIssue.status.in_(status_filter))
         issues = q.limit(50).all()
@@ -61,12 +57,7 @@ def _print_issues(status_filter: tuple[str, ...] | None = None) -> None:
 def _print_tasks() -> None:
     session = get_session()
     try:
-        tasks = (
-            session.query(DataFixTask)
-            .order_by(DataFixTask.created_at.desc())
-            .limit(50)
-            .all()
-        )
+        tasks = session.query(DataFixTask).order_by(DataFixTask.created_at.desc()).limit(50).all()
 
         if not tasks:
             print("No fix tasks found.")
@@ -75,12 +66,7 @@ def _print_tasks() -> None:
         print(f"{'Task ID':<8} {'Issue':<8} {'Status':<10} {'Target'}")
         print("-" * 100)
         for task in tasks:
-            print(
-                f"{task.task_id:<8} "
-                f"{task.issue_id:<8} "
-                f"{task.status.value:<10} "
-                f"{task.patch_target or 'N/A'}"
-            )
+            print(f"{task.task_id:<8} {task.issue_id:<8} {task.status.value:<10} {task.patch_target or 'N/A'}")
     finally:
         session.close()
 
@@ -90,21 +76,9 @@ def _print_stats() -> None:
     try:
         total_events = session.query(DataFetchEvent).count()
         total_issues = session.query(DataFetchIssue).count()
-        open_issues = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.status.in_(("new", "active")))
-            .count()
-        )
-        fixed_issues = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.status == IssueStatus.FIXED)
-            .count()
-        )
-        pending_tasks = (
-            session.query(DataFixTask)
-            .filter(DataFixTask.status.in_(("pending", "running")))
-            .count()
-        )
+        open_issues = session.query(DataFetchIssue).filter(DataFetchIssue.status.in_(("new", "active"))).count()
+        fixed_issues = session.query(DataFetchIssue).filter(DataFetchIssue.status == IssueStatus.FIXED).count()
+        pending_tasks = session.query(DataFixTask).filter(DataFixTask.status.in_(("pending", "running"))).count()
 
         print("Data Fetch Failure Statistics")
         print("=" * 40)
@@ -120,11 +94,7 @@ def _print_stats() -> None:
 def _show_issue(issue_id: int) -> None:
     session = get_session()
     try:
-        issue = (
-            session.query(DataFetchIssue)
-            .filter(DataFetchIssue.issue_id == issue_id)
-            .first()
-        )
+        issue = session.query(DataFetchIssue).filter(DataFetchIssue.issue_id == issue_id).first()
         if issue is None:
             print(f"Issue {issue_id} not found.")
             return
@@ -141,22 +111,14 @@ def _show_issue(issue_id: int) -> None:
         print(f"  Fix strategy: {issue.fix_strategy.value if issue.fix_strategy else 'N/A'}")
 
         if issue.sample_event_id:
-            event = (
-                session.query(DataFetchEvent)
-                .filter(DataFetchEvent.event_id == issue.sample_event_id)
-                .first()
-            )
+            event = session.query(DataFetchEvent).filter(DataFetchEvent.event_id == issue.sample_event_id).first()
             if event:
-                print(f"\n  Sample Event:")
+                print("\n  Sample Event:")
                 print(f"    Symbol:    {event.symbol or 'N/A'}")
                 print(f"    Error:     {event.error_message or 'N/A'}")
                 print(f"    Severity:  {event.severity.value}")
 
-        tasks = (
-            session.query(DataFixTask)
-            .filter(DataFixTask.issue_id == issue_id)
-            .all()
-        )
+        tasks = session.query(DataFixTask).filter(DataFixTask.issue_id == issue_id).all()
         if tasks:
             print(f"\n  Fix Tasks ({len(tasks)}):")
             for t in tasks:
@@ -170,14 +132,14 @@ def _show_issue(issue_id: int) -> None:
 def _get_mr_url_for_branch(branch: str) -> str | None:
     """Get MR creation URL for a branch."""
     try:
-        from alphabee.data_fetch.fix_executor import _build_mr_url as _mr
-        from alphabee.data_fetch.fix_executor import _gather_context as _gc
         # Hmm, this requires a task_id but we just want the URL
         # Use dummy context just for the URL
         import subprocess
+
         result = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         remote = result.stdout.strip()
         if "github.com:" in remote:
@@ -282,6 +244,7 @@ def main() -> None:
             print("  Invokes Claude Agent SDK, then verifies and submits the fix.")
             return
         import asyncio
+
         from alphabee.data_fetch.fix_executor import prepare_and_run_fix
 
         task_id = int(args[1])
@@ -322,7 +285,9 @@ def main() -> None:
 
     else:
         print(f"Unknown command: {cmd}")
-        print("Available: issues | tasks | stats | scan | auto-fix | show <id> | fix <id> | run-fix <task_id> | verify <task_id> | prompt <task_id>")
+        print(
+            "Available: issues | tasks | stats | scan | auto-fix | show <id> | fix <id> | run-fix <task_id> | verify <task_id> | prompt <task_id>"
+        )
 
 
 if __name__ == "__main__":

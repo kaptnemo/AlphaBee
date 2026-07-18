@@ -3,9 +3,9 @@
 import datetime
 from typing import Any
 
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 
 _CACHE = SyncTTLCache(ttl_seconds=3600.0)
 
@@ -98,15 +98,11 @@ def render(data: dict[str, Any]) -> str:
         gross_margin = (profit / revenue * 100) if revenue > 0 else 0.0
         total_revenue += revenue
         lines.append(
-            f"| {segment} "
-            f"| {revenue/1e8:.2f} "
-            f"| {cost/1e8:.2f} "
-            f"| {profit/1e8:.2f} "
-            f"| {gross_margin:.2f} |"
+            f"| {segment} | {revenue / 1e8:.2f} | {cost / 1e8:.2f} | {profit / 1e8:.2f} | {gross_margin:.2f} |"
         )
 
     if total_revenue > 0:
-        lines.append(f"| **合计** | **{total_revenue/1e8:.2f}** | - | - | - |")
+        lines.append(f"| **合计** | **{total_revenue / 1e8:.2f}** | - | - | - |")
     lines.append("")
 
     if len(period_totals) > 1:
@@ -116,9 +112,7 @@ def render(data: dict[str, Any]) -> str:
             "|--------|------------|",
         ]
         for entry in period_totals:
-            lines.append(f"| {entry['period']} | {entry['biz_total_revenue']/1e8:.2f} |")
+            lines.append(f"| {entry['period']} | {entry['biz_total_revenue'] / 1e8:.2f} |")
         lines.append("")
 
     return "\n".join(lines)
-
-

@@ -8,8 +8,9 @@ from alphabee.agents.thesis.engine import ThesisEngine
 from alphabee.agents.thesis.enhancer import ThesisEnhancer
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _build_conflict_data, _finalize_step, _find_artifact, _make_id
-from alphabee.orchestrator.contracts import ThesisArtifact, ThesisIndustryContext
 from alphabee.orchestrator.contracts import (
+    ThesisArtifact,
+    ThesisIndustryContext,
     coerce_conflicts_result,
     coerce_verification_artifact,
 )
@@ -18,7 +19,8 @@ from alphabee.orchestrator.state import OrchestratorState
 
 
 async def run_thesis(
-    state: OrchestratorState, config: RunnableConfig,
+    state: OrchestratorState,
+    config: RunnableConfig,
 ) -> OrchestratorState:
     """Run ThesisEngine on signal results, with optional LLM enhancement."""
     del config
@@ -58,10 +60,7 @@ async def run_thesis(
         anomaly_data = {
             "anomaly_count": anomaly_av.get("anomaly_count", 0),
             "pattern_count": anomaly_av.get("pattern_count", 0),
-            "anomalies": [
-                item for item in anomaly_av.get("anomalies", [])
-                if item.get("level") != "none"
-            ],
+            "anomalies": [item for item in anomaly_av.get("anomalies", []) if item.get("level") != "none"],
             "pattern_matches": anomaly_av.get("pattern_matches", []),
         }
 
@@ -115,9 +114,7 @@ async def run_thesis(
             verification_results=(
                 [
                     item.model_dump(mode="json")
-                    for item in coerce_verification_artifact(
-                        state.get("verification_results")
-                    ).results
+                    for item in coerce_verification_artifact(state.get("verification_results")).results
                 ]
                 if coerce_verification_artifact(state.get("verification_results")) is not None
                 else None
@@ -151,9 +148,7 @@ async def run_thesis(
                 market_cap_category=company_ctx.market_cap_category,
                 lifecycle_stage=company_ctx.lifecycle_stage,
                 business_model_summary=(
-                    company_ctx.business_model_summary[:300]
-                    if company_ctx.business_model_summary
-                    else ""
+                    company_ctx.business_model_summary[:300] if company_ctx.business_model_summary else ""
                 ),
             ),
             anomaly_data=anomaly_data,

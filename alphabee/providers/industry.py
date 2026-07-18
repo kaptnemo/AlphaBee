@@ -15,7 +15,7 @@ from typing import Any
 class IndustryDailyResult:
     daily: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
-    source: str = ""   # "sw_daily" | "index_daily+akshare" | "none"
+    source: str = ""  # "sw_daily" | "index_daily+akshare" | "none"
 
 
 def get_industry_daily(
@@ -78,9 +78,7 @@ def _try_sw_daily(sw_code: str, start: str, end: str) -> IndustryDailyResult | N
 # ── fallback: index_daily + akshare ────────────────────────────────────
 
 
-def _try_index_daily_plus_akshare(
-    sw_code: str, industry: str, start: str, end: str
-) -> IndustryDailyResult | None:
+def _try_index_daily_plus_akshare(sw_code: str, industry: str, start: str, end: str) -> IndustryDailyResult | None:
     """index_daily gives close + pct_chg; akshare snapshot fills PE/PB."""
 
     # Step A: Tushare index_daily
@@ -132,9 +130,7 @@ def _get_akshare_pe_pb(industry: str) -> tuple[float | None, float | None]:
             return None, None
 
         # AkShare uses Chinese column names; match by industry name
-        name_col = next(
-            (c for c in ("板块名称", "name") if c in df.columns), None
-        )
+        name_col = next((c for c in ("板块名称", "name") if c in df.columns), None)
         if name_col is None:
             return None, None
 
@@ -175,6 +171,7 @@ def _to_rows(df, extra: bool) -> list[dict[str, Any]]:
 
 def _safe_float(row_or_val, col: str | None = None) -> float:
     import math
+
     try:
         val = row_or_val[col] if col else row_or_val
         f = float(val)

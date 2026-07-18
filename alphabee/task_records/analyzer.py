@@ -37,7 +37,9 @@ class TaskAnalyzer:
         return counter.most_common(limit)
 
     def issue_message_clusters(
-        self, keywords: list[str] | None = None, top_n: int = 20,
+        self,
+        keywords: list[str] | None = None,
+        top_n: int = 20,
     ) -> list[tuple[str, int]]:
         """按关键词聚类 issue message。
 
@@ -47,10 +49,16 @@ class TaskAnalyzer:
         """
         if keywords is None:
             keywords = [
-                "语境不适配", "行业信息不足", "证据单薄",
-                "信号方向冲突", "thesis 判断", "结构调整",
-                "缺乏行业对比", "缺少行业负债率基准",
-                "单证据", "映射错位",
+                "语境不适配",
+                "行业信息不足",
+                "证据单薄",
+                "信号方向冲突",
+                "thesis 判断",
+                "结构调整",
+                "缺乏行业对比",
+                "缺少行业负债率基准",
+                "单证据",
+                "映射错位",
             ]
         counter: Counter[str] = Counter()
         for r in self.store.load_all():
@@ -138,9 +146,10 @@ class TaskAnalyzer:
             result[sid] = {
                 "runs": runs,
                 "triggered_pct": round(
-                    (counter.get("high", 0) + counter.get("medium", 0) + counter.get("low", 0))
-                    / runs * 100, 1
-                ) if runs else 0,
+                    (counter.get("high", 0) + counter.get("medium", 0) + counter.get("low", 0)) / runs * 100, 1
+                )
+                if runs
+                else 0,
                 "high_pct": round(counter.get("high", 0) / runs * 100, 1) if runs else 0,
                 "medium_pct": round(counter.get("medium", 0) / runs * 100, 1) if runs else 0,
                 "low_pct": round(counter.get("low", 0) / runs * 100, 1) if runs else 0,
@@ -169,7 +178,9 @@ class TaskAnalyzer:
         return counter.most_common()
 
     def high_zscore_rules(
-        self, min_runs: int = 3, z_threshold: float = 2.5,
+        self,
+        min_runs: int = 3,
+        z_threshold: float = 2.5,
     ) -> list[dict[str, Any]]:
         """哪些勾稽关系规则最常触发高 z-score。"""
         counter: Counter[str] = Counter()
@@ -181,8 +192,12 @@ class TaskAnalyzer:
                     counter[a.rule_id] += 1
         return sorted(
             [
-                {"rule_id": rid, "high_z_runs": count, "total_runs": runs.get(rid, 0),
-                 "high_z_rate": round(count / runs.get(rid, 1) * 100, 1)}
+                {
+                    "rule_id": rid,
+                    "high_z_runs": count,
+                    "total_runs": runs.get(rid, 0),
+                    "high_z_rate": round(count / runs.get(rid, 1) * 100, 1),
+                }
                 for rid, count in counter.items()
                 if runs.get(rid, 0) >= min_runs
             ],
@@ -196,10 +211,7 @@ class TaskAnalyzer:
         """哪些行业最常出现'语境不适配' issue。"""
         counter: Counter[str] = Counter()
         for r in self.store.load_all():
-            has_context_issue = any(
-                "语境不适配" in i.message or "行业信息不足" in i.message
-                for i in r.issues
-            )
+            has_context_issue = any("语境不适配" in i.message or "行业信息不足" in i.message for i in r.issues)
             if has_context_issue and r.company_industry:
                 counter[r.company_industry] += 1
         return counter.most_common()
@@ -214,9 +226,7 @@ class TaskAnalyzer:
                 if d.status == "contested":
                     counter[d.dim_name or d.dim_id] += 1
         return sorted(
-            [
-                (dim, cnt) for dim, cnt in counter.items()
-            ],
+            [(dim, cnt) for dim, cnt in counter.items()],
             key=lambda x: x[1],
             reverse=True,
         )
@@ -232,10 +242,7 @@ class TaskAnalyzer:
                 if d.status in ("contested", "insufficient"):
                     counter[dim] += 1
         return sorted(
-            [
-                {"dimension": dim, "blocked_pct": round(counter[dim] / total[dim] * 100, 1)}
-                for dim in total
-            ],
+            [{"dimension": dim, "blocked_pct": round(counter[dim] / total[dim] * 100, 1)} for dim in total],
             key=lambda x: x["blocked_pct"],
             reverse=True,
         )

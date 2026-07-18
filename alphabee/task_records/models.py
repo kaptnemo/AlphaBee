@@ -17,37 +17,38 @@ def _make_id() -> str:
 # 子记录结构
 # ═══════════════════════════════════════════════════════════════════
 
+
 class StageTiming(BaseModel):
-    stage: str                 # collect_facts / review_thesis / generate_report / finalize
+    stage: str  # collect_facts / review_thesis / generate_report / finalize
     elapsed_s: float
 
 
 class SignalResult(BaseModel):
     signal_id: str
-    level: str = ""            # high / medium / low / none / blocked / missing_fact
+    level: str = ""  # high / medium / low / none / blocked / missing_fact
     interpretation: str = ""
 
 
 class AnomalyResult(BaseModel):
     rule_id: str
     z_score: float = 0.0
-    level: str = ""            # high / medium / low / none
+    level: str = ""  # high / medium / low / none
     pattern_ids: list[str] = Field(default_factory=list)
 
 
 class DimensionVerdictSummary(BaseModel):
     dim_id: str
     dim_name: str = ""
-    status: str = ""           # confirmed / qualified / insufficient / contested
+    status: str = ""  # confirmed / qualified / insufficient / contested
     evidence_count: int = 0
-    judgment: str = ""         # strong_positive / positive / neutral / negative / strong_negative
+    judgment: str = ""  # strong_positive / positive / neutral / negative / strong_negative
     score: float = 0.0
     confidence: float = 0.0
 
 
 class IssueRecord(BaseModel):
-    severity: str = ""         # low / medium / high / critical
-    category: str = ""         # thesis_gap / missing_data / subagent_failure / etc.
+    severity: str = ""  # low / medium / high / critical
+    category: str = ""  # thesis_gap / missing_data / subagent_failure / etc.
     message: str = ""
     related_step: str = ""
 
@@ -55,6 +56,7 @@ class IssueRecord(BaseModel):
 # ═══════════════════════════════════════════════════════════════════
 # 主记录
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TaskRecord(BaseModel):
     """单次任务执行的完整记录。"""
@@ -89,14 +91,14 @@ class TaskRecord(BaseModel):
     overall_judgment: str = ""
 
     # ── 审查层 ──
-    review_overall_status: str = ""          # passed / qualified_pass / needs_revision / blocked
+    review_overall_status: str = ""  # passed / qualified_pass / needs_revision / blocked
     review_dimension_verdicts: list[DimensionVerdictSummary] = Field(default_factory=list)
 
     # ── 问题清单 ──
     issues: list[IssueRecord] = Field(default_factory=list)
 
     # ── 报告元信息 ──
-    overall_confidence: str = ""             # high / medium / low
+    overall_confidence: str = ""  # high / medium / low
     risk_count: dict[str, int] = Field(default_factory=dict)
     report_raw: dict[str, Any] = Field(default_factory=dict)  # 完整报告 JSON
 

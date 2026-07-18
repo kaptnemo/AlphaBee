@@ -11,12 +11,12 @@
 
 import pytest
 
-from alphabee.agents.derived_facts.engine import CyclicDependencyError, Engine
-from alphabee.agents.derived_facts.registry import DerivedFactRule, load_rules, RULES
+from alphabee.agents.derived_facts.engine import Engine
+from alphabee.agents.derived_facts.registry import RULES, load_rules
 from alphabee.agents.derived_facts.tools import evaluate_derived_facts
 
-
 # ── 前置：确保规则注册表已加载 ─────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def ensure_rules_loaded():
@@ -26,6 +26,7 @@ def ensure_rules_loaded():
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. 规则加载
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestRuleLoading:
     def test_rule_is_registered(self):
@@ -56,8 +57,8 @@ class TestRuleLoading:
 # 2. 规则计算正确性
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestRuleComputation:
 
+class TestRuleComputation:
     @pytest.fixture
     def rule(self):
         return RULES["accounts_receivable_yoy"]
@@ -97,20 +98,23 @@ class TestRuleComputation:
 # 3. 阈值档位判断
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestThresholds:
 
+class TestThresholds:
     @pytest.fixture
     def rule(self):
         return RULES["accounts_receivable_yoy"]
 
-    @pytest.mark.parametrize("current,prev,expected_level", [
-        (1310, 1000, "fast"),        # +31% → fast（严格 > 30）
-        (1300, 1000, "moderate"),    # +30% 恰好在 moderate 上边界（10 <= 30 <= 30）
-        (1299, 1000, "moderate"),    # +29.9% → moderate
-        (1100, 1000, "moderate"),    # +10% 下边界
-        (1099, 1000, "slow"),        # +9.9% → slow
-        (900,  1000, "slow"),        # 负增长 → slow
-    ])
+    @pytest.mark.parametrize(
+        "current,prev,expected_level",
+        [
+            (1310, 1000, "fast"),  # +31% → fast（严格 > 30）
+            (1300, 1000, "moderate"),  # +30% 恰好在 moderate 上边界（10 <= 30 <= 30）
+            (1299, 1000, "moderate"),  # +29.9% → moderate
+            (1100, 1000, "moderate"),  # +10% 下边界
+            (1099, 1000, "slow"),  # +9.9% → slow
+            (900, 1000, "slow"),  # 负增长 → slow
+        ],
+    )
     def test_threshold_level(self, rule, current, prev, expected_level):
         result = rule.compute({"accounts_receivable": current, "accounts_receivable_prev": prev})
         assert result["level"] == expected_level
@@ -120,8 +124,8 @@ class TestThresholds:
 # 4. Engine 链式依赖
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestEngineChain:
 
+class TestEngineChain:
     @pytest.fixture
     def engine(self):
         return Engine()
@@ -190,8 +194,8 @@ class TestEngineChain:
 # 5. Agent 工具函数 evaluate_derived_facts
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestEvaluateDerivedFacts:
 
+class TestEvaluateDerivedFacts:
     def test_tool_returns_yoy_value(self):
         """agent 工具调用应在输出中包含计算结果。"""
         output = evaluate_derived_facts(
@@ -215,7 +219,7 @@ class TestEvaluateDerivedFacts:
             {"accounts_receivable": 1600, "accounts_receivable_prev": 1000},
         )
         assert "accounts_receivable_growth" in output
-        assert "accounts_receivable_yoy" in output   # 传递依赖附录
+        assert "accounts_receivable_yoy" in output  # 传递依赖附录
 
     def test_tool_missing_prev_reports_error(self):
         """缺少 accounts_receivable_prev 时工具应返回错误信息，不应抛出异常。"""
@@ -245,32 +249,35 @@ class TestEvaluateDerivedFacts:
             },
         )
         assert "high_risk" in output
-        assert "45" in output   # gap = 60 - 15 = 45pp
+        assert "45" in output  # gap = 60 - 15 = 45pp
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 6. Agent 配置验证
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestAgentConfiguration:
 
+class TestAgentConfiguration:
     def test_agent_tool_is_evaluate_derived_facts(self):
         """derived_fact_agent 的工具列表中应包含 evaluate_derived_facts。"""
-        from alphabee.agents.derived_facts.tools import evaluate_derived_facts as tool_fn
-        from alphabee.agents.derived_facts import agent as agent_module
         import inspect
+
+        from alphabee.agents.derived_facts import agent as agent_module
 
         src = inspect.getsource(agent_module)
         assert "evaluate_derived_facts" in src
 
     def test_evaluate_derived_facts_is_callable(self):
         from alphabee.agents.derived_facts.tools import evaluate_derived_facts as tool_fn
+
         assert callable(tool_fn)
 
     def test_evaluate_derived_facts_signature(self):
         """工具函数签名应接受 rule_names 和 fact_values 参数。"""
         import inspect
+
         from alphabee.agents.derived_facts.tools import evaluate_derived_facts as tool_fn
+
         params = inspect.signature(tool_fn).parameters
         assert "rule_names" in params
         assert "fact_values" in params

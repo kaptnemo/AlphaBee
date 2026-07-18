@@ -3,9 +3,9 @@
 import datetime
 from typing import Any
 
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 
 _CACHE = SyncTTLCache(ttl_seconds=1800.0)
 
@@ -40,7 +40,7 @@ def get_expectation_fact(symbol: str) -> dict[str, Any]:
                     ts_code=ts_code,
                     start_date=start,
                     fields="ts_code,ann_date,end_date,type,p_change_min,p_change_max,"
-                           "net_profit_min,net_profit_max,last_parent_net,summary,change_reason",
+                    "net_profit_min,net_profit_max,last_parent_net,summary,change_reason",
                 ).data
             result["forecast"] = forecast_df.head(8).to_dict(orient="records") if not forecast_df.empty else []
             result["forecast_error"] = None
@@ -55,11 +55,11 @@ def get_expectation_fact(symbol: str) -> dict[str, Any]:
                     ts_code=ts_code,
                     start_date=start,
                     fields="ts_code,ann_date,end_date,revenue,operate_profit,total_profit,"
-                           "n_income,total_assets,total_hldr_eqy_exc_min_int,"
-                           "diluted_eps,diluted_roe,or_last_year,op_last_year,"
-                           "tp_last_year,np_last_year,eps_last_year,open_net_assets,"
-                           "bps_last_year,yoy_sales,yoy_op,yoy_tp,yoy_dedu_np,"
-                           "yoy_eps,yoy_roe,growth_assets,yoy_equity,growth_bps,perf_summary",
+                    "n_income,total_assets,total_hldr_eqy_exc_min_int,"
+                    "diluted_eps,diluted_roe,or_last_year,op_last_year,"
+                    "tp_last_year,np_last_year,eps_last_year,open_net_assets,"
+                    "bps_last_year,yoy_sales,yoy_op,yoy_tp,yoy_dedu_np,"
+                    "yoy_eps,yoy_roe,growth_assets,yoy_equity,growth_bps,perf_summary",
                 ).data
             result["express"] = express_df.head(8).to_dict(orient="records") if not express_df.empty else []
             result["express_error"] = None
@@ -100,9 +100,7 @@ def render(data: dict[str, Any]) -> str:
             np_min = safe_float(row.get("forecast_net_profit_min")) / 1e8
             np_max = safe_float(row.get("forecast_net_profit_max")) / 1e8
             lines.append(
-                f"| {ann_date} | {period} | {f_type} "
-                f"| {np_min:.2f} | {np_max:.2f} "
-                f"| {p_min:.2f} | {p_max:.2f} |"
+                f"| {ann_date} | {period} | {f_type} | {np_min:.2f} | {np_max:.2f} | {p_min:.2f} | {p_max:.2f} |"
             )
 
         lines += ["", "**预告摘要：**"]
@@ -154,5 +152,3 @@ def render(data: dict[str, Any]) -> str:
         lines.append("_近两年无业绩快报数据_\n")
 
     return "\n".join(lines)
-
-

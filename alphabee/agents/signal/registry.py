@@ -32,7 +32,7 @@ class SignalRule:
     description: str
     required_facts: list[str]
     required_derived_facts: list[str]
-    trigger_rules: dict[str, str]           # level → condition expression
+    trigger_rules: dict[str, str]  # level → condition expression
     interpretation_templates: dict[str, str]
     critic_questions: list[str]
     thesis_impact: dict[str, dict[str, str]]  # dimension → {level → impact}
@@ -45,7 +45,7 @@ class SignalRule:
     def _load_definition(self) -> None:
         import yaml
 
-        with open(self.rule_file, "r", encoding="utf-8") as f:
+        with open(self.rule_file, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         self.id = data.get("id", self.id)

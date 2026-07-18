@@ -1,12 +1,11 @@
 """IndustryFact tool — 行业分类、行业指数行情与申万行业估值。"""
 
-import datetime
 from typing import Any
 
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.providers.industry import get_industry_daily
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 
 _CACHE = SyncTTLCache(ttl_seconds=600.0)
 
@@ -34,9 +33,7 @@ def get_industry_fact(symbol: str) -> dict[str, Any]:
                 ts_code=ts_code,
                 fields="ts_code,name,industry,sector",
             ).data
-            sw_class_df = helper.index_classify(
-                level="L1", src="SW2021"
-            ).data
+            sw_class_df = helper.index_classify(level="L1", src="SW2021").data
 
         industry = ""
         sector = ""
@@ -53,9 +50,7 @@ def get_industry_fact(symbol: str) -> dict[str, Any]:
                 None,
             )
             if name_col:
-                matched_rows = sw_class_df[
-                    sw_class_df[name_col].str.contains(industry[:2], na=False)
-                ]
+                matched_rows = sw_class_df[sw_class_df[name_col].str.contains(industry[:2], na=False)]
                 if not matched_rows.empty:
                     matched_sw_code = safe_str(matched_rows.iloc[0].get("sw_code"))
 
@@ -134,5 +129,3 @@ def render(data: dict[str, Any]) -> str:
         lines.append("")
 
     return "\n".join(lines)
-
-

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 try:
     from json_repair import repair_json as _repair_json
+
     _JSON_REPAIR_AVAILABLE = True
 except ImportError:
     _JSON_REPAIR_AVAILABLE = False
@@ -68,6 +69,7 @@ def parse_json(text: str) -> Any:
 
     # ── 1. Markdown fence (anywhere in text) ─────────────────────────
     import re as _re
+
     fence_match = _re.search(r"```(?:json)?\s*\n([\s\S]*?)\n```", text)
     if fence_match:
         candidates.append(fence_match.group(1).strip())
@@ -91,7 +93,7 @@ def parse_json(text: str) -> Any:
         closer = "}" if opener == "{" else "]"
         end = text.rfind(closer)
         if end > start:
-            candidates.append(text[start: end + 1])
+            candidates.append(text[start : end + 1])
 
     # ── Try each candidate, deduplicating ──────────────────────────────
     seen: set[str] = set()

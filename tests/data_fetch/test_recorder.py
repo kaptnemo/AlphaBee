@@ -7,7 +7,7 @@ import pytest
 
 import alphabee.data_fetch.database as db_mod
 import alphabee.data_fetch.recorder as rec_mod
-from alphabee.data_fetch.models import DataFetchEvent, DataFetchIssue
+from alphabee.data_fetch.models import DataFetchEvent
 from alphabee.data_fetch.recorder import record_failure
 
 
@@ -207,11 +207,7 @@ class TestCaptureFailure:
             will_fail()
 
         session = db_mod.get_session()
-        events = (
-            session.query(DataFetchEvent)
-            .filter(DataFetchEvent.provider == "test_provider")
-            .all()
-        )
+        events = session.query(DataFetchEvent).filter(DataFetchEvent.provider == "test_provider").all()
         assert len(events) == 1
         assert events[0].error_type.value == "timeout"
 
@@ -229,10 +225,6 @@ class TestCaptureFailure:
             will_timeout()
 
         session = db_mod.get_session()
-        event = (
-            session.query(DataFetchEvent)
-            .filter(DataFetchEvent.provider == "sev_test")
-            .first()
-        )
+        event = session.query(DataFetchEvent).filter(DataFetchEvent.provider == "sev_test").first()
         assert event is not None
         assert event.severity.value == "high"

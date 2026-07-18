@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
 from pydantic import BaseModel, Field
@@ -10,7 +10,8 @@ from alphabee.collectors.eastmoney.helper import EastmoneyHelper
 from alphabee.utils.storage import get_data_root
 
 DEFAULT_EASTMONEY_OUTPUT_DIR = get_data_root() / "eastmoney_reports"
-SKILLS_PATH = Path(__file__).resolve().parents[2] / "skills" /"eastmoney"
+SKILLS_PATH = Path(__file__).resolve().parents[2] / "skills" / "eastmoney"
+
 
 class EastmoneyReportListOutput(BaseModel):
     page_num: int = Field(description="页码")
@@ -124,7 +125,9 @@ def get_eastmoney_report_detail_by_info_code(
     """通过 infoCode 获取研报详情。"""
     helper = _helper()
     with requests.Session() as session:
-        detail = helper.fetch_report_detail_by_info_code(session, info_code, timeout=timeout)
+        detail = helper.fetch_report_detail_by_info_code(
+            session, info_code, timeout=timeout
+        )
     return {"found": detail is not None, "detail": _to_detail_payload(detail)}
 
 
@@ -135,7 +138,9 @@ def get_eastmoney_report_industry_info_by_info_code(
     """通过 infoCode 获取研报里的行业信息。"""
     helper = _helper()
     with requests.Session() as session:
-        detail = helper.fetch_report_industry_info_by_info_code(session, info_code, timeout=timeout)
+        detail = helper.fetch_report_industry_info_by_info_code(
+            session, info_code, timeout=timeout
+        )
     if detail is None:
         return {"found": False}
     return EastmoneyIndustryInfoOutput(found=True, **detail).model_dump()
@@ -171,7 +176,7 @@ def get_eastmoney_industry_reports(
 def download_eastmoney_report_pdf(
     encoded_url: str,
     save_dir: str | Path | None = None,
-    filename: Optional[str] = None,
+    filename: str | None = None,
     timeout: int = 30,
     chunk_size: int = 8192,
 ) -> dict[str, Any]:
@@ -197,7 +202,7 @@ def download_eastmoney_report_pdf(
 def download_eastmoney_report_pdf_by_info_code(
     info_code: str,
     save_dir: str | Path | None = None,
-    filename: Optional[str] = None,
+    filename: str | None = None,
     timeout: int = 30,
     chunk_size: int = 8192,
 ) -> dict[str, Any]:

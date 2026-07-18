@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -192,14 +192,11 @@ class ReportGenerationPayload(BaseModel):
     required_issue_disclosures: list[ReportIssuePayload] = Field(default_factory=list)
 
 
-_ArtifactModelT = TypeVar("_ArtifactModelT", bound=BaseModel)
-
-
-def find_artifact_model(
+def find_artifact_model[ArtifactModelT: BaseModel](
     artifacts: list[Artifact] | list[dict[str, Any]],
     artifact_type: str,
-    model_type: type[_ArtifactModelT],
-) -> _ArtifactModelT | None:
+    model_type: type[ArtifactModelT],
+) -> ArtifactModelT | None:
     """Return the latest artifact payload validated as ``model_type``."""
 
     for artifact in reversed(artifacts):
@@ -256,9 +253,7 @@ def coerce_verification_artifact(value: Any) -> VerificationArtifact | None:
         return VerificationArtifact.model_validate(value)
     if isinstance(value, list):
         results = [VerificationResultItem.model_validate(item) for item in value]
-        verified_count = sum(
-            1 for item in results if item.status in ("verified", "partial")
-        )
+        verified_count = sum(1 for item in results if item.status in ("verified", "partial"))
         rejected_count = sum(1 for item in results if item.status == "rejected")
         return VerificationArtifact(
             results=results,

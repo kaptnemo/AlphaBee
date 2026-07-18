@@ -1,13 +1,14 @@
 """CompetitionFact tool — 同行竞争对手关键指标对比。"""
 
 import datetime
-import pandas as pd
 from typing import Any
 
+import pandas as pd
+
+from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
+from alphabee.collectors.local.helper import get_industry_peers, get_stock_basic
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
-from alphabee.collectors.local.helper import get_stock_basic, get_industry_peers
 
 _CACHE = SyncTTLCache(ttl_seconds=1800.0)
 
@@ -122,30 +123,34 @@ def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
             for _, row in sorted_df.head(max_peers).iterrows():
                 code = safe_str(row.get("stock_code"))
                 fina = fina_map.get(code, {})
-                peer_records.append({
-                    "stock_code": code,
-                    "company_name": name_map.get(code, ""),
-                    "market_cap": safe_float(row.get("market_cap")),
-                    "pe_ttm": safe_float(row.get("pe_ttm")),
-                    "pb_ratio": safe_float(row.get("pb_ratio")),
-                    "roe": fina.get("roe", 0.0),
-                    "gross_margin": fina.get("gross_margin", 0.0),
-                    "has_metrics": True,
-                })
+                peer_records.append(
+                    {
+                        "stock_code": code,
+                        "company_name": name_map.get(code, ""),
+                        "market_cap": safe_float(row.get("market_cap")),
+                        "pe_ttm": safe_float(row.get("pe_ttm")),
+                        "pb_ratio": safe_float(row.get("pb_ratio")),
+                        "roe": fina.get("roe", 0.0),
+                        "gross_margin": fina.get("gross_margin", 0.0),
+                        "has_metrics": True,
+                    }
+                )
         else:
             # Fallback: no market data, still show peer list with empty metrics
             for p in peers[:max_peers]:
                 code = safe_str(p.get("stock_code"))
-                peer_records.append({
-                    "stock_code": code,
-                    "company_name": safe_str(p.get("company_name")),
-                    "market_cap": 0.0,
-                    "pe_ttm": 0.0,
-                    "pb_ratio": 0.0,
-                    "roe": 0.0,
-                    "gross_margin": 0.0,
-                    "has_metrics": False,
-                })
+                peer_records.append(
+                    {
+                        "stock_code": code,
+                        "company_name": safe_str(p.get("company_name")),
+                        "market_cap": 0.0,
+                        "pe_ttm": 0.0,
+                        "pb_ratio": 0.0,
+                        "roe": 0.0,
+                        "gross_margin": 0.0,
+                        "has_metrics": False,
+                    }
+                )
 
         return {
             "stock_code": stock_code,
@@ -188,7 +193,7 @@ def render(data: dict[str, Any]) -> str:
             marker = " ◀ 目标" if code == stock_code else ""
             lines.append(
                 f"| {code} | {peer['company_name']}{marker} "
-                f"| {peer['market_cap']/10000:,.1f} "
+                f"| {peer['market_cap'] / 10000:,.1f} "
                 f"| {peer['pe_ttm']:.1f} "
                 f"| {peer['pb_ratio']:.2f} "
                 f"| {peer['roe']:.2f} "

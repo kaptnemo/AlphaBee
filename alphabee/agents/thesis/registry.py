@@ -32,7 +32,7 @@ class ThesisDimensionDef:
     id: str
     name: str
     description: str
-    signal_dimension_key: str     # 对应信号 thesis_impact 的 key
+    signal_dimension_key: str  # 对应信号 thesis_impact 的 key
     interpretation_templates: dict[str, str] = field(default_factory=dict)
     critic_questions: list[DimensionCriticQuestion] = field(default_factory=list)
 
@@ -78,7 +78,7 @@ def load_dimension_defs() -> None:
 
     DIMENSION_DEFS.clear()
     for yaml_file in sorted(DIMENSIONS_DIR.glob("*.yaml")):
-        with open(yaml_file, "r", encoding="utf-8") as f:
+        with open(yaml_file, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if not data:
             continue

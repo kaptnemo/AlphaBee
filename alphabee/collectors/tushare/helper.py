@@ -1,11 +1,12 @@
 import time
 from typing import Any
-# import pymongo
 
+# import pymongo
 from pandas import DataFrame
+
+from alphabee.adapters.tushare import TuShare_Adapter
 from alphabee.collectors.tushare import ts
 from alphabee.utils import get_logger
-from alphabee.adapters.tushare import TuShare_Adapter
 
 # mongo_client: pymongo.MongoClient[dict[str, Any]] = pymongo.MongoClient(
 #     "mongodb://root:cyw271828@localhost:27017/"
@@ -104,6 +105,7 @@ class TuShareHelper:
 
         def wrapper(*arg, **kwargs):
             max_retries = 1
+            e = None
             for attempt in range(1, max_retries + 1):
                 try:
                     return TuShareResult(func(*arg, **kwargs), name)
@@ -128,7 +130,7 @@ class TuShareHelper:
                         )
                         _report_tushare_failure(name, e, kwargs)
                         raise
-                    wait = attempt ** 2  # 1s, 4s, 9s
+                    wait = attempt**2  # 1s, 4s, 9s
                     logger.warning(
                         "Tushare API error, retrying",
                         api=name,
@@ -161,8 +163,6 @@ if __name__ == "__main__":
     all_stocks = ts_client.stock_basic(exchange="", list_status="L")
     all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")
 
-
-    
     # df = ts_client.balancesheet(
     #     ts_code='600000.SH',
     #     start_date='20170101',

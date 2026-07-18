@@ -367,4 +367,3 @@ ExpectationFitAgent
 1. 扩展 `ThesisEngine`，让 anomaly/conflict/verification 成为 thesis evidence。
 2. 新增 `InsightAgent`，输出 `core_view / central_tension / evidence_for / evidence_against`。
 3. 重构 `REPORT_GENERATOR_PROMPT`，让报告以 InsightAgent 的观点骨架为主线。
-

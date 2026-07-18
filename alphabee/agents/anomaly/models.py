@@ -18,13 +18,13 @@ class CrossRule:
     id: str
     name: str
     description: str
-    metric_a: str                          # 第一个指标（canonical 字段名）
-    metric_b: str                          # 第二个指标
-    rule_type: str                         # "gap" | "ratio" | "codir"
-    anomaly_direction: str                 # "spike" | "drop" | "any"
-    threshold_sigma: float = 2.0           # z-score 阈值
-    baseline_periods: int = 4              # 基线计算期数（不含当期）
-    book_ref: str = ""                     # 《手财》章节引用
+    metric_a: str  # 第一个指标（canonical 字段名）
+    metric_b: str  # 第二个指标
+    rule_type: str  # "gap" | "ratio" | "codir"
+    anomaly_direction: str  # "spike" | "drop" | "any"
+    threshold_sigma: float = 2.0  # z-score 阈值
+    baseline_periods: int = 4  # 基线计算期数（不含当期）
+    book_ref: str = ""  # 《手财》章节引用
     verify_questions: list[str] = field(default_factory=list)  # 排查路径
     # 特殊：对照法定税率而非历史基线
     use_statutory: bool = False
@@ -57,12 +57,12 @@ class MetricAnomaly:
 
     rule_id: str
     rule_name: str
-    z_score: float                         # 正值=高于基线, 负值=低于基线
+    z_score: float  # 正值=高于基线, 负值=低于基线
     current_value: float
     baseline_mean: float
     baseline_std: float
-    level: str = "none"                    # "high" | "medium" | "low" | "none"
-    baseline_mode: str = "same_period"     # "same_period" | "mixed_periods" | "statutory"
+    level: str = "none"  # "high" | "medium" | "low" | "none"
+    baseline_mode: str = "same_period"  # "same_period" | "mixed_periods" | "statutory"
     history_periods: list[str] = field(default_factory=list)
     book_ref: str = ""
     verify_questions: list[str] = field(default_factory=list)  # 排查路径
@@ -91,8 +91,8 @@ class AnomalyPattern:
 
     id: str
     name: str
-    severity: str                          # "high" | "medium" | "low"
-    risk_dimension: str                    # "financial_quality" | "earnings_quality" | "credit_risk"
+    severity: str  # "high" | "medium" | "low"
+    risk_dimension: str  # "financial_quality" | "earnings_quality" | "credit_risk"
     conditions: list[AnomalyPatternCondition] = field(default_factory=list)
     explanation: str = ""
     verify_questions: list[str] = field(default_factory=list)
@@ -101,10 +101,7 @@ class AnomalyPattern:
     def from_dict(cls, data: dict[str, Any]) -> AnomalyPattern:
         # Pattern 的业务角色类似“审计经验模板”：
         # 它把多个一阶异常组合成更接近真实经营/会计问题的解释框架。
-        conditions = [
-            AnomalyPatternCondition.from_dict(c)
-            for c in data.get("conditions", [])
-        ]
+        conditions = [AnomalyPatternCondition.from_dict(c) for c in data.get("conditions", [])]
         return cls(
             id=data["id"],
             name=data["name"],
@@ -133,8 +130,8 @@ class AnomalyPatternCondition:
     """单个模式条件：某条勾稽关系规则必须触发，且方向/阈值匹配。"""
 
     rule_id: str
-    min_zscore: float = 1.5               # |z| 至少这么大
-    direction: str = "any"                # "spike" | "drop" | "any"
+    min_zscore: float = 1.5  # |z| 至少这么大
+    direction: str = "any"  # "spike" | "drop" | "any"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AnomalyPatternCondition:

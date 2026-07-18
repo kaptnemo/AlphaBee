@@ -67,9 +67,7 @@ def test_build_company_context_prefers_structured_lifecycle_over_text_hints(monk
     ctx = company_context.build_company_context(
         symbol="300750.SZ",
         fact_text="公司已经进入成熟稳定期。",
-        financial_facts=SimpleNamespace(
-            snapshots=[SimpleNamespace(revenue_yoy=32.0)]
-        ),
+        financial_facts=SimpleNamespace(snapshots=[SimpleNamespace(revenue_yoy=32.0)]),
     )
 
     assert ctx.lifecycle_stage == "growth"

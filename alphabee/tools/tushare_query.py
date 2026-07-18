@@ -4,7 +4,6 @@ import json
 
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
-from alphabee.utils.paths import PROJECT_ROOT
 
 _QUERY_CACHE = SyncTTLCache(ttl_seconds=300.0)
 
@@ -79,8 +78,7 @@ def query_tushare(api_name: str, params: str, max_rows: int = 50) -> str:
         ]
         if total_rows > max_rows:
             lines.append(
-                f"\n> 共 {total_rows} 行，只显示前 {max_rows} 行。"
-                "如需更多数据，请缩小时间范围或增大 max_rows。"
+                f"\n> 共 {total_rows} 行，只显示前 {max_rows} 行。如需更多数据，请缩小时间范围或增大 max_rows。"
             )
 
         return "\n".join(lines)

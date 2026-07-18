@@ -60,12 +60,14 @@ def _build_key_signals(signal_analysis: dict) -> list[dict]:
         if level not in ("none", "unknown", ""):
             # 冲突探索只需要“有信息量的信号”，
             # 没命中的信号不带入 prompt，避免 agent 被大量无效规则噪声淹没。
-            key.append({
-                "signal_id": sig_id,
-                "level": level,
-                "interpretation": (result.get("interpretation") or "")[:200],
-                "thesis_impact": result.get("thesis_impact", {}),
-            })
+            key.append(
+                {
+                    "signal_id": sig_id,
+                    "level": level,
+                    "interpretation": (result.get("interpretation") or "")[:200],
+                    "thesis_impact": result.get("thesis_impact", {}),
+                }
+            )
     return key
 
 
@@ -85,9 +87,7 @@ def _build_key_derived(derived_facts: dict) -> dict:
     return result
 
 
-def generate_explore_conflicts_prompt(
-    state: OrchestratorState, query: str, symbol: str | None
-) -> str:
+def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symbol: str | None) -> str:
     financial_facts: FinancialFacts | None = state.get("financial_facts")
     market_facts: MarketFacts | None = state.get("market_facts")
     derived_facts = coerce_derived_facts(state.get("derived_facts")) or DerivedFactsArtifact()
@@ -165,17 +165,19 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
     snapshots_summary = []
     if financial_facts and financial_facts.snapshots:
         for snapshot in financial_facts.snapshots[:4]:
-            snapshots_summary.append({
-                "period": getattr(snapshot, "period", ""),
-                "revenue_yoy": getattr(snapshot, "revenue_yoy", None),
-                "net_profit_yoy": getattr(snapshot, "net_profit_yoy", None),
-                "gross_margin": getattr(snapshot, "gross_margin", None),
-                "roe": getattr(snapshot, "roe", None),
-                "operating_cashflow_ratio": getattr(snapshot, "operating_cashflow_ratio", None),
-                "accounts_receivable_days": getattr(snapshot, "accounts_receivable_days", None),
-                "inventory_days": getattr(snapshot, "inventory_days", None),
-                "debt_ratio": getattr(snapshot, "debt_ratio", None),
-            })
+            snapshots_summary.append(
+                {
+                    "period": getattr(snapshot, "period", ""),
+                    "revenue_yoy": getattr(snapshot, "revenue_yoy", None),
+                    "net_profit_yoy": getattr(snapshot, "net_profit_yoy", None),
+                    "gross_margin": getattr(snapshot, "gross_margin", None),
+                    "roe": getattr(snapshot, "roe", None),
+                    "operating_cashflow_ratio": getattr(snapshot, "operating_cashflow_ratio", None),
+                    "accounts_receivable_days": getattr(snapshot, "accounts_receivable_days", None),
+                    "inventory_days": getattr(snapshot, "inventory_days", None),
+                    "debt_ratio": getattr(snapshot, "debt_ratio", None),
+                }
+            )
 
     market_summary = {}
     if market_facts:
@@ -202,7 +204,9 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
                 for item in (anomaly_report.anomalies if anomaly_report else [])
                 if item.get("level") != "none"
             ][:8],
-        } if anomaly_report else {},
+        }
+        if anomaly_report
+        else {},
     }
 
 
@@ -280,23 +284,15 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
         payload.anomaly = ReportAnomalyPayload(
             anomaly_count=anomaly_val.anomaly_count,
             pattern_count=anomaly_val.pattern_count,
-            anomalies=[
-                anomaly for anomaly in anomaly_val.anomalies
-                if anomaly.get("level") != "none"
-            ],
+            anomalies=[anomaly for anomaly in anomaly_val.anomalies if anomaly.get("level") != "none"],
             pattern_matches=list(anomaly_val.pattern_matches),
         )
 
     conflicts_result = coerce_conflicts_result(state.get("conflicts_result"))
-    verification_artifact = (
-        coerce_verification_artifact(state.get("verification_results"))
-        or VerificationArtifact()
-    )
+    verification_artifact = coerce_verification_artifact(state.get("verification_results")) or VerificationArtifact()
     if conflicts_result:
         verify_by_hid = {
-            result.hypothesis_id: result
-            for result in verification_artifact.results
-            if result.hypothesis_id
+            result.hypothesis_id: result for result in verification_artifact.results if result.hypothesis_id
         }
 
         enriched_conflicts: list[ReportConflictItemPayload] = []
@@ -308,28 +304,14 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
                     ReportConflictHypothesisPayload(
                         explanation=hypothesis.explanation,
                         predictions=list(hypothesis.predictions),
-                        verification_status=(
-                            verification.status
-                            if verification is not None
-                            else hypothesis.status
-                        ),
-                        support_score=(
-                            verification.support_score if verification is not None else None
-                        ),
-                        contradiction_score=(
-                            verification.contradiction_score if verification is not None else None
-                        ),
-                        confidence=(
-                            verification.confidence if verification is not None else None
-                        ),
+                        verification_status=(verification.status if verification is not None else hypothesis.status),
+                        support_score=(verification.support_score if verification is not None else None),
+                        contradiction_score=(verification.contradiction_score if verification is not None else None),
+                        confidence=(verification.confidence if verification is not None else None),
                         supporting_evidence=(
-                            list(verification.supporting_evidence)
-                            if verification is not None else []
+                            list(verification.supporting_evidence) if verification is not None else []
                         ),
-                        refuting_evidence=(
-                            list(verification.refuting_evidence)
-                            if verification is not None else []
-                        ),
+                        refuting_evidence=(list(verification.refuting_evidence) if verification is not None else []),
                         gaps=list(verification.gaps) if verification is not None else [],
                         summary=verification.summary if verification is not None else "",
                     )
@@ -372,9 +354,6 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
         )
         for issue in issues
     ]
-    payload.required_issue_disclosures = [
-        issue for issue in payload.issues
-        if issue.severity in {"high", "critical"}
-    ]
+    payload.required_issue_disclosures = [issue for issue in payload.issues if issue.severity in {"high", "critical"}]
 
     return payload

@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import json
-
 from alphabee.agents.thesis.critic import CriticEngine
 from alphabee.agents.thesis.engine import ThesisEngine
 from alphabee.agents.thesis.models import (
@@ -50,9 +48,7 @@ def list_thesis_dimensions() -> str:
     ]
     for dim_id, dim_def in sorted(DIMENSION_DEFS.items()):
         desc = " ".join(dim_def.description.split())[:60] + "…"
-        lines.append(
-            f"| `{dim_id}` | {dim_def.name} | `{dim_def.signal_dimension_key}` | {desc} |"
-        )
+        lines.append(f"| `{dim_id}` | {dim_def.name} | `{dim_def.signal_dimension_key}` | {desc} |")
 
     lines.append(
         "\n> 💡 **使用提示**：signal_results 中每条信号的 `thesis_impact` "
@@ -107,8 +103,7 @@ def synthesize_thesis(
 
     if not signal_results:
         return (
-            "> ⚠️ signal_results 为空，无法生成 Thesis。\n"
-            "> 请先通过 `evaluate_signals` 获取信号评估结果后再调用本工具。"
+            "> ⚠️ signal_results 为空，无法生成 Thesis。\n> 请先通过 `evaluate_signals` 获取信号评估结果后再调用本工具。"
         )
 
     # ── 确定性引擎 ────────────────────────────────────────────────────
@@ -149,9 +144,7 @@ def synthesize_thesis(
             enhanced_md = _render_enhanced(enhanced)
         except Exception as e:
             enhanced_md = (
-                f"\n\n---\n\n## Enhanced Analysis (LLM)\n\n"
-                f"> ⚠️ LLM 增强层运行失败：{e}\n"
-                f"> 以下仅包含确定性分析结论。\n"
+                f"\n\n---\n\n## Enhanced Analysis (LLM)\n\n> ⚠️ LLM 增强层运行失败：{e}\n> 以下仅包含确定性分析结论。\n"
             )
 
     # ── 渲染报告 ─────────────────────────────────────────────────────
@@ -173,9 +166,7 @@ def _render_thesis(thesis) -> str:
     }
 
     # ── 标题与摘要 ──────────────────────────────────────────────────
-    sections.append(
-        f"# 投资论点（Thesis）— {thesis.symbol} · {thesis.period}\n"
-    )
+    sections.append(f"# 投资论点（Thesis）— {thesis.symbol} · {thesis.period}\n")
     sections.append(f"**整体判断**：{overall_label}（评分：{thesis.overall_score:+.2f}）\n")
 
     coverage = f"{thesis.triggered_signal_count}/{thesis.signal_count}"
@@ -198,9 +189,7 @@ def _render_thesis(thesis) -> str:
         if dim.evidence:
             sections.append("**支撑证据**：")
             for e in dim.evidence:
-                level_icon = {
-                    "high": "🔴", "medium": "🟡", "low": "🟢", "none": "✅"
-                }.get(e.level, "⚪")
+                level_icon = {"high": "🔴", "medium": "🟡", "low": "🟢", "none": "✅"}.get(e.level, "⚪")
                 source_label = source_labels.get(getattr(e, "source_type", ""), "证据")
                 sections.append(
                     f"  - {level_icon} `{e.signal_id}` [{source_label}] → 影响：{e.impact}"
@@ -236,15 +225,11 @@ def _render_thesis(thesis) -> str:
     # ── Critic 追问 ──────────────────────────────────────────────────
     if thesis.critic_questions:
         sections.append("---\n\n## Critic 质疑追问\n")
-        sections.append(
-            "以下问题需在最终报告中逐一核实或说明，否则结论可信度将受到限制：\n"
-        )
+        sections.append("以下问题需在最终报告中逐一核实或说明，否则结论可信度将受到限制：\n")
         for cq in thesis.critic_questions:
             sev_label = CRITIC_SEVERITY_LABELS.get(cq.severity, cq.severity)
             cat_label = CRITIC_CATEGORY_LABELS.get(cq.category, cq.category)
-            sections.append(
-                f"- **{sev_label}**（{cat_label}）：{cq.question}"
-            )
+            sections.append(f"- **{sev_label}**（{cat_label}）：{cq.question}")
         sections.append("")
 
     # ── 尾部提示 ────────────────────────────────────────────────────
@@ -269,9 +254,7 @@ def _render_enhanced(enhanced) -> str:
                 "mitigated": " ✅ 部分缓解",
             }.get(p.severity_modifier, "")
             parts.append(f"**{i}. {p.pattern_name}**{sev_mod}\n")
-            parts.append(
-                f"涉及的信号：{', '.join(f'`{s}`' for s in p.signals_involved)}\n"
-            )
+            parts.append(f"涉及的信号：{', '.join(f'`{s}`' for s in p.signals_involved)}\n")
             parts.append(f"\n{p.narrative}\n")
 
     if enhanced.context_notes:

@@ -169,9 +169,7 @@ def evaluate_derived_facts(
     sections: list[str] = []
 
     if unknown_rules:
-        sections.append(
-            f"> ⚠️ 未知规则（已跳过）：{', '.join(f'`{r}`' for r in unknown_rules)}\n"
-        )
+        sections.append(f"> ⚠️ 未知规则（已跳过）：{', '.join(f'`{r}`' for r in unknown_rules)}\n")
 
     if not valid_rules:
         sections.append("没有可计算的规则，请检查规则名称和字段输入。")
@@ -190,10 +188,7 @@ def evaluate_derived_facts(
     for name in valid_rules:
         result = all_results.get(name)
         if result is None:
-            sections.append(
-                f"### `{name}`\n"
-                f"> ⚠️ 数据不可用 — 规则未被引擎计算\n"
-            )
+            sections.append(f"### `{name}`\n> ⚠️ 数据不可用 — 规则未被引擎计算\n")
             continue
 
         sections.append(_format_result(name, result))
@@ -232,11 +227,7 @@ def _format_result(name: str, result: dict) -> str:
         return f"{header}\n> ❌ 计算失败：{error}\n"
 
     if raw_value is None:
-        missing_facts = [f for f in (rule.required_facts if rule else []) if f not in {}]
-        return (
-            f"{header}\n"
-            f"> ⚠️ 数据不可用 — 缺少字段：{error or '未知'}\n"
-        )
+        return f"{header}\n> ⚠️ 数据不可用 — 缺少字段：{error or '未知'}\n"
 
     value_str = f"{raw_value:.4g}" if isinstance(raw_value, float) else str(raw_value)
 
@@ -248,4 +239,3 @@ def _format_result(name: str, result: dict) -> str:
     if interp:
         block.append(f"- **解释**：{interp}")
     return "\n".join(block) + "\n"
-

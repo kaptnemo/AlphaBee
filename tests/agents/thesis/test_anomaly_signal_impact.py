@@ -22,4 +22,3 @@ def test_anomaly_signal_contributes_to_thesis_dimensions():
     assert thesis.dimensions["earnings_quality"].judgment == "strong_negative"
     assert thesis.dimensions["operational_stability"].judgment == "strong_negative"
     assert thesis.primary_risks
-

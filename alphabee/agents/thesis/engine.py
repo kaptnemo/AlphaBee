@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
+
+import structlog
 
 from alphabee.agents.thesis.models import (
     IMPACT_TO_DIRECTION,
@@ -106,16 +107,13 @@ class ThesisEngine:
         # ── 1. 统计信号基础数据 ────────────────────────────────────────
         total_signals = len(signal_results)
         triggered_signals = sum(
-            1
-            for r in signal_results.values()
-            if r.get("level") in SIGNAL_LEVEL_TO_SCORE and r["level"] != "none"
+            1 for r in signal_results.values() if r.get("level") in SIGNAL_LEVEL_TO_SCORE and r["level"] != "none"
         )
 
         # ── 2. 按维度分组信号证据 ──────────────────────────────────────
         # dim_key → list of (signal_id, level_score, impact_direction, evidence)
         dim_contributions: dict[str, list[tuple[float, float, EvidenceItem]]] = {
-            dim_def.signal_dimension_key: []
-            for dim_def in self.dimension_defs.values()
+            dim_def.signal_dimension_key: [] for dim_def in self.dimension_defs.values()
         }
 
         for signal_id, result in signal_results.items():
@@ -355,11 +353,7 @@ class ThesisEngine:
             return
 
         verify_items = verification_results or conflict_analysis.get("verification_results") or []
-        verify_by_hid = {
-            item.get("hypothesis_id", ""): item
-            for item in verify_items
-            if item.get("hypothesis_id")
-        }
+        verify_by_hid = {item.get("hypothesis_id", ""): item for item in verify_items if item.get("hypothesis_id")}
 
         for conflict in conflict_analysis.get("conflicts", []):
             dim_ids = self._map_conflict_dimensions(conflict)
@@ -431,15 +425,17 @@ class ThesisEngine:
             dim = dimensions.get(dim_id)
             if dim is None:
                 continue
-            dim.evidence.append(EvidenceItem(
-                signal_id=f"conflict:{conflict.get('id', theme)}",
-                signal_name=theme or "verified_conflict",
-                level=severity,
-                impact="negative",
-                interpretation=text,
-                source_type="conflict",
-                source_label="verified_conflict",
-            ))
+            dim.evidence.append(
+                EvidenceItem(
+                    signal_id=f"conflict:{conflict.get('id', theme)}",
+                    signal_name=theme or "verified_conflict",
+                    level=severity,
+                    impact="negative",
+                    interpretation=text,
+                    source_type="conflict",
+                    source_label="verified_conflict",
+                )
+            )
             dim.score = max(-1.0, min(1.0, dim.score - penalty))
             dim.confidence = min(1.0, dim.confidence + 0.1)
 
@@ -486,9 +482,7 @@ class ThesisEngine:
                     for keyword in ("应收", "receivable", "现金流", "cashflow", "回款")
                 ):
                     dim.score *= 0.9
-                    dim.context_notes.append(
-                        "项目制/验收型业务会天然拉长回款节奏，相关异常已按商业模式做小幅折减。"
-                    )
+                    dim.context_notes.append("项目制/验收型业务会天然拉长回款节奏，相关异常已按商业模式做小幅折减。")
 
         for dim in dimensions.values():
             dim.context_notes = self._dedupe_preserve_order(dim.context_notes)
@@ -516,20 +510,15 @@ class ThesisEngine:
             dim.judgment = score_to_judgment(dim.score)
             interpretation = dim_def.get_interpretation(dim.judgment)
             if dim.context_notes:
-                interpretation = (
-                    f"{interpretation} 语境校准："
-                    + " ".join(self._dedupe_preserve_order(dim.context_notes))
+                interpretation = f"{interpretation} 语境校准：" + " ".join(
+                    self._dedupe_preserve_order(dim.context_notes)
                 )
             dim.interpretation = interpretation
 
     def _map_conflict_dimensions(self, conflict: dict[str, Any]) -> list[str]:
         related_dimensions = conflict.get("related_dimensions") or []
         return self._dedupe_preserve_order(
-            [
-                str(dim_id)
-                for dim_id in related_dimensions
-                if isinstance(dim_id, str) and dim_id in self.dimension_defs
-            ]
+            [str(dim_id) for dim_id in related_dimensions if isinstance(dim_id, str) and dim_id in self.dimension_defs]
         )
 
     def _resolve_hypothesis_status(
@@ -548,12 +537,7 @@ class ThesisEngine:
     ) -> str:
         hid = hypothesis.get("id", "")
         verification = verify_by_hid.get(hid, {})
-        return str(
-            verification.get("summary")
-            or hypothesis.get("summary")
-            or hypothesis.get("explanation")
-            or ""
-        )
+        return str(verification.get("summary") or hypothesis.get("summary") or hypothesis.get("explanation") or "")
 
     def _resolve_hypothesis_gaps(
         self,

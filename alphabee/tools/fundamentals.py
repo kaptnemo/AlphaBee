@@ -8,23 +8,27 @@ from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import AsyncTTLCache
 from alphabee.utils import tracked_chat_completion
 
-
 # ---------------------------------------------------------------------------
 # Pydantic models — all keyed by period (YYYYMMDD)
 # ---------------------------------------------------------------------------
 
+
 class IncomeStatement(BaseModel):
     """利润表核心数据（单期）"""
+
     period: str = Field(description="报告期（YYYYMMDD），如 '20241231' 表示2024年年报")
     revenue: float = Field(description="营业总收入（元）")
     operating_profit: float = Field(description="营业利润（元）")
     net_profit: float = Field(description="归母净利润（元）")
-    ebitda: float = Field(description="息税折旧摊销前利润EBITDA（元），衡量核心盈利能力")
+    ebitda: float = Field(
+        description="息税折旧摊销前利润EBITDA（元），衡量核心盈利能力"
+    )
     basic_eps: float = Field(description="基本每股收益（元/股）")
 
 
 class BalanceSheet(BaseModel):
     """资产负债表核心数据（单期）"""
+
     period: str = Field(description="报告期（YYYYMMDD）")
     total_assets: float = Field(description="资产总计（元）")
     total_liabilities: float = Field(description="负债合计（元）")
@@ -36,51 +40,82 @@ class BalanceSheet(BaseModel):
 
 class CashFlow(BaseModel):
     """现金流量表核心数据（单期）"""
+
     period: str = Field(description="报告期（YYYYMMDD）")
-    operating_cf: float = Field(description="经营活动现金流净额（元），反映主营业务造血能力")
-    investing_cf: float = Field(description="投资活动现金流净额（元），负数通常代表扩张投入")
+    operating_cf: float = Field(
+        description="经营活动现金流净额（元），反映主营业务造血能力"
+    )
+    investing_cf: float = Field(
+        description="投资活动现金流净额（元），负数通常代表扩张投入"
+    )
     financing_cf: float = Field(description="筹资活动现金流净额（元）")
-    free_cf: float = Field(description="自由现金流FCFF（元）= 经营现金流 − 资本性支出，衡量可分配现金")
+    free_cf: float = Field(
+        description="自由现金流FCFF（元）= 经营现金流 − 资本性支出，衡量可分配现金"
+    )
 
 
 class FinancialRatios(BaseModel):
     """关键财务比率（单期）"""
+
     period: str = Field(description="报告期（YYYYMMDD）")
     roe: float = Field(description="净资产收益率ROE（%），衡量股东回报能力，越高越好")
     roa: float = Field(description="总资产净利率ROA（%），衡量资产运营效率")
     gross_margin: float = Field(description="毛利率（%），反映产品定价能力与竞争优势")
     net_margin: float = Field(description="净利润率（%），反映最终盈利能力")
-    current_ratio: float = Field(description="流动比率（倍），衡量短期偿债能力，通常>1为健康")
-    quick_ratio: float = Field(description="速动比率（倍），排除存货后的短期偿债能力，通常>0.8为健康")
-    debt_to_assets: float = Field(description="资产负债率（%），衡量财务杠杆，过高存在偿债风险")
+    current_ratio: float = Field(
+        description="流动比率（倍），衡量短期偿债能力，通常>1为健康"
+    )
+    quick_ratio: float = Field(
+        description="速动比率（倍），排除存货后的短期偿债能力，通常>0.8为健康"
+    )
+    debt_to_assets: float = Field(
+        description="资产负债率（%），衡量财务杠杆，过高存在偿债风险"
+    )
 
 
 class GrowthMetrics(BaseModel):
     """成长性指标（单期，相对于同比同期）"""
+
     period: str = Field(description="报告期（YYYYMMDD）")
-    revenue_growth_yoy: float = Field(description="营业收入同比增长率（%），正数为增长，负数为下滑")
+    revenue_growth_yoy: float = Field(
+        description="营业收入同比增长率（%），正数为增长，负数为下滑"
+    )
     profit_growth_yoy: float = Field(description="净利润同比增长率（%）")
     eps_growth_yoy: float = Field(description="基本每股收益同比增长率（%）")
 
 
 class Summary(BaseModel):
     """基本面分析摘要（由大模型生成，综合多期数据趋势）"""
+
     overview: str = Field(description="公司财务状况的总体评述，含趋势判断（2-3句话）")
-    strengths: list[str] = Field(description="主要财务优势，如高ROE、强现金流、低负债、持续增长等")
-    risks: list[str] = Field(description="主要财务风险，如利润下滑、高负债、现金流恶化等")
+    strengths: list[str] = Field(
+        description="主要财务优势，如高ROE、强现金流、低负债、持续增长等"
+    )
+    risks: list[str] = Field(
+        description="主要财务风险，如利润下滑、高负债、现金流恶化等"
+    )
     outlook: str = Field(description="基于多期财务趋势的展望与投资参考观点（1-2句话）")
 
 
 class Fundamentals(BaseModel):
     """A股公司多期基本面数据汇总"""
+
     stock_code: str = Field(description="股票代码（Tushare格式，如 '600519.SH'）")
     name: str = Field(description="股票名称，如'贵州茅台'")
-    periods: list[str] = Field(description="包含的报告期列表，按时间倒序排列（最新在前）")
-    income_statements: list[IncomeStatement] = Field(description="多期利润表，按时间倒序")
+    periods: list[str] = Field(
+        description="包含的报告期列表，按时间倒序排列（最新在前）"
+    )
+    income_statements: list[IncomeStatement] = Field(
+        description="多期利润表，按时间倒序"
+    )
     balance_sheets: list[BalanceSheet] = Field(description="多期资产负债表，按时间倒序")
     cash_flows: list[CashFlow] = Field(description="多期现金流量表，按时间倒序")
-    financial_ratios: list[FinancialRatios] = Field(description="多期关键财务比率，按时间倒序")
-    growth_metrics: list[GrowthMetrics] = Field(description="多期成长性指标（同比增速），按时间倒序")
+    financial_ratios: list[FinancialRatios] = Field(
+        description="多期关键财务比率，按时间倒序"
+    )
+    growth_metrics: list[GrowthMetrics] = Field(
+        description="多期成长性指标（同比增速），按时间倒序"
+    )
     summary: Summary = Field(description="大模型生成的多期趋势综合分析摘要")
 
 
@@ -90,6 +125,7 @@ _FUNDAMENTALS_CACHE = AsyncTTLCache(ttl_seconds=300.0)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _normalize_ts_code(symbol: str) -> str:
     s = symbol.strip().lower()
@@ -135,6 +171,7 @@ def _lookup_row(df, date: str, date_col: str = "end_date"):
 # LLM summary generation (multi-period)
 # ---------------------------------------------------------------------------
 
+
 async def _generate_summary(
     name: str,
     stock_code: str,
@@ -163,22 +200,28 @@ async def _generate_summary(
             "基本EPS(元)": inc.basic_eps,
         }
         if r:
-            row.update({
-                "ROE(%)": round(r.roe, 2),
-                "毛利率(%)": round(r.gross_margin, 2),
-                "净利润率(%)": round(r.net_margin, 2),
-                "资产负债率(%)": round(r.debt_to_assets, 2),
-            })
+            row.update(
+                {
+                    "ROE(%)": round(r.roe, 2),
+                    "毛利率(%)": round(r.gross_margin, 2),
+                    "净利润率(%)": round(r.net_margin, 2),
+                    "资产负债率(%)": round(r.debt_to_assets, 2),
+                }
+            )
         if g:
-            row.update({
-                "营收同比增速(%)": round(g.revenue_growth_yoy, 2),
-                "净利润同比增速(%)": round(g.profit_growth_yoy, 2),
-            })
+            row.update(
+                {
+                    "营收同比增速(%)": round(g.revenue_growth_yoy, 2),
+                    "净利润同比增速(%)": round(g.profit_growth_yoy, 2),
+                }
+            )
         if c:
-            row.update({
-                "经营现金流(亿元)": round(c.operating_cf / 1e8, 2),
-                "自由现金流(亿元)": round(c.free_cf / 1e8, 2),
-            })
+            row.update(
+                {
+                    "经营现金流(亿元)": round(c.operating_cf / 1e8, 2),
+                    "自由现金流(亿元)": round(c.free_cf / 1e8, 2),
+                }
+            )
         rows.append(row)
 
     prompt = (
@@ -223,6 +266,7 @@ async def _generate_summary(
 # Main tool function
 # ---------------------------------------------------------------------------
 
+
 async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
     """获取指定A股公司的多期基本面财务数据，并生成AI趋势分析摘要。
 
@@ -265,21 +309,20 @@ async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
                 ts_code=ts_code,
                 start_date=start_date,
                 fields="ts_code,end_date,total_assets,total_liab,"
-                       "total_hldr_eqy_exc_min_int,money_cap,"
-                       "total_cur_assets,total_cur_liab",
+                "total_hldr_eqy_exc_min_int,money_cap,"
+                "total_cur_assets,total_cur_liab",
             ).data
             cashflow_df = helper.cashflow(
                 ts_code=ts_code,
                 start_date=start_date,
-                fields="ts_code,end_date,n_cashflow_act,n_cashflow_inv_act,"
-                       "n_cash_flows_fnc_act,c_pay_acq_const_fiolta",
+                fields="ts_code,end_date,n_cashflow_act,n_cashflow_inv_act,n_cash_flows_fnc_act,c_pay_acq_const_fiolta",
             ).data
             fina_df = helper.fina_indicator(
                 ts_code=ts_code,
                 start_date=start_date,
                 fields="ts_code,end_date,roe,roa,grossprofit_margin,netprofit_margin,"
-                       "current_ratio,quick_ratio,debt_to_assets,"
-                       "or_yoy,netprofit_yoy,basic_eps_yoy,fcff",
+                "current_ratio,quick_ratio,debt_to_assets,"
+                "or_yoy,netprofit_yoy,basic_eps_yoy,fcff",
             ).data
             stock_basic_df = helper.stock_basic(
                 ts_code=ts_code, fields="ts_code,name"
@@ -307,56 +350,66 @@ async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
             fin = _lookup_row(fina_df, date)
 
             if inc is not None:
-                income_list.append(IncomeStatement(
-                    period=str(inc["end_date"]),
-                    revenue=_safe_float(inc["total_revenue"]),
-                    operating_profit=_safe_float(inc["operate_profit"]),
-                    net_profit=_safe_float(inc["n_income"]),
-                    ebitda=_safe_float(inc["ebitda"]),
-                    basic_eps=_safe_float(inc["basic_eps"]),
-                ))
+                income_list.append(
+                    IncomeStatement(
+                        period=str(inc["end_date"]),
+                        revenue=_safe_float(inc["total_revenue"]),
+                        operating_profit=_safe_float(inc["operate_profit"]),
+                        net_profit=_safe_float(inc["n_income"]),
+                        ebitda=_safe_float(inc["ebitda"]),
+                        basic_eps=_safe_float(inc["basic_eps"]),
+                    )
+                )
 
             if bal is not None:
-                balance_list.append(BalanceSheet(
-                    period=str(bal["end_date"]),
-                    total_assets=_safe_float(bal["total_assets"]),
-                    total_liabilities=_safe_float(bal["total_liab"]),
-                    total_equity=_safe_float(bal["total_hldr_eqy_exc_min_int"]),
-                    cash=_safe_float(bal["money_cap"]),
-                    current_assets=_safe_float(bal["total_cur_assets"]),
-                    current_liabilities=_safe_float(bal["total_cur_liab"]),
-                ))
+                balance_list.append(
+                    BalanceSheet(
+                        period=str(bal["end_date"]),
+                        total_assets=_safe_float(bal["total_assets"]),
+                        total_liabilities=_safe_float(bal["total_liab"]),
+                        total_equity=_safe_float(bal["total_hldr_eqy_exc_min_int"]),
+                        cash=_safe_float(bal["money_cap"]),
+                        current_assets=_safe_float(bal["total_cur_assets"]),
+                        current_liabilities=_safe_float(bal["total_cur_liab"]),
+                    )
+                )
 
             if cf is not None:
                 operating_cf = _safe_float(cf["n_cashflow_act"])
                 capex = _safe_float(cf["c_pay_acq_const_fiolta"])
                 fcff = _safe_float(fin["fcff"]) if fin is not None else 0.0
                 free_cf = fcff if fcff != 0.0 else (operating_cf - capex)
-                cf_list.append(CashFlow(
-                    period=str(cf["end_date"]),
-                    operating_cf=operating_cf,
-                    investing_cf=_safe_float(cf["n_cashflow_inv_act"]),
-                    financing_cf=_safe_float(cf["n_cash_flows_fnc_act"]),
-                    free_cf=free_cf,
-                ))
+                cf_list.append(
+                    CashFlow(
+                        period=str(cf["end_date"]),
+                        operating_cf=operating_cf,
+                        investing_cf=_safe_float(cf["n_cashflow_inv_act"]),
+                        financing_cf=_safe_float(cf["n_cash_flows_fnc_act"]),
+                        free_cf=free_cf,
+                    )
+                )
 
             if fin is not None:
-                ratio_list.append(FinancialRatios(
-                    period=str(fin["end_date"]),
-                    roe=_safe_float(fin["roe"]),
-                    roa=_safe_float(fin["roa"]),
-                    gross_margin=_safe_float(fin["grossprofit_margin"]),
-                    net_margin=_safe_float(fin["netprofit_margin"]),
-                    current_ratio=_safe_float(fin["current_ratio"]),
-                    quick_ratio=_safe_float(fin["quick_ratio"]),
-                    debt_to_assets=_safe_float(fin["debt_to_assets"]),
-                ))
-                growth_list.append(GrowthMetrics(
-                    period=str(fin["end_date"]),
-                    revenue_growth_yoy=_safe_float(fin["or_yoy"]),
-                    profit_growth_yoy=_safe_float(fin["netprofit_yoy"]),
-                    eps_growth_yoy=_safe_float(fin["basic_eps_yoy"]),
-                ))
+                ratio_list.append(
+                    FinancialRatios(
+                        period=str(fin["end_date"]),
+                        roe=_safe_float(fin["roe"]),
+                        roa=_safe_float(fin["roa"]),
+                        gross_margin=_safe_float(fin["grossprofit_margin"]),
+                        net_margin=_safe_float(fin["netprofit_margin"]),
+                        current_ratio=_safe_float(fin["current_ratio"]),
+                        quick_ratio=_safe_float(fin["quick_ratio"]),
+                        debt_to_assets=_safe_float(fin["debt_to_assets"]),
+                    )
+                )
+                growth_list.append(
+                    GrowthMetrics(
+                        period=str(fin["end_date"]),
+                        revenue_growth_yoy=_safe_float(fin["or_yoy"]),
+                        profit_growth_yoy=_safe_float(fin["netprofit_yoy"]),
+                        eps_growth_yoy=_safe_float(fin["basic_eps_yoy"]),
+                    )
+                )
 
         summary = await _generate_summary(
             name=name,

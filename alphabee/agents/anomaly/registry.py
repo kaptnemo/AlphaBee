@@ -21,7 +21,7 @@ def load_rules() -> None:
     import yaml
 
     rules_path = _RULES_DIR / "rules.yaml"
-    with open(rules_path, "r", encoding="utf-8") as f:
+    with open(rules_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     CROSS_RULES.clear()
@@ -40,7 +40,7 @@ def load_patterns() -> None:
     import yaml
 
     patterns_path = _RULES_DIR / "patterns.yaml"
-    with open(patterns_path, "r", encoding="utf-8") as f:
+    with open(patterns_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     ANOMALY_PATTERNS.clear()

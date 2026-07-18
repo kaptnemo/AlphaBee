@@ -47,14 +47,27 @@ class RuleDistiller:
             "single_evidence_dims": self.analyzer.single_evidence_dimensions(),
             "signal_trigger_rates": self.analyzer.signal_trigger_rates(),
             "available_derived_facts": [
-                "roe_level", "gross_margin_trend", "revenue_growth",
-                "profit_leverage", "debt_ratio", "current_ratio",
-                "cashflow_quality", "accounts_receivable_yoy",
-                "receivable_growth_gap", "interest_coverage",
-                "goodwill_risk", "capex_intensity", "valuation_compression",
-                "peg_ratio", "pb_roe_match", "inventory_pressure",
-                "asset_turnover", "receivable_pressure", "dividend_coverage",
-                "market_share_change", "accounts_receivable_growth",
+                "roe_level",
+                "gross_margin_trend",
+                "revenue_growth",
+                "profit_leverage",
+                "debt_ratio",
+                "current_ratio",
+                "cashflow_quality",
+                "accounts_receivable_yoy",
+                "receivable_growth_gap",
+                "interest_coverage",
+                "goodwill_risk",
+                "capex_intensity",
+                "valuation_compression",
+                "peg_ratio",
+                "pb_roe_match",
+                "inventory_pressure",
+                "asset_turnover",
+                "receivable_pressure",
+                "dividend_coverage",
+                "market_share_change",
+                "accounts_receivable_growth",
             ],
         }
         return self._call_llm(
@@ -129,7 +142,8 @@ class RuleDistiller:
             return content
         if isinstance(content, list):
             parts = [
-                block.get("text", "") if isinstance(block, dict) and block.get("type") in ("text", "thinking")
+                block.get("text", "")
+                if isinstance(block, dict) and block.get("type") in ("text", "thinking")
                 else (str(block) if isinstance(block, str) else "")
                 for block in content
             ]

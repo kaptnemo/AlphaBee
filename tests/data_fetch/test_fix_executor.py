@@ -8,16 +8,15 @@ import pytest
 import alphabee.data_fetch.database as db_mod
 import alphabee.data_fetch.fix_executor as fx_mod
 import alphabee.data_fetch.recorder as rec_mod
+from alphabee.data_fetch.fix_executor import (
+    FixResult,
+    _build_prompt,
+    _load_task,
+    build_agent_prompt,
+)
 from alphabee.data_fetch.models import TaskStatus
 from alphabee.data_fetch.recorder import record_failure
 from alphabee.data_fetch.scanner import mark_task, scan_and_create_tasks
-from alphabee.data_fetch.fix_executor import (
-    FixResult,
-    build_agent_prompt,
-    prepare_fix,
-    _load_task,
-    _build_prompt,
-)
 
 
 @pytest.fixture(autouse=True)
@@ -210,7 +209,11 @@ class TestVerifyAndSubmit:
         session_ctx = fx_mod.get_session()
         try:
             task = session_ctx.query(fx_mod.DataFixTask).filter(fx_mod.DataFixTask.task_id == task_id).first()
-            issue = session_ctx.query(fx_mod.DataFetchIssue).filter(fx_mod.DataFetchIssue.issue_id == tasks[0].issue_id).first()
+            issue = (
+                session_ctx.query(fx_mod.DataFetchIssue)
+                .filter(fx_mod.DataFetchIssue.issue_id == tasks[0].issue_id)
+                .first()
+            )
             assert task is not None
             assert task.status == TaskStatus.DONE
             assert task.verification_result == "https://github.com/captainemo/AlphaBee/pull/99"
@@ -234,9 +237,15 @@ class TestVerifyAndSubmit:
             verification_result="https://github.com/captainemo/AlphaBee/pull/77",
         )
 
-        monkeypatch.setattr(fx_mod, "_run_git", lambda *args: (_ for _ in ()).throw(AssertionError("git should not run")))
+        monkeypatch.setattr(
+            fx_mod, "_run_git", lambda *args: (_ for _ in ()).throw(AssertionError("git should not run"))
+        )
         monkeypatch.setattr(fx_mod, "_run_tests", lambda: (_ for _ in ()).throw(AssertionError("tests should not run")))
-        monkeypatch.setattr(fx_mod, "_create_or_get_pull_request", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("PR should not run")))
+        monkeypatch.setattr(
+            fx_mod,
+            "_create_or_get_pull_request",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("PR should not run")),
+        )
 
         result = fx_mod.verify_and_submit(task_id)
 

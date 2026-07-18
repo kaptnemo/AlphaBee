@@ -10,8 +10,9 @@
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
+
+import structlog
 
 from alphabee.agents.anomaly.models import (
     AnomalyPattern,
@@ -135,14 +136,13 @@ class AnomalyEngine:
         for pattern in self.patterns.values():
             try:
                 if pattern.all_conditions_met(anomalies):
-                    triggering = [
-                        a for a in anomalies
-                        if a.rule_id in {c.rule_id for c in pattern.conditions}
-                    ]
-                    matches.append(PatternMatch(
-                        pattern=pattern,
-                        triggering_anomalies=triggering,
-                    ))
+                    triggering = [a for a in anomalies if a.rule_id in {c.rule_id for c in pattern.conditions}]
+                    matches.append(
+                        PatternMatch(
+                            pattern=pattern,
+                            triggering_anomalies=triggering,
+                        )
+                    )
             except Exception as exc:
                 logger.warning(
                     "anomaly_pattern_match_failed",
@@ -180,7 +180,9 @@ class AnomalyEngine:
 
         # ── 提取组合指标的多期值 ──
         current_val, history, baseline_mode, history_periods = self._extract_rule_values(
-            rule, snapshots, extra,
+            rule,
+            snapshots,
+            extra,
         )
         if current_val is None or len(history) < max(2, rule.baseline_periods // 2):
             # 业务上我们宁可“暂不评价”，也不在历史样本过薄时硬算异常。
@@ -273,10 +275,14 @@ class AnomalyEngine:
         a_cur = a_map[current_period]
         b_cur = b_map[current_period]
         a_hist, a_mode, a_history_periods = self._build_history_values(
-            a_series, current_period, rule.baseline_periods,
+            a_series,
+            current_period,
+            rule.baseline_periods,
         )
         b_hist, b_mode, b_history_periods = self._build_history_values(
-            b_series, current_period, rule.baseline_periods,
+            b_series,
+            current_period,
+            rule.baseline_periods,
         )
 
         if len(a_hist) < max(2, rule.baseline_periods // 2):
@@ -321,11 +327,7 @@ class AnomalyEngine:
             z_score = (z_a + z_b) / 2.0
 
         level = self._classify_level(z_score, rule.threshold_sigma)
-        baseline_mode = (
-            "mixed_periods"
-            if "mixed_periods" in {a_mode, b_mode}
-            else "same_period"
-        )
+        baseline_mode = "mixed_periods" if "mixed_periods" in {a_mode, b_mode} else "same_period"
         history_periods = a_history_periods if len(a_history_periods) >= len(b_history_periods) else b_history_periods
 
         # current_value 用两个 z-score 和作为综合值
@@ -352,11 +354,7 @@ class AnomalyEngine:
         return field in _CUMULATIVE_FLOW_FIELDS
 
     def _series_suffixes(self, snapshot_by_period: dict[str, Any]) -> set[str]:
-        return {
-            self._period_suffix(period)
-            for period in snapshot_by_period
-            if self._period_suffix(period)
-        }
+        return {self._period_suffix(period) for period in snapshot_by_period if self._period_suffix(period)}
 
     def _extract_raw_value(
         self,
@@ -535,7 +533,9 @@ class AnomalyEngine:
             return None, [], "same_period", []
 
         history, baseline_mode, history_periods = self._build_history_values(
-            aligned, current_period, rule.baseline_periods,
+            aligned,
+            current_period,
+            rule.baseline_periods,
         )
         return current, history, baseline_mode, history_periods
 
@@ -552,7 +552,7 @@ class AnomalyEngine:
         if n == 1:
             return mean, abs(mean) * 0.1 if mean != 0 else _MIN_SIGMA
         variance = sum((v - mean) ** 2 for v in values) / (n - 1)
-        std = variance ** 0.5
+        std = variance**0.5
         return mean, std
 
     def _classify_level(self, z_score: float, threshold: float) -> str:
