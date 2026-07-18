@@ -13,6 +13,7 @@ data/
 large_tool_results/
 pdfs/
 *.pdf
+tmp/
 
 # env files
 .env
