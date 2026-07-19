@@ -7,7 +7,7 @@ import json as _json
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
+from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
 from alphabee.orchestrator.contracts import InsightArtifact
 from alphabee.orchestrator.services.payload_builders import build_insight_context
@@ -131,7 +131,7 @@ async def synthesize_insights(
         new_artifacts.append(
             Artifact(
                 id=_make_id("artifact"),
-                type="insight_analysis",
+                type=ArtifactType.INSIGHT_ANALYSIS,
                 producer_step=step.id,
                 value=artifact_payload.model_dump(mode="json"),
             )

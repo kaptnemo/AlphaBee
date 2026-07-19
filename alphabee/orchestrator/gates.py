@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from alphabee.agents.schemas import ReportOutput
 from alphabee.core import (
     Artifact,
+    ArtifactType,
     Decision,
     EvaluateMetrics,
     EvaluationAssessment,
@@ -47,7 +48,7 @@ def _find_latest_report_artifact(state: OrchestratorState) -> Artifact | None:
         for artifact in reversed(artifacts):
             if artifact.id == final_artifact_id:
                 return artifact
-    return _find_latest_artifact(artifacts, "report")
+    return _find_latest_artifact(artifacts, ArtifactType.REPORT)
 
 
 def _normalize_text_for_search(value: Any) -> str:
@@ -424,7 +425,7 @@ async def review_report(
     )
     evaluation_artifact = Artifact(
         id=_make_id("evaluation"),
-        type="evaluation_report",
+        type=ArtifactType.EVALUATION_REPORT,
         producer_step=step.id,
         value=evaluation_report.model_dump(mode="json"),
     )

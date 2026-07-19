@@ -5,7 +5,7 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
+from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
 from alphabee.orchestrator.contracts import ConflictAnalysisArtifact
 from alphabee.orchestrator.services.payload_builders import generate_explore_conflicts_prompt
@@ -99,7 +99,7 @@ async def explore_conflicts(
     new_artifacts.append(
         Artifact(
             id=_make_id("artifact"),
-            type="conflict_analysis",
+            type=ArtifactType.CONFLICT_ANALYSIS,
             producer_step=step.id,
             value=artifact_payload.model_dump(mode="json"),
         )
@@ -125,7 +125,7 @@ async def explore_conflicts(
     new_artifacts.append(
         Artifact(
             id=_make_id("artifact"),
-            type="conflicts_result",
+            type=ArtifactType.CONFLICTS_RESULT,
             producer_step=step.id,
             value=conflicts_result.model_dump(mode="json"),
         )

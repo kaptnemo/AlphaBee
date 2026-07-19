@@ -53,22 +53,52 @@ class ArtifactRoleGroup(enum.StrEnum):
     OTHER = "other"
 
 
-# Canonical mapping from the free-form ``Artifact.type`` string to a role group.
+class ArtifactType(enum.StrEnum):
+    """Canonical registry of every artifact type flowing through the pipeline.
+
+    Each member maps 1:1 to an ``Artifact.type`` value.  Using the enum
+    instead of bare strings gives the IDE autocompletion, makes the full
+    catalogue discoverable in one place, and prevents accidental naming
+    inconsistencies between producers and consumers.
+
+    New pipeline nodes MUST register their artifact type here.
+    """
+
+    FACT_COLLECTION = "fact_collection"
+    DERIVED_FACTS = "derived_facts"
+    SIGNAL_ANALYSIS = "signal_analysis"
+    ANOMALY_REPORT = "anomaly_report"
+    CONFLICT_ANALYSIS = "conflict_analysis"  # raw LLM parse output
+    CONFLICTS_RESULT = "conflicts_result"  # structured conflict data
+    VERIFICATION_RESULTS = "verification_results"
+    INSIGHT_ANALYSIS = "insight_analysis"
+    THESIS_ANALYSIS = "thesis_analysis"
+    THESIS_REVIEW = "thesis_review"
+    REPORT = "report"
+    EVALUATION_REPORT = "evaluation_report"
+
+
+# Canonical mapping from the ``ArtifactType`` to a role group.
 # Used by the auto-inference validator so callers rarely need to set role_group
 # explicitly.
-_ARTIFACT_TYPE_TO_ROLE_GROUP: dict[str, ArtifactRoleGroup] = {
+_ARTIFACT_TYPE_TO_ROLE_GROUP: dict[ArtifactType | str, ArtifactRoleGroup] = {
+    ArtifactType.FACT_COLLECTION: ArtifactRoleGroup.DATA,
+    ArtifactType.DERIVED_FACTS: ArtifactRoleGroup.DATA,
+    ArtifactType.SIGNAL_ANALYSIS: ArtifactRoleGroup.DATA,
+    ArtifactType.ANOMALY_REPORT: ArtifactRoleGroup.DATA,
+    ArtifactType.CONFLICT_ANALYSIS: ArtifactRoleGroup.DATA,
+    ArtifactType.CONFLICTS_RESULT: ArtifactRoleGroup.DATA,
+    ArtifactType.VERIFICATION_RESULTS: ArtifactRoleGroup.DATA,
+    ArtifactType.INSIGHT_ANALYSIS: ArtifactRoleGroup.NARRATIVE,
+    ArtifactType.THESIS_ANALYSIS: ArtifactRoleGroup.NARRATIVE,
+    ArtifactType.THESIS_REVIEW: ArtifactRoleGroup.REVIEW,
+    ArtifactType.REPORT: ArtifactRoleGroup.NARRATIVE,
+    ArtifactType.EVALUATION_REPORT: ArtifactRoleGroup.EVALUATION,
+    # Legacy / external types kept for backward compatibility:
     "fundamental_analysis": ArtifactRoleGroup.DATA,
     "market_analysis": ArtifactRoleGroup.DATA,
     "risk_analysis": ArtifactRoleGroup.DATA,
-    "fact_collection": ArtifactRoleGroup.DATA,
-    "derived_facts": ArtifactRoleGroup.DATA,
-    "signal_analysis": ArtifactRoleGroup.DATA,
-    "anomaly_report": ArtifactRoleGroup.DATA,
-    "conflict_analysis": ArtifactRoleGroup.DATA,
-    "verification_results": ArtifactRoleGroup.DATA,
-    "thesis_analysis": ArtifactRoleGroup.NARRATIVE,
     "plan": ArtifactRoleGroup.PLAN,
-    "report": ArtifactRoleGroup.NARRATIVE,
     "summary": ArtifactRoleGroup.NARRATIVE,
     "conclusion": ArtifactRoleGroup.NARRATIVE,
     "critique": ArtifactRoleGroup.REVIEW,
@@ -164,9 +194,9 @@ class Artifact(BaseModel):
     """A durable output produced by a step."""
 
     id: str = Field(..., description="Unique identifier for the artifact.")
-    type: str = Field(
+    type: ArtifactType | str = Field(
         ...,
-        description="Artifact type such as table, report, snapshot, conclusion, or chart.",
+        description="Artifact type — prefer ArtifactType enum members for new code.",
     )
     path: str | None = Field(
         default=None,

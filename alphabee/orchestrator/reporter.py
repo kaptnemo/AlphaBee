@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from alphabee.agents.schemas import ReportOutput
-from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
+from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.contracts import ReportArtifact
 from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT
 from alphabee.orchestrator.services.payload_builders import (
@@ -72,7 +72,7 @@ async def generate_report(
         # 质量 gate 触发重写时，会把上一版报告一并交给模型。
         # 这样重写动作更像“定向修补”而不是完全重新生成，能减少风格漂移。
         for artifact in reversed(state.get("artifacts", [])):
-            if artifact.type == "report" and isinstance(artifact.value, dict):
+            if artifact.type == ArtifactType.REPORT and isinstance(artifact.value, dict):
                 prior_report = artifact.value
                 break
 
@@ -132,7 +132,7 @@ async def generate_report(
 
     report_artifact = Artifact(
         id=_make_id("artifact"),
-        type="report",
+        type=ArtifactType.REPORT,
         producer_step=step.id,
         value=report_value,
     )

@@ -6,6 +6,7 @@ import json as _json
 
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 from alphabee.agents.schemas import ConflictAnalysisResult
+from alphabee.core import ArtifactType
 from alphabee.orchestrator.collectors import _find_artifact
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
@@ -89,11 +90,13 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
     artifacts = state.get("artifacts", [])
     financial_facts: FinancialFacts | None = state.get("financial_facts")
     market_facts: MarketFacts | None = state.get("market_facts")
-    derived_facts = find_artifact_model(artifacts, "derived_facts", DerivedFactsArtifact) or DerivedFactsArtifact()
-    signal_analysis = (
-        find_artifact_model(artifacts, "signal_analysis", SignalAnalysisArtifact) or SignalAnalysisArtifact()
+    derived_facts = (
+        find_artifact_model(artifacts, ArtifactType.DERIVED_FACTS, DerivedFactsArtifact) or DerivedFactsArtifact()
     )
-    anomaly_report = find_artifact_model(artifacts, "anomaly_report", AnomalyReportArtifact)
+    signal_analysis = (
+        find_artifact_model(artifacts, ArtifactType.SIGNAL_ANALYSIS, SignalAnalysisArtifact) or SignalAnalysisArtifact()
+    )
+    anomaly_report = find_artifact_model(artifacts, ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
 
     snapshot_summary: dict = {}
     if financial_facts and financial_facts.snapshots:
@@ -182,7 +185,7 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
             "market_cap": getattr(market_facts, "market_cap", None),
         }
 
-    anomaly_report = find_artifact_model(state.get("artifacts", []), "anomaly_report", AnomalyReportArtifact)
+    anomaly_report = find_artifact_model(state.get("artifacts", []), ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
 
     return {
         "symbol": symbol or "unknown",
@@ -208,7 +211,7 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
 
     payload = ReportGenerationPayload()
 
-    fact_val = find_artifact_model(artifacts, "fact_collection", FactCollectionArtifact)
+    fact_val = find_artifact_model(artifacts, ArtifactType.FACT_COLLECTION, FactCollectionArtifact)
     if fact_val:
         payload.company = ReportCompanyPayload(
             symbol=fact_val.symbol or "",
@@ -216,7 +219,7 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             raw_response=(fact_val.raw_response or "")[:2000],
         )
 
-    derived_val = find_artifact_model(artifacts, "derived_facts", DerivedFactsArtifact)
+    derived_val = find_artifact_model(artifacts, ArtifactType.DERIVED_FACTS, DerivedFactsArtifact)
     if derived_val:
         top_metrics: list[ReportMetricEntry] = []
         for name, result in derived_val.results.items():
@@ -236,7 +239,7 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             top_metrics=top_metrics[:10],
         )
 
-    signal_val = find_artifact_model(artifacts, "signal_analysis", SignalAnalysisArtifact)
+    signal_val = find_artifact_model(artifacts, ArtifactType.SIGNAL_ANALYSIS, SignalAnalysisArtifact)
     if signal_val:
         signal_list = [
             ReportSignalEntry(
@@ -255,7 +258,7 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             signals=signal_list,
         )
 
-    thesis_val = find_artifact_model(artifacts, "thesis_analysis", ThesisArtifact)
+    thesis_val = find_artifact_model(artifacts, ArtifactType.THESIS_ANALYSIS, ThesisArtifact)
     if thesis_val:
         payload.thesis = dict(thesis_val.thesis)
         enhanced = thesis_val.enhanced or {}
@@ -265,11 +268,11 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
                 "context_notes": enhanced.get("context_notes", ""),
             }
 
-    review_val = _find_artifact(artifacts, "thesis_review")
+    review_val = _find_artifact(artifacts, ArtifactType.THESIS_REVIEW)
     if review_val:
         payload.review = review_val
 
-    anomaly_val = find_artifact_model(artifacts, "anomaly_report", AnomalyReportArtifact)
+    anomaly_val = find_artifact_model(artifacts, ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
     if anomaly_val:
         payload.anomaly = ReportAnomalyPayload(
             anomaly_count=anomaly_val.anomaly_count,
@@ -278,9 +281,10 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             pattern_matches=list(anomaly_val.pattern_matches),
         )
 
-    conflicts_result = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
+    conflicts_result = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
     verification_artifact = (
-        find_artifact_model(artifacts, "verification_results", VerificationArtifact) or VerificationArtifact()
+        find_artifact_model(artifacts, ArtifactType.VERIFICATION_RESULTS, VerificationArtifact)
+        or VerificationArtifact()
     )
     if conflicts_result:
         verify_by_hid = {
@@ -337,7 +341,7 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             conflicts=enriched_conflicts,
         )
 
-    insight_val = find_artifact_model(artifacts, "insight_analysis", InsightArtifact)
+    insight_val = find_artifact_model(artifacts, ArtifactType.INSIGHT_ANALYSIS, InsightArtifact)
     if insight_val:
         payload.insight = ReportInsightPayload(
             core_view=insight_val.core_view,
@@ -381,7 +385,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
     market_facts = state.get("market_facts")
 
     # ── Company context ──────────────────────────────────────────────
-    fact_val = _find_artifact(artifacts, "fact_collection")
+    fact_val = _find_artifact(artifacts, ArtifactType.FACT_COLLECTION)
     fact_text = fact_val.get("raw_response", "") if fact_val else ""
     company_ctx = build_company_context(
         symbol=symbol,
@@ -391,7 +395,9 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
     )
 
     # ── Key signals (non-neutral, sorted by severity) ────────────────
-    signal_val = find_artifact_model(artifacts, "signal_analysis", SignalAnalysisArtifact) or SignalAnalysisArtifact()
+    signal_val = (
+        find_artifact_model(artifacts, ArtifactType.SIGNAL_ANALYSIS, SignalAnalysisArtifact) or SignalAnalysisArtifact()
+    )
     level_order = {"high": 3, "medium": 2, "low": 1, "none": 0}
     key_signals: list[dict] = []
     for sig_id, result in signal_val.results.items():
@@ -409,7 +415,9 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
     key_signals.sort(key=lambda s: level_order.get(str(s.get("level", "")), 0), reverse=True)
 
     # ── Derived facts (non-neutral) ──────────────────────────────────
-    derived_val = find_artifact_model(artifacts, "derived_facts", DerivedFactsArtifact) or DerivedFactsArtifact()
+    derived_val = (
+        find_artifact_model(artifacts, ArtifactType.DERIVED_FACTS, DerivedFactsArtifact) or DerivedFactsArtifact()
+    )
     key_derived: dict[str, dict] = {}
     for name, item in derived_val.results.items():
         val = item.get(name)
@@ -422,7 +430,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
             }
 
     # ── Anomalies ────────────────────────────────────────────────────
-    anomaly_report = find_artifact_model(artifacts, "anomaly_report", AnomalyReportArtifact)
+    anomaly_report = find_artifact_model(artifacts, ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
     anomaly_summary: dict = {}
     if anomaly_report:
         anomaly_summary = {
@@ -439,9 +447,10 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
         }
 
     # ── Conflicts & verification ─────────────────────────────────────
-    conflicts_result = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
+    conflicts_result = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
     verification_artifact = (
-        find_artifact_model(artifacts, "verification_results", VerificationArtifact) or VerificationArtifact()
+        find_artifact_model(artifacts, ArtifactType.VERIFICATION_RESULTS, VerificationArtifact)
+        or VerificationArtifact()
     )
 
     conflict_summary: list[dict] = []

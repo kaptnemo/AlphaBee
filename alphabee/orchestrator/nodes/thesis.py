@@ -7,7 +7,7 @@ from langchain_core.runnables import RunnableConfig
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.agents.thesis.engine import ThesisEngine
 from alphabee.agents.thesis.enhancer import ThesisEnhancer
-from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
+from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _build_conflict_data, _finalize_step, _find_artifact, _make_id
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
@@ -46,13 +46,15 @@ async def run_thesis(
 
     # Thesis 层消费的是“已结构化、已归因”的中间结果：
     # 信号提供方向性判断，事实摘要提供定性背景，异常/冲突提供反证和疑点。
-    signal_av = _find_artifact(state.get("artifacts", []), "signal_analysis")
+    signal_av = _find_artifact(state.get("artifacts", []), ArtifactType.SIGNAL_ANALYSIS)
     signal_results: dict = signal_av.get("results", {}) if signal_av else {}
 
-    fc_av = _find_artifact(state.get("artifacts", []), "fact_collection")
+    fc_av = _find_artifact(state.get("artifacts", []), ArtifactType.FACT_COLLECTION)
     fact_text: str = fc_av.get("raw_response", "") if fc_av else ""
 
-    anomaly_payload = find_artifact_model(state.get("artifacts", []), "anomaly_report", AnomalyReportArtifact)
+    anomaly_payload = find_artifact_model(
+        state.get("artifacts", []), ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact
+    )
     anomaly_av = anomaly_payload.model_dump(mode="json") if anomaly_payload is not None else None
     anomaly_data: dict = {}
     if anomaly_av:
@@ -101,9 +103,9 @@ async def run_thesis(
 
         artifacts = state.get("artifacts", [])
         thesis_engine = ThesisEngine()
-        insight = find_artifact_model(artifacts, "insight_analysis", InsightArtifact)
-        conflicts_raw = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
-        verification_raw = find_artifact_model(artifacts, "verification_results", VerificationArtifact)
+        insight = find_artifact_model(artifacts, ArtifactType.INSIGHT_ANALYSIS, InsightArtifact)
+        conflicts_raw = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
+        verification_raw = find_artifact_model(artifacts, ArtifactType.VERIFICATION_RESULTS, VerificationArtifact)
         thesis = thesis_engine.run(
             symbol=symbol or "unknown",
             period=period,
@@ -154,7 +156,7 @@ async def run_thesis(
         new_artifacts.append(
             Artifact(
                 id=_make_id("artifact"),
-                type="thesis_analysis",
+                type=ArtifactType.THESIS_ANALYSIS,
                 producer_step=step.id,
                 value=thesis_artifact.model_dump(mode="json"),
             )

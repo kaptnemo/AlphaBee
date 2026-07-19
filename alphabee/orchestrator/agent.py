@@ -25,6 +25,7 @@ from langgraph.store.memory import InMemoryStore
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import (
     Artifact,
+    ArtifactType,
     Decision,
     Issue,
     IssueSeverity,
@@ -88,7 +89,7 @@ async def review_thesis(
     # ── Find thesis_analysis artifact ──
     # review_thesis 不负责生成新观点，而是审计已有 thesis 是否站得住脚。
     # 这里从 artifact 里拿到 thesis_analysis，确保审查面对的是编排层真正产出的正式结论。
-    thesis_payload = find_artifact_model(artifacts, "thesis_analysis", ThesisArtifact)
+    thesis_payload = find_artifact_model(artifacts, ArtifactType.THESIS_ANALYSIS, ThesisArtifact)
     if thesis_payload is None:
         completed_step = step.model_copy(
             update={
@@ -107,11 +108,11 @@ async def review_thesis(
     # ── Get signal_results for detail-level review ──
     # 维度审查需要回看 signal 粒度的细节：
     # thesis 可能把多个信号压缩成一个维度判断，review 则要检查压缩后是否丢失关键反证。
-    signal_val = find_artifact_model(artifacts, "signal_analysis", SignalAnalysisArtifact)
+    signal_val = find_artifact_model(artifacts, ArtifactType.SIGNAL_ANALYSIS, SignalAnalysisArtifact)
     signal_results = signal_val.results if signal_val else {}
 
     # ── Get company context ──
-    fact_val = _find_artifact_value(artifacts, "fact_collection")
+    fact_val = _find_artifact_value(artifacts, ArtifactType.FACT_COLLECTION)
     fact_text = fact_val.get("raw_response", "") if fact_val else ""
     # 审查阶段同样引入公司语境，避免机械地用统一阈值判断所有公司。
     # 例如高成长行业的估值与成熟行业的估值，其审查口径不能完全一致。
@@ -181,10 +182,11 @@ async def review_thesis(
         )
 
     # ── Inject verified conflicts as additional review evidence ──
-    conflicts_raw = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
+    conflicts_raw = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
     if conflicts_raw:
         verification_results = (
-            find_artifact_model(artifacts, "verification_results", VerificationArtifact) or VerificationArtifact()
+            find_artifact_model(artifacts, ArtifactType.VERIFICATION_RESULTS, VerificationArtifact)
+            or VerificationArtifact()
         )
         verify_by_hid: dict[str, dict] = {
             vr.hypothesis_id: vr.model_dump(mode="json") for vr in verification_results.results
@@ -264,7 +266,7 @@ async def review_thesis(
     # ── Produce thesis_review Artifact ──
     review_artifact = Artifact(
         id=_make_id("artifact"),
-        type="thesis_review",
+        type=ArtifactType.THESIS_REVIEW,
         producer_step=step.id,
         value=review.to_dict(),
     )

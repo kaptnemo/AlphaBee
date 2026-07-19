@@ -20,6 +20,7 @@ from alphabee.agents.facts.tools.market_fact import get_market_facts_model
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import (
     Artifact,
+    ArtifactType,
     Issue,
     IssueSeverity,
     Run,
@@ -64,8 +65,8 @@ def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict | None
 def _build_conflict_data(state: OrchestratorState) -> dict:
     """Summarise conflict+verification results for downstream nodes."""
     artifacts = state.get("artifacts", [])
-    conflicts_raw = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
-    verification_artifact = find_artifact_model(artifacts, "verification_results", VerificationArtifact)
+    conflicts_raw = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
+    verification_artifact = find_artifact_model(artifacts, ArtifactType.VERIFICATION_RESULTS, VerificationArtifact)
     verification_results = verification_artifact.results if verification_artifact else []
 
     if not conflicts_raw:
@@ -251,7 +252,7 @@ async def collect_raw_facts(
     artifacts.append(
         Artifact(
             id=_make_id("artifact"),
-            type="fact_collection",
+            type=ArtifactType.FACT_COLLECTION,
             producer_step=step.id,
             value=FactCollectionArtifact(
                 agent="FactCollector",

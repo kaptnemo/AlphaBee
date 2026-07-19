@@ -9,7 +9,7 @@ from alphabee.agents.derived_facts.registry import RULES, load_rules
 from alphabee.agents.facts.tools.company_profile import get_company_profile
 from alphabee.agents.signal.engine import SignalEngine
 from alphabee.agents.signal.registry import SIGNAL_RULES, load_signal_rules
-from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
+from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _finalize_step, _make_id
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
@@ -79,7 +79,7 @@ async def run_analysis_engines(
         new_artifacts.append(
             Artifact(
                 id=_make_id("artifact"),
-                type="derived_facts",
+                type=ArtifactType.DERIVED_FACTS,
                 producer_step=step.id,
                 value=derived_facts_payload.model_dump(mode="json"),
             )
@@ -128,7 +128,7 @@ async def run_analysis_engines(
             new_artifacts.append(
                 Artifact(
                     id=_make_id("artifact"),
-                    type="anomaly_report",
+                    type=ArtifactType.ANOMALY_REPORT,
                     producer_step=step.id,
                     value=anomaly_report_payload.model_dump(mode="json"),
                 )
@@ -160,7 +160,7 @@ async def run_analysis_engines(
         new_artifacts.append(
             Artifact(
                 id=_make_id("artifact"),
-                type="signal_analysis",
+                type=ArtifactType.SIGNAL_ANALYSIS,
                 producer_step=step.id,
                 value=signal_analysis_payload.model_dump(mode="json"),
             )
