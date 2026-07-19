@@ -3,11 +3,14 @@
 Simplified pipeline:
 1. collect_raw_facts      — FactCollector + structured model extraction (concurrent)
 2. run_analysis_engines   — DerivedFacts + SignalEngine + AnomalyEngine
-3. run_thesis             — ThesisEngine + optional LLM enhancement
-4. review_thesis          — ThesisReviewer (deterministic + optional LLM audit)
-5. generate_report        — Single LLM call: structured data → Markdown report
-6. review_report          — Harness-as-library quality gate with optional rewrite
-7. finalize               — Merge all results into JSON AIMessage
+3. explore_conflicts      — ConflictExplorer: identify contradictions and gaps
+4. verify_hypotheses       — Verify each hypothesis against evidence
+5. synthesize_insights     — InsightAgent: synthesize central viewpoint from all upstream
+6. run_thesis             — ThesisEngine + optional LLM enhancement
+7. review_thesis          — ThesisReviewer (deterministic + optional LLM audit)
+8. generate_report        — Single LLM call: structured data → Markdown report
+9. review_report          — Harness-as-library quality gate with optional rewrite
+10. finalize               — Merge all results into JSON AIMessage
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ from alphabee.orchestrator.contracts import (
 from alphabee.orchestrator.gates import review_report, route_after_report_review
 from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
+from alphabee.orchestrator.nodes.insights import synthesize_insights
 from alphabee.orchestrator.nodes.thesis import run_thesis
 from alphabee.orchestrator.nodes.verification import verify_hypotheses
 from alphabee.orchestrator.reporter import generate_report
@@ -334,6 +338,7 @@ _graph.add_node("collect_raw_facts", collect_raw_facts)
 _graph.add_node("run_analysis_engines", run_analysis_engines)
 _graph.add_node("explore_conflicts", explore_conflicts)
 _graph.add_node("verify_hypotheses", verify_hypotheses)
+_graph.add_node("synthesize_insights", synthesize_insights)
 _graph.add_node("run_thesis", run_thesis)
 _graph.add_node("review_thesis", review_thesis)
 _graph.add_node("generate_report", generate_report)
@@ -344,7 +349,8 @@ _graph.add_edge(START, "collect_raw_facts")
 _graph.add_edge("collect_raw_facts", "run_analysis_engines")
 _graph.add_edge("run_analysis_engines", "explore_conflicts")
 _graph.add_edge("explore_conflicts", "verify_hypotheses")
-_graph.add_edge("verify_hypotheses", "run_thesis")
+_graph.add_edge("verify_hypotheses", "synthesize_insights")
+_graph.add_edge("synthesize_insights", "run_thesis")
 _graph.add_edge("run_thesis", "review_thesis")
 _graph.add_edge("review_thesis", "generate_report")
 _graph.add_edge("generate_report", "review_report")
