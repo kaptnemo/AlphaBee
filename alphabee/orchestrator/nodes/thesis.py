@@ -9,10 +9,12 @@ from alphabee.agents.thesis.enhancer import ThesisEnhancer
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _build_conflict_data, _finalize_step, _find_artifact, _make_id
 from alphabee.orchestrator.contracts import (
+    InsightArtifact,
     ThesisArtifact,
     ThesisIndustryContext,
     coerce_conflicts_result,
     coerce_verification_artifact,
+    find_artifact_model,
 )
 from alphabee.orchestrator.services.company_context import build_company_context
 from alphabee.orchestrator.state import OrchestratorState
@@ -101,11 +103,13 @@ async def run_thesis(
         )
 
         thesis_engine = ThesisEngine()
+        insight = find_artifact_model(state.get("artifacts", []), "insight_analysis", InsightArtifact)
         thesis = thesis_engine.run(
             symbol=symbol or "unknown",
             period=period,
             signal_results=signal_results,
             anomaly_report=anomaly_av,
+            insight=(insight.model_dump(mode="json") if insight is not None else None),
             conflict_analysis=(
                 coerce_conflicts_result(state.get("conflicts_result")).model_dump(mode="json")
                 if coerce_conflicts_result(state.get("conflicts_result")) is not None

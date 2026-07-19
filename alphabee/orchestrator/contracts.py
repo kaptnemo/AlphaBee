@@ -98,8 +98,20 @@ class ThesisArtifact(BaseModel):
 
 
 class InsightArtifact(BaseModel):
-    summary: str = ""
-    findings: list[dict[str, Any]] = Field(default_factory=list)
+    """Typed artifact wrapping InsightAgent output — the central opinion document."""
+
+    core_view: str = ""
+    central_tension: str = ""
+    main_driver: str = ""
+    supporting_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    counter_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    materiality_rank: list[dict[str, Any]] = Field(default_factory=list)
+    business_model_context: str = ""
+    base_case: str = ""
+    bull_case: str = ""
+    bear_case: str = ""
+    what_would_change_my_mind: list[str] = Field(default_factory=list)
+    confidence: str = "medium"
 
 
 class ReportArtifact(ReportOutput):
@@ -180,6 +192,20 @@ class ReportIssuePayload(BaseModel):
     message: str
 
 
+class ReportInsightPayload(BaseModel):
+    """InsightAgent output carried into the report-generation payload."""
+
+    core_view: str = ""
+    central_tension: str = ""
+    main_driver: str = ""
+    business_model_context: str = ""
+    base_case: str = ""
+    bull_case: str = ""
+    bear_case: str = ""
+    what_would_change_my_mind: list[str] = Field(default_factory=list)
+    confidence: str = "medium"
+
+
 class ReportGenerationPayload(BaseModel):
     company: ReportCompanyPayload = Field(default_factory=ReportCompanyPayload)
     metrics: ReportMetricsPayload = Field(default_factory=ReportMetricsPayload)
@@ -188,6 +214,7 @@ class ReportGenerationPayload(BaseModel):
     review: dict[str, Any] | None = None
     anomaly: ReportAnomalyPayload = Field(default_factory=ReportAnomalyPayload)
     conflict_analysis: ReportConflictAnalysisPayload | None = None
+    insight: ReportInsightPayload | None = None
     issues: list[ReportIssuePayload] = Field(default_factory=list)
     required_issue_disclosures: list[ReportIssuePayload] = Field(default_factory=list)
 

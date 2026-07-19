@@ -91,6 +91,7 @@ class ThesisEngine:
         conflict_analysis: dict[str, Any] | None = None,
         verification_results: list[dict[str, Any]] | None = None,
         company_context: dict[str, Any] | None = None,
+        insight: dict[str, Any] | None = None,
     ) -> InvestmentThesis:
         """根据信号评估结果生成 InvestmentThesis。
 
@@ -186,6 +187,10 @@ class ThesisEngine:
         self._apply_company_context(
             dimensions=dimensions,
             company_context=company_context,
+        )
+        self._apply_insight(
+            dimensions=dimensions,
+            insight=insight,
         )
         self._refresh_dimensions(dimensions)
 
@@ -500,6 +505,60 @@ class ThesisEngine:
             return
         dim.score *= factor
         dim.context_notes.append(note)
+
+    def _apply_insight(
+        self,
+        *,
+        dimensions: dict[str, ThesisDimension],
+        insight: dict[str, Any] | None,
+    ) -> None:
+        """Apply InsightAgent output as qualitative context on top of deterministic scores.
+
+        InsightAgent produces an LLM-generated opinion document.  We use it to:
+        - inject counter-evidence (so the thesis does not read as one-sided)
+        - attach the central tension as a context note on every dimension
+        - temper overall confidence when the insight itself is low-confidence
+
+        The deterministic signal-based scores are never overridden; insight only
+        adds qualitative annotations that the report generator can surface.
+        """
+        if not insight:
+            return
+
+        central_tension = str(insight.get("central_tension", "") or "")
+        counter_evidence_items: list[dict] = insight.get("counter_evidence") or []
+        insight_confidence = str(insight.get("confidence", "medium") or "medium")
+
+        # ── Attach central tension to every dimension as a context note ──
+        if central_tension:
+            for dim in dimensions.values():
+                if central_tension not in dim.context_notes:
+                    dim.context_notes.append(f"洞察-中心矛盾：{central_tension}")
+
+        # ── Inject counter-evidence as counter_evidence on all dimensions ──
+        # These are LLM-identified facts that cut against the core view.
+        # Rather than guessing which dimension each counter-evidence item
+        # belongs to, we attach all of them to every dimension — the report
+        # generator will surface the most relevant ones per dimension.
+        for item in counter_evidence_items:
+            statement = str(item.get("statement", "") or "")
+            if not statement:
+                continue
+            source = str(item.get("source", "insight") or "insight")
+            text = f"[洞察反证] {statement} (来源: {source})"
+            for dim in dimensions.values():
+                dim.counter_evidence.append(text)
+
+        # ── Deduplicate counter_evidence per dimension ──
+        for dim in dimensions.values():
+            dim.counter_evidence = self._dedupe_preserve_order(dim.counter_evidence)
+
+        # ── Temper confidence when insight itself is low ──
+        confidence_factor = {"high": 1.0, "medium": 0.95, "low": 0.85}
+        factor = confidence_factor.get(insight_confidence, 0.95)
+        if factor < 1.0:
+            for dim in dimensions.values():
+                dim.confidence = round(max(0.0, dim.confidence * factor), 3)
 
     def _refresh_dimensions(self, dimensions: dict[str, ThesisDimension]) -> None:
         for dim_id, dim in dimensions.items():

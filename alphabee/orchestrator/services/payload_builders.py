@@ -10,12 +10,14 @@ from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
     DerivedFactsArtifact,
     FactCollectionArtifact,
+    InsightArtifact,
     ReportAnomalyPayload,
     ReportCompanyPayload,
     ReportConflictAnalysisPayload,
     ReportConflictHypothesisPayload,
     ReportConflictItemPayload,
     ReportGenerationPayload,
+    ReportInsightPayload,
     ReportIssuePayload,
     ReportMetricEntry,
     ReportMetricsPayload,
@@ -345,6 +347,20 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             conflicts=enriched_conflicts,
         )
 
+    insight_val = find_artifact_model(artifacts, "insight_analysis", InsightArtifact)
+    if insight_val:
+        payload.insight = ReportInsightPayload(
+            core_view=insight_val.core_view,
+            central_tension=insight_val.central_tension,
+            main_driver=insight_val.main_driver,
+            business_model_context=insight_val.business_model_context,
+            base_case=insight_val.base_case,
+            bull_case=insight_val.bull_case,
+            bear_case=insight_val.bear_case,
+            what_would_change_my_mind=list(insight_val.what_would_change_my_mind),
+            confidence=insight_val.confidence,
+        )
+
     payload.issues = [
         ReportIssuePayload(
             id=issue.id,
@@ -357,3 +373,161 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
     payload.required_issue_disclosures = [issue for issue in payload.issues if issue.severity in {"high", "critical"}]
 
     return payload
+
+
+def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
+    """Assemble upstream analysis context for the InsightAgent.
+
+    The InsightAgent needs a concise, structured summary of all upstream
+    findings — signals, anomalies, conflicts, verification results, and
+    derived facts — to synthesize a central investment viewpoint.
+
+    Returns a dict suitable for JSON serialization into the agent prompt.
+    """
+    from alphabee.orchestrator.services.company_context import build_company_context
+
+    artifacts = state.get("artifacts", [])
+    financial_facts = state.get("financial_facts")
+    market_facts = state.get("market_facts")
+
+    # ── Company context ──────────────────────────────────────────────
+    fact_val = _find_artifact(artifacts, "fact_collection")
+    fact_text = fact_val.get("raw_response", "") if fact_val else ""
+    company_ctx = build_company_context(
+        symbol=symbol,
+        fact_text=fact_text,
+        financial_facts=financial_facts,
+        market_facts=market_facts,
+    )
+
+    # ── Key signals (non-neutral, sorted by severity) ────────────────
+    signal_val = coerce_signal_analysis(state.get("signal_analysis")) or SignalAnalysisArtifact()
+    level_order = {"high": 3, "medium": 2, "low": 1, "none": 0}
+    key_signals: list[dict] = []
+    for sig_id, result in signal_val.results.items():
+        level = str(result.get("level", ""))
+        if level in ("none", "unknown", "", "blocked", "missing_fact"):
+            continue
+        key_signals.append(
+            {
+                "signal_id": sig_id,
+                "level": level,
+                "interpretation": str(result.get("interpretation", ""))[:200],
+                "thesis_impact": result.get("thesis_impact", {}),
+            }
+        )
+    key_signals.sort(key=lambda s: level_order.get(str(s.get("level", "")), 0), reverse=True)
+
+    # ── Derived facts (non-neutral) ──────────────────────────────────
+    derived_val = coerce_derived_facts(state.get("derived_facts")) or DerivedFactsArtifact()
+    key_derived: dict[str, dict] = {}
+    for name, item in derived_val.results.items():
+        val = item.get(name)
+        level = str(item.get("level", ""))
+        if val is not None and level not in ("none", ""):
+            key_derived[name] = {
+                "value": round(float(val), 3) if isinstance(val, (int, float)) else val,
+                "level": level,
+                "interpretation": str(item.get("interpretation", ""))[:120],
+            }
+
+    # ── Anomalies ────────────────────────────────────────────────────
+    anomaly_report = coerce_anomaly_report(state.get("anomaly_report")) or find_artifact_model(
+        artifacts, "anomaly_report", AnomalyReportArtifact
+    )
+    anomaly_summary: dict = {}
+    if anomaly_report:
+        anomaly_summary = {
+            "anomaly_count": anomaly_report.anomaly_count,
+            "pattern_count": anomaly_report.pattern_count,
+            "top_anomalies": [
+                {"metric": a.get("metric"), "level": a.get("level"), "z_score": a.get("z_score")}
+                for a in anomaly_report.anomalies
+                if a.get("level") != "none"
+            ][:8],
+            "pattern_matches": [
+                {"name": p.get("pattern_name"), "severity": p.get("severity")} for p in anomaly_report.pattern_matches
+            ][:5],
+        }
+
+    # ── Conflicts & verification ─────────────────────────────────────
+    conflicts_result = coerce_conflicts_result(state.get("conflicts_result"))
+    verification_artifact = coerce_verification_artifact(state.get("verification_results")) or VerificationArtifact()
+
+    conflict_summary: list[dict] = []
+    if conflicts_result:
+        verify_by_hid: dict[str, dict] = {
+            vr.hypothesis_id: {
+                "status": vr.status,
+                "support_score": vr.support_score,
+                "contradiction_score": vr.contradiction_score,
+                "summary": vr.summary,
+                "gaps": vr.gaps,
+            }
+            for vr in verification_artifact.results
+            if vr.hypothesis_id
+        }
+        for c in conflicts_result.conflicts:
+            hypotheses = []
+            for h in c.hypotheses:
+                vr = verify_by_hid.get(h.id, {})
+                hypotheses.append(
+                    {
+                        "explanation": h.explanation,
+                        "status": vr.get("status", h.status),
+                        "support_score": vr.get("support_score"),
+                        "contradiction_score": vr.get("contradiction_score"),
+                        "summary": vr.get("summary", ""),
+                        "gaps": vr.get("gaps", []),
+                    }
+                )
+            conflict_summary.append(
+                {
+                    "theme": c.theme,
+                    "severity": c.severity,
+                    "description": c.description[:300],
+                    "related_dimensions": list(c.related_dimensions),
+                    "hypotheses": hypotheses,
+                }
+            )
+
+    # ── Financial snapshot ───────────────────────────────────────────
+    snapshot: dict = {}
+    if financial_facts and financial_facts.snapshots:
+        s = financial_facts.snapshots[0]
+        snapshot = {
+            "period": getattr(s, "period", ""),
+            "revenue_yoy": getattr(s, "revenue_yoy", None),
+            "net_profit_yoy": getattr(s, "net_profit_yoy", None),
+            "gross_margin": getattr(s, "gross_margin", None),
+            "roe": getattr(s, "roe", None),
+            "operating_cashflow_ratio": getattr(s, "operating_cashflow_ratio", None),
+            "debt_ratio": getattr(s, "debt_ratio", None),
+        }
+
+    # ── Market valuation ─────────────────────────────────────────────
+    market_summary: dict = {}
+    if market_facts:
+        market_summary = {
+            "pe_ttm": getattr(market_facts, "pe_ttm", None),
+            "pb_ratio": getattr(market_facts, "pb_ratio", None),
+            "market_cap": getattr(market_facts, "market_cap", None),
+        }
+
+    return {
+        "symbol": symbol or "unknown",
+        "company": {
+            "industry": company_ctx.industry,
+            "sub_industry": company_ctx.sub_industry,
+            "market_cap_category": company_ctx.market_cap_category,
+            "lifecycle_stage": company_ctx.lifecycle_stage,
+        },
+        "latest_snapshot": snapshot,
+        "market_valuation": market_summary,
+        "key_signals": key_signals,
+        "key_derived_facts": key_derived,
+        "anomaly": anomaly_summary,
+        "conflicts": conflict_summary,
+        "verified_count": verification_artifact.verified_count,
+        "rejected_count": verification_artifact.rejected_count,
+    }

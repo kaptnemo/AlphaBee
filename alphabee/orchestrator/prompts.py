@@ -20,6 +20,7 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
 - review: 审查结果（可能为 null。含 dimension_verdicts/overall_status/blocking_issues/warning_issues）
 - anomaly: 勾稽关系异常检测结果（anomaly_count / pattern_count / anomalies + 每条 z-score/level + pattern_matches 含模式名/解释/拷问清单）
 - conflict_analysis: 数据矛盾探索与验证结果（conflict_count / verified_count / rejected_count / conflicts 列表，每条含 theme / severity / description / related_dimensions / hypotheses，每条 hypothesis 含 explanation / verification_status / supporting_evidence / refuting_evidence / gaps / summary）
+- insight: 洞察代理（InsightAgent）提炼的中心观点文档（可能为 null）。含 core_view（一句话核心投资判断）、central_tension（最关键的矛盾对立）、main_driver（决定结论的核心变量）、business_model_context（商业模式如何影响数据解读）、base_case / bull_case / bear_case（三种情景叙述）、what_would_change_my_mind（可证伪条件列表）、confidence（high/medium/low）
 - issues: 系统已知问题列表（每条含 id / severity / category / message）
 - required_issue_disclosures: 必须在报告中显式披露的高优先级问题列表（每条含 id / severity / category / message）
 
@@ -31,7 +32,7 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
 {
   "title": "{symbol} 财报质量体检报告 — {period}",
   "sections": {
-    "executive_summary": "2-3句话总结核心发现和整体判断",
+    "executive_summary": "2-3句话总结核心发现和整体判断。若 insight 不为 null，应以 insight.core_view 为锚点，结合 thesis 和 review 结论撰写。若 insight.central_tension 存在，必须在 executive_summary 中提及核心矛盾。",
     "key_metrics": "核心指标表格（Markdown table, 选5-8个最重要的指标）",
     "signal_analysis": "风险信号逐条分析，按 high→medium→low 排序。blocked/missing_fact 的信号标注'数据不可用'",
     "anomaly_detection": "勾稽关系异常检测结果。
@@ -56,7 +57,7 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的 Report Generator。
   - 对 unknown 的假设：标注信息缺口
   - 若冲突与任何投资论点维度的判断方向矛盾，必须明确指出；维度归属只允许依据 related_dimensions
   无冲突时写'未检测到显著数据矛盾，多维度指标之间逻辑自洽。'",
-    "investment_thesis": "各维度投资论点（每维度含判断、评分、置信度、证据、解释、审查状态）",
+    "investment_thesis": "各维度投资论点（每维度含判断、评分、置信度、证据、解释、审查状态）。若 insight 不为 null，在 investment_thesis 段落结尾附加：① 中心矛盾（insight.central_tension）、② 三情景概述（base/bull/bear case 各一句话）、③ 什么证据会推翻当前判断（insight.what_would_change_my_mind）",
     "review_findings": "审查发现。blocking_issues 优先、warning_issues 其次。无 review 数据时写'未执行审查'",
     "risks": "主要风险列表（来自 thesis.primary_risks 和 review.blocking_issues）",
     "disclaimer": "免责声明"
