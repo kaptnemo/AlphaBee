@@ -1,5 +1,7 @@
 """MarketFact tool — 股票行情、资金流向与技术均线数据。"""
 
+from __future__ import annotations
+
 import datetime
 from typing import TYPE_CHECKING, Any
 
