@@ -17,6 +17,7 @@ from alphabee.agents.facts.agent import fact_collector_agent_factory
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 from alphabee.agents.facts.tools.financial_fact import get_financial_facts_model
 from alphabee.agents.facts.tools.market_fact import get_market_facts_model
+from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import (
     Artifact,
     Issue,
@@ -30,9 +31,9 @@ from alphabee.orchestrator.contracts import (
     ConflictDataSummary,
     ConflictSummary,
     FactCollectionArtifact,
+    VerificationArtifact,
     VerifiedHypothesisSummary,
-    coerce_conflicts_result,
-    coerce_verification_artifact,
+    find_artifact_model,
 )
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.tools.common import extract_symbols_from_query
@@ -62,8 +63,9 @@ def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict | None
 
 def _build_conflict_data(state: OrchestratorState) -> dict:
     """Summarise conflict+verification results for downstream nodes."""
-    conflicts_raw = coerce_conflicts_result(state.get("conflicts_result"))
-    verification_artifact = coerce_verification_artifact(state.get("verification_results"))
+    artifacts = state.get("artifacts", [])
+    conflicts_raw = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
+    verification_artifact = find_artifact_model(artifacts, "verification_results", VerificationArtifact)
     verification_results = verification_artifact.results if verification_artifact else []
 
     if not conflicts_raw:

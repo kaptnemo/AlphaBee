@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from langchain_core.runnables import RunnableConfig
 
+from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.agents.thesis.engine import ThesisEngine
 from alphabee.agents.thesis.enhancer import ThesisEnhancer
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _build_conflict_data, _finalize_step, _find_artifact, _make_id
 from alphabee.orchestrator.contracts import (
+    AnomalyReportArtifact,
     InsightArtifact,
     ThesisArtifact,
     ThesisIndustryContext,
-    coerce_conflicts_result,
-    coerce_verification_artifact,
+    VerificationArtifact,
     find_artifact_model,
 )
 from alphabee.orchestrator.services.company_context import build_company_context
@@ -51,12 +52,8 @@ async def run_thesis(
     fc_av = _find_artifact(state.get("artifacts", []), "fact_collection")
     fact_text: str = fc_av.get("raw_response", "") if fc_av else ""
 
-    anomaly_payload = state.get("anomaly_report")
-    anomaly_av = (
-        anomaly_payload.model_dump(mode="json")
-        if anomaly_payload is not None
-        else _find_artifact(state.get("artifacts", []), "anomaly_report")
-    )
+    anomaly_payload = find_artifact_model(state.get("artifacts", []), "anomaly_report", AnomalyReportArtifact)
+    anomaly_av = anomaly_payload.model_dump(mode="json") if anomaly_payload is not None else None
     anomaly_data: dict = {}
     if anomaly_av:
         anomaly_data = {
@@ -102,25 +99,21 @@ async def run_thesis(
             market_facts=market_facts,
         )
 
+        artifacts = state.get("artifacts", [])
         thesis_engine = ThesisEngine()
-        insight = find_artifact_model(state.get("artifacts", []), "insight_analysis", InsightArtifact)
+        insight = find_artifact_model(artifacts, "insight_analysis", InsightArtifact)
+        conflicts_raw = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
+        verification_raw = find_artifact_model(artifacts, "verification_results", VerificationArtifact)
         thesis = thesis_engine.run(
             symbol=symbol or "unknown",
             period=period,
             signal_results=signal_results,
             anomaly_report=anomaly_av,
             insight=(insight.model_dump(mode="json") if insight is not None else None),
-            conflict_analysis=(
-                coerce_conflicts_result(state.get("conflicts_result")).model_dump(mode="json")
-                if coerce_conflicts_result(state.get("conflicts_result")) is not None
-                else None
-            ),
+            conflict_analysis=(conflicts_raw.model_dump(mode="json") if conflicts_raw is not None else None),
             verification_results=(
-                [
-                    item.model_dump(mode="json")
-                    for item in coerce_verification_artifact(state.get("verification_results")).results
-                ]
-                if coerce_verification_artifact(state.get("verification_results")) is not None
+                [item.model_dump(mode="json") for item in verification_raw.results]
+                if verification_raw is not None
                 else None
             ),
             company_context=company_ctx,

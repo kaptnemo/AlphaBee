@@ -22,6 +22,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.store.memory import InMemoryStore
 
+from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import (
     Artifact,
     Decision,
@@ -37,8 +38,6 @@ from alphabee.orchestrator.contracts import (
     SignalAnalysisArtifact,
     ThesisArtifact,
     VerificationArtifact,
-    coerce_conflicts_result,
-    coerce_verification_artifact,
     find_artifact_model,
 )
 from alphabee.orchestrator.gates import review_report, route_after_report_review
@@ -182,9 +181,11 @@ async def review_thesis(
         )
 
     # ── Inject verified conflicts as additional review evidence ──
-    conflicts_raw = coerce_conflicts_result(state.get("conflicts_result"))
+    conflicts_raw = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
     if conflicts_raw:
-        verification_results = coerce_verification_artifact(state.get("verification_results")) or VerificationArtifact()
+        verification_results = (
+            find_artifact_model(artifacts, "verification_results", VerificationArtifact) or VerificationArtifact()
+        )
         verify_by_hid: dict[str, dict] = {
             vr.hypothesis_id: vr.model_dump(mode="json") for vr in verification_results.results
         }

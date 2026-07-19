@@ -7,14 +7,7 @@ from typing import TypedDict
 from langchain_core.messages import AnyMessage
 
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
-from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import Artifact, Decision, Issue, Observation, Run, Step
-from alphabee.orchestrator.contracts import (
-    AnomalyReportArtifact,
-    DerivedFactsArtifact,
-    SignalAnalysisArtifact,
-    VerificationArtifact,
-)
 
 
 class OrchestratorState(TypedDict, total=False):
@@ -42,9 +35,3 @@ class OrchestratorState(TypedDict, total=False):
     fact_values: dict[str, float]  # 规范化数值事实，由 collect_raw_facts 填充
     financial_facts: FinancialFacts | None
     market_facts: MarketFacts | None
-    derived_facts: DerivedFactsArtifact
-    signal_analysis: SignalAnalysisArtifact
-    anomaly_report: AnomalyReportArtifact | None
-    conflicts_result: ConflictAnalysisResult | None
-    verification_results: VerificationArtifact | None
-    # ── 由各节点生成的中间产物 ─────────────────────────

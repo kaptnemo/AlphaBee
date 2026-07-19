@@ -14,11 +14,12 @@ import json as _json
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
+from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import Artifact, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
 from alphabee.orchestrator.contracts import (
     VerificationArtifact,
-    coerce_conflicts_result,
+    find_artifact_model,
 )
 from alphabee.orchestrator.services.payload_builders import build_verify_context
 from alphabee.orchestrator.state import OrchestratorState
@@ -119,7 +120,7 @@ async def verify_hypotheses(
     new_artifacts: list[Artifact] = []
     new_issues: list[Issue] = []
 
-    conflicts_result = coerce_conflicts_result(state.get("conflicts_result"))
+    conflicts_result = find_artifact_model(state.get("artifacts", []), "conflicts_result", ConflictAnalysisResult)
     if not conflicts_result:
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
         return {**state, "steps": state.get("steps", []) + [completed_step]}
@@ -178,6 +179,4 @@ async def verify_hypotheses(
         "steps": state.get("steps", []) + [completed_step],
         "issues": state.get("issues", []) + new_issues,
         "artifacts": state.get("artifacts", []) + new_artifacts,
-        "conflicts_result": conflicts_result,
-        "verification_results": verification_artifact,
     }

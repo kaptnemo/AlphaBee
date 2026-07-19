@@ -122,10 +122,17 @@ async def explore_conflicts(
                 )
 
     completed_step = _finalize_step(step, new_issues, new_artifacts)
+    new_artifacts.append(
+        Artifact(
+            id=_make_id("artifact"),
+            type="conflicts_result",
+            producer_step=step.id,
+            value=conflicts_result.model_dump(mode="json"),
+        )
+    )
     return {
         **state,
         "steps": state.get("steps", []) + [completed_step],
         "issues": state.get("issues", []) + new_issues,
         "artifacts": state.get("artifacts", []) + new_artifacts,
-        "conflicts_result": conflicts_result,
     }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json as _json
 
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
+from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.orchestrator.collectors import _find_artifact
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
@@ -26,11 +27,6 @@ from alphabee.orchestrator.contracts import (
     SignalAnalysisArtifact,
     ThesisArtifact,
     VerificationArtifact,
-    coerce_anomaly_report,
-    coerce_conflicts_result,
-    coerce_derived_facts,
-    coerce_signal_analysis,
-    coerce_verification_artifact,
     find_artifact_model,
 )
 from alphabee.orchestrator.state import OrchestratorState
@@ -90,18 +86,14 @@ def _build_key_derived(derived_facts: dict) -> dict:
 
 
 def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symbol: str | None) -> str:
+    artifacts = state.get("artifacts", [])
     financial_facts: FinancialFacts | None = state.get("financial_facts")
     market_facts: MarketFacts | None = state.get("market_facts")
-    derived_facts = coerce_derived_facts(state.get("derived_facts")) or DerivedFactsArtifact()
-    signal_analysis = coerce_signal_analysis(state.get("signal_analysis")) or SignalAnalysisArtifact()
-
-    anomaly_report = coerce_anomaly_report(state.get("anomaly_report"))
-    if anomaly_report is None:
-        anomaly_report = find_artifact_model(
-            state.get("artifacts", []),
-            "anomaly_report",
-            AnomalyReportArtifact,
-        )
+    derived_facts = find_artifact_model(artifacts, "derived_facts", DerivedFactsArtifact) or DerivedFactsArtifact()
+    signal_analysis = (
+        find_artifact_model(artifacts, "signal_analysis", SignalAnalysisArtifact) or SignalAnalysisArtifact()
+    )
+    anomaly_report = find_artifact_model(artifacts, "anomaly_report", AnomalyReportArtifact)
 
     snapshot_summary: dict = {}
     if financial_facts and financial_facts.snapshots:
@@ -190,11 +182,7 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
             "market_cap": getattr(market_facts, "market_cap", None),
         }
 
-    anomaly_report = coerce_anomaly_report(state.get("anomaly_report")) or find_artifact_model(
-        state.get("artifacts", []),
-        "anomaly_report",
-        AnomalyReportArtifact,
-    )
+    anomaly_report = find_artifact_model(state.get("artifacts", []), "anomaly_report", AnomalyReportArtifact)
 
     return {
         "symbol": symbol or "unknown",
@@ -290,8 +278,10 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             pattern_matches=list(anomaly_val.pattern_matches),
         )
 
-    conflicts_result = coerce_conflicts_result(state.get("conflicts_result"))
-    verification_artifact = coerce_verification_artifact(state.get("verification_results")) or VerificationArtifact()
+    conflicts_result = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
+    verification_artifact = (
+        find_artifact_model(artifacts, "verification_results", VerificationArtifact) or VerificationArtifact()
+    )
     if conflicts_result:
         verify_by_hid = {
             result.hypothesis_id: result for result in verification_artifact.results if result.hypothesis_id
@@ -401,7 +391,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
     )
 
     # ── Key signals (non-neutral, sorted by severity) ────────────────
-    signal_val = coerce_signal_analysis(state.get("signal_analysis")) or SignalAnalysisArtifact()
+    signal_val = find_artifact_model(artifacts, "signal_analysis", SignalAnalysisArtifact) or SignalAnalysisArtifact()
     level_order = {"high": 3, "medium": 2, "low": 1, "none": 0}
     key_signals: list[dict] = []
     for sig_id, result in signal_val.results.items():
@@ -419,7 +409,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
     key_signals.sort(key=lambda s: level_order.get(str(s.get("level", "")), 0), reverse=True)
 
     # ── Derived facts (non-neutral) ──────────────────────────────────
-    derived_val = coerce_derived_facts(state.get("derived_facts")) or DerivedFactsArtifact()
+    derived_val = find_artifact_model(artifacts, "derived_facts", DerivedFactsArtifact) or DerivedFactsArtifact()
     key_derived: dict[str, dict] = {}
     for name, item in derived_val.results.items():
         val = item.get(name)
@@ -432,9 +422,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
             }
 
     # ── Anomalies ────────────────────────────────────────────────────
-    anomaly_report = coerce_anomaly_report(state.get("anomaly_report")) or find_artifact_model(
-        artifacts, "anomaly_report", AnomalyReportArtifact
-    )
+    anomaly_report = find_artifact_model(artifacts, "anomaly_report", AnomalyReportArtifact)
     anomaly_summary: dict = {}
     if anomaly_report:
         anomaly_summary = {
@@ -451,8 +439,10 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
         }
 
     # ── Conflicts & verification ─────────────────────────────────────
-    conflicts_result = coerce_conflicts_result(state.get("conflicts_result"))
-    verification_artifact = coerce_verification_artifact(state.get("verification_results")) or VerificationArtifact()
+    conflicts_result = find_artifact_model(artifacts, "conflicts_result", ConflictAnalysisResult)
+    verification_artifact = (
+        find_artifact_model(artifacts, "verification_results", VerificationArtifact) or VerificationArtifact()
+    )
 
     conflict_summary: list[dict] = []
     if conflicts_result:

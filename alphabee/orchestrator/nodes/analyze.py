@@ -186,7 +186,4 @@ async def run_analysis_engines(
         "artifacts": state.get("artifacts", []) + new_artifacts,
         "issues": state.get("issues", []) + new_issues,
         "fact_values": fact_values,
-        "derived_facts": derived_facts_payload,
-        "signal_analysis": signal_analysis_payload,
-        "anomaly_report": anomaly_report_payload,
     }
