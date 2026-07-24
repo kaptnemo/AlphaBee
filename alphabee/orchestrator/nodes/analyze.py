@@ -59,9 +59,8 @@ async def run_analysis_engines(
         )
         completed_step = _finalize_step(step, new_issues, new_artifacts)
         return {
-            **state,
-            "steps": state.get("steps", []) + [completed_step],
-            "issues": state.get("issues", []) + new_issues,
+            "steps": [completed_step],
+            "issues": new_issues,
         }
 
     derived_facts_payload = DerivedFactsArtifact()
@@ -181,9 +180,8 @@ async def run_analysis_engines(
 
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
-        **state,
-        "steps": state.get("steps", []) + [completed_step],
-        "artifacts": state.get("artifacts", []) + new_artifacts,
-        "issues": state.get("issues", []) + new_issues,
-        "fact_values": fact_values,
+        "steps": [completed_step],
+        "artifacts": new_artifacts,
+        "issues": new_issues,
+        "fact_values": anomaly_fact_values,
     }

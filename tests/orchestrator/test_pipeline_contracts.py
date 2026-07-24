@@ -118,9 +118,6 @@ def test_run_analysis_engines_emits_typed_artifacts(monkeypatch):
         )
     )
 
-    assert isinstance(result["derived_facts"], DerivedFactsArtifact)
-    assert isinstance(result["signal_analysis"], SignalAnalysisArtifact)
-    assert isinstance(result["anomaly_report"], AnomalyReportArtifact)
     assert find_artifact_model(result["artifacts"], "derived_facts", DerivedFactsArtifact)
     assert find_artifact_model(result["artifacts"], "signal_analysis", SignalAnalysisArtifact)
     assert find_artifact_model(result["artifacts"], "anomaly_report", AnomalyReportArtifact)
@@ -185,8 +182,9 @@ def test_conflict_and_verification_nodes_emit_typed_contracts(monkeypatch):
         )
     )
 
-    assert isinstance(conflict_state["conflicts_result"], ConflictAnalysisResult)
     assert find_artifact_model(conflict_state["artifacts"], "conflict_analysis", ConflictAnalysisArtifact)
+    conflicts_result = find_artifact_model(conflict_state["artifacts"], "conflicts_result", ConflictAnalysisResult)
+    assert isinstance(conflicts_result, ConflictAnalysisResult)
 
     async def fake_verify_single_conflict(conflict, shared_context, step_id, config):
         return (
@@ -210,13 +208,13 @@ def test_conflict_and_verification_nodes_emit_typed_contracts(monkeypatch):
 
     verification_state = asyncio.run(verification_node.verify_hypotheses(conflict_state, {}))
 
-    assert isinstance(verification_state["verification_results"], VerificationArtifact)
-    assert verification_state["verification_results"].results[0].status == "verified"
-    assert find_artifact_model(
+    verification_result = find_artifact_model(
         verification_state["artifacts"],
         "verification_results",
         VerificationArtifact,
     )
+    assert isinstance(verification_result, VerificationArtifact)
+    assert verification_result.results[0].status == "verified"
 
 
 def test_report_generation_payload_is_typed_and_tracks_required_disclosures():
@@ -290,6 +288,58 @@ def test_report_generation_payload_is_typed_and_tracks_required_disclosures():
                 producer_step="run_thesis",
                 value=thesis_artifact.model_dump(mode="json"),
             ),
+            Artifact(
+                id="a6",
+                type="conflicts_result",
+                producer_step="explore_conflicts",
+                value=ConflictAnalysisResult.model_validate(
+                    {
+                        "conflicts": [
+                            {
+                                "id": "c1",
+                                "theme": "盈利增长但现金流恶化",
+                                "description": "利润增长没有被现金流验证。",
+                                "related_dimensions": ["earnings_quality"],
+                                "severity": "high",
+                                "confidence": 0.9,
+                                "hypotheses": [
+                                    {
+                                        "id": "h1",
+                                        "conflict_id": "c1",
+                                        "explanation": "收入质量不足",
+                                        "predictions": [],
+                                        "required_evidence": [],
+                                        "score": 0.8,
+                                        "status": "verified",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ).model_dump(mode="json"),
+            ),
+            Artifact(
+                id="a7",
+                type="verification_results",
+                producer_step="verify_hypotheses",
+                value=VerificationArtifact(
+                    results=[
+                        VerificationResultItem(
+                            id="v1",
+                            hypothesis_id="h1",
+                            status="verified",
+                            support_score=0.9,
+                            contradiction_score=0.1,
+                            confidence=0.8,
+                            gaps=[],
+                            summary="现金流未能验证利润增长。",
+                        )
+                    ],
+                    verified_count=1,
+                    rejected_count=0,
+                    unknown_count=0,
+                ).model_dump(mode="json"),
+            ),
         ],
         "issues": [
             type(
@@ -303,48 +353,6 @@ def test_report_generation_payload_is_typed_and_tracks_required_disclosures():
                 },
             )()
         ],
-        "conflicts_result": ConflictAnalysisResult.model_validate(
-            {
-                "conflicts": [
-                    {
-                        "id": "c1",
-                        "theme": "盈利增长但现金流恶化",
-                        "description": "利润增长没有被现金流验证。",
-                        "related_dimensions": ["earnings_quality"],
-                        "severity": "high",
-                        "confidence": 0.9,
-                        "hypotheses": [
-                            {
-                                "id": "h1",
-                                "conflict_id": "c1",
-                                "explanation": "收入质量不足",
-                                "predictions": [],
-                                "required_evidence": [],
-                                "score": 0.8,
-                                "status": "verified",
-                            }
-                        ],
-                    }
-                ]
-            }
-        ),
-        "verification_results": VerificationArtifact(
-            results=[
-                VerificationResultItem(
-                    id="v1",
-                    hypothesis_id="h1",
-                    status="verified",
-                    support_score=0.9,
-                    contradiction_score=0.1,
-                    confidence=0.8,
-                    gaps=[],
-                    summary="现金流未能验证利润增长。",
-                )
-            ],
-            verified_count=1,
-            rejected_count=0,
-            unknown_count=0,
-        ),
     }
 
     payload = build_report_generation_payload(state)

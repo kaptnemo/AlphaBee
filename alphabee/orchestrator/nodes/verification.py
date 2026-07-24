@@ -125,12 +125,12 @@ async def verify_hypotheses(
     )
     if not conflicts_result:
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
-        return {**state, "steps": state.get("steps", []) + [completed_step]}
+        return {"steps": [completed_step]}
 
     all_hypotheses = [hypothesis for conflict in conflicts_result.conflicts for hypothesis in conflict.hypotheses]
     if not all_hypotheses:
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
-        return {**state, "steps": state.get("steps", []) + [completed_step]}
+        return {"steps": [completed_step]}
 
     # 第二阶段验证不是重新发现 conflict，而是尝试把每个假设落到证据层：
     # verified/partial/rejected 的状态会直接影响 thesis 审查和最终 confidence。
@@ -177,8 +177,7 @@ async def verify_hypotheses(
 
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
-        **state,
-        "steps": state.get("steps", []) + [completed_step],
-        "issues": state.get("issues", []) + new_issues,
-        "artifacts": state.get("artifacts", []) + new_artifacts,
+        "steps": [completed_step],
+        "issues": new_issues,
+        "artifacts": new_artifacts,
     }

@@ -288,12 +288,9 @@ async def collect_raw_facts(
 
     completed_step = _finalize_step(step, issues, artifacts)
     return {
-        "messages": state.get("messages", []),
         "run": run,
         "steps": [completed_step],
         "artifacts": artifacts,
-        "observations": [],
-        "decisions": [],
         "issues": issues,
         "final_artifact_id": None,
         "evaluation_artifact_id": None,
@@ -306,6 +303,4 @@ async def collect_raw_facts(
         "fact_values": fact_values,
         "financial_facts": financial_facts,
         "market_facts": market_facts,
-        "enhance": state.get("enhance", False),
-        "llm_review": state.get("llm_review", False),
     }

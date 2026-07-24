@@ -377,9 +377,7 @@ async def review_report(
 ) -> OrchestratorState:
     """Evaluate the generated report and request one rewrite when needed."""
     del config
-    steps = list(state.get("steps", []))
     issues = list(state.get("issues", []))
-    decisions = list(state.get("decisions", []))
     artifacts = list(state.get("artifacts", []))
     run = state.get("run")
 
@@ -397,10 +395,7 @@ async def review_report(
     report_artifact = _find_latest_report_artifact(state)
     if report_artifact is None:
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
-        return {
-            **state,
-            "steps": [*steps, completed_step],
-        }
+        return {"steps": [completed_step]}
 
     # 先做结构化打分，再决定是否引入 LLM gate。
     # 这样即使 LLM 不可用，最关键的交付约束仍然是可重复、可解释的。
@@ -429,9 +424,9 @@ async def review_report(
         producer_step=step.id,
         value=evaluation_report.model_dump(mode="json"),
     )
-    artifacts.append(evaluation_artifact)
+    new_artifacts = [evaluation_artifact]
 
-    decisions.append(
+    new_decisions = [
         Decision(
             id=_make_id("decision"),
             maker="report_quality_gate",
@@ -442,29 +437,27 @@ async def review_report(
                 evaluation_artifact.id,
             ],
         )
-    )
+    ]
 
     # 只有“确实没过 gate 且存在明确阻断项”时才触发重写。
     # 这避免因为轻微措辞问题反复重写，保持编排层对重试次数的可控性。
     rewrite_needed = not assessment.passed and bool(assessment.blocking_issues)
     rewrite_reason = "；".join(assessment.blocking_issues[:3]) if rewrite_needed else None
     retries_remaining = rewrite_needed and review_round < state.get("max_report_review_rounds", 2)
+    updated_issues: list[Issue] = []
     if not rewrite_needed:
-        issues = [
+        updated_issues.extend(
             issue.model_copy(
                 update={
-                    "status": IssueStatus.RESOLVED if issue.category == "report_rewrite_needed" else issue.status,
-                    "resolution_evidence": report_artifact.id
-                    if issue.category == "report_rewrite_needed"
-                    else issue.resolution_evidence,
+                    "status": IssueStatus.RESOLVED,
+                    "resolution_evidence": report_artifact.id,
                 }
             )
-            if issue.category == "report_rewrite_needed" and issue.status == IssueStatus.OPEN
-            else issue
             for issue in issues
-        ]
+            if issue.category == "report_rewrite_needed" and issue.status == IssueStatus.OPEN
+        )
     for message in assessment.blocking_issues:
-        issues.append(
+        updated_issues.append(
             Issue(
                 id=_make_id("issue"),
                 severity=IssueSeverity.HIGH,
@@ -492,12 +485,11 @@ async def review_report(
             next_run = next_run.model_copy(update={"status": RunStatus.PARTIAL, "ended_at": datetime.now()})
 
     return {
-        **state,
         "run": next_run,
-        "steps": [*steps, completed_step],
-        "artifacts": artifacts,
-        "decisions": decisions,
-        "issues": issues,
+        "steps": [completed_step],
+        "artifacts": new_artifacts,
+        "decisions": new_decisions,
+        "issues": updated_issues,
         "evaluation_artifact_id": evaluation_artifact.id,
         "report_review_round": review_round,
         "report_rewrite_needed": rewrite_needed,

@@ -59,9 +59,8 @@ async def synthesize_insights(
         )
         completed_step = _finalize_step(step, new_issues, new_artifacts)
         return {
-            **state,
-            "steps": state.get("steps", []) + [completed_step],
-            "issues": state.get("issues", []) + new_issues,
+            "steps": [completed_step],
+            "issues": new_issues,
         }
 
     # ── Run InsightAgent ─────────────────────────────────────────────
@@ -86,9 +85,8 @@ async def synthesize_insights(
         )
         completed_step = _finalize_step(step, new_issues, new_artifacts)
         return {
-            **state,
-            "steps": state.get("steps", []) + [completed_step],
-            "issues": state.get("issues", []) + new_issues,
+            "steps": [completed_step],
+            "issues": new_issues,
         }
 
     # ── Parse output ─────────────────────────────────────────────────
@@ -104,9 +102,8 @@ async def synthesize_insights(
         )
         completed_step = _finalize_step(step, new_issues, new_artifacts)
         return {
-            **state,
-            "steps": state.get("steps", []) + [completed_step],
-            "issues": state.get("issues", []) + new_issues,
+            "steps": [completed_step],
+            "issues": new_issues,
         }
 
     try:
@@ -149,8 +146,7 @@ async def synthesize_insights(
 
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
-        **state,
-        "steps": state.get("steps", []) + [completed_step],
-        "artifacts": state.get("artifacts", []) + new_artifacts,
-        "issues": state.get("issues", []) + new_issues,
+        "steps": [completed_step],
+        "artifacts": new_artifacts,
+        "issues": new_issues,
     }

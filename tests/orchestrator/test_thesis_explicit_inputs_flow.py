@@ -2,6 +2,7 @@ import asyncio
 
 from alphabee.agents.thesis.models import CompanyContext, InvestmentThesis
 from alphabee.core import Artifact, Run, RunStatus
+from alphabee.orchestrator.contracts import VerificationArtifact
 from alphabee.orchestrator.nodes import thesis as thesis_node
 
 
@@ -77,43 +78,59 @@ def test_run_thesis_passes_anomaly_conflict_verification_and_context(monkeypatch
                     ]
                 },
             ),
+            Artifact(
+                id="a4",
+                type="conflicts_result",
+                producer_step="explore_conflicts",
+                value={
+                    "conflicts": [
+                        {
+                            "id": "c1",
+                            "theme": "盈利增长但现金流恶化",
+                            "description": "利润增长未被现金流验证。",
+                            "related_dimensions": ["earnings_quality", "financial_quality"],
+                            "severity": "high",
+                            "confidence": 0.9,
+                            "hypotheses": [
+                                {
+                                    "id": "h1",
+                                    "conflict_id": "c1",
+                                    "explanation": "收入质量不足",
+                                    "predictions": [],
+                                    "required_evidence": [],
+                                    "score": 0.8,
+                                    "status": "verified",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ),
+            Artifact(
+                id="a5",
+                type="verification_results",
+                producer_step="verify_hypotheses",
+                value=VerificationArtifact(
+                    results=[
+                        {
+                            "id": "v1",
+                            "hypothesis_id": "h1",
+                            "status": "verified",
+                            "support_score": 0.9,
+                            "contradiction_score": 0.1,
+                            "confidence": 0.8,
+                            "summary": "现金流未验证利润增长。",
+                        }
+                    ],
+                    verified_count=1,
+                    rejected_count=0,
+                    unknown_count=0,
+                ).model_dump(mode="json"),
+            ),
         ],
         "issues": [],
         "financial_facts": _FakeFinancialFacts(),
         "market_facts": None,
-        "conflicts_result": {
-            "conflicts": [
-                {
-                    "id": "c1",
-                    "theme": "盈利增长但现金流恶化",
-                    "description": "利润增长未被现金流验证。",
-                    "related_dimensions": ["earnings_quality", "financial_quality"],
-                    "severity": "high",
-                    "confidence": 0.9,
-                    "hypotheses": [
-                        {
-                            "id": "h1",
-                            "conflict_id": "c1",
-                            "explanation": "收入质量不足",
-                            "predictions": [],
-                            "required_evidence": [],
-                            "score": 0.8,
-                        }
-                    ],
-                }
-            ]
-        },
-        "verification_results": [
-            {
-                "id": "v1",
-                "hypothesis_id": "h1",
-                "status": "verified",
-                "support_score": 0.9,
-                "contradiction_score": 0.1,
-                "confidence": 0.8,
-                "summary": "现金流未验证利润增长。",
-            }
-        ],
     }
 
     asyncio.run(thesis_node.run_thesis(state, {}))

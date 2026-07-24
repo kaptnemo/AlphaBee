@@ -1,4 +1,10 @@
 from alphabee.core import Run, RunStatus
+from alphabee.orchestrator.contracts import (
+    AnomalyReportArtifact,
+    DerivedFactsArtifact,
+    SignalAnalysisArtifact,
+    find_artifact_model,
+)
 from alphabee.orchestrator.nodes import analyze as analyze_node
 
 
@@ -86,4 +92,8 @@ def test_run_analysis_engines_injects_anomaly_facts_before_signal(monkeypatch):
     assert captured_signal_facts["anomaly_pattern_count"] == 1.0
     assert captured_signal_facts["anomaly_pattern_inflated_revenue"] == 1.0
     assert result["fact_values"]["anomaly_triggered_count"] == 2.0
-    assert result["signal_analysis"].results["cross_validation_break"]["level"] == "high"
+    assert find_artifact_model(result["artifacts"], "derived_facts", DerivedFactsArtifact) is not None
+    assert find_artifact_model(result["artifacts"], "anomaly_report", AnomalyReportArtifact) is not None
+    signal_artifact = find_artifact_model(result["artifacts"], "signal_analysis", SignalAnalysisArtifact)
+    assert signal_artifact is not None
+    assert signal_artifact.results["cross_validation_break"]["level"] == "high"

@@ -66,7 +66,7 @@ async def generate_report(
     payload = build_report_generation_payload(state)
     prompt_text = payload.model_dump_json(indent=2)
     rewrite_reason = state.get("report_rewrite_reason")
-    issues = list(state.get("issues", []))
+    new_issues: list[Issue] = []
     prior_report = None
     if rewrite_reason:
         # 质量 gate 触发重写时，会把上一版报告一并交给模型。
@@ -106,7 +106,7 @@ async def generate_report(
         try:
             report_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")
         except Exception as exc:
-            issues.append(
+            new_issues.append(
                 Issue(
                     id=_make_id("issue"),
                     severity=IssueSeverity.MEDIUM,
@@ -119,7 +119,7 @@ async def generate_report(
                 f"报告生成结果不符合结构化 schema，已降级保存错误信息。原始输出：{raw_text[:500]}"
             )
     except Exception as exc:
-        issues.append(
+        new_issues.append(
             Issue(
                 id=_make_id("issue"),
                 severity=IssueSeverity.HIGH,
@@ -145,10 +145,9 @@ async def generate_report(
     )
 
     return {
-        **state,
-        "steps": [*state.get("steps", []), completed_step],
-        "artifacts": [*state.get("artifacts", []), report_artifact],
-        "issues": issues,
+        "steps": [completed_step],
+        "artifacts": [report_artifact],
+        "issues": new_issues,
         "final_artifact_id": report_artifact.id,
         "report_rewrite_needed": False,
         "report_rewrite_reason": None,

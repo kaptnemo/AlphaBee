@@ -75,9 +75,8 @@ async def review_thesis(
     load_dimension_defs()
 
     artifacts = state.get("artifacts", [])
-    issues = list(state.get("issues", []))
-    decisions = list(state.get("decisions", []))
-    steps = list(state.get("steps", []))
+    new_issues: list[Issue] = []
+    new_decisions: list[Decision] = []
 
     step = Step(
         id="review_thesis",
@@ -98,8 +97,7 @@ async def review_thesis(
             }
         )
         return {
-            **state,
-            "steps": [*steps, completed_step],
+            "steps": [completed_step],
         }
 
     # ── Reconstruct InvestmentThesis from artifact dict ──
@@ -137,7 +135,7 @@ async def review_thesis(
     # 维度 verdict 会沉淀为 Decision，便于最终报告和质量 gate 回溯：
     # 每个维度到底是 confirmed、qualified 还是 contested，都有单独决策对象承载。
     for dim_id, verdict in review.dimension_verdicts.items():
-        decisions.append(
+        new_decisions.append(
             Decision(
                 id=_make_id("decision"),
                 maker="thesis_reviewer",
@@ -161,7 +159,7 @@ async def review_thesis(
     # 审查问题按严重度拆成 blocking / warning，
     # 这样最终报告既能突出真正阻断结论的缺陷，也不会丢掉次级风险提示。
     for msg in review.blocking_issues:
-        issues.append(
+        new_issues.append(
             Issue(
                 id=_make_id("issue"),
                 severity=IssueSeverity.HIGH,
@@ -171,7 +169,7 @@ async def review_thesis(
             )
         )
     for msg in review.warning_issues:
-        issues.append(
+        new_issues.append(
             Issue(
                 id=_make_id("issue"),
                 severity=IssueSeverity.MEDIUM,
@@ -210,7 +208,7 @@ async def review_thesis(
                 explanation = hyp.explanation
                 gap_hint = f" 缺口: {', '.join(vr.get('gaps', [])[:3])}" if vr.get("gaps") else ""
 
-                issues.append(
+                new_issues.append(
                     Issue(
                         id=_make_id("issue"),
                         severity=conflict_severity,
@@ -230,7 +228,7 @@ async def review_thesis(
                     dim_name = dim.name if hasattr(dim, "name") else dim_id
                     judgment = dim.judgment if hasattr(dim, "judgment") else ""
                     if judgment in ("strong_positive", "positive"):
-                        issues.append(
+                        new_issues.append(
                             Issue(
                                 id=_make_id("issue"),
                                 severity=IssueSeverity.HIGH,
@@ -252,7 +250,7 @@ async def review_thesis(
                     continue
                 hid = hyp.id
                 vr = verify_by_hid.get(hid, {})
-                decisions.append(
+                new_decisions.append(
                     Decision(
                         id=_make_id("decision"),
                         maker="conflict_verifier",
@@ -279,11 +277,10 @@ async def review_thesis(
     )
 
     return {
-        **state,
-        "steps": [*steps, completed_step],
-        "artifacts": [*artifacts, review_artifact],
-        "decisions": decisions,
-        "issues": issues,
+        "steps": [completed_step],
+        "artifacts": [review_artifact],
+        "decisions": new_decisions,
+        "issues": new_issues,
     }
 
 
@@ -310,7 +307,6 @@ def finalize_message(state: OrchestratorState) -> OrchestratorState:
     }
 
     return {
-        **state,
         "messages": [AIMessage(content=json.dumps(payload, ensure_ascii=False, indent=2))],
     }
 

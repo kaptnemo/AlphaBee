@@ -209,11 +209,7 @@ def _print_step_tool_result(
 
 
 def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float) -> None:
-    """Print structured progress for each orchestrator node (depth==0 only).
-
-    Called every time a top-level node finishes and emits its state update.
-    `node_update` is the full state dict returned by the node (via `{**state, ...}`).
-    """
+    """Print structured progress for each orchestrator node from its incremental update."""
     issues: list = node_update.get("issues", [])
     issue_tag = _c(f"  ⚠ {len(issues)}", _C.YELLOW) if issues else ""
 
@@ -246,9 +242,9 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
 
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "run_analysis_engines":
-        signal_analysis = node_update.get("signal_analysis") or {}
-        anomaly_report = node_update.get("anomaly_report") or {}
-        derived_facts = node_update.get("derived_facts") or {}
+        signal_analysis = _last_artifact("signal_analysis") or {}
+        anomaly_report = _last_artifact("anomaly_report") or {}
+        derived_facts = _last_artifact("derived_facts") or {}
 
         if hasattr(signal_analysis, "results"):
             results = signal_analysis.results
@@ -291,7 +287,7 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
 
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "explore_conflicts":
-        cr = node_update.get("conflicts_result") or {}
+        cr = _last_artifact("conflicts_result") or {}
         conflicts = (
             cr.conflicts if hasattr(cr, "conflicts") else (cr.get("conflicts", []) if isinstance(cr, dict) else [])
         )
@@ -322,11 +318,11 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
 
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "verify_hypotheses":
-        vr = node_update.get("verification_results") or []
+        vr = _last_artifact("verification_results") or []
         if hasattr(vr, "results"):
             vr_items = [item.model_dump(mode="json") for item in vr.results]
         else:
-            vr_items = vr
+            vr_items = vr.get("results", []) if isinstance(vr, dict) else vr
         if not vr_items:
             print(f"  🧪 无假设待验证{issue_tag}")
             return
@@ -408,7 +404,7 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
 
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "generate_report":
-        av = _last_artifact("final_report")
+        av = _last_artifact("report")
         if av:
             title = av.get("title", "")
             conf = av.get("overall_confidence", "")

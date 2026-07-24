@@ -60,9 +60,8 @@ async def explore_conflicts(
         )
         completed_step = _finalize_step(step, new_issues, new_artifacts)
         return {
-            **state,
-            "steps": state.get("steps", []) + [completed_step],
-            "issues": state.get("issues", []) + new_issues,
+            "steps": [completed_step],
+            "issues": new_issues,
         }
 
     parse_error: str | None = None
@@ -121,18 +120,18 @@ async def explore_conflicts(
                     )
                 )
 
-    completed_step = _finalize_step(step, new_issues, new_artifacts)
-    new_artifacts.append(
-        Artifact(
-            id=_make_id("artifact"),
-            type=ArtifactType.CONFLICTS_RESULT,
-            producer_step=step.id,
-            value=conflicts_result.model_dump(mode="json"),
+    if conflicts_result is not None:
+        new_artifacts.append(
+            Artifact(
+                id=_make_id("artifact"),
+                type=ArtifactType.CONFLICTS_RESULT,
+                producer_step=step.id,
+                value=conflicts_result.model_dump(mode="json"),
+            )
         )
-    )
+    completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
-        **state,
-        "steps": state.get("steps", []) + [completed_step],
-        "issues": state.get("issues", []) + new_issues,
-        "artifacts": state.get("artifacts", []) + new_artifacts,
+        "steps": [completed_step],
+        "issues": new_issues,
+        "artifacts": new_artifacts,
     }
