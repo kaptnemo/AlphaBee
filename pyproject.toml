@@ -11,7 +11,7 @@ dependencies = [
     "langgraph (>=1.2.0,<2.0.0)",
     "mem0ai (>=2.0.2,<3.0.0)",
     "openai (>=2.36.0,<3.0.0)",
-    "deepagents (>=0.6.1,<0.7.0)",
+    "deepagents[mcp] (>=0.6.12,<0.7.0)",
     "langchain-openai (>=1.2.1,<2.0.0)",
     "tushare (>=1.4.29,<2.0.0)",
     "akshare (>=1.18.62,<2.0.0)",
@@ -29,6 +29,7 @@ dependencies = [
     "json-repair (>=0.61.2,<0.62.0)",
     "sqlalchemy (>=2.0.0,<3.0.0)",
     "claude-agent-sdk (>=0.2.116,<0.3.0)",
+    "langchain-mcp-adapters (>=0.3.0,<0.4.0)",
 ]
 
 
