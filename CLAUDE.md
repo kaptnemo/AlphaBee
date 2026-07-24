@@ -38,14 +38,17 @@ AlphaBee is a multi-agent investment analysis system for the A-share market, bui
 `main.py` uses the LangGraph orchestrator at `alphabee/orchestrator/agent.py`, which currently runs:
 
 ```
-START → collect_raw_facts → run_analysis_engines → explore_conflicts
-→ verify_hypotheses → run_thesis → review_thesis
-→ generate_report → review_report → finalize_message → END
+START → collect_raw_facts → detect_transition_state → run_analysis_engines
+→ explore_conflicts → verify_hypotheses → synthesize_insights
+→ run_thesis → review_thesis → generate_report → review_report
+→ finalize_message → END
 ```
 
 - **`collect_raw_facts`** (`orchestrator/collectors.py`): Runs FactCollectorAgent plus structured financial/market fact extraction.
+- **`detect_transition_state`**: Detects identity/driver drift and emits `transition_state` / `domain_context` artifacts.
 - **`run_analysis_engines`**: Runs DerivedFacts, AnomalyEngine, and SignalEngine on canonical facts.
 - **`explore_conflicts` / `verify_hypotheses`**: Use DeepAgents-based research nodes to surface and verify contradictions.
+- **`synthesize_insights`**: Synthesizes upstream signals, anomalies, conflicts, and verification results into a central viewpoint artifact.
 - **`review_thesis`**: Audits thesis quality against signals, company context, and verified conflicts.
 - **`review_report`**: Uses harness prompts/schemas as a library-level quality gate to evaluate the generated report and request one rewrite when needed.
 - **`finalize_message`**: Merges artifacts into a JSON `AIMessage` for streaming output.
@@ -98,5 +101,6 @@ Pydantic models that carry through the entire pipeline:
 - **Factory functions**: Each agent is created via a factory (e.g., `fact_collector_agent_factory()`), NOT a module-level constant. This prevents state leakage and ensures fresh middleware/config per invocation.
 - **Subagents as CompiledSubAgent**: Subagents wrap factory-created runnables in `CompiledSubAgent(name=..., description=..., runnable=...)` registered on the parent `create_deep_agent`.
 - **YAML-driven rules**: Derived fact and signal rules live in `agents/derived_facts/rules/*.yaml` and `agents/signal/rules/*.yaml`. Each rule declares dependencies declaratively; the engine handles topological ordering and safe formula evaluation.
+- **Orchestrator artifact contract**: Do not add node-produced artifact payloads (for example `derived_facts`, `signal_analysis`, `anomaly_report`, `conflicts_result`, `verification_results`, `transition_state`, `domain_context`) as dedicated fields on `OrchestratorState`. Store them only in the `artifacts` list, register their `ArtifactType`/typed contract when needed, and make downstream consumers read them via `find_artifact_model(...)`.
 - **`@lru_cache` for expensive construction**: model instances use `@lru_cache` to amortize construction cost.
 - **Streaming with subgraphs**: `main.py` streams with `subgraphs=True` to capture events from both parent and child graphs. Namespace tuples are parsed (`_parse_namespace`) to display the agent hierarchy in the CLI.
