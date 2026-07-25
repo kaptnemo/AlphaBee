@@ -9,12 +9,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from alphabee import PROJECT_ROOT
 from alphabee.tools.common import web_search
 from alphabee.tools.fundamentals import get_fundamentals
 from alphabee.tools.market_data import get_market_data
 from alphabee.tools.news import get_stock_news_summary
 from alphabee.utils import tracked_chat_completion
-from alphabee.utils.paths import PROJECT_ROOT
 from alphabee.utils.storage import get_data_root, normalize_symbol
 
 

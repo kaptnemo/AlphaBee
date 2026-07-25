@@ -3,11 +3,11 @@ from pathlib import Path
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 
+from alphabee import PROJECT_ROOT
 from alphabee.agents.derived_facts.prompts import DERIVED_FACT_AGENT_PROMPT
 from alphabee.agents.derived_facts.tools import evaluate_derived_facts
 from alphabee.middleware.common import check_message_limit
 from alphabee.utils import create_chat_model
-from alphabee.utils.paths import PROJECT_ROOT
 
 _SKILLS_SOURCES = Path(__file__).parent / "skills"
 

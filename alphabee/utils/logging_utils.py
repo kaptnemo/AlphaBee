@@ -6,7 +6,7 @@ from typing import Any
 
 import structlog
 
-from alphabee.utils.paths import PROJECT_ROOT
+from alphabee import PROJECT_ROOT
 
 _IS_CONFIGURED = False
 

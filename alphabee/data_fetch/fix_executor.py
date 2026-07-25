@@ -23,11 +23,11 @@ import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from alphabee import PROJECT_ROOT as _PROJECT_ROOT
 from alphabee.data_fetch.database import get_session, init_db
 from alphabee.data_fetch.models import (
     DataFetchEvent,
@@ -35,9 +35,6 @@ from alphabee.data_fetch.models import (
     DataFixTask,
     TaskStatus,
 )
-
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
-
 
 # ── data structures ────────────────────────────────────────────────────
 

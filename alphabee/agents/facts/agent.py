@@ -2,6 +2,7 @@ from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain.agents.middleware import ToolRetryMiddleware
 
+from alphabee import PROJECT_ROOT
 from alphabee.agents.facts.prompts import FACT_COLLECTOR_PROMPT
 from alphabee.agents.facts.tools import (
     get_company_profile,
@@ -20,7 +21,6 @@ from alphabee.tools.common import (
     web_search,
 )
 from alphabee.utils import create_chat_model
-from alphabee.utils.paths import PROJECT_ROOT
 
 
 def fact_collector_agent_factory():

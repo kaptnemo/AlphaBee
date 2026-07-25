@@ -125,9 +125,7 @@ def get_eastmoney_report_detail_by_info_code(
     """通过 infoCode 获取研报详情。"""
     helper = _helper()
     with requests.Session() as session:
-        detail = helper.fetch_report_detail_by_info_code(
-            session, info_code, timeout=timeout
-        )
+        detail = helper.fetch_report_detail_by_info_code(session, info_code, timeout=timeout)
     return {"found": detail is not None, "detail": _to_detail_payload(detail)}
 
 
@@ -138,9 +136,7 @@ def get_eastmoney_report_industry_info_by_info_code(
     """通过 infoCode 获取研报里的行业信息。"""
     helper = _helper()
     with requests.Session() as session:
-        detail = helper.fetch_report_industry_info_by_info_code(
-            session, info_code, timeout=timeout
-        )
+        detail = helper.fetch_report_industry_info_by_info_code(session, info_code, timeout=timeout)
     if detail is None:
         return {"found": False}
     return EastmoneyIndustryInfoOutput(found=True, **detail).model_dump()

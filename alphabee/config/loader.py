@@ -4,7 +4,7 @@ from typing import Any
 
 import yaml
 
-from alphabee.utils.paths import PROJECT_ROOT
+from alphabee import PROJECT_ROOT
 
 
 class ConfigLoader:

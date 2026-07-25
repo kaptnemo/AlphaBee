@@ -3,10 +3,10 @@
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 
+from alphabee import PROJECT_ROOT
 from alphabee.agents.insights.prompts import INSIGHT_AGENT_SYSTEM_PROMPT
 from alphabee.middleware.common import check_message_limit
 from alphabee.utils import create_chat_model
-from alphabee.utils.paths import PROJECT_ROOT
 
 
 def insight_agent_factory():

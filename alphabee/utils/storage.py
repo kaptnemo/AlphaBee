@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from alphabee import PROJECT_ROOT
 from alphabee.config import settings
-from alphabee.utils.paths import PROJECT_ROOT
 
 
 def get_data_root() -> Path:
