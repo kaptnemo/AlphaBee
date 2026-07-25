@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class EvidenceItem(BaseModel):
@@ -62,3 +62,9 @@ class InsightOutput(BaseModel):
     confidence: Literal["high", "medium", "low"] = Field(
         default="medium", description="Overall confidence in the core view"
     )
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, v: str) -> str:
+        _map = {"moderate": "medium"}
+        return _map.get(str(v).lower(), str(v).lower())
