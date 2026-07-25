@@ -75,8 +75,11 @@ class SignalEngine:
                 df_results = df_engine.run(list(all_required_derived), fact_values)
                 for df_name, df_result in df_results.items():
                     value = df_result.get(df_name)
+                    level = str(df_result.get("level", ""))
                     if value is not None and isinstance(value, (int, float, bool)):
                         extended_values[df_name] = value
+                    elif level == "not_applicable":
+                        extended_values[df_name] = None
                     else:
                         derived_failed.add(df_name)
             except Exception as e:

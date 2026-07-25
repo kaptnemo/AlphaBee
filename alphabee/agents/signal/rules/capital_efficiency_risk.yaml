@@ -15,6 +15,7 @@ description: >
 required_facts:
   - net_profit
   - operating_cash_flow
+  - dividends_paid
 
 required_derived_facts:
   - roe_level
@@ -31,7 +32,7 @@ trigger_rules:
     condition: (roe_level < 0.08 and capex_intensity > 0.15) or cashflow_quality < 0.2
 
   low:
-    condition: roe_level < 0.10 or (capex_intensity > 0.20 and dividend_coverage < 1.0)
+    condition: roe_level < 0.10 or (dividends_paid > 0 and capex_intensity > 0.20 and dividend_coverage < 1.0)
 
 interpretation_templates:
 

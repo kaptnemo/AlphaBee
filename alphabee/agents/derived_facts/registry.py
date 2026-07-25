@@ -80,13 +80,17 @@ def safe_eval_formula(formula: str, fact_values: dict[str, float]) -> float | bo
             return True
 
         if isinstance(node, ast.BoolOp):
-            values = [eval_node(v) for v in node.values]
-
             if isinstance(node.op, ast.And):
-                return all(values)
+                for value in node.values:
+                    if not eval_node(value):
+                        return False
+                return True
 
             if isinstance(node.op, ast.Or):
-                return any(values)
+                for value in node.values:
+                    if eval_node(value):
+                        return True
+                return False
 
             raise ValueError("Boolean operator not allowed")
 
@@ -102,6 +106,8 @@ class DerivedFactRule:
     formula: str = ""
     thresholds: dict[str, str] = {}
     interpretation: dict[str, str] = {}
+    zero_division_policy: str = "invalid"
+    zero_division_error: str = "division_by_zero"
 
     @singledispatchmethod
     def __init__(self, fact_name: str):
@@ -132,6 +138,8 @@ class DerivedFactRule:
             self.interpretation = data.get("interpretation", {})
             self.required_facts = data.get("required_facts", [])
             self.required_derived_facts = data.get("required_derived_facts", [])
+            self.zero_division_policy = data.get("zero_division_policy", "invalid")
+            self.zero_division_error = data.get("zero_division_error", "division_by_zero")
 
     def compute(
         self,
@@ -141,11 +149,17 @@ class DerivedFactRule:
         try:
             derived_value = safe_eval_formula(self.formula, fact_values)
         except ZeroDivisionError:
-            return {
+            result = {
                 self.name: None,
-                "level": "invalid",
-                "error": "division_by_zero",
+                "level": self.zero_division_policy,
+                "error": self.zero_division_error,
             }
+            if interpretation:
+                result["interpretation"] = self.interpretation.get(
+                    self.zero_division_policy,
+                    self.interpretation.get("invalid", "未知"),
+                )
+            return result
         except KeyError as e:
             return {
                 self.name: None,

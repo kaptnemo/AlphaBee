@@ -142,6 +142,8 @@ class Engine:
             computed_value = result.get(name)
             if computed_value is not None:
                 all_values[name] = computed_value
+            elif result.get("level") == "not_applicable":
+                all_values[name] = None
             elif result.get("level") in ("invalid", "missing_fact"):
                 failed[name] = result.get("error", "计算失败")
 

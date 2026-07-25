@@ -223,6 +223,10 @@ def _format_result(name: str, result: dict) -> str:
         deps_str = ", ".join(f"`{d}`" for d in blocked_by)
         return f"{header}\n> ❌ 被阻塞 — 上游依赖失败：{deps_str}\n> 原因：{error}\n"
 
+    if level == "not_applicable":
+        reason = interp or error or "当前指标不适用"
+        return f"{header}\n> ℹ️ 不适用：{reason}\n"
+
     if level in ("invalid", "missing_fact"):
         return f"{header}\n> ❌ 计算失败：{error}\n"
 
