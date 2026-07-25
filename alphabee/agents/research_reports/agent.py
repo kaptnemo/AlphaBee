@@ -5,6 +5,7 @@ from deepagents.backends.filesystem import FilesystemBackend
 from langchain.agents.middleware import ToolRetryMiddleware
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from alphabee import PROJECT_ROOT
 from alphabee.agents.research_reports.prompts import RESEARCH_REPORTS_PROMPT
 from alphabee.tools.eastmoney import (
     download_eastmoney_report_pdf,
@@ -17,7 +18,6 @@ from alphabee.tools.eastmoney import (
 )
 from alphabee.tools.tushare_query import query_tushare
 from alphabee.utils.llm import create_chat_model
-from alphabee.utils.paths import PROJECT_ROOT
 
 _RETURN_SCHEMA_HINTS: dict[str, str] = {
     "ocr_pdf_to_markdown": """
@@ -96,8 +96,8 @@ async def research_reports_fetch_agent_factory():
         ],
         backend=backend,
         skills=[
-            str(PROJECT_ROOT / ".github" / "skills" / "tushare"),
-            str(PROJECT_ROOT / "alphabee" / "skills" / "eastmoney"),
+            "alphabee/skills/tushare",
+            "alphabee/skills/eastmoney",
         ],
     )
 

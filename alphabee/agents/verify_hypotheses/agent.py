@@ -2,6 +2,7 @@ from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain.agents.middleware import ToolRetryMiddleware
 
+from alphabee import PROJECT_ROOT
 from alphabee.agents.schemas import VerificationResultList
 from alphabee.agents.verify_hypotheses.prompts import VERIFY_HYPOTHESES_PROMPT
 from alphabee.middleware.common import check_message_limit
@@ -18,7 +19,6 @@ from alphabee.tools.eastmoney import (
 )
 from alphabee.tools.tushare_query import query_tushare
 from alphabee.utils import create_chat_model, json_instruction
-from alphabee.utils.paths import PROJECT_ROOT
 
 
 def verify_hypotheses_agent_factory():
@@ -47,7 +47,24 @@ def verify_hypotheses_agent_factory():
         ],
         backend=backend,
         skills=[
-            str(PROJECT_ROOT / ".github" / "skills" / "tushare"),
-            str(PROJECT_ROOT / "alphabee" / "skills" / "eastmoney"),
+            "alphabee/skills/tushare",
+            "alphabee/skills/eastmoney",
         ],
+    )
+
+
+if __name__ == "__main__":
+    agent = verify_hypotheses_agent_factory()
+    print("VerifyHypothesesAgent created successfully.")
+
+    import asyncio
+
+    asyncio.run(
+        agent.ainvoke(
+            {
+                "messages": [
+                    {"role": "user", "content": "请帮我验证一个假设：贵州茅台的股价在过去一年内上涨了 20% 以上。"}
+                ]
+            }
+        )
     )
