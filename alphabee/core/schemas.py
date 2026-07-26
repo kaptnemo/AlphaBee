@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RunStatus(enum.StrEnum):
@@ -448,6 +448,23 @@ class EvaluateMetrics(BaseModel):
 
 class EvaluationAssessment(BaseModel):
     """Qualitative evaluator output produced by the evaluator agent."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "summary": "报告整体质量良好，关键风险已披露，但缺少行业对比数据支撑部分结论。",
+                "strengths": ["财务数据分析深入，异常检测覆盖全面", "投资论点逻辑清晰，证据链完整"],
+                "weaknesses": ["缺少与同行业可比公司的横向对比", "部分风险描述过于笼统"],
+                "blocking_issues": [],
+                "passed": True,
+                "recommendation": "建议补充行业对比数据后交付。",
+                "improvement_actions": [
+                    "添加同行业ROE、毛利率等关键指标对比",
+                    "细化政策风险的具体影响路径",
+                ],
+            }
+        }
+    )
 
     summary: str = Field(..., description="Overall summary of the evaluation.")
     strengths: list[str] = Field(default_factory=list, description="Main strengths of the result.")

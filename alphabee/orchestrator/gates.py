@@ -335,10 +335,7 @@ async def _llm_assessment(
     evidence_map = build_evidence_map(state)
     prompt = (
         "请作为主流程的 report quality gate，评估当前报告是否可交付。\n\n"
-        + json_instruction(
-            EvaluationAssessment,
-            example='{"summary":"","strengths":[],"weaknesses":[],"blocking_issues":[],"passed":false,"recommendation":"","improvement_actions":[]}',
-        )
+        + json_instruction(EvaluationAssessment)
         + "\n\n"
         + "定量指标：\n"
         + metrics.model_dump_json(indent=2)

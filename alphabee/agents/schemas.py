@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 ThesisDimensionId = Literal[
     "financial_quality",
@@ -58,6 +58,27 @@ class VerificationResultItem(BaseModel):
 class VerificationResultList(BaseModel):
     """verify_hypotheses 节点的整体输出"""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "results": [
+                    {
+                        "id": "v1",
+                        "hypothesis_id": "h1",
+                        "status": "verified",
+                        "support_score": 0.85,
+                        "contradiction_score": 0.10,
+                        "confidence": 0.80,
+                        "supporting_evidence": ["应收账款周转天数连续3期上升：120→135→148天"],
+                        "refuting_evidence": [],
+                        "gaps": ["缺少同行业可比公司的周转天数数据"],
+                        "summary": "应收账款恶化趋势被多期财务数据证实，假设基本成立",
+                    }
+                ]
+            }
+        }
+    )
+
     results: list[VerificationResultItem]
 
 
@@ -79,6 +100,56 @@ class ConflictItem(BaseModel):
 class ConflictAnalysisResult(BaseModel):
     """冲突分析结果"""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "conflicts": [
+                    {
+                        "id": "conflict_1",
+                        "theme": "盈利改善但现金流恶化",
+                        "description": "净利润同比+15%，但经营现金流同比-20%，应收账款周转天数上升",
+                        "related_dimensions": ["earnings_quality", "financial_quality"],
+                        "supporting_claims": ["net_profit_yoy=0.15", "operating_cashflow_yoy=-0.20"],
+                        "contradicting_claims": [],
+                        "severity": "high",
+                        "confidence": 0.82,
+                        "status": "open",
+                        "hypotheses": [
+                            {
+                                "id": "h1",
+                                "conflict_id": "conflict_1",
+                                "explanation": "收入确认前置，回款滞后",
+                                "predictions": [
+                                    "应收账款周转天数连续上升",
+                                    "经营现金流/净利润比值持续低于1",
+                                    "合同负债下降或增速弱于收入",
+                                ],
+                                "required_evidence": ["financial_facts", "announcement"],
+                                "score": 0.75,
+                                "status": "pending",
+                                "supporting_claims": [],
+                                "refuting_claims": [],
+                                "verification_items": [
+                                    {
+                                        "id": "v1",
+                                        "hypothesis_id": "h1",
+                                        "questions": [
+                                            "近4期应收账款周转天数是否持续上升？",
+                                            "经营现金流/净利润是否<1？",
+                                        ],
+                                        "preferred_sources": ["financial_facts"],
+                                        "acceptance_criteria": "至少2条预测成立，且无强反证",
+                                        "priority": "high",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+
     conflicts: list[ConflictItem]
 
 
@@ -95,6 +166,29 @@ class ReportSections(BaseModel):
 
 
 class ReportOutput(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "title": "贵州茅台(600519) 财报质量体检报告",
+                "sections": {
+                    "executive_summary": "公司整体财务质量稳健，盈利能力突出，现金流充裕。需关注批价波动对渠道利润的挤压效应。",
+                    "key_metrics": "ROE 32%，经营现金流/净利润 1.05，应收账款周转天数 2 天。",
+                    "signal_analysis": "盈利质量信号整体偏正面，现金流信号中性。",
+                    "anomaly_detection": "未发现明显财务异常模式。",
+                    "conflict_analysis": "批价下行与营收增长之间存在轻微背离。",
+                    "investment_thesis": "品牌护城河深厚，直销占比提升驱动吨价上行，中长期看好。",
+                    "review_findings": "报告覆盖度完备，风险披露充分，无阻塞性问题。",
+                    "risks": "宏观经济下行导致高端消费收缩；批价持续下滑压缩渠道利润。",
+                    "disclaimer": "本报告基于公开数据自动生成，不构成投资建议。",
+                },
+                "summary": "财务质量优异，品牌壁垒深厚，中长期价值确定性强。",
+                "risk_count": {"high": 1, "medium": 2, "low": 2},
+                "overall_confidence": "high",
+                "disclosed_issue_ids": ["issue_001"],
+            }
+        }
+    )
+
     title: str
     sections: ReportSections
     summary: str
