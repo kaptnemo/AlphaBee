@@ -115,7 +115,7 @@ def _try_index_daily_plus_akshare(sw_code: str, industry: str, start: str, end: 
 
 
 def _get_akshare_pe_pb(industry: str) -> tuple[float | None, float | None]:
-    """从 AkShare 行业板块快照获取 PE/PB。"""
+    """从 AkShare 行业板块快照获取 PE/PB（东方财富，同花顺无等效接口）。"""
     if not industry:
         return None, None
 
@@ -129,8 +129,8 @@ def _get_akshare_pe_pb(industry: str) -> tuple[float | None, float | None]:
         if df.empty:
             return None, None
 
-        # AkShare uses Chinese column names; match by industry name
-        name_col = next((c for c in ("板块名称", "name") if c in df.columns), None)
+        # After adapter, columns are canonical names
+        name_col = next((c for c in ("industry_name", "板块名称", "name") if c in df.columns), None)
         if name_col is None:
             return None, None
 
@@ -139,8 +139,8 @@ def _get_akshare_pe_pb(industry: str) -> tuple[float | None, float | None]:
             return None, None
 
         row = matched.iloc[0]
-        pe = _safe_float(row.get("市盈率-动态"))
-        pb = _safe_float(row.get("市净率"))
+        pe = _safe_float(row.get("industry_pe_ttm"), row.get("市盈率-动态"))
+        pb = _safe_float(row.get("industry_pb"), row.get("市净率"))
         return pe, pb
 
     except Exception:
@@ -172,19 +172,24 @@ def _to_rows(df, extra: bool) -> list[dict[str, Any]]:
 def _safe_float(row_or_val, col: str | None = None) -> float:
     import math
 
+    val = row_or_val
     try:
-        val = row_or_val[col] if col else row_or_val
+        if col is not None:
+            val = row_or_val.get(col, row_or_val)
         f = float(val)
         return f if not math.isnan(f) else 0.0
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, AttributeError):
         return 0.0
 
 
 def _safe_str(row_or_val, col: str | None = None) -> str:
     try:
-        val = row_or_val[col] if col else row_or_val
+        if col is not None and hasattr(row_or_val, "get"):
+            val = row_or_val.get(col, row_or_val)
+        else:
+            val = row_or_val
         if val is None or (isinstance(val, float) and val != val):
             return ""
         return str(val)
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError):
         return ""

@@ -39,13 +39,18 @@ def get_risk_fact(symbol: str) -> dict[str, Any]:
         try:
             with AkShareHelper() as helper:
                 news_df = helper.stock_news_em(symbol=pure_code).data
+            # After adapter: canonical names news_publish_time, news_title
             news = []
             if not news_df.empty:
+                time_col = next(
+                    (c for c in ("news_publish_time", "发布时间", "publish_time") if c in news_df.columns), None
+                )
+                title_col = next((c for c in ("news_title", "新闻标题", "title") if c in news_df.columns), None)
                 for _, row in news_df.head(20).iterrows():
                     news.append(
                         {
-                            "news_publish_time": safe_str(row.get("发布时间", row.get("publish_time", ""))),
-                            "news_title": safe_str(row.get("新闻标题", row.get("title", ""))),
+                            "news_publish_time": safe_str(row.get(time_col, "")) if time_col else "",
+                            "news_title": safe_str(row.get(title_col, "")) if title_col else "",
                         }
                     )
             result["news"] = news

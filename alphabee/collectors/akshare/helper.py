@@ -4,6 +4,7 @@ from typing import Any
 
 from pandas import DataFrame
 
+from alphabee.adapters.akshare import AkShare_Adapter
 from alphabee.collectors.akshare import ak
 
 try:
@@ -50,7 +51,7 @@ class AkShareResult:
     """Wrap AkShare result and provide common export operations."""
 
     def __init__(self, data: Any, collection_name: str):
-        self._data = data
+        self._data = AkShare_Adapter.adapt(collection_name, data) if isinstance(data, DataFrame) else data
         self._collection_name = collection_name
 
     @property
@@ -157,5 +158,5 @@ if __name__ == "__main__":
         stock_news_df = helper.stock_news_em(symbol="药明康德")
         print(stock_news_df.data.head())
 
-        names = helper.stock_board_industry_name_em()
+        names = helper.stock_board_industry_summary_ths()
         print(names.data.head())

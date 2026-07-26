@@ -1,7 +1,8 @@
 """行业基本面数据工具
 
 数据来源：
-  - akshare（东方财富）：行业列表快照、历史价格走势、成分股明细
+  - akshare（同花顺优先）：行业列表、行情摘要
+  - akshare（东方财富）：历史价格走势、成分股明细（同花顺无替代接口时回退）
   - tushare（申万）：PE/PB 历史估值数据
   - 以上任一来源不可用时自动降级，仅返回可获取的部分数据。
 """
@@ -63,9 +64,7 @@ class IndustrySummary(BaseModel):
     """行业基本面分析摘要（大模型生成）"""
 
     overview: str = Field(description="行业整体状况概述（2-3句）")
-    valuation_comment: str = Field(
-        description="当前估值水平评价（偏高/合理/偏低）及依据"
-    )
+    valuation_comment: str = Field(description="当前估值水平评价（偏高/合理/偏低）及依据")
     strengths: list[str] = Field(description="行业主要优势或机会")
     risks: list[str] = Field(description="行业主要风险或挑战")
     outlook: str = Field(description="基于近期走势和估值的投资展望（1-2句）")
@@ -76,16 +75,12 @@ class IndustryFundamentals(BaseModel):
 
     industry_name: str = Field(description="行业名称（东方财富板块）")
     industry_code: str = Field(description="东方财富行业板块代码")
-    sw_code: str | None = Field(
-        default=None, description="申万行业指数代码（如 801020.SI），用于估值查询"
-    )
+    sw_code: str | None = Field(default=None, description="申万行业指数代码（如 801020.SI），用于估值查询")
     performance: IndustryPerformance = Field(description="行业价格表现")
     valuation_history: list[IndustryValuation] = Field(
         description="历史估值数据（PE/PB/市值），来自申万行业指数，按时间倒序"
     )
-    top_stocks: list[ConstituentStock] = Field(
-        description="行业成分股列表（按总市值降序排列，最多50只）"
-    )
+    top_stocks: list[ConstituentStock] = Field(description="行业成分股列表（按总市值降序排列，最多50只）")
     summary: IndustrySummary = Field(description="AI 生成的行业基本面综合分析摘要")
 
 
@@ -117,9 +112,9 @@ def _col(df: pd.DataFrame, *candidates: str, default=None):
     return default
 
 
-def _find_em_board(boards_df: pd.DataFrame, industry: str) -> pd.Series | None:
-    """Fuzzy-match ``industry`` against EM board names (板块名称 column)."""
-    name_col = _col(boards_df, "板块名称", "name")
+def _find_board(boards_df: pd.DataFrame, industry: str) -> pd.Series | None:
+    """Fuzzy-match ``industry`` against board names."""
+    name_col = _col(boards_df, "industry_name", "板块名称", "板块", "name")
     if name_col is None or boards_df.empty:
         return None
     # Exact match
@@ -142,15 +137,15 @@ def _find_em_board(boards_df: pd.DataFrame, industry: str) -> pd.Series | None:
 def _compute_perf_from_hist(hist_df: pd.DataFrame, today_change_pct: float) -> dict:
     """Compute rolling returns from daily history DataFrame.
 
-    Expects columns: 日期 (str YYYY-MM-DD or datetime), 收盘 (float).
+    Expects canonical columns: trade_date (str), industry_close (float).
     Returns a dict with keys 1w, 1m, 3m, 6m, 1y (percentage changes).
     """
     result = {k: 0.0 for k in ("1w", "1m", "3m", "6m", "1y")}
     if hist_df is None or hist_df.empty:
         return result
 
-    close_col = _col(hist_df, "收盘", "close", "Close")
-    date_col = _col(hist_df, "日期", "date", "Date")
+    close_col = _col(hist_df, "industry_close", "收盘", "close", "Close")
+    date_col = _col(hist_df, "trade_date", "日期", "date", "Date")
     if close_col is None or date_col is None:
         return result
 
@@ -173,11 +168,7 @@ def _compute_perf_from_hist(hist_df: pd.DataFrame, today_change_pct: float) -> d
             result[label] = 0.0
         else:
             past_price = _safe_float(past.iloc[0][close_col])
-            result[label] = (
-                round((current_price / past_price - 1) * 100, 2)
-                if past_price != 0
-                else 0.0
-            )
+            result[label] = round((current_price / past_price - 1) * 100, 2) if past_price != 0 else 0.0
     return result
 
 
@@ -186,18 +177,24 @@ def _compute_perf_from_hist(hist_df: pd.DataFrame, today_change_pct: float) -> d
 # ---------------------------------------------------------------------------
 
 
-def _fetch_em_snapshot(helper: AkShareHelper) -> pd.DataFrame | None:
-    """Fetch East Money industry board snapshot (all boards)."""
+def _fetch_board_list(helper: AkShareHelper) -> pd.DataFrame | None:
+    """Fetch industry board name list (同花顺)."""
     try:
-        return helper.stock_board_industry_name_em().data
+        return helper.stock_board_industry_name_ths().data
     except Exception:
         return None
 
 
-def _fetch_em_history(
-    helper: AkShareHelper, board_name: str, start_date: str
-) -> pd.DataFrame | None:
-    """Fetch historical daily price for an EM board."""
+def _fetch_board_summary(helper: AkShareHelper) -> pd.DataFrame | None:
+    """Fetch industry board market summary (同花顺)."""
+    try:
+        return helper.stock_board_industry_summary_ths().data
+    except Exception:
+        return None
+
+
+def _fetch_board_history(helper: AkShareHelper, board_name: str, start_date: str) -> pd.DataFrame | None:
+    """Fetch historical daily price for a board (东方财富，同花顺无替代接口)."""
     try:
         end_date = datetime.date.today().strftime("%Y%m%d")
         return helper.stock_board_industry_hist_em(
@@ -211,10 +208,8 @@ def _fetch_em_history(
         return None
 
 
-def _fetch_em_constituents(
-    helper: AkShareHelper, board_name: str
-) -> pd.DataFrame | None:
-    """Fetch constituent stocks for an EM board."""
+def _fetch_board_constituents(helper: AkShareHelper, board_name: str) -> pd.DataFrame | None:
+    """Fetch constituent stocks for a board (东方财富，同花顺无替代接口)."""
     try:
         return helper.stock_board_industry_cons_em(symbol=board_name).data
     except Exception:
@@ -245,9 +240,7 @@ def _find_sw_code(ts_helper: TuShareHelper, industry_name: str) -> str | None:
         return None
 
 
-def _fetch_sw_valuation_history(
-    ts_helper: TuShareHelper, sw_code: str, start_date: str
-) -> list[IndustryValuation]:
+def _fetch_sw_valuation_history(ts_helper: TuShareHelper, sw_code: str, start_date: str) -> list[IndustryValuation]:
     """Fetch PE/PB history from Tushare index_dailybasic for a SW industry index."""
     try:
         end_date = datetime.date.today().strftime("%Y%m%d")
@@ -276,9 +269,7 @@ def _fetch_sw_valuation_history(
                     date=str(row[date_col]),
                     pe_ttm=_safe_float(row[pe_col]) if pe_col else 0.0,
                     pb=_safe_float(row[pb_col]) if pb_col else 0.0,
-                    total_mv=round(_safe_float(row[mv_col]) / 1e4, 2)
-                    if mv_col
-                    else 0.0,
+                    total_mv=round(_safe_float(row[mv_col]) / 1e4, 2) if mv_col else 0.0,
                 )
             )
         return result[:24]  # cap at 24 data points (≈2 years monthly)
@@ -286,8 +277,8 @@ def _fetch_sw_valuation_history(
         return []
 
 
-def _parse_em_snapshot_row(row: pd.Series) -> dict:
-    """Extract standardised fields from an EM board snapshot row."""
+def _parse_board_summary_row(row: pd.Series) -> dict:
+    """Extract standardised fields from a board summary row (同花顺)."""
 
     def _get(*keys):
         for k in keys:
@@ -295,44 +286,33 @@ def _parse_em_snapshot_row(row: pd.Series) -> dict:
                 return row[k]
         return None
 
-    name = str(_get("板块名称", "name") or "")
-    code = str(_get("板块代码", "code") or "")
-    price = _safe_float(_get("最新价", "close", "price"))
-    change_pct = _safe_float(_get("涨跌幅", "change_pct"))
-    total_mv = _safe_float(_get("总市值", "total_mv"))
-    # Total market value from EM is typically in 亿元 already; if > 1e8 treat as 元
-    if total_mv > 1e8:
-        total_mv = round(total_mv / 1e8, 2)
-    else:
-        total_mv = round(total_mv, 2)
-    up_count = _safe_int(_get("上涨家数", "up_count"))
-    down_count = _safe_int(_get("下跌家数", "down_count"))
-    turnover = _safe_float(_get("换手率", "turnover_rate"))
+    name = str(_get("industry_name", "板块名称", "板块", "name") or "")
+    code = str(_get("industry_code", "板块代码", "code") or "")
+    avg_price = _safe_float(_get("industry_avg_price", "均价"))
+    change_pct = _safe_float(_get("industry_change_pct", "涨跌幅"))
+    up_count = _safe_int(_get("industry_up_count", "上涨家数"))
+    down_count = _safe_int(_get("industry_down_count", "下跌家数"))
     return dict(
         name=name,
         code=code,
-        price=price,
+        price=avg_price,
         change_pct=change_pct,
-        total_mv=total_mv,
         up_count=up_count,
         down_count=down_count,
-        turnover=turnover,
     )
 
 
-def _parse_constituents(
-    cons_df: pd.DataFrame, max_stocks: int = 50
-) -> list[ConstituentStock]:
-    """Parse EM constituent stock DataFrame into ConstituentStock list."""
+def _parse_constituents(cons_df: pd.DataFrame, max_stocks: int = 50) -> list[ConstituentStock]:
+    """Parse constituent stock DataFrame into ConstituentStock list."""
     if cons_df is None or cons_df.empty:
         return []
 
-    code_col = _col(cons_df, "代码", "code", "ts_code")
-    name_col = _col(cons_df, "名称", "name")
-    chg_col = _col(cons_df, "涨跌幅", "change_pct")
+    code_col = _col(cons_df, "constituent_code", "代码", "code", "ts_code")
+    name_col = _col(cons_df, "constituent_name", "名称", "name")
+    chg_col = _col(cons_df, "constituent_change_pct", "涨跌幅", "change_pct")
     pe_col = _col(cons_df, "市盈率(动)", "市盈率TTM", "pe_ttm", "pe")
     pb_col = _col(cons_df, "市净率", "pb")
-    mv_col = _col(cons_df, "总市值", "market_cap", "total_mv")
+    mv_col = _col(cons_df, "constituent_total_mv", "总市值", "market_cap", "total_mv")
     ytd_col = _col(cons_df, "年初至今涨跌幅", "ytd_change")
 
     if code_col is None or name_col is None:
@@ -426,9 +406,7 @@ async def _generate_industry_summary(
         f"价格表现：\n{json.dumps(perf_dict, ensure_ascii=False, indent=2)}\n\n"
     )
     if val_dict:
-        prompt += (
-            f"估值数据：\n{json.dumps(val_dict, ensure_ascii=False, indent=2)}\n\n"
-        )
+        prompt += f"估值数据：\n{json.dumps(val_dict, ensure_ascii=False, indent=2)}\n\n"
     if top10:
         prompt += f"行业龙头股（按市值排序）：\n{json.dumps(top10, ensure_ascii=False, indent=2)}\n\n"
 
@@ -500,20 +478,14 @@ async def get_industry_fundamentals(
     """
     periods = max(1, min(periods, 24))
     # History window: periods months + 30-day buffer
-    start_date = (
-        datetime.date.today() - datetime.timedelta(days=periods * 30 + 30)
-    ).strftime("%Y%m%d")
+    start_date = (datetime.date.today() - datetime.timedelta(days=periods * 30 + 30)).strftime("%Y%m%d")
     # For 1-year performance we need at least 400 days of price history
-    hist_start = (datetime.date.today() - datetime.timedelta(days=400)).strftime(
-        "%Y%m%d"
-    )
+    hist_start = (datetime.date.today() - datetime.timedelta(days=400)).strftime("%Y%m%d")
 
     with AkShareHelper() as ak_helper, TuShareHelper() as ts_helper:
-        # ── 1. Get EM board snapshot ─────────────────────────────────────────
-        boards_df = _fetch_em_snapshot(ak_helper)
-        board_row = (
-            _find_em_board(boards_df, industry) if boards_df is not None else None
-        )
+        # ── 1. Get board list + summary (同花顺) ────────────────────────────
+        boards_df = _fetch_board_list(ak_helper)
+        board_row = _find_board(boards_df, industry) if boards_df is not None else None
 
         if board_row is None:
             raise ValueError(
@@ -521,38 +493,48 @@ async def get_industry_fundamentals(
                 "常见行业名称示例：银行、医药生物、食品饮料、半导体、新能源、汽车、计算机"
             )
 
-        snap = _parse_em_snapshot_row(board_row)
-        matched_name: str = snap["name"]
+        # Extract board name from list; get market data from summary
+        matched_name = str(board_row.get("industry_name", board_row.get("板块名称", board_row.get("name", ""))))
+        board_code = str(board_row.get("industry_code", board_row.get("板块代码", board_row.get("code", ""))))
 
-        # ── 2. Historical price for rolling returns ─────────────────────────
-        hist_df = _fetch_em_history(ak_helper, matched_name, hist_start)
+        # Try to enrich with summary data (同花顺)
+        summary_df = _fetch_board_summary(ak_helper)
+        summary_row = _find_board(summary_df, matched_name) if summary_df is not None else None
+        if summary_row is not None:
+            snap = _parse_board_summary_row(summary_row)
+        else:
+            snap = dict(name=matched_name, code=board_code, price=0.0, change_pct=0.0, up_count=0, down_count=0)
+
+        matched_name = snap["name"] or matched_name
+
+        # ── 2. Historical price for rolling returns (东方财富，无同花顺替代) ───
+        hist_display_name = snap.get("name", matched_name)
+        hist_df = _fetch_board_history(ak_helper, hist_display_name, hist_start)
         perf_changes = _compute_perf_from_hist(hist_df, snap["change_pct"])
 
         performance = IndustryPerformance(
-            current_price=snap["price"],
-            change_pct_today=snap["change_pct"],
+            current_price=snap.get("price", 0.0),
+            change_pct_today=snap.get("change_pct", 0.0),
             change_pct_1w=perf_changes["1w"],
             change_pct_1m=perf_changes["1m"],
             change_pct_3m=perf_changes["3m"],
             change_pct_6m=perf_changes["6m"],
             change_pct_1y=perf_changes["1y"],
-            up_count=snap["up_count"],
-            down_count=snap["down_count"],
-            total_mv=snap["total_mv"],
-            turnover_rate=snap["turnover"],
+            up_count=snap.get("up_count", 0),
+            down_count=snap.get("down_count", 0),
+            total_mv=0.0,
+            turnover_rate=0.0,
         )
 
-        # ── 3. Constituent stocks ────────────────────────────────────────────
-        cons_df = _fetch_em_constituents(ak_helper, matched_name)
+        # ── 3. Constituent stocks (东方财富，无同花顺替代) ──────────────────
+        cons_df = _fetch_board_constituents(ak_helper, hist_display_name)
         top_stocks = _parse_constituents(cons_df)
 
         # ── 4. SW industry PE/PB history (Tushare) ──────────────────────────
         sw_code = _find_sw_code(ts_helper, matched_name)
         valuation_history: list[IndustryValuation] = []
         if sw_code:
-            valuation_history = _fetch_sw_valuation_history(
-                ts_helper, sw_code, start_date
-            )
+            valuation_history = _fetch_sw_valuation_history(ts_helper, sw_code, start_date)
 
     # ── 5. AI summary ────────────────────────────────────────────────────────
     summary = await _generate_industry_summary(
@@ -564,7 +546,7 @@ async def get_industry_fundamentals(
 
     return IndustryFundamentals(
         industry_name=matched_name,
-        industry_code=snap["code"],
+        industry_code=snap.get("code", board_code),
         sw_code=sw_code,
         performance=performance,
         valuation_history=valuation_history,

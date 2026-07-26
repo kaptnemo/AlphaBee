@@ -28,9 +28,12 @@ def get_stock_news_summary(symbol: str) -> str:
         if df.empty:
             return f"未找到股票 {normalized_symbol} 的相关新闻。"
 
-        lines = [f"[{row['发布时间']}] {row['新闻标题']}" for _, row in df.iterrows()]
+        # After adapter: canonical names news_publish_time, news_title
+        time_col = next((c for c in ("news_publish_time", "发布时间", "publish_time") if c in df.columns), None)
+        title_col = next((c for c in ("news_title", "新闻标题", "title") if c in df.columns), None)
+        if time_col is None or title_col is None:
+            return f"未找到股票 {normalized_symbol} 的相关新闻。"
+        lines = [f"[{row[time_col]}] {row[title_col]}" for _, row in df.iterrows()]
         return "\n".join(lines)
 
-    return _NEWS_CACHE.get_or_compute(
-        ("stock_news_summary", normalized_symbol), _compute
-    )
+    return _NEWS_CACHE.get_or_compute(("stock_news_summary", normalized_symbol), _compute)

@@ -1,16 +1,25 @@
 # AlphaBee AkShare Adapter — 行业字段映射
-# API: stock_board_industry_name_em()、stock_board_industry_hist_em()、stock_board_industry_cons_em()
+# 优先使用同花顺(_ths)，无替代方案时保留东方财富(_em)
+
+# ─────────────────────────────────────────
+# 行业板块列表 stock_board_industry_name_ths()
+# 同花顺行业板块名称与代码
+# ─────────────────────────────────────────
+stock_board_industry_name_ths:
+  name:  industry_name
+  code:  industry_code
 
 # ─────────────────────────────────────────
 # 行业板块列表快照 stock_board_industry_name_em()
+# 东方财富行业板块快照（PE/PB/市值等），无 _ths 替代
 # ─────────────────────────────────────────
-board_snapshot:
+stock_board_industry_name_em:
   板块名称:  industry_name
   板块代码:  industry_code
   最新价:    industry_close
   涨跌额:    _price_change_raw
   涨跌幅:    industry_change_pct
-  总市值:    industry_total_mv     # 原始单位：亿元（直接使用）
+  总市值:    industry_total_mv
   换手率:    industry_turnover_rate
   上涨家数:  industry_up_count
   下跌家数:  industry_down_count
@@ -18,9 +27,27 @@ board_snapshot:
   市净率:    industry_pb
 
 # ─────────────────────────────────────────
-# 行业历史 K 线 stock_board_industry_hist_em()
+# 行业板块行情摘要 stock_board_industry_summary_ths()
+# 同花顺行业行情汇总（涨跌幅、成交、资金流向等）
 # ─────────────────────────────────────────
-board_hist:
+stock_board_industry_summary_ths:
+  板块:    industry_name
+  涨跌幅:  industry_change_pct
+  总成交量: industry_volume
+  总成交额: industry_amount
+  净流入:   industry_net_inflow
+  上涨家数: industry_up_count
+  下跌家数: industry_down_count
+  均价:     industry_avg_price
+  领涨股:   industry_top_gainer_name
+  领涨股-最新价: industry_top_gainer_price
+  领涨股-涨跌幅: industry_top_gainer_change_pct
+
+# ─────────────────────────────────────────
+# 行业历史 K 线 stock_board_industry_hist_em()
+# 无 _ths 替代，保留东方财富数据源
+# ─────────────────────────────────────────
+stock_board_industry_hist_em:
   日期:   trade_date
   收盘:   industry_close
   开盘:   industry_open
@@ -32,8 +59,9 @@ board_hist:
 
 # ─────────────────────────────────────────
 # 行业成分股 stock_board_industry_cons_em()
+# 无 _ths 替代，保留东方财富数据源
 # ─────────────────────────────────────────
-board_cons:
+stock_board_industry_cons_em:
   代码:       constituent_code
   名称:       constituent_name
   最新价:     constituent_close
