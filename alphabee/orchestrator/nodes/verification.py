@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from alphabee.utils.prompts import json_instruction
+
 if TYPE_CHECKING:
     from alphabee.orchestrator.contracts import ConflictItem, VerificationResultItem
     from alphabee.orchestrator.state import OrchestratorState
@@ -58,7 +60,7 @@ async def _verify_single_conflict(
     user_msg = VERIFY_HYPOTHESES_USER_TEMPLATE.format(
         hypotheses_json=hypotheses_json,
         context_json=context_json,
-    )
+    ) + json_instruction(VerificationResultList)
 
     try:
         agent = verify_hypotheses_agent_factory()

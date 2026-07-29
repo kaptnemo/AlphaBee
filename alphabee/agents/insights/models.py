@@ -24,6 +24,12 @@ class MaterialityRank(BaseModel):
     )
     reasoning: str = Field(description="Why this variable matters")
 
+    @field_validator("importance", mode="before")
+    @classmethod
+    def _coerce_importance(cls, v: str) -> str:
+        _map = {"moderate": "medium"}
+        return _map.get(str(v).lower(), str(v).lower())
+
 
 class InsightOutput(BaseModel):
     """Structured output from the InsightAgent — the central opinion document.

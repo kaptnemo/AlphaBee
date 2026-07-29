@@ -46,6 +46,54 @@ def extract_text(content: Any) -> str:
     return str(content)
 
 
+def _extract_balanced_json_candidates(text: str, candidates: list[str]) -> None:
+    """Extract balanced ``{…}`` substrings as additional parse candidates.
+
+    When the model outputs analysis text before/after the JSON payload,
+    strategy 3's "first ``{`` to last ``}``" may capture too much non-JSON
+    content.  This helper walks the string and emits every balanced
+    top-level ``{…}`` block, ordered longest-first so the most complete
+    candidate is tried first.
+    """
+
+    # Quick guard: if there are no braces at all, don't bother
+    if "{" not in text:
+        return
+
+    brace_starts: list[int] = []
+    brace_pairs: list[tuple[int, int]] = []
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            if depth == 0:
+                brace_starts.append(i)
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and brace_starts:
+                brace_pairs.append((brace_starts.pop(), i))
+
+    # Emit candidates sorted longest-first (most likely the right one)
+    for start, end in sorted(brace_pairs, key=lambda p: p[0] - p[1]):
+        candidate = text[start : end + 1].strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+
 def parse_json(text: str) -> Any:
     """Parse a JSON value from an LLM response string.
 
@@ -54,6 +102,7 @@ def parse_json(text: str) -> Any:
     1. Markdown fenced block (`` ```json … ``` `` or `` ``` … ``` ``)
     2. The raw text itself
     3. The first ``{…}`` or ``[…]`` substring (outermost braces)
+    4. All balanced ``{…}`` substrings (longest-first)
 
     Candidates are deduplicated and tried in order; the first that parses
     successfully is returned.
@@ -94,6 +143,9 @@ def parse_json(text: str) -> Any:
         end = text.rfind(closer)
         if end > start:
             candidates.append(text[start : end + 1])
+
+    # ── 3b. All balanced {…} substrings (handles JSON embedded in analysis)
+    _extract_balanced_json_candidates(text, candidates)
 
     # ── Try each candidate, deduplicating ──────────────────────────────
     seen: set[str] = set()
