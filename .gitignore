@@ -16,6 +16,7 @@ pdfs/
 *.pdf
 tmp/
 conversation_history/
+reports/
 
 # env files
 .env
