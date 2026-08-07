@@ -449,6 +449,10 @@ class EvaluateMetrics(BaseModel):
 class EvaluationAssessment(BaseModel):
     """Qualitative evaluator output produced by the evaluator agent."""
 
+    # json_instruction() 从此处提取示例，注入到 report quality gate 的
+    # 评估 prompt 中。example 展示了 passed=true（无阻塞问题）的场景，
+    # 同时仍列出了 weaknesses 和 improvement_actions，体现质量评估的
+    # 审慎立场：即使通过，也应指出可改进之处。
     model_config = ConfigDict(
         json_schema_extra={
             "example": {

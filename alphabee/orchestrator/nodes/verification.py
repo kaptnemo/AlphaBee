@@ -57,6 +57,8 @@ async def _verify_single_conflict(
         "conflict_severity": conflict.severity,
     }
     context_json = _json.dumps(ctx, ensure_ascii=False, indent=2)
+
+    # 生成验证 agent 的输入 prompt，包含 hypotheses、context、输出格式约束。
     user_msg = VERIFY_HYPOTHESES_USER_TEMPLATE.format(
         hypotheses_json=hypotheses_json,
         context_json=context_json,
