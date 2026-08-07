@@ -15,6 +15,7 @@ large_tool_results/
 pdfs/
 *.pdf
 tmp/
+conversation_history/
 
 # env files
 .env
