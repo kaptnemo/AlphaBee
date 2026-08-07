@@ -7,6 +7,17 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+class CrossSignalPattern(BaseModel):
+    """A cross-signal pattern discovered by the InsightAgent."""
+
+    pattern_name: str = Field(description="Pattern name, e.g. '以账期换增长'")
+    signals_involved: list[str] = Field(default_factory=list, description="Signal IDs involved in this pattern")
+    narrative: str = Field(description="Reasoning and impact on investment judgment")
+    severity_modifier: Literal["amplified", "mitigated", "unchanged"] = Field(
+        default="unchanged", description="How this pattern affects the overall risk assessment"
+    )
+
+
 class EvidenceItem(BaseModel):
     """One piece of supporting or counter evidence with source traceability."""
 
@@ -54,6 +65,9 @@ class InsightOutput(BaseModel):
     )
     materiality_rank: list[MaterialityRank] = Field(
         default_factory=list, description="Key variables ranked by importance (top 3-5)"
+    )
+    cross_signal_patterns: list[CrossSignalPattern] = Field(
+        default_factory=list, description="Cross-signal patterns discovered during synthesis"
     )
     business_model_context: str = Field(
         default="", description="How the business model shapes interpretation of the data"
