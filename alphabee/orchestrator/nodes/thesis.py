@@ -32,7 +32,7 @@ async def run_thesis(
     query = run.context.get("query", "") if run else ""
     financial_facts = state.get("financial_facts")
     market_facts = state.get("market_facts")
-    enhance = state.get("enhance", False)
+    enhance = state.get("enhance", True)
 
     step = Step(
         id="run_thesis",

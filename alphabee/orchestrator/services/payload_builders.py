@@ -18,9 +18,11 @@ from alphabee.orchestrator.contracts import (
     ReportConflictAnalysisPayload,
     ReportConflictHypothesisPayload,
     ReportConflictItemPayload,
+    ReportEvidenceItem,
     ReportGenerationPayload,
     ReportInsightPayload,
     ReportIssuePayload,
+    ReportMaterialityRank,
     ReportMetricEntry,
     ReportMetricsPayload,
     ReportSignalEntry,
@@ -347,6 +349,31 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             core_view=insight_val.core_view,
             central_tension=insight_val.central_tension,
             main_driver=insight_val.main_driver,
+            supporting_evidence=[
+                ReportEvidenceItem(
+                    statement=e.get("statement", ""),
+                    source=e.get("source", ""),
+                    weight=e.get("weight", "moderate"),
+                )
+                for e in insight_val.supporting_evidence
+            ],
+            counter_evidence=[
+                ReportEvidenceItem(
+                    statement=e.get("statement", ""),
+                    source=e.get("source", ""),
+                    weight=e.get("weight", "moderate"),
+                )
+                for e in insight_val.counter_evidence
+            ],
+            materiality_rank=[
+                ReportMaterialityRank(
+                    variable=m.get("variable", ""),
+                    importance=m.get("importance", ""),
+                    reasoning=m.get("reasoning", ""),
+                )
+                for m in insight_val.materiality_rank
+            ],
+            cross_signal_patterns=list(insight_val.cross_signal_patterns),
             business_model_context=insight_val.business_model_context,
             base_case=insight_val.base_case,
             bull_case=insight_val.bull_case,

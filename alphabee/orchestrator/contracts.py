@@ -106,6 +106,7 @@ class InsightArtifact(BaseModel):
     supporting_evidence: list[dict[str, Any]] = Field(default_factory=list)
     counter_evidence: list[dict[str, Any]] = Field(default_factory=list)
     materiality_rank: list[dict[str, Any]] = Field(default_factory=list)
+    cross_signal_patterns: list[dict[str, Any]] = Field(default_factory=list)
     business_model_context: str = ""
     base_case: str = ""
     bull_case: str = ""
@@ -192,12 +193,32 @@ class ReportIssuePayload(BaseModel):
     message: str
 
 
+class ReportEvidenceItem(BaseModel):
+    """Evidence item from InsightAgent."""
+
+    statement: str = ""
+    source: str = ""
+    weight: str = "moderate"
+
+
+class ReportMaterialityRank(BaseModel):
+    """Materiality rank item from InsightAgent."""
+
+    variable: str = ""
+    importance: str = ""
+    reasoning: str = ""
+
+
 class ReportInsightPayload(BaseModel):
     """InsightAgent output carried into the report-generation payload."""
 
     core_view: str = ""
     central_tension: str = ""
     main_driver: str = ""
+    supporting_evidence: list[ReportEvidenceItem] = Field(default_factory=list)
+    counter_evidence: list[ReportEvidenceItem] = Field(default_factory=list)
+    materiality_rank: list[ReportMaterialityRank] = Field(default_factory=list)
+    cross_signal_patterns: list[dict[str, Any]] = Field(default_factory=list)
     business_model_context: str = ""
     base_case: str = ""
     bull_case: str = ""

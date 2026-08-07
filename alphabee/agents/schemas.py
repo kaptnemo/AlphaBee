@@ -56,8 +56,15 @@ class VerificationResultItem(BaseModel):
 
 
 class VerificationResultList(BaseModel):
-    """verify_hypotheses 节点的整体输出"""
+    """verify_hypotheses 节点的整体输出
 
+    model_config.json_schema_extra.example 是 json_instruction() 的
+    few-shot 示例来源。修改本模型的字段时，请同步更新 example 中的
+    示例数据，确保示例与实际结构一致，避免 LLM 受过期示例误导。
+    """
+
+    # json_instruction() 从此处提取示例，注入到 verify_hypotheses agent 的
+    # 系统 prompt 中，用于引导 LLM 输出正确格式的 JSON。
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -98,8 +105,17 @@ class ConflictItem(BaseModel):
 
 
 class ConflictAnalysisResult(BaseModel):
-    """冲突分析结果"""
+    """冲突分析结果
 
+    model_config.json_schema_extra.example 是 json_instruction() 的
+    few-shot 示例来源。修改本模型或其嵌套模型（ConflictItem、
+    HypothesisItem、VerificationItem）的字段时，请同步更新 example
+    中的对应示例数据。
+    """
+
+    # json_instruction() 从此处提取示例，注入到 explore_conflicts agent 的
+    # 系统 prompt 中。示例包含完整的嵌套结构（conflict → hypothesis →
+    # verification_item），确保 LLM 理解三层嵌套的正确输出格式。
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -155,29 +171,37 @@ class ConflictAnalysisResult(BaseModel):
 
 class ReportSections(BaseModel):
     executive_summary: str
+    investment_viewpoint: str
+    scenario_analysis: str
     key_metrics: str
     signal_analysis: str
     anomaly_detection: str
     conflict_analysis: str
-    investment_thesis: str
+    dimension_analysis: str
     review_findings: str
+    falsification_conditions: str
     risks: str
     disclaimer: str
 
 
 class ReportOutput(BaseModel):
+    # json_instruction() 从此处提取示例，注入到 reporter agent 的系统 prompt
+    # 中。示例覆盖了所有 12 个 report sections，确保 LLM 理解报告的完整结构。
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "title": "贵州茅台(600519) 财报质量体检报告",
                 "sections": {
                     "executive_summary": "公司整体财务质量稳健，盈利能力突出，现金流充裕。需关注批价波动对渠道利润的挤压效应。",
+                    "investment_viewpoint": "核心观点是品牌壁垒仍强，但需验证渠道价格压力是否会削弱盈利质量。",
+                    "scenario_analysis": "基准情景为渠道利润温和承压但现金流保持稳健；乐观情景取决于批价企稳；悲观情景来自需求收缩。",
                     "key_metrics": "ROE 32%，经营现金流/净利润 1.05，应收账款周转天数 2 天。",
                     "signal_analysis": "盈利质量信号整体偏正面，现金流信号中性。",
                     "anomaly_detection": "未发现明显财务异常模式。",
                     "conflict_analysis": "批价下行与营收增长之间存在轻微背离。",
-                    "investment_thesis": "品牌护城河深厚，直销占比提升驱动吨价上行，中长期看好。",
+                    "dimension_analysis": "品牌护城河深厚，直销占比提升驱动吨价上行，但需持续审查渠道价格与现金流质量。",
                     "review_findings": "报告覆盖度完备，风险披露充分，无阻塞性问题。",
+                    "falsification_conditions": "若批价持续下行并传导至现金流弱化，则当前核心观点需要下修。",
                     "risks": "宏观经济下行导致高端消费收缩；批价持续下滑压缩渠道利润。",
                     "disclaimer": "本报告基于公开数据自动生成，不构成投资建议。",
                 },

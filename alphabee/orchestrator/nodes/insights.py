@@ -117,6 +117,7 @@ async def synthesize_insights(
             supporting_evidence=[e.model_dump(mode="json") for e in insight_output.supporting_evidence],
             counter_evidence=[e.model_dump(mode="json") for e in insight_output.counter_evidence],
             materiality_rank=[m.model_dump(mode="json") for m in insight_output.materiality_rank],
+            cross_signal_patterns=[p.model_dump(mode="json") for p in insight_output.cross_signal_patterns],
             business_model_context=insight_output.business_model_context,
             base_case=insight_output.base_case,
             bull_case=insight_output.bull_case,

@@ -424,7 +424,7 @@ def _render_final_report(final_payload: dict) -> None:
     if not report or not isinstance(report, dict):
         return
 
-    title = report.get("title", "财报质量体检报告")
+    title = report.get("title", "投资分析报告")
     summary = report.get("summary", "")
     confidence = report.get("overall_confidence", "unknown")
     risk_count = report.get("risk_count", {})
@@ -435,12 +435,10 @@ def _render_final_report(final_payload: dict) -> None:
     print(_c(f"  📋 {title}", _C.BOLD, _C.GREEN))
     print(_hr("═", 70, _C.GREEN))
 
-    # Confidence badge
     conf_colors = {"high": _C.GREEN, "medium": _C.YELLOW, "low": _C.RED}
     conf_c = conf_colors.get(confidence, _C.GRAY)
     print(_c(f"  整体置信度: {confidence}", conf_c))
 
-    # Risk summary
     if risk_count:
         high_r = risk_count.get("high", 0)
         med_r = risk_count.get("medium", 0)
@@ -459,22 +457,38 @@ def _render_final_report(final_payload: dict) -> None:
             print(f"  风险分布: {'  '.join(parts)}")
     print()
 
-    # Summary
     if summary:
         print(_c("  💡 摘要", _C.BOLD, _C.WHITE))
         print(f"  {summary}")
         print()
 
-    # Section: executive_summary
     exec_summary = sections.get("executive_summary", "")
     if exec_summary:
         print(_hr("─", 60, _C.CYAN))
-        print(_c("  📌 核心发现", _C.BOLD, _C.CYAN))
+        print(_c("  📌 核心观点摘要", _C.BOLD, _C.CYAN))
         print(_hr("─", 60, _C.CYAN))
         print(f"  {exec_summary}")
         print()
 
-    # Section: key_metrics
+    investment_viewpoint = sections.get("investment_viewpoint", "")
+    if investment_viewpoint and investment_viewpoint != "未生成独立投资观点，以下为结构化数据分析。":
+        print(_hr("─", 60, _C.MAGENTA))
+        print(_c("  🎯 投资观点展开", _C.BOLD, _C.MAGENTA))
+        print(_hr("─", 60, _C.MAGENTA))
+        vp_display = investment_viewpoint
+        if len(vp_display) > 3000:
+            vp_display = vp_display[:3000] + "\n\n  ...(已截断，完整内容见最终 JSON)"
+        print(vp_display)
+        print()
+
+    scenario_analysis = sections.get("scenario_analysis", "")
+    if scenario_analysis and scenario_analysis != "未生成情景分析。":
+        print(_hr("─", 60, _C.MAGENTA))
+        print(_c("  🔮 情景分析", _C.BOLD, _C.MAGENTA))
+        print(_hr("─", 60, _C.MAGENTA))
+        print(scenario_analysis)
+        print()
+
     key_metrics = sections.get("key_metrics", "")
     if key_metrics:
         print(_hr("─", 60, _C.CYAN))
@@ -483,7 +497,6 @@ def _render_final_report(final_payload: dict) -> None:
         print(key_metrics)
         print()
 
-    # Section: signal_analysis
     signal_analysis = sections.get("signal_analysis", "")
     if signal_analysis:
         print(_hr("─", 60, _C.CYAN))
@@ -492,19 +505,33 @@ def _render_final_report(final_payload: dict) -> None:
         print(signal_analysis)
         print()
 
-    # Section: investment_thesis (truncated)
-    investment_thesis = sections.get("investment_thesis", "")
-    if investment_thesis:
-        thesis_display = investment_thesis
-        if len(thesis_display) > 2000:
-            thesis_display = thesis_display[:2000] + "\n\n  ...(已截断，完整内容见最终 JSON)"
+    anomaly_detection = sections.get("anomaly_detection", "")
+    if anomaly_detection:
         print(_hr("─", 60, _C.CYAN))
-        print(_c("  🏛 投资论点", _C.BOLD, _C.CYAN))
+        print(_c("  🔍 勾稽关系异常", _C.BOLD, _C.CYAN))
         print(_hr("─", 60, _C.CYAN))
-        print(thesis_display)
+        print(anomaly_detection)
         print()
 
-    # Section: review_findings
+    conflict_analysis = sections.get("conflict_analysis", "")
+    if conflict_analysis and conflict_analysis != "未检测到显著数据矛盾，多维度指标之间逻辑自洽。":
+        print(_hr("─", 60, _C.MAGENTA))
+        print(_c("  🔬 数据矛盾", _C.BOLD, _C.MAGENTA))
+        print(_hr("─", 60, _C.MAGENTA))
+        print(conflict_analysis)
+        print()
+
+    dimension_analysis = sections.get("dimension_analysis", "")
+    if dimension_analysis:
+        dim_display = dimension_analysis
+        if len(dim_display) > 2000:
+            dim_display = dim_display[:2000] + "\n\n  ...(已截断，完整内容见最终 JSON)"
+        print(_hr("─", 60, _C.CYAN))
+        print(_c("  🏛 维度分析", _C.BOLD, _C.CYAN))
+        print(_hr("─", 60, _C.CYAN))
+        print(dim_display)
+        print()
+
     review_findings = sections.get("review_findings", "")
     if review_findings and review_findings != "未执行审查":
         print(_hr("─", 60, _C.CYAN))
@@ -513,50 +540,14 @@ def _render_final_report(final_payload: dict) -> None:
         print(review_findings)
         print()
 
-    # Section: conflict_analysis — 冲突探索与假设验证
-    conflict_analysis = final_payload.get("conflict_analysis", {})
-    if conflict_analysis and conflict_analysis.get("conflict_count", 0) > 0:
-        verified = conflict_analysis.get("verified_count", 0)
-        rejected = conflict_analysis.get("rejected_count", 0)
-        total_h = conflict_analysis.get("hypothesis_count", 0)
-        unknown = total_h - verified - rejected
-
-        print(_hr("─", 60, _C.MAGENTA))
-        print(_c("  🔬 冲突探索 · 假设验证", _C.BOLD, _C.MAGENTA))
-        print(_hr("─", 60, _C.MAGENTA))
-        stats_parts = []
-        stats_parts.append(_c(f"冲突 {conflict_analysis['conflict_count']} 个", _C.WHITE))
-        stats_parts.append(_c(f"假设 {total_h} 条", _C.WHITE))
-        if verified:
-            stats_parts.append(_c(f"✓ 验证 {verified}", _C.GREEN))
-        if rejected:
-            stats_parts.append(_c(f"✗ 排除 {rejected}", _C.RED))
-        if unknown:
-            stats_parts.append(_c(f"? 待定 {unknown}", _C.GRAY))
-        print("  " + "  ".join(stats_parts))
+    falsification_conditions = sections.get("falsification_conditions", "")
+    if falsification_conditions and falsification_conditions != "无可证伪条件。":
+        print(_hr("─", 60, _C.YELLOW))
+        print(_c("  ⚖️ 可证伪条件", _C.BOLD, _C.YELLOW))
+        print(_hr("─", 60, _C.YELLOW))
+        print(falsification_conditions)
         print()
 
-        # Conflicts summary
-        for ci in conflict_analysis.get("conflicts_summary", []):
-            sev = ci.get("severity", "")
-            sev_color = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.GRAY
-            print(f"  {_c(f'[{sev}]', sev_color)} {_c(ci.get('theme', ''), _C.BOLD, _C.WHITE)}")
-            desc = ci.get("description", "")
-            if desc:
-                print(f"        {_c(desc, _C.DIM)}")
-        print()
-
-        # Verified hypotheses
-        verified_hyps = conflict_analysis.get("verified_hypotheses", [])
-        if verified_hyps:
-            print(_c("  ✅ 被证实假设：", _C.BOLD, _C.GREEN))
-            for h in verified_hyps:
-                status = h.get("status", "")
-                status_tag = _c("[partial]", _C.YELLOW) if status == "partial" else _c("[verified]", _C.GREEN)
-                print(f"    {status_tag} {h.get('description', '')}")
-            print()
-
-    # Section: risks
     risks = sections.get("risks", "")
     if risks:
         print(_hr("─", 60, _C.CYAN))
@@ -565,7 +556,6 @@ def _render_final_report(final_payload: dict) -> None:
         print(risks)
         print()
 
-    # Issues from system
     issues = final_payload.get("issues", [])
     if issues:
         print(_hr("─", 60, _C.CYAN))
@@ -577,11 +567,9 @@ def _render_final_report(final_payload: dict) -> None:
             msg = i.get("message", "")
             color = _C.RED if sev in ("critical", "high") else _C.YELLOW if sev == "medium" else _C.DIM
             print(_c(f"  [{sev}] {cat}: {msg}", color))
-        # if len(issues) > 5:
         print(_c(f"  共 {len(issues)} 个问题", _C.DIM))
         print()
 
-    # Disclaimer
     disclaimer = sections.get("disclaimer", "")
     if disclaimer:
         print(_hr("─", 60, _C.GRAY))

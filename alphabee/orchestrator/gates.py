@@ -163,12 +163,15 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
     # 缺任一关键章节，都意味着用户拿到的不是完整“财报质量体检”。
     expected_sections = {
         "executive_summary",
+        "investment_viewpoint",
+        "scenario_analysis",
         "key_metrics",
         "signal_analysis",
         "anomaly_detection",
         "conflict_analysis",
-        "investment_thesis",
+        "dimension_analysis",
         "review_findings",
+        "falsification_conditions",
         "risks",
         "disclaimer",
     }
