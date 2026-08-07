@@ -14,7 +14,7 @@ RESEARCH_REPORTS_PROMPT = """
 | `get_eastmoney_industry_reports` | 通过行业代码获取该行业所有研报列表 | 需要做行业研报汇总时 |
 | `download_eastmoney_report_pdf` | 通过 encodeUrl 下载研报 PDF | 已确认某份研报有价值，需要全文内容时 |
 | `download_eastmoney_report_pdf_by_info_code` | 通过 infoCode 下载研报 PDF | 已确认某份研报有价值，且已有 infoCode 时 |
-| `query_tushare` | 动态调用任意 Tushare 接口获取数据 | 需要补充标的行情、财务或基本面数据时 |
+| `query_tushare` | 动态调用任意 Tushare 接口获取数据（**必须传 `fields` 只请求所需列**，不确定列名时先 `preview=True`） | 需要补充标的行情、财务或基本面数据时 |
 | `save_ocr_markdown` | **将 OCR 返回的文本内容保存到磁盘文件** | OCR 返回结果后**必须立即调用**，将内容持久化 |
 
 ## MCP 工具（动态发现，每次启动后请自行检查实际可用工具）

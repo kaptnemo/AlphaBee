@@ -39,6 +39,8 @@ VERIFY_HYPOTHESES_USER_TEMPLATE = """请验证以下假设，输出 Verification
 
 ## 验证提示
 - 优先使用 query_tushare 拉取财务/行情结构化数据
+- **query_tushare 必须用 fields 只请求当前假设直接需要的列**（如只取应收、营收、现金流相关列），
+  不确定可用列时先 preview=True 获取列名清单再传 fields，禁止拉取全量列进入上下文
 - 公告/研报细节可用 eastmoney 工具补充
 - 无法确认时设 status=unknown，在 gaps 中明确说明缺了什么
 """
