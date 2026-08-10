@@ -1,10 +1,10 @@
 # AlphaBee Tushare Adapter — 市场状态域字段映射
-# API: index_dailybasic()、shibor()、us_tycr()、cn_m()、margin()
+# API: index_dailybasic()、shibor()、us_tycr()、cn_m()、sf_month()、margin()
 #
 # 注意：本映射描述 tushare 源字段 → AlphaBee canonical 字段的对应关系。
 # 采集器（alphabee/collectors/market_regime/tushare.py）按该映射提取字段。
-# 实际权限校验：当前 token 无法访问 yield_cnbd（中债收益率）与 cn_sf（社融），
-# 这两个字段由 akshare 数据源兜底（见 INDEX.yaml field_gaps 与 data.py source=auto）。
+# 实际权限校验：当前 token 无法访问 yield_cnbd（中债收益率），该字段由
+# akshare 数据源兜底（见 INDEX.yaml field_gaps 与 data.py source=auto）。
 
 # ─────────────────────────────────────────
 # 指数估值 index_dailybasic()
@@ -32,6 +32,12 @@ us_tycr:
 cn_m:
   m1_yoy: m1_yoy
   m2_yoy: m2_yoy
+
+# ─────────────────────────────────────────
+# 社融增量 sf_month()
+# ─────────────────────────────────────────
+sf_month:
+  inc_month: social_financing_increment
 
 # ─────────────────────────────────────────
 # 两融 margin()

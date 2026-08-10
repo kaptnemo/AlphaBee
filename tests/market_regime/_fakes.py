@@ -137,6 +137,7 @@ class FakeTs:
         self.shibor_df: pd.DataFrame | None = None
         self.us_tycr_df: pd.DataFrame | None = None
         self.cn_m_df: pd.DataFrame | None = None
+        self.sf_month_df: pd.DataFrame | None = None
         self.margin_by_date: dict[str, pd.DataFrame] = {}
 
     # ── index valuation ─────────────────────────────────────
@@ -158,6 +159,9 @@ class FakeTs:
 
     def cn_m(self, start_m: str, end_m: str) -> pd.DataFrame:
         return self.cn_m_df if self.cn_m_df is not None else make_df(["month", "m1_yoy", "m2_yoy"], [])
+
+    def sf_month(self, start_m: str, end_m: str) -> pd.DataFrame:
+        return self.sf_month_df if self.sf_month_df is not None else make_df(["month", "inc_month"], [])
 
     # ── margin ──────────────────────────────────────────────
     def margin(self, trade_date: str, fields: str | None = None) -> pd.DataFrame:
@@ -186,6 +190,10 @@ def build_default_tushare_fake() -> FakeTs:
     fake.cn_m_df = make_df(
         ["month", "m1_yoy", "m2_yoy"],
         [["202606", 3.0, 7.0], ["202607", 4.0, 8.0]],
+    )
+    fake.sf_month_df = make_df(
+        ["month", "inc_month"],
+        [["202606", 22000.0], ["202607", 6245.0]],
     )
     fake.margin_by_date["20260807"] = make_df(
         ["trade_date", "exchange_id", "rzye"],

@@ -6,8 +6,9 @@ full historical series (valuation + liquidity) into the daily CSV so percentile
 windows (ERP / PE / PB 分位) have history to draw on in Phase 1.
 
 数据源策略（``source``）：
-- ``"auto"``（默认）：tushare 优先，缺失字段由 akshare 补齐（如中债收益率、社融、
-  市场宽度）；tushare 提供的字段（如创业板估值、融资余额）覆盖 akshare。
+- ``"auto"``（默认）：tushare 优先，缺失字段由 akshare 补齐（如中债收益率、
+  市场宽度、全A估值分位、两市成交额）；tushare 提供的字段（创业板估值、融资余额、
+  社融增量等）覆盖 akshare。
 - ``"tushare"`` / ``"akshare"``：强制只用单一数据源。
 """
 
@@ -117,7 +118,7 @@ def backfill_history(
     """Backfill historical valuation + liquidity series into the daily CSV.
 
     With ``source="auto"`` the tushare history (per-index PE/PB incl. 创业板,
-    SHIBOR, US yield, M1/M2) is combined with akshare history (中债收益率、社融、
+    SHIBOR, US yield, M1/M2, 社融) is combined with akshare history (中债收益率、
     全A估值分位); tushare wins on overlapping columns.
 
     Returns the number of rows written.

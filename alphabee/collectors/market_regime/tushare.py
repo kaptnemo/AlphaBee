@@ -1,9 +1,9 @@
 """Collector: tushare-based market-regime data (valuation / liquidity / margin).
 
 Covers fields that akshare cannot fully provide (notably per-index PE/PB for
-创业板), plus authoritative SHIBOR / US 10y yield / M1-M2 / margin. Fields that
-tushare cannot serve under the current token (``cn_10y_yield`` via ``yield_cnbd``,
-``social_financing_increment`` via ``cn_sf``) stay on akshare — ``data.py`` merges
+创业板), plus authoritative SHIBOR / US 10y yield / M1-M2 / social financing /
+margin. Fields that tushare cannot serve under the current token
+(``cn_10y_yield`` via ``yield_cnbd``) stay on akshare — ``data.py`` merges
 both sources with tushare priority (``source="auto"``).
 """
 
@@ -18,7 +18,7 @@ import pandas as pd
 from alphabee.collectors.market_regime._utils import month_key, select_latest, walk_back_dates
 from alphabee.market_regime.models import CollectorOutput
 
-SOURCE = "tushare:index_dailybasic/shibor/us_tycr/cn_m/margin"
+SOURCE = "tushare:index_dailybasic/shibor/us_tycr/cn_m/sf_month/margin"
 
 # (ts_code, canonical field prefix)
 INDEX_CODES: list[tuple[str, str]] = [
@@ -160,6 +160,20 @@ def fetch_liquidity(asof_date: str | None = None, *, ts_module: Any = None) -> C
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"cn_m 获取失败: {exc}")
 
+    try:
+        df = pro.sf_month(start_m=month_start, end_m=asof_month)
+        if df is not None and not df.empty:
+            df = df.copy()
+            df["_month"] = df["month"].map(month_key)
+            candidates = df[df["_month"].notna()].sort_values("_month")
+            candidates = candidates[candidates["_month"] <= asof_month]
+            if not candidates.empty:
+                row = candidates.iloc[-1]
+                if pd.notna(row.get("inc_month")):
+                    values["social_financing_increment"] = float(row["inc_month"])
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"sf_month 获取失败: {exc}")
+
     return CollectorOutput(values=values, source=SOURCE, warnings=warnings)
 
 
@@ -244,10 +258,10 @@ def history(
         pass
 
     daily = pd.DataFrame(frames).sort_index()
+    month_start = f"{int(start_c[:6]) - 1:06d}"
 
     # 月频 M1/M2 前向填充到日频网格
     try:
-        month_start = f"{int(start_c[:6]) - 1:06d}"
         df = pro.cn_m(start_m=month_start, end_m=end_c[:6] or "")
         if df is not None and not df.empty:
             m = df.copy()
@@ -261,6 +275,19 @@ def history(
             for name, series in (("m1_yoy", m1), ("m2_yoy", m2)):
                 daily[name] = series.reindex(daily.index, method="ffill")
             daily["m1_m2_gap"] = (daily["m1_yoy"] - daily["m2_yoy"]).round(2)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 月频社融增量前向填充到日频网格
+    try:
+        df = pro.sf_month(start_m=month_start, end_m=end_c[:6] or "")
+        if df is not None and not df.empty:
+            m = df.copy()
+            m["_month"] = m["month"].map(month_key)
+            m = m[m["_month"].notna()].sort_values("_month")
+            month_index = pd.to_datetime(m["_month"], format="%Y%m")
+            sf = pd.Series(pd.to_numeric(m["inc_month"], errors="coerce").values, index=month_index)
+            daily["social_financing_increment"] = sf.sort_index().reindex(daily.index, method="ffill")
     except Exception:  # noqa: BLE001
         pass
 

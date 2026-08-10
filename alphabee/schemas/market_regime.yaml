@@ -326,7 +326,7 @@ social_financing_increment:
     en: [social financing increment]
   required_by: []
   source_mappings:
-    tushare: [cn_sf.sf]
+    tushare: [sf_month.inc_month]
     akshare: [macro_china_shrzgm.社会融资规模增量]
 
 social_financing_yoy:

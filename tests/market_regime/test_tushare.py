@@ -36,9 +36,14 @@ class TestFetchLiquidity:
         assert out.values["m2_yoy"] == 8.0
         assert out.values["m1_m2_gap"] == round(4.0 - 8.0, 2)
 
+    def test_social_financing_from_sf_month(self) -> None:
+        out = fetch_liquidity("2026-08-07", ts_module=build_default_tushare_fake())
+        assert out.values["social_financing_increment"] == 6245.0
+
     def test_excludes_months_after_asof(self) -> None:
         out = fetch_liquidity("2026-06-30", ts_module=build_default_tushare_fake())
         assert out.values["m1_yoy"] == 3.0  # 07 月数据被排除
+        assert out.values["social_financing_increment"] == 22000.0  # 07 月社融被排除
 
 
 class TestFetchMargin:
@@ -71,3 +76,5 @@ class TestTushareHistory:
         assert "hs300_ep_ttm" in df.columns
         # 月频 M1 在 8 月日频网格上前向填充
         assert df.loc["2026-08-07", "m1_yoy"] == 4.0
+        # 月频社融增量前向填充
+        assert df.loc["2026-08-07", "social_financing_increment"] == 6245.0

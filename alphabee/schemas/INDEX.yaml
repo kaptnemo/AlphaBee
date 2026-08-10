@@ -60,7 +60,7 @@ domains:
     description: 市场状态域（指数估值、利率流动性、市场宽度、风险偏好）
     field_count: 28
     primary_source: [akshare, tushare]
-    apis: [index_dailybasic, yield_cnbd, shibor, cn_m, cn_sf, us_tycr, margin, stock_index_pe_lg, stock_index_pb_lg, stock_a_ttm_lyr, stock_a_all_pb, bond_china_yield, bond_zh_us_rate, macro_china_shibor_all, macro_china_money_supply, macro_china_shrzgm, stock_market_activity_legu, stock_zh_index_daily, stock_sse_deal_daily, stock_szse_summary, stock_margin_sse, stock_margin_szse]
+    apis: [index_dailybasic, shibor, cn_m, sf_month, us_tycr, margin, stock_index_pe_lg, stock_index_pb_lg, stock_a_ttm_lyr, stock_a_all_pb, bond_china_yield, bond_zh_us_rate, macro_china_shibor_all, macro_china_money_supply, macro_china_shrzgm, stock_market_activity_legu, stock_zh_index_daily, stock_sse_deal_daily, stock_szse_summary, stock_margin_sse, stock_margin_szse]
 
 adapters:
   tushare:
