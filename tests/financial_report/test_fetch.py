@@ -1,10 +1,20 @@
 from alphabee.financial_report.fetch import (
+    _extract_report_year,
     _is_message,
     _iter_text_blocks,
     _render_tool_call,
     build_fetch_prompt,
     build_file_tree,
 )
+
+
+class TestExtractReportYear:
+    def test_extracts_year_from_annual_report_name(self) -> None:
+        assert _extract_report_year("江西沃格光电集团股份有限公司_2025_年年度报告") == "2025"
+
+    def test_none_when_no_year(self) -> None:
+        assert _extract_report_year("审计报告") is None
+        assert _extract_report_year("") is None
 
 
 class TestBuildFetchPrompt:
@@ -20,6 +30,16 @@ class TestBuildFetchPrompt:
         assert "Glob" in prompt
         assert "file_tree" in prompt
         assert "不要" in prompt
+
+    def test_announces_report_year(self) -> None:
+        prompt = build_fetch_prompt("某公司_2025_年年度报告", "q")
+        assert "2025 年" in prompt
+        assert "按期间回答" in prompt
+
+    def test_handles_report_without_year(self) -> None:
+        prompt = build_fetch_prompt("审计报告", "q")
+        assert "本报告年度" in prompt
+        assert "None" not in prompt
 
 
 class TestBuildFileTree:
