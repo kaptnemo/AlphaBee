@@ -1,0 +1,67 @@
+# AlphaBee Tushare Adapter — 市场状态域字段映射
+# API: index_dailybasic()、yield_cnbd()、shibor()、cn_m()、cn_sf()、us_tycr()、margin()
+#
+# 注意：本映射描述 tushare 源字段 → AlphaBee canonical 字段的对应关系。
+# 实际采集目前以 akshare 为主（无需 token），tushare 作为权限就绪后的备选路径。
+
+# ─────────────────────────────────────────
+# 指数估值 index_dailybasic()
+# 每只指数一行；需按指数代码过滤 ts_code
+# ─────────────────────────────────────────
+index_dailybasic:
+  pe:   hs300_pe_ttm    # 实际按指数映射，见下方 INDEX_CODE_MAP 说明
+  pb:   hs300_pb
+
+# ─────────────────────────────────────────
+# 中债国债收益率 yield_cnbd()
+# 列含 curve_type、yield；取十年期行（curve_type=国债，期限10年）
+# ─────────────────────────────────────────
+yield_cnbd:
+  yield: cn_10y_yield
+
+# ─────────────────────────────────────────
+# SHIBOR shibor()
+# ─────────────────────────────────────────
+shibor:
+  shibor_3m: shibor_3m
+
+# ─────────────────────────────────────────
+# 美债收益率 us_tycr()
+# ─────────────────────────────────────────
+us_tycr:
+  yield: us_10y_yield
+
+# ─────────────────────────────────────────
+# 货币供应 cn_m()
+# ─────────────────────────────────────────
+cn_m:
+  m1_yoy: m1_yoy
+  m2_yoy: m2_yoy
+
+# ─────────────────────────────────────────
+# 社融 cn_sf()
+# ─────────────────────────────────────────
+cn_sf:
+  sf: social_financing_increment
+
+# ─────────────────────────────────────────
+# 两融 margin()
+# ─────────────────────────────────────────
+margin:
+  rzye: margin_balance   # 融资余额（元），adapter 层 /1e8 换算为亿元
+
+# 指数代码 → canonical 字段前缀
+# 单指数行情接口返回的 pe/pb 需按指数归属映射到对应字段
+index_code_map:
+  "000300.SH": hs300
+  "000905.SH": cs500
+  "000852.SH": cs1000
+  "399006.SZ": cyb
+
+# 衍生字段（adapter 层计算规则）
+derived:
+  hs300_ep_ttm: "100 / hs300_pe_ttm"
+  cs500_ep_ttm: "100 / cs500_pe_ttm"
+  cs1000_ep_ttm: "100 / cs1000_pe_ttm"
+  cyb_ep_ttm: "100 / cyb_pe_ttm"
+  m1_m2_gap: "m1_yoy - m2_yoy"

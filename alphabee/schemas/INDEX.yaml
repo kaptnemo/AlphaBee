@@ -55,6 +55,13 @@ domains:
     primary_source: tushare
     apis: [fina_mainbz]
 
+  market_regime:
+    file: schemas/market_regime.yaml
+    description: 市场状态域（指数估值、利率流动性、市场宽度、风险偏好）
+    field_count: 28
+    primary_source: [akshare, tushare]
+    apis: [index_dailybasic, yield_cnbd, shibor, cn_m, cn_sf, us_tycr, margin, stock_index_pe_lg, stock_index_pb_lg, stock_a_ttm_lyr, stock_a_all_pb, bond_china_yield, bond_zh_us_rate, macro_china_shibor_all, macro_china_money_supply, macro_china_shrzgm, stock_market_activity_legu, stock_zh_index_daily, stock_sse_deal_daily, stock_szse_summary, stock_margin_sse, stock_margin_szse]
+
 adapters:
   tushare:
     financial_mapping:   adapters/tushare/financial_mapping.yaml
@@ -64,9 +71,11 @@ adapters:
     expectation_mapping: adapters/tushare/expectation_mapping.yaml
     risk_mapping:        adapters/tushare/risk_mapping.yaml
     operation_mapping:   adapters/tushare/operation_mapping.yaml
+    market_regime_mapping: adapters/tushare/market_regime_mapping.yaml
   akshare:
     industry_mapping:    adapters/akshare/industry_mapping.yaml
     risk_mapping:        adapters/akshare/risk_mapping.yaml
+    market_regime_mapping: adapters/akshare/market_regime_mapping.yaml
 
 # ─────────────────────────────────────────
 # 已识别的 Gap 字段（规则引用但暂无数据源接口）
@@ -99,3 +108,31 @@ field_gaps:
   - field: industry_revenue_yoy
     used_by: derived_facts/rules/market_share_change.yaml
     gap: 无直接 API；需从行业成分股财务数据加权汇总，或引入外部行业数据库
+
+  - field: cyb_pe_ttm
+    used_by: market_regime/rules/valuation.yaml
+    gap: 乐咕 legu 指数估值未覆盖创业板指；tushare index_dailybasic 需有效 token
+
+  - field: cyb_pb
+    used_by: market_regime/rules/valuation.yaml
+    gap: 同 cyb_pe_ttm，tushare index_dailybasic 需有效 token
+
+  - field: cyb_ep_ttm
+    used_by: market_regime/rules/valuation.yaml
+    gap: 依赖 cyb_pe_ttm 数据源可用性
+
+  - field: social_financing_yoy
+    used_by: market_regime/rules/liquidity.yaml
+    gap: akshare macro_china_shrzgm 只提供社融增量，存量同比需另寻数据源
+
+  - field: breadth_above_ma60_pct
+    used_by: market_regime/rules/trend.yaml
+    gap: 需全市场个股日线历史（5000+ 标的 × 60 交易日）计算，暂无低成本接口；可后续用抽样或日级缓存
+
+  - field: nh_nl_diff
+    used_by: market_regime/rules/trend.yaml
+    gap: 需全市场个股 52 周高低点数据，暂无低成本接口
+
+  - field: etf_net_inflow
+    used_by: market_regime/rules/risk_preference.yaml
+    gap: 当前无稳定免费 ETF 资金流数据源（东方财富接口不稳定）

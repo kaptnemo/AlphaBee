@@ -1,0 +1,511 @@
+# AlphaBee 内部标准字段 — 市场状态域（Market Regime）
+# 覆盖：指数估值、利率与流动性、市场宽度、风险偏好
+# 频率：日频为主，宏观指标月频
+#
+# 说明：本域描述“整个市场”的状态，与 market.yaml（个股行情估值）区分。
+# 市场状态引擎（alphabee/market_regime/）只消费本域 canonical 字段。
+
+# ─────────────────────────────────────────
+# 指数估值 (Index Valuation)
+# ─────────────────────────────────────────
+
+hs300_pe_ttm:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 沪深300 滚动市盈率（PE-TTM，整体法）
+  aliases:
+    zh: [沪深300市盈率, 沪深300PE, HS300 PE]
+    en: [CSI300 PE TTM, CSI300 P/E]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pe]
+    akshare: [stock_index_pe_lg.滚动市盈率]
+  notes: 指数代码 000300.SH / sh000300。
+
+hs300_pb:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 沪深300 市净率（整体法）
+  aliases:
+    zh: [沪深300市净率, 沪深300PB]
+    en: [CSI300 PB]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pb]
+    akshare: [stock_index_pb_lg.市净率]
+
+hs300_ep_ttm:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 沪深300 盈利收益率（%）= 100 / 沪深300 PE-TTM，用于计算股债收益差 ERP
+  aliases:
+    zh: [沪深300盈利收益率, 沪深300EP]
+    en: [CSI300 earnings yield]
+  required_by: []
+  source_mappings: {}
+  notes: 由 hs300_pe_ttm 在 adapter 层换算（100 / pe_ttm）。
+
+cs500_pe_ttm:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 中证500 滚动市盈率（PE-TTM）
+  aliases:
+    zh: [中证500市盈率, 中证500PE]
+    en: [CSI500 PE TTM]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pe]
+    akshare: [stock_index_pe_lg.滚动市盈率]
+  notes: 指数代码 000905.SH。
+
+cs500_pb:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 中证500 市净率
+  aliases:
+    zh: [中证500市净率, 中证500PB]
+    en: [CSI500 PB]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pb]
+    akshare: [stock_index_pb_lg.市净率]
+
+cs500_ep_ttm:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 中证500 盈利收益率（%）= 100 / 中证500 PE-TTM
+  aliases:
+    zh: [中证500盈利收益率, 中证500EP]
+    en: [CSI500 earnings yield]
+  required_by: []
+  source_mappings: {}
+  notes: 由 cs500_pe_ttm 在 adapter 层换算（100 / pe_ttm）。
+
+cs1000_pe_ttm:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 中证1000 滚动市盈率（PE-TTM）
+  aliases:
+    zh: [中证1000市盈率, 中证1000PE]
+    en: [CSI1000 PE TTM]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pe]
+    akshare: [stock_index_pe_lg.滚动市盈率]
+  notes: 指数代码 000852.SH。
+
+cs1000_pb:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 中证1000 市净率
+  aliases:
+    zh: [中证1000市净率, 中证1000PB]
+    en: [CSI1000 PB]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pb]
+    akshare: [stock_index_pb_lg.市净率]
+
+cs1000_ep_ttm:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 中证1000 盈利收益率（%）= 100 / 中证1000 PE-TTM
+  aliases:
+    zh: [中证1000盈利收益率, 中证1000EP]
+    en: [CSI1000 earnings yield]
+  required_by: []
+  source_mappings: {}
+  notes: 由 cs1000_pe_ttm 在 adapter 层换算（100 / pe_ttm）。
+
+all_market_pe_ttm:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: A股整体滚动市盈率（全体个股 PE-TTM 中位数）
+  aliases:
+    zh: [全A市盈率, 市场整体PE]
+    en: [all-market PE TTM, whole-market PE]
+  required_by: []
+  source_mappings:
+    akshare: [stock_a_ttm_lyr.middlePETTM]
+
+all_market_pe_10y_percentile:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: A股整体滚动市盈率近10年历史分位（0-1，数据源直接提供）
+  aliases:
+    zh: [全A市盈率分位, PE历史分位]
+    en: [all-market PE 10y percentile]
+  required_by: []
+  source_mappings:
+    akshare: [stock_a_ttm_lyr.quantileInRecent10YearsMiddlePeTtm]
+
+all_market_pb:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: A股整体市净率（全体个股 PB 中位数）
+  aliases:
+    zh: [全A市净率, 市场整体PB]
+    en: [all-market PB]
+  required_by: []
+  source_mappings:
+    akshare: [stock_a_all_pb.middlePB]
+
+all_market_pb_10y_percentile:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: A股整体市净率近10年历史分位（0-1，数据源直接提供）
+  aliases:
+    zh: [全A市净率分位, PB历史分位]
+    en: [all-market PB 10y percentile]
+  required_by: []
+  source_mappings:
+    akshare: [stock_a_all_pb.quantileInRecent10YearsMiddlePB]
+
+cyb_pe_ttm:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 创业板指 滚动市盈率（PE-TTM）
+  aliases:
+    zh: [创业板市盈率, 创业板指PE]
+    en: [ChiNext PE TTM]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pe]
+  notes: 当前暂无可用 akshare 数据源，见 INDEX.yaml field_gaps。
+
+cyb_pb:
+  category: market_regime
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 创业板指 市净率
+  aliases:
+    zh: [创业板市净率, 创业板指PB]
+    en: [ChiNext PB]
+  required_by: []
+  source_mappings:
+    tushare: [index_dailybasic.pb]
+  notes: 当前暂无可用 akshare 数据源，见 INDEX.yaml field_gaps。
+
+cyb_ep_ttm:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 创业板指 盈利收益率（%）= 100 / 创业板指 PE-TTM
+  aliases:
+    zh: [创业板盈利收益率, 创业板EP]
+    en: [ChiNext earnings yield]
+  required_by: []
+  source_mappings: {}
+  notes: 由 cyb_pe_ttm 在 adapter 层换算（100 / pe_ttm）；受 cyb_pe_ttm 数据源可用性约束。
+
+# ─────────────────────────────────────────
+# 利率与流动性 (Interest Rate & Liquidity)
+# ─────────────────────────────────────────
+
+cn_10y_yield:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 中债10年期国债到期收益率（%）
+  aliases:
+    zh: [十年国债收益率, 中债10年期国债, 无风险利率]
+    en: [China 10y treasury yield, risk-free rate]
+  required_by: []
+  source_mappings:
+    tushare: [yield_cnbd]
+    akshare: [bond_china_yield.10年, bond_zh_us_rate.中国国债收益率10年]
+
+us_10y_yield:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 美国10年期国债收益率（%）
+  aliases:
+    zh: [美债10年期收益率, 美债收益率]
+    en: [US 10y treasury yield]
+  required_by: []
+  source_mappings:
+    tushare: [us_tycr]
+    akshare: [bond_zh_us_rate.美国国债收益率10年]
+
+shibor_3m:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 3个月 SHIBOR 报价利率（%）
+  aliases:
+    zh: [Shibor3M, 三个月Shibor]
+    en: [3-month SHIBOR]
+  required_by: []
+  source_mappings:
+    tushare: [shibor]
+    akshare: [macro_china_shibor_all.3M-定价]
+
+m1_yoy:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [monthly]
+  description: 狭义货币供应量 M1 同比增速（%）
+  aliases:
+    zh: [M1同比, M1增速]
+    en: [M1 YoY growth]
+  required_by: []
+  source_mappings:
+    tushare: [cn_m.m1_yoy]
+    akshare: [macro_china_money_supply.货币(M1)-同比增长]
+
+m2_yoy:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [monthly]
+  description: 广义货币供应量 M2 同比增速（%）
+  aliases:
+    zh: [M2同比, M2增速]
+    en: [M2 YoY growth]
+  required_by: []
+  source_mappings:
+    tushare: [cn_m.m2_yoy]
+    akshare: [macro_china_money_supply.货币和准货币(M2)-同比增长]
+
+m1_m2_gap:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [monthly]
+  description: M1-M2 剪刀差（%）= M1同比 - M2同比，反映企业活钱与居民储蓄的相对变化
+  aliases:
+    zh: [M1-M2剪刀差]
+    en: [M1-M2 gap]
+  required_by: []
+  source_mappings: {}
+  notes: 由 m1_yoy - m2_yoy 在 adapter 层计算。
+
+social_financing_increment:
+  category: market_regime
+  type: float
+  unit: CNY_100M
+  frequency: [monthly]
+  description: 社会融资规模当月增量（亿元）
+  aliases:
+    zh: [社融增量, 新增社融]
+    en: [social financing increment]
+  required_by: []
+  source_mappings:
+    tushare: [cn_sf.sf]
+    akshare: [macro_china_shrzgm.社会融资规模增量]
+
+social_financing_yoy:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [monthly]
+  description: 社会融资规模存量同比增速（%）
+  aliases:
+    zh: [社融存量同比]
+    en: [social financing stock YoY]
+  required_by: []
+  source_mappings: {}
+  notes: 当前 akshare macro_china_shrzgm 只提供增量，存量同比需另寻数据源，见 INDEX.yaml field_gaps。
+
+# ─────────────────────────────────────────
+# 市场趋势与宽度 (Trend & Breadth)
+# ─────────────────────────────────────────
+
+hs300_close:
+  category: market_regime
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 沪深300 收盘点位
+  aliases:
+    zh: [沪深300收盘, 沪深300点位]
+    en: [CSI300 close]
+  required_by: []
+  source_mappings:
+    tushare: [index_daily.close]
+    akshare: [stock_zh_index_daily.close]
+
+hs300_ma20:
+  category: market_regime
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 沪深300 20日均线（月线）
+  aliases:
+    zh: [沪深300 MA20]
+    en: [CSI300 20-day MA]
+  required_by: []
+  source_mappings: {}
+  notes: 由 hs300_close 近20个交易日序列计算。
+
+hs300_ma60:
+  category: market_regime
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 沪深300 60日均线（季线）
+  aliases:
+    zh: [沪深300 MA60]
+    en: [CSI300 60-day MA]
+  required_by: []
+  source_mappings: {}
+  notes: 由 hs300_close 近60个交易日序列计算。
+
+hs300_ma250:
+  category: market_regime
+  type: float
+  unit: CNY
+  frequency: [daily]
+  description: 沪深300 250日均线（年线）
+  aliases:
+    zh: [沪深300 MA250]
+    en: [CSI300 250-day MA]
+  required_by: []
+  source_mappings: {}
+  notes: 由 hs300_close 近250个交易日序列计算。
+
+breadth_above_ma60_pct:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 全市场站上60日均线的股票占比（%），核心宽度指标
+  aliases:
+    zh: [站上60日线比例, 市场宽度]
+    en: [breadth above MA60, percentage above 60d MA]
+  required_by: []
+  source_mappings: {}
+  notes: 需全市场个股日线历史计算，暂无低成本数据源，见 INDEX.yaml field_gaps。
+
+nh_nl_diff:
+  category: market_regime
+  type: int
+  unit: COUNT
+  frequency: [daily]
+  description: 创新高家数 - 创新低家数（NH-NL）
+  aliases:
+    zh: [创新高减创新低, NH-NL]
+    en: [new highs minus new lows, NH-NL]
+  required_by: []
+  source_mappings: {}
+  notes: 需全市场个股52周高低点数据，暂无低成本数据源，见 INDEX.yaml field_gaps。
+
+up_stock_ratio:
+  category: market_regime
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 上涨家数占比（%）= 上涨家数 / (上涨+下跌+平盘)
+  aliases:
+    zh: [上涨家数占比, 涨跌家数比]
+    en: [advancing stocks ratio]
+  required_by: []
+  source_mappings:
+    akshare: [stock_market_activity_legu.上涨]
+
+limit_up_count:
+  category: market_regime
+  type: int
+  unit: COUNT
+  frequency: [daily]
+  description: 涨停家数
+  aliases:
+    zh: [涨停家数, 涨停数]
+    en: [limit-up count]
+  required_by: []
+  source_mappings:
+    akshare: [stock_market_activity_legu.涨停]
+
+limit_down_count:
+  category: market_regime
+  type: int
+  unit: COUNT
+  frequency: [daily]
+  description: 跌停家数
+  aliases:
+    zh: [跌停家数, 跌停数]
+    en: [limit-down count]
+  required_by: []
+  source_mappings:
+    akshare: [stock_market_activity_legu.跌停]
+
+# ─────────────────────────────────────────
+# 风险偏好 (Risk Preference)
+# ─────────────────────────────────────────
+
+market_turnover:
+  category: market_regime
+  type: float
+  unit: CNY_100M
+  frequency: [daily]
+  description: 沪深两市股票成交额合计（亿元）
+  aliases:
+    zh: [两市成交额, 成交金额]
+    en: [market turnover, total A-share turnover]
+  required_by: []
+  source_mappings:
+    akshare: [stock_sse_deal_daily.成交金额, stock_szse_summary.成交金额]
+  notes: 上交所成交金额单位亿元 + 深交所成交金额单位元（÷1e8 后相加）。
+
+margin_balance:
+  category: market_regime
+  type: float
+  unit: CNY_100M
+  frequency: [daily]
+  description: 沪深两市融资余额合计（亿元），杠杆资金规模
+  aliases:
+    zh: [融资余额, 两融余额中的融资]
+    en: [margin balance, financing balance]
+  required_by: []
+  source_mappings:
+    tushare: [margin]
+    akshare: [stock_margin_sse.融资余额, stock_margin_szse.融资余额]
+  notes: 上交所单位元（÷1e8），深交所单位亿元，相加为两市融资余额。
+
+etf_net_inflow:
+  category: market_regime
+  type: float
+  unit: CNY_100M
+  frequency: [daily]
+  description: 股票 ETF 资金净流入（亿元）
+  aliases:
+    zh: [ETF资金流, ETF净流入]
+    en: [ETF net inflow]
+  required_by: []
+  source_mappings: {}
+  notes: 当前无稳定免费数据源，见 INDEX.yaml field_gaps。

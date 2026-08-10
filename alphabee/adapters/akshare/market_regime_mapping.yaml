@@ -1,0 +1,112 @@
+# AlphaBee AkShare Adapter — 市场状态域字段映射
+# API: stock_index_pe_lg()、stock_index_pb_lg()、stock_a_ttm_lyr()、stock_a_all_pb()
+#      bond_china_yield()、bond_zh_us_rate()、macro_china_shibor_all()、
+#      macro_china_money_supply()、macro_china_shrzgm()、stock_market_activity_legu()、
+#      stock_zh_index_daily()、stock_sse_deal_daily()、stock_szse_summary()、
+#      stock_margin_sse()、stock_margin_szse()
+#
+# akshare 为当前市场状态域的主要数据源（无需 token）。
+# 每个 API 的字段名映射；含行选择逻辑的（如债券取 10 年期）在采集器中处理。
+
+# ─────────────────────────────────────────
+# 指数估值 stock_index_pe_lg(symbol="沪深300"/"中证500"/"中证1000")
+# ─────────────────────────────────────────
+stock_index_pe_lg:
+  滚动市盈率: hs300_pe_ttm   # 实际按 symbol 映射，见 COLLECTOR_INDEX_MAP
+
+stock_index_pb_lg:
+  市净率: hs300_pb
+
+# ─────────────────────────────────────────
+# 全A整体估值 stock_a_ttm_lyr() / stock_a_all_pb()
+# ─────────────────────────────────────────
+stock_a_ttm_lyr:
+  middlePETTM: all_market_pe_ttm
+  quantileInRecent10YearsMiddlePeTtm: all_market_pe_10y_percentile
+
+stock_a_all_pb:
+  middlePB: all_market_pb
+  quantileInRecent10YearsMiddlePB: all_market_pb_10y_percentile
+
+# ─────────────────────────────────────────
+# 债券收益率 bond_china_yield() / bond_zh_us_rate()
+# 需取"中债国债收益率曲线"且期限=10年的行
+# ─────────────────────────────────────────
+bond_china_yield:
+  10年: cn_10y_yield
+
+bond_zh_us_rate:
+  中国国债收益率10年: cn_10y_yield
+  美国国债收益率10年: us_10y_yield
+
+# ─────────────────────────────────────────
+# SHIBOR macro_china_shibor_all()
+# ─────────────────────────────────────────
+macro_china_shibor_all:
+  3M-定价: shibor_3m
+
+# ─────────────────────────────────────────
+# 货币供应 macro_china_money_supply()
+# ─────────────────────────────────────────
+macro_china_money_supply:
+  货币(M1)-同比增长: m1_yoy
+  货币和准货币(M2)-同比增长: m2_yoy
+
+# ─────────────────────────────────────────
+# 社融增量 macro_china_shrzgm()
+# ─────────────────────────────────────────
+macro_china_shrzgm:
+  社会融资规模增量: social_financing_increment
+
+# ─────────────────────────────────────────
+# 市场活跃度 stock_market_activity_legu()
+# 该接口为当前快照（无历史）；上涨/下跌/平盘行用于计算 up_stock_ratio
+# ─────────────────────────────────────────
+stock_market_activity_legu:
+  上涨: up_count
+  下跌: down_count
+  平盘: flat_count
+  涨停: limit_up_count
+  跌停: limit_down_count
+
+# ─────────────────────────────────────────
+# 指数日线 stock_zh_index_daily(symbol="sh000300") — 新浪源
+# 用于计算 hs300_close / hs300_ma20/60/250
+# ─────────────────────────────────────────
+stock_zh_index_daily:
+  close: hs300_close
+
+# ─────────────────────────────────────────
+# 两市成交额 stock_sse_deal_daily(date) + stock_szse_summary(date)
+# ─────────────────────────────────────────
+stock_sse_deal_daily:
+  成交金额: sse_turnover_cny100m   # 单位：亿元
+
+stock_szse_summary:
+  成交金额: szse_turnover_cny   # 单位：元，采集器 /1e8 后与 SSE 相加
+
+# ─────────────────────────────────────────
+# 融资余额 stock_margin_sse(start_date,end_date) + stock_margin_szse(date)
+# ─────────────────────────────────────────
+stock_margin_sse:
+  融资余额: sse_margin_balance_cny   # 单位：元，采集器 /1e8 换算为亿元
+
+stock_margin_szse:
+  融资余额: szse_margin_balance_cny100m   # 单位：亿元
+
+# 指数名称 → canonical 字段前缀
+collector_index_map:
+  沪深300: hs300
+  中证500: cs500
+  中证1000: cs1000
+
+# 衍生字段（adapter/采集器层计算规则）
+derived:
+  hs300_ep_ttm: "100 / hs300_pe_ttm"
+  cs500_ep_ttm: "100 / cs500_pe_ttm"
+  cs1000_ep_ttm: "100 / cs1000_pe_ttm"
+  cyb_ep_ttm: "100 / cyb_pe_ttm"
+  m1_m2_gap: "m1_yoy - m2_yoy"
+  up_stock_ratio: "up_count / (up_count + down_count + flat_count) * 100"
+  market_turnover: "sse_turnover_cny100m + szse_turnover_cny / 1e8"
+  margin_balance: "sse_margin_balance_cny / 1e8 + szse_margin_balance_cny100m"
