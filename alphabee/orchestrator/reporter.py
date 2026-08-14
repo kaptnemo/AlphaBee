@@ -9,7 +9,10 @@ from langchain_core.runnables import RunnableConfig
 
 from alphabee.agents.schemas import ReportOutput
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
-from alphabee.orchestrator.contracts import ReportArtifact
+from alphabee.orchestrator.contracts import (
+    ReportArtifact,
+    ReportGenerationPayload,
+)
 from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT
 from alphabee.orchestrator.services.payload_builders import (
     build_report_generation_payload,
@@ -21,6 +24,105 @@ from alphabee.utils.pipeline import extract_text, make_id, parse_json
 
 def _make_id(prefix: str) -> str:
     return make_id(prefix)
+
+
+def _markdown_list(items: list[str], limit: int = 6) -> str:
+    lines = []
+    for idx, item in enumerate(items or []):
+        if idx >= limit:
+            lines.append(f"- … 共 {len(items)} 项")
+            break
+        lines.append(f"- {item}")
+    return "\n".join(lines) or "无"
+
+
+def build_deterministic_report(payload: ReportGenerationPayload, failure_reason: str = "") -> dict:
+    """LLM 报告生成失败时，用结构化 payload 拼装一份可消费的确定性报告。
+
+    与 ``_fallback_report`` 的区别：这里把信号/异常/冲突/论点/审查问题等真实分析
+    结果渲染进各章节，而不是只剩一句错误信息。这样即使模型侧连续空输出，
+    最终交付的报告也包含实质内容，可被 review gate 与 CLI 正常展示。
+    """
+    company = payload.company
+    symbol = company.symbol or "标的"
+
+    metric_lines = [
+        f"- {m.name} = {m.value}（{m.level or 'none'}）{m.interpretation}" for m in payload.metrics.top_metrics
+    ]
+    key_metrics = "\n".join(metric_lines) or "无关键衍生指标"
+
+    signal_lines = [
+        f"- [{s.level}] {s.signal_id}: {s.interpretation}"
+        for s in payload.signals.signals
+        if s.level not in ("none", "unknown", "")
+    ]
+    signal_analysis = "\n".join(signal_lines) or "无风险信号触发"
+
+    anomaly_lines = [
+        f"- {a.get('metric')}: level={a.get('level')} z_score={a.get('z_score')}"
+        for a in payload.anomaly.anomalies
+        if a.get("level") != "none"
+    ]
+    anomaly_lines += [
+        f"- 模式 {p.get('pattern_name')} severity={p.get('severity')}" for p in payload.anomaly.pattern_matches
+    ]
+    anomaly_detection = "\n".join(anomaly_lines) or "未检出异常"
+
+    conflict_lines: list[str] = []
+    if payload.conflict_analysis:
+        for c in payload.conflict_analysis.conflicts:
+            conflict_lines.append(f"- [{c.severity}] {c.theme}: {c.description[:150]}")
+            for h in c.hypotheses:
+                conflict_lines.append(f"    - 假设({h.verification_status}): {h.explanation[:120]}")
+    conflict_analysis = "\n".join(conflict_lines) or "无冲突"
+
+    dim_lines: list[str] = []
+    for dim_id, d in (payload.thesis or {}).get("dimensions", {}).items():
+        dim_lines.append(
+            f"- {dim_id}: judgment={d.get('judgment')} score={d.get('score')} confidence={d.get('confidence')}"
+        )
+    dimension_analysis = "\n".join(dim_lines) or "无维度分析"
+
+    insight = payload.insight
+    exec_summary = (
+        (insight.core_view if insight and insight.core_view else "")
+        or (payload.thesis or {}).get("summary", "")
+        or "确定性分析结果汇总。"
+    )
+    viewpoint = (insight.base_case if insight else "") or ((payload.thesis or {}).get("viewpoint") or "")
+    scenario = ""
+    if insight:
+        scenario = f"基准情景：{insight.base_case}\n乐观情景：{insight.bull_case}\n悲观情景：{insight.bear_case}"
+    falsification = _markdown_list(insight.what_would_change_my_mind if insight else [])
+
+    high_msgs = [i.message for i in payload.issues if i.severity in ("high", "critical")]
+    medium_msgs = [i.message for i in payload.issues if i.severity == "medium"]
+    risks = "\n".join(f"- {m}" for m in high_msgs[:8]) or "无高危风险项"
+    review_findings = "\n".join(f"- [{i.severity}] {i.message}" for i in payload.issues[:10]) or "无审查问题"
+    if failure_reason:
+        review_findings += f"\n\n（LLM 报告生成失败，已降级为确定性报告：{failure_reason}）"
+
+    return ReportArtifact(
+        title=f"{symbol} 财报质量体检报告（确定性降级版）",
+        sections={
+            "executive_summary": exec_summary[:800],
+            "investment_viewpoint": viewpoint[:800],
+            "scenario_analysis": scenario[:800] or "无情景分析数据",
+            "key_metrics": key_metrics[:1000],
+            "signal_analysis": signal_analysis[:1000],
+            "anomaly_detection": anomaly_detection[:800],
+            "conflict_analysis": conflict_analysis[:1000],
+            "dimension_analysis": dimension_analysis[:1000],
+            "review_findings": review_findings[:1000],
+            "falsification_conditions": falsification[:800] or "无明确证伪条件",
+            "risks": risks[:800],
+            "disclaimer": "本报告由 AlphaBee 自动生成，不构成投资建议。",
+        },
+        summary=exec_summary[:200],
+        risk_count={"high": len(high_msgs), "medium": len(medium_msgs), "low": 0},
+        overall_confidence="unknown" if failure_reason else "medium",
+        disclosed_issue_ids=[i.id for i in payload.issues if i.severity in ("high", "critical")],
+    ).model_dump(mode="json")
 
 
 def _fallback_report(summary: str) -> dict:
@@ -80,7 +182,8 @@ async def generate_report(
                 break
 
     try:
-        model = create_chat_model("agent.report")
+        # max_tokens 放宽，避免推理型模型把输出预算耗在思考过程、正文被截成空。
+        model = create_chat_model("agent.report", max_tokens=8192)
         raw_text = ""
         parse_error: Exception | None = None
         for attempt in range(2):
@@ -137,8 +240,11 @@ async def generate_report(
                     related_step=step.id,
                 )
             )
-            report_value = _fallback_report(
-                f"报告生成结果不符合结构化 schema，已降级保存错误信息。原始输出：{raw_text[:1000]}"
+            # LLM 连续空输出时，用结构化 payload 拼一份可消费的确定性报告，
+            # 保证最终交付仍有实质内容（信号/异常/冲突/论点/审查问题）。
+            report_value = build_deterministic_report(
+                payload,
+                failure_reason=f"LLM 返回空文本或无法解析。原始输出：{raw_text[:200]}",
             )
     except Exception as exc:
         new_issues.append(
@@ -150,7 +256,7 @@ async def generate_report(
                 related_step=step.id,
             )
         )
-        report_value = _fallback_report(f"报告生成失败: {exc}")
+        report_value = build_deterministic_report(payload, failure_reason=str(exc))
 
     report_artifact = Artifact(
         id=_make_id("artifact"),
