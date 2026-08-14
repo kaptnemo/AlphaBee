@@ -1,0 +1,76 @@
+# 风险偏好调整规则（不进主权重，评分确定后按规则 ±5 微调）
+#
+# 输入：两市成交额组合（market_turnover）、融资余额（margin_balance）、
+#       ETF 资金流（etf_net_inflow）。
+# 输出：risk_preference_delta（-5 ~ +5）与 risk_preference_status。
+#
+# 设计：情绪因子只作调整项，防止污染结构性判断。
+#   turnover_delta：成交额较 20 日均值偏离（%），过热为正、萎缩为负
+#   margin_delta：融资余额较 20 日均值变化（%），杠杆扩张为正、去杠杆为负
+#   etf_delta：股票 ETF 净流入强度（亿，弱化权重）
+
+rules:
+  turnover_delta:
+    weight: 0.50
+    description: 成交额热度调整项：较近20日均值偏离百分比，±10% 封顶
+    required_facts: [turnover_vs_20d_avg_pct]
+    formula: >
+      (turnover_vs_20d_avg_pct > 10) * 5 +
+      (turnover_vs_20d_avg_pct < -10) * -5 +
+      (turnover_vs_20d_avg_pct >= -10) * (turnover_vs_20d_avg_pct <= 10) * turnover_vs_20d_avg_pct * 0.5
+    thresholds:
+      overheated: "value >= 3"
+      neutral: "-3 <= value < 3"
+      cooling: "value < -3"
+    interpretation:
+      overheated: 成交额明显放大，情绪过热，警惕追高风险
+      neutral: 成交额热度正常
+      cooling: 成交额萎缩，情绪降温
+
+  margin_delta:
+    weight: 0.30
+    description: 融资余额热度调整项：较近20日均值变化百分比，±10% 封顶
+    required_facts: [margin_vs_20d_avg_pct]
+    formula: >
+      (margin_vs_20d_avg_pct > 10) * 3 +
+      (margin_vs_20d_avg_pct < -10) * -3 +
+      (margin_vs_20d_avg_pct >= -10) * (margin_vs_20d_avg_pct <= 10) * margin_vs_20d_avg_pct * 0.3
+    thresholds:
+      leveraged: "value >= 2"
+      neutral: "-2 <= value < 2"
+      deleveraging: "value < -2"
+    interpretation:
+      leveraged: 融资余额扩张，杠杆资金进场，情绪偏热
+      neutral: 杠杆资金中性
+      deleveraging: 融资余额收缩，去杠杆进行中
+
+  etf_delta:
+    weight: 0.20
+    description: ETF 资金流调整项：净流入（亿元）强度，每 50 亿 +1，封顶 ±2
+    required_facts: [etf_net_inflow]
+    formula: >
+      (etf_net_inflow > 100) * 2 +
+      (etf_net_inflow < -100) * -2 +
+      (etf_net_inflow >= -100) * (etf_net_inflow <= 100) * etf_net_inflow * 0.02
+    thresholds:
+      inflow: "value >= 1"
+      neutral: "-1 <= value < 1"
+      outflow: "value < -1"
+    interpretation:
+      inflow: ETF 明显净流入，机构资金进场
+      neutral: ETF 资金流中性
+      outflow: ETF 明显净流出，机构资金离场
+
+  risk_preference_delta:
+    weight: 0.0
+    description: 风险偏好调整总分 = 成交额×50% + 融资×30% + ETF×20%，范围 -5 ~ +5
+    required_derived_facts: [turnover_delta, margin_delta, etf_delta]
+    formula: turnover_delta * 0.50 + margin_delta * 0.30 + etf_delta * 0.20
+    thresholds:
+      positive: "value >= 1"
+      neutral: "-1 <= value < 1"
+      negative: "value < -1"
+    interpretation:
+      positive: 风险偏好升温，资金面活跃
+      neutral: 风险偏好中性
+      negative: 风险偏好回落，资金面谨慎

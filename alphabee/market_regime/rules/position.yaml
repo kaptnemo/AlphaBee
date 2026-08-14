@@ -1,0 +1,13 @@
+# 仓位映射规则：评分 → 仓位区间 + 单周最大调整限制
+#
+# bands 按 score 升序排列；命中条件为 band.min <= score < band.max（最后一档含上限）。
+# weekly_delta_limit：单周建议仓位最大 ±10%，防止追涨杀跌。
+
+bands:
+  - { min: 85, max: 100, regime: 强牛阶段,   position_lo: 0.80, position_hi: 0.90 }
+  - { min: 70, max: 85,  regime: 趋势健康,   position_lo: 0.60, position_hi: 0.80 }
+  - { min: 50, max: 70,  regime: 震荡阶段,   position_lo: 0.40, position_hi: 0.60 }
+  - { min: 30, max: 50,  regime: 风险增加,   position_lo: 0.20, position_hi: 0.40 }
+  - { min: 0,  max: 30,  regime: 熊市阶段,   position_lo: 0.00, position_hi: 0.20 }
+
+weekly_delta_limit: 0.10

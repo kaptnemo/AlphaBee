@@ -1,0 +1,21 @@
+# 市场总分 = 估值×30% + 趋势×40% + 流动性×30%，范围 0-100
+#
+# risk_preference_delta 不进主权重，作为调整项在 score_engine 里叠加。
+
+name: market_score
+weight: 1.0
+required_facts: []
+required_derived_facts: [valuation_score, trend_score, liquidity_score]
+formula: valuation_score * 0.30 + trend_score * 0.40 + liquidity_score * 0.30
+thresholds:
+  strong_bull: "value >= 85"
+  healthy: "70 <= value < 85"
+  sideways: "50 <= value < 70"
+  risk_on: "30 <= value < 50"
+  bear: "value < 30"
+interpretation:
+  strong_bull: 强牛阶段，市场全面向好
+  healthy: 趋势健康，市场处于上行周期
+  sideways: 震荡阶段，方向不明，控制仓位
+  risk_on: 风险增加，市场承压，谨慎防守
+  bear: 熊市阶段，系统性下行风险大，严控仓位

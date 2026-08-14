@@ -76,6 +76,8 @@ class ArtifactType(enum.StrEnum):
     THESIS_REVIEW = "thesis_review"
     REPORT = "report"
     EVALUATION_REPORT = "evaluation_report"
+    MARKET_REGIME = "market_regime"
+    MARKET_REGIME_HISTORY = "market_regime_history"
 
 
 # Canonical mapping from the ``ArtifactType`` to a role group.
@@ -94,6 +96,8 @@ _ARTIFACT_TYPE_TO_ROLE_GROUP: dict[ArtifactType | str, ArtifactRoleGroup] = {
     ArtifactType.THESIS_REVIEW: ArtifactRoleGroup.REVIEW,
     ArtifactType.REPORT: ArtifactRoleGroup.NARRATIVE,
     ArtifactType.EVALUATION_REPORT: ArtifactRoleGroup.EVALUATION,
+    ArtifactType.MARKET_REGIME: ArtifactRoleGroup.DATA,
+    ArtifactType.MARKET_REGIME_HISTORY: ArtifactRoleGroup.DATA,
     # Legacy / external types kept for backward compatibility:
     "fundamental_analysis": ArtifactRoleGroup.DATA,
     "market_analysis": ArtifactRoleGroup.DATA,

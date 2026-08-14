@@ -1,0 +1,68 @@
+# 估值引擎规则（引擎权重 30%）
+#
+# 指标层：erp_score / pe_percentile_score / pb_percentile_score（各 0-100 分）
+# 聚合层：valuation_score = ERP×50% + PE分位×30% + PB分位×20%
+#
+# 分位规则要求调用方预先提供 0-1 的 percentile 事实（erp_percentile /
+# pe_percentile / pb_percentile）。分位计算在 score_engine 完成：过去 10 年
+# 滚动窗口、只含窗口内数据，避免前视偏差。
+#
+# 口径：ERP 历史分位越高 → 股债利差越厚 → 估值越便宜 → 得分越高；
+#       PE/PB 分位越低 → 越便宜 → 得分越高。
+
+rules:
+  erp_score:
+    weight: 0.5
+    description: ERP（股债利差）历史分位得分；分位 ≥90% 记 90-100，逐档递减
+    required_facts: [erp_percentile]
+    formula: erp_percentile * 100
+    thresholds:
+      attractive: "value >= 70"
+      neutral: "40 <= value < 70"
+      expensive: "value < 40"
+    interpretation:
+      attractive: ERP 处于历史高分位，股债利差厚，权益相对债券更具吸引力
+      neutral: ERP 处于中性分位，股债性价比均衡
+      expensive: ERP 处于历史低分位，股债利差薄，权益相对债券吸引力不足
+
+  pe_percentile_score:
+    weight: 0.3
+    description: 沪深300 PE-TTM 历史分位得分；分位越低越便宜，得分越高
+    required_facts: [pe_percentile]
+    formula: (1 - pe_percentile) * 100
+    thresholds:
+      cheap: "value >= 70"
+      neutral: "40 <= value < 70"
+      expensive: "value < 40"
+    interpretation:
+      cheap: PE 分位偏低，估值便宜
+      neutral: PE 分位中性
+      expensive: PE 分位偏高，估值偏贵
+
+  pb_percentile_score:
+    weight: 0.2
+    description: 沪深300 PB 历史分位得分；分位越低越便宜，得分越高
+    required_facts: [pb_percentile]
+    formula: (1 - pb_percentile) * 100
+    thresholds:
+      cheap: "value >= 70"
+      neutral: "40 <= value < 70"
+      expensive: "value < 40"
+    interpretation:
+      cheap: PB 分位偏低，估值便宜
+      neutral: PB 分位中性
+      expensive: PB 分位偏高，估值偏贵
+
+  valuation_score:
+    weight: 0.30
+    description: 估值引擎总分 = ERP×50% + PE分位×30% + PB分位×20%
+    required_derived_facts: [erp_score, pe_percentile_score, pb_percentile_score]
+    formula: erp_score * 0.5 + pe_percentile_score * 0.3 + pb_percentile_score * 0.2
+    thresholds:
+      high_attractiveness: "value >= 70"
+      neutral: "50 <= value < 70"
+      low: "value < 50"
+    interpretation:
+      high_attractiveness: 估值处于历史吸引力区间，股债性价比高，对中期回报有支撑
+      neutral: 估值处于中性区间，对回报影响中性
+      low: 估值偏贵，股债利差薄，对中期回报构成压力

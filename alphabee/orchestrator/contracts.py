@@ -13,6 +13,15 @@ from alphabee.agents.schemas import (
     VerificationResultItem,
 )
 from alphabee.core import Artifact
+from alphabee.market_regime.models import MarketScore, RegimeSnapshot
+
+# Phase 1 market-regime typed payloads are re-exported here so the orchestrator's
+# artifact contract convention (`find_artifact_model` / coerce helpers) exposes
+# them alongside the per-symbol contracts.
+__all__ = [
+    "MarketScore",
+    "RegimeSnapshot",
+]
 
 
 class FactCollectionArtifact(BaseModel):
@@ -253,6 +262,8 @@ def find_artifact_model[ArtifactModelT: BaseModel](
                 continue
             value = artifact.value
         else:
+            if not isinstance(artifact, dict):
+                continue
             if artifact.get("type") != artifact_type:
                 continue
             value = artifact.get("value")
@@ -309,4 +320,24 @@ def coerce_verification_artifact(value: Any) -> VerificationArtifact | None:
             rejected_count=rejected_count,
             unknown_count=len(results) - verified_count - rejected_count,
         )
+    return None
+
+
+def coerce_market_regime(value: Any) -> RegimeSnapshot | None:
+    """Coerce a ``market_regime`` artifact value into the typed ``RegimeSnapshot``."""
+    if value is None or isinstance(value, RegimeSnapshot):
+        return value
+    if isinstance(value, dict):
+        return RegimeSnapshot.model_validate(value)
+    return None
+
+
+def coerce_market_regime_history(value: Any) -> list[RegimeSnapshot] | None:
+    """Coerce a ``market_regime_history`` artifact value into a list of snapshots."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [RegimeSnapshot.model_validate(item) for item in value]
+    if isinstance(value, dict) and isinstance(value.get("history"), list):
+        return [RegimeSnapshot.model_validate(item) for item in value["history"]]
     return None

@@ -1,0 +1,68 @@
+# 流动性引擎规则（引擎权重 30%）
+#
+# 指标层：rate_cycle_score / m1_m2_score / socfin_score（各 0-100 分）
+# 聚合层：liquidity_score = 利率周期 + M1-M2 + 社融拐点
+#
+# 权重口径：利率周期 40% + M1-M2 30% + 社融拐点 30%。
+# 利率：下降趋势记 90 / 稳定 60 / 上升 30。
+# 社融：看拐点不看绝对值（rate_cycle 用趋势输入，socfin 用同比变化输入）。
+
+rules:
+  rate_cycle_score:
+    weight: 0.40
+    description: 利率周期得分：cn_10y_yield 较 90 天前下降记 90，稳定记 60，上升记 30
+    required_facts: [yield_90d_change]
+    formula: >
+      (yield_90d_change < -0.15) * 90 +
+      (yield_90d_change > 0.15) * 30 +
+      (yield_90d_change >= -0.15) * (yield_90d_change <= 0.15) * 60
+    thresholds:
+      easing: "value >= 80"
+      stable: "45 <= value < 80"
+      tightening: "value < 45"
+    interpretation:
+      easing: 利率下行周期，流动性宽松，利好权益估值
+      stable: 利率平稳，流动性中性
+      tightening: 利率上行周期，流动性收紧，压制权益估值
+
+  m1_m2_score:
+    weight: 0.30
+    description: M1-M2 剪刀差得分：剪刀差 >0 且扩大代表企业活钱增多，流动性传导积极
+    required_facts: [m1_m2_gap]
+    formula: 50 + m1_m2_gap * 10
+    thresholds:
+      positive: "value >= 60"
+      neutral: "40 <= value < 60"
+      negative: "value < 40"
+    interpretation:
+      positive: M1-M2 剪刀差为正，资金活化，流动性传导积极
+      neutral: M1-M2 剪刀差中性
+      negative: M1-M2 剪刀差为负，资金活化不足，流动性传导偏弱
+
+  socfin_score:
+    weight: 0.30
+    description: 社融拐点得分：社融同比变化为正代表信用扩张拐点向上（看拐点不看绝对值）
+    required_facts: [socfin_yoy_change]
+    formula: 50 + socfin_yoy_change * 10
+    thresholds:
+      expansion: "value >= 60"
+      neutral: "40 <= value < 60"
+      contraction: "value < 40"
+    interpretation:
+      expansion: 社融同比改善，信用拐点向上，流动性环境友好
+      neutral: 社融变化中性
+      contraction: 社融同比恶化，信用拐点向下，流动性环境承压
+
+  liquidity_score:
+    weight: 0.30
+    description: 流动性引擎总分 = 利率周期×40% + M1-M2×30% + 社融拐点×30%
+    required_derived_facts: [rate_cycle_score, m1_m2_score, socfin_score]
+    formula: rate_cycle_score * 0.40 + m1_m2_score * 0.30 + socfin_score * 0.30
+    thresholds:
+      loose: "value >= 70"
+      neutral: "50 <= value < 70"
+      tight: "value < 50"
+    interpretation:
+      loose: 流动性宽松，资金面友好
+      neutral: 流动性中性
+      tight: 流动性偏紧，资金面承压

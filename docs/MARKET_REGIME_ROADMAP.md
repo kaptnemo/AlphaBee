@@ -151,9 +151,15 @@ poetry run pytest -m integration tests/market_regime
 
 ---
 
-## Phase 1：确定性评分引擎（核心，先不做 LLM）
+## Phase 1：确定性评分引擎（核心，先不做 LLM）✅ 已实现
 
 目标：用现有 `derived_facts` 的 **YAML 规则 + 拓扑排序 + 安全求值** 模式，把三个引擎（估值/趋势/流动性）+ 风险偏好调整全部做成确定性、可审计、可单测的规则集。
+
+> 落地说明（相对本文档的差异）：
+> - 每个主题 YAML（valuation/trend/liquidity/risk_preference）内用 `rules:` 键同时声明**指标层**与**聚合层**规则，`market_score.yaml` 单独放市场总分规则（本文档模块清单中未列出，属合理补充）。
+> - `score_engine.py` 直接复用 `derived_facts` 的 `Engine`（拓扑排序）+ `DerivedFactRule`（safe-AST 公式 + thresholds → level/interpretation），`MarketRegimeRule` 覆写 `compute` 把"未知变量"映射为 `missing_fact`。
+> - 缺失子指标时聚合**重归一化**权重（缺失项跳过，不作为 0 拖累）；全部缺失则对应引擎/总分为 `None` 并记录 `missing_facts`。
+> - 产出：`MarketScore` / `RegimeSnapshot` / `PositionAdvice`（models.py），ArtifactType 新增 `MARKET_REGIME` / `MARKET_REGIME_HISTORY`，`contracts.py` re-export 类型 + `coerce_market_regime`，`build_decision_issue` 生成 Decision/Issue。
 
 ### 1.1 规则引擎复用
 

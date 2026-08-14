@@ -15,10 +15,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from alphabee.market_regime.models import MarketIndicatorSnapshot
+from alphabee.market_regime.models import MarketIndicatorSnapshot, MarketScoreResult
 
 DEFAULT_DATA_DIR = Path("data") / "market_regime"
 DEFAULT_CSV = DEFAULT_DATA_DIR / "market_indicator_daily.csv"
+DEFAULT_SCORE_HISTORY = DEFAULT_DATA_DIR / "market_score_history.csv"
 
 
 def default_csv_path() -> Path:
@@ -59,13 +60,17 @@ def append_snapshot(snapshot: MarketIndicatorSnapshot, path: str | Path | None =
     existing = load_history(csv_path)
     new_row = _snapshot_row(snapshot)
 
+    # 以 date 为主键做 upsert：同一天多次采集（盘中/收盘各跑一次）只保留最后一次，
+    # backfill_history 反复执行也不会产生重复行 → 幂等，可直接定期调度。
     if existing.empty:
         frame = pd.DataFrame([new_row])
     else:
+        # 剔除同 date 的旧行后再拼接新行 → "最新快照获胜"
         date_mask = existing["date"] != snapshot.date
         frame = pd.concat([existing.loc[date_mask], pd.DataFrame([new_row])], ignore_index=True)
 
-    # 固定列序：date, fetched_at, 其余 canonical 字段按字母序
+    # 固定列序：date, fetched_at, 其余 canonical 字段按字母序。
+    # 好处：列结构稳定可读；新增字段时不漂移；便于 diff 与 CSV 审计。
     base_cols = ["date", "fetched_at"]
     value_cols = [col for col in sorted(frame.columns) if col not in base_cols]
     frame = frame[base_cols + value_cols].sort_values("date").reset_index(drop=True)
@@ -85,3 +90,79 @@ def drop_date(date_str: str, path: str | Path | None = None) -> bool:
         return False
     dropped.to_csv(csv_path, index=False)
     return True
+
+
+# ── 周级评分历史（market_score_history.csv） ──────────────────────────────
+#
+# 列：date, total_score, valuation_score, trend_score, liquidity_score,
+#     risk_preference_delta, regime, position_low, position_high
+# 该表为 position.py 的 prev_week_score（单周仓位限制）提供上一期建议仓位。
+
+DEFAULT_SCORE_COLUMNS = [
+    "date",
+    "total_score",
+    "valuation_score",
+    "trend_score",
+    "liquidity_score",
+    "risk_preference_delta",
+    "regime",
+    "position_low",
+    "position_high",
+]
+
+
+def score_history_path() -> Path:
+    return DEFAULT_SCORE_HISTORY
+
+
+def load_score_history(path: str | Path | None = None) -> pd.DataFrame:
+    """Load weekly score history as a DataFrame (empty frame with columns if missing)."""
+    csv_path = Path(path) if path else score_history_path()
+    if not csv_path.exists():
+        return pd.DataFrame(columns=DEFAULT_SCORE_COLUMNS)
+    df = pd.read_csv(csv_path)
+    for col in DEFAULT_SCORE_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
+    df["date"] = df["date"].astype(str)
+    return df[DEFAULT_SCORE_COLUMNS]
+
+
+def latest_score_row(path: str | Path | None = None) -> pd.Series | None:
+    """Latest weekly score row (used to read ``prev_week_score``), or None."""
+    df = load_score_history(path)
+    if df.empty:
+        return None
+    df = df.dropna(subset=["date"]).sort_values("date")
+    if df.empty:
+        return None
+    return df.iloc[-1]
+
+
+def append_score_result(result: MarketScoreResult, path: str | Path | None = None) -> Path:
+    """Upsert a scored week into ``market_score_history.csv`` (idempotent by date)."""
+    csv_path = Path(path) if path else score_history_path()
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing = load_score_history(csv_path)
+    row = {
+        "date": result.date,
+        "total_score": result.scores.total_score,
+        "valuation_score": result.scores.valuation_score,
+        "trend_score": result.scores.trend_score,
+        "liquidity_score": result.scores.liquidity_score,
+        "risk_preference_delta": result.scores.risk_preference_delta,
+        "regime": result.snapshot.regime if result.snapshot else "",
+        "position_low": result.position.position_low if result.position else None,
+        "position_high": result.position.position_high if result.position else None,
+    }
+    # 与 append_snapshot 相同的 upsert 语义：周级评分按 date 幂等写入，
+    # 保证 position.py 读 prev_week_score 时拿到的是最新一次评分。
+    if existing.empty:
+        frame = pd.DataFrame([row])
+    else:
+        mask = existing["date"] != result.date
+        frame = pd.concat([existing.loc[mask], pd.DataFrame([row])], ignore_index=True)
+    frame = frame[DEFAULT_SCORE_COLUMNS].sort_values("date").reset_index(drop=True)
+    frame.to_csv(csv_path, index=False)
+    return csv_path

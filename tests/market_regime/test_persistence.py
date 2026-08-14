@@ -1,9 +1,12 @@
-from alphabee.market_regime.models import CollectorOutput, MarketIndicatorSnapshot
+from alphabee.market_regime.models import CollectorOutput, MarketIndicatorSnapshot, MarketScore, MarketScoreResult
 from alphabee.market_regime.persistence import (
+    append_score_result,
     append_snapshot,
     drop_date,
     latest_date,
+    latest_score_row,
     load_history,
+    load_score_history,
 )
 
 
@@ -63,3 +66,38 @@ class TestMerge:
         snap.merge(CollectorOutput(values={"hs300_pe_ttm": 13.5}, source="akshare:test"))
         assert snap.values["hs300_pe_ttm"] == 13.5
         assert snap.sources["hs300_pe_ttm"] == "akshare:test"
+
+
+def _score_result(date_str: str, total: float) -> MarketScoreResult:
+    return MarketScoreResult(
+        date=date_str,
+        scores=MarketScore(valuation_score=60.0, trend_score=70.0, liquidity_score=50.0, total_score=total),
+    )
+
+
+class TestScoreHistory:
+    def test_appends_and_upserts_weekly_scores(self, tmp_path) -> None:
+        csv = tmp_path / "market_score_history.csv"
+        append_score_result(_score_result("2026-08-07", 72.5), path=csv)
+        append_score_result(_score_result("2026-08-14", 65.0), path=csv)
+        append_score_result(_score_result("2026-08-14", 66.0), path=csv)  # upsert
+
+        df = load_score_history(csv)
+        assert len(df) == 2
+        assert list(df["date"]) == ["2026-08-07", "2026-08-14"]
+        row = df[df["date"] == "2026-08-14"].iloc[0]
+        assert row["total_score"] == 66.0
+        assert row["valuation_score"] == 60.0
+
+    def test_latest_score_row_provides_prev_week_position(self, tmp_path) -> None:
+        csv = tmp_path / "market_score_history.csv"
+        append_score_result(_score_result("2026-08-07", 72.5), path=csv)
+        latest = latest_score_row(csv)
+        assert latest is not None
+        assert latest["total_score"] == 72.5
+
+    def test_empty_history_returns_none(self, tmp_path) -> None:
+        csv = tmp_path / "market_score_history.csv"
+        assert latest_score_row(csv) is None
+        df = load_score_history(csv)
+        assert df.empty

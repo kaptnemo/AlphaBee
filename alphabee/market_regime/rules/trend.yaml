@@ -1,0 +1,70 @@
+# 趋势引擎规则（引擎权重 40%）
+#
+# 指标层：ma_structure_score / breadth_score / momentum_score（各 0-100 分）
+# 聚合层：trend_score = 均线结构 + 市场宽度 + 动量（低权）
+#
+# 权重口径：宽度 > 均线 > 动量（动量仅作微调）。
+#
+# 趋势层输入为日频行情 canonical 字段（hs300_close / hs300_ma20 / hs300_ma60 /
+# hs300_ma250 / breadth_above_ma60_pct / up_stock_ratio / hs300_mom_20d）。
+
+rules:
+  ma_structure_score:
+    weight: 0.30
+    description: 均线结构得分：多头排列（close>ma20>ma60>ma250）计高分，空头排列计低分
+    required_facts: [hs300_close, hs300_ma20, hs300_ma60, hs300_ma250]
+    formula: >
+      (hs300_close > hs300_ma20) * 25 +
+      (hs300_ma20 > hs300_ma60) * 25 +
+      (hs300_ma60 > hs300_ma250) * 25 +
+      (hs300_close > hs300_ma250) * 25
+    thresholds:
+      bullish: "value >= 75"
+      neutral: "40 <= value < 75"
+      bearish: "value < 40"
+    interpretation:
+      bullish: 均线多头排列，趋势向上
+      neutral: 均线结构中性，方向不明
+      bearish: 均线空头排列，趋势向下
+
+  breadth_score:
+    weight: 0.40
+    description: 市场宽度得分：站上60日均线股票占比（%）越高，市场参与度越健康
+    required_facts: [breadth_above_ma60_pct]
+    formula: breadth_above_ma60_pct
+    thresholds:
+      healthy: "value >= 70"
+      neutral: "40 <= value < 70"
+      weak: "value < 40"
+    interpretation:
+      healthy: 市场宽度健康，多数个股站上60日线，赚钱效应强
+      neutral: 市场宽度中性，个股分化
+      weak: 市场宽度弱，多数个股跌破60日线，风险偏好低
+
+  momentum_score:
+    weight: 0.30
+    description: 动量得分：沪深300近20日涨幅（%），仅作趋势的微调项
+    required_facts: [hs300_mom_20d]
+    formula: 50 + hs300_mom_20d * 2
+    thresholds:
+      positive: "value >= 55"
+      neutral: "45 <= value < 55"
+      negative: "value < 45"
+    interpretation:
+      positive: 短期动量为正，微调上行
+      neutral: 短期动量中性
+      negative: 短期动量转负，微调下行
+
+  trend_score:
+    weight: 0.40
+    description: 趋势引擎总分 = 均线×30% + 宽度×40% + 动量×30%
+    required_derived_facts: [ma_structure_score, breadth_score, momentum_score]
+    formula: ma_structure_score * 0.30 + breadth_score * 0.40 + momentum_score * 0.30
+    thresholds:
+      strong: "value >= 70"
+      neutral: "50 <= value < 70"
+      weak: "value < 50"
+    interpretation:
+      strong: 趋势强劲，市场处于上行状态
+      neutral: 趋势中性，方向待确认
+      weak: 趋势走弱，市场处于下行状态
