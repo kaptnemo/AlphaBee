@@ -22,6 +22,7 @@ from pathlib import Path  # noqa: E402
 
 from deepagents import create_deep_agent  # noqa: E402
 from deepagents.backends import FilesystemBackend  # noqa: E402
+from deepagents.middleware._tool_exclusion import _ToolExclusionMiddleware  # noqa: E402
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
 from langchain_core.runnables.config import RunnableConfig  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
@@ -46,6 +47,11 @@ def create_report_fetch_agent(report_dir: str | Path) -> CompiledStateGraph[Any,
         model=create_chat_model("financial_report"),
         system_prompt=system_prompt,
         backend=backend,
+        middleware=[
+            # 硬性移除 ls：目录树已在 system prompt 中给出，禁止代理再做目录遍历。
+            # 保留 grep/glob/read_file —— 它们只作用于本报告文件夹，是检索正文所必需。
+            _ToolExclusionMiddleware(excluded=frozenset({"ls", "write_file", "edit_file", "execute"})),
+        ],
     )
 
 

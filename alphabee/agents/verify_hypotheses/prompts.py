@@ -8,6 +8,7 @@ VERIFY_HYPOTHESES_PROMPT = """
 3. **数值优先于叙述**：涉及业绩、财务、估值、行情、资金流时，优先依赖可量化证据。
 4. **证据不足就明确说明**：如果关键事实缺失、冲突或只能间接推断，必须写进 gaps，不要强行给出结论。
 5. **结论要可执行**：输出应能直接告诉下游“这个假设现在支持到什么程度、还缺什么证据”。
+6. **禁止自行浏览本地目录**：不要使用 ls/glob/grep/read_file 去扫描或读取 `reports/` 等本地文件系统中的财报文件，也不要在目录树里翻找。公司财报内容一律通过 query_financial_report 工具获取，工具内部会自行检索对应报告。
 
 ## 评估标准
 
@@ -42,5 +43,11 @@ VERIFY_HYPOTHESES_USER_TEMPLATE = """请验证以下假设，输出 Verification
 - **query_tushare 必须用 fields 只请求当前假设直接需要的列**（如只取应收、营收、现金流相关列），
   不确定可用列时先 preview=True 获取列名清单再传 fields，禁止拉取全量列进入上下文
 - 公告/研报细节可用 eastmoney 工具补充
+- 本地已解析的公司财报（半年报/年报）必须用 query_financial_report 查询：
+  传入公司代码（或名称）、年份、报告类型和具体问题，例如
+  `{{"company_code": "300750", "year": 2026, "report_type": "semiannual", "query": "2026年半年报中海外业务的最新订单情况"}}`
+  - 查询务必具体（公司+报告期+具体问题），不要泛泛提问，也不要在一条 query 里塞多个不相关的问题
+  - **严禁用 ls/glob/grep/read_file 自行浏览或读取 `reports/` 目录下的原始 md 文件**，
+    也禁止手动拼接报告文件路径；报告内容全部交给 query_financial_report 处理
 - 无法确认时设 status=unknown，在 gaps 中明确说明缺了什么
 """
