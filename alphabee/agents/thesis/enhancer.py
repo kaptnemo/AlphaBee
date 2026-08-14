@@ -151,15 +151,31 @@ class ThesisEnhancer:
             fact_summary=fact_summary or "无",
         )
 
-        response = self._llm.invoke(
-            [
-                SystemMessage(content=ENHANCER_SYSTEM_PROMPT),
-                HumanMessage(content=prompt),
-            ]
-        )
-
-        raw_text = self._extract_text(response.content)
-        return self._parse_json(raw_text)
+        # 空输出 / 解析失败时重试一次，并追加“纯 JSON 输出”的强硬提示。
+        # 推理型模型偶发只输出推理、不输出最终正文，重试可显著提高成功率。
+        last_error: Exception | None = None
+        for attempt in range(2):
+            retry_hint = (
+                ""
+                if attempt == 0
+                else (
+                    "\n\n## 重要：上一次输出为空或无法解析为 JSON。\n"
+                    "请只输出一个完整的、合法的纯 JSON 对象，不要输出任何分析文字、"
+                    "Markdown 代码块标记或前后缀说明。"
+                )
+            )
+            try:
+                response = self._llm.invoke(
+                    [
+                        SystemMessage(content=ENHANCER_SYSTEM_PROMPT),
+                        HumanMessage(content=prompt + retry_hint),
+                    ]
+                )
+                raw_text = self._extract_text(response.content)
+                return self._parse_json(raw_text)
+            except Exception as exc:
+                last_error = exc
+        raise last_error
 
     def _extract_text(self, content) -> str:
         return extract_text(content)

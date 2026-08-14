@@ -267,6 +267,10 @@ class CompanyContext:
     clarification rather than fabricating it.
     """
 
+    # TODO: 信息太少，考虑增加：
+    # - 经营模式简述（主营业务、收入来源、客户结构、供应链特征）
+    # - 行业生命周期阶段（成长/成熟/衰退/周期性）
+
     name: str = ""
     symbol: str = ""
     industry: str = ""

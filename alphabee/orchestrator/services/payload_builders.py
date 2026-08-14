@@ -35,6 +35,17 @@ from alphabee.orchestrator.contracts import (
 from alphabee.orchestrator.state import OrchestratorState
 
 
+def _bounded_text(text: str, limit: int = 300) -> str:
+    """Truncate a single text field to keep report prompts bounded."""
+    text = (text or "").strip()
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _bounded_texts(items: list[str], limit: int = 200, max_items: int = 5) -> list[str]:
+    """Truncate and cap a list of evidence strings."""
+    return [_bounded_text(item, limit) for item in (items or [])[:max_items]]
+
+
 def default_anomaly_fact_values() -> dict[str, float]:
     """Return neutral anomaly facts so anomaly signal rules can evaluate."""
     from alphabee.agents.anomaly.registry import ANOMALY_PATTERNS, ensure_loaded
@@ -298,6 +309,8 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             enriched_hypotheses: list[ReportConflictHypothesisPayload] = []
             for hypothesis in conflict.hypotheses:
                 verification = verify_by_hid.get(hypothesis.id)
+                # 对证据类字段做有界截断，防止验证阶段（尤其本地财报工具返回的长文本）
+                # 使报告生成 prompt 无限膨胀，导致模型空输出或超长解析失败。
                 enriched_hypotheses.append(
                     ReportConflictHypothesisPayload(
                         explanation=hypothesis.explanation,
@@ -306,12 +319,14 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
                         support_score=(verification.support_score if verification is not None else None),
                         contradiction_score=(verification.contradiction_score if verification is not None else None),
                         confidence=(verification.confidence if verification is not None else None),
-                        supporting_evidence=(
-                            list(verification.supporting_evidence) if verification is not None else []
+                        supporting_evidence=_bounded_texts(
+                            verification.supporting_evidence if verification is not None else []
                         ),
-                        refuting_evidence=(list(verification.refuting_evidence) if verification is not None else []),
-                        gaps=list(verification.gaps) if verification is not None else [],
-                        summary=verification.summary if verification is not None else "",
+                        refuting_evidence=_bounded_texts(
+                            verification.refuting_evidence if verification is not None else []
+                        ),
+                        gaps=_bounded_texts(verification.gaps if verification is not None else []),
+                        summary=_bounded_text(verification.summary if verification is not None else ""),
                     )
                 )
 

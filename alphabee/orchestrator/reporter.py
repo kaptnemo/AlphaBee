@@ -81,45 +81,64 @@ async def generate_report(
 
     try:
         model = create_chat_model("agent.report")
-        response = model.invoke(
-            [
-                SystemMessage(content=REPORT_GENERATOR_PROMPT),
-                HumanMessage(
-                    content=(
-                        json_instruction(ReportOutput)
-                        + "\n\n"
-                        + (
-                            "请基于以下结构化数据生成财报质量体检报告。\n\n"
-                            if not rewrite_reason
-                            else "这是一次基于质量 gate 的重写，请优先修复以下问题后再生成新报告：\n"
-                            f"- {rewrite_reason}\n\n"
-                            "请保持所有判断忠实于输入 JSON，不要新增分析，只修复结构覆盖、风险披露和冲突呈现。\n\n"
+        raw_text = ""
+        parse_error: Exception | None = None
+        for attempt in range(2):
+            # 首次空输出或解析失败时重试一次，并追加“纯 JSON 输出”的强硬提示。
+            # 推理型模型偶发只输出推理过程、不输出最终正文，重试可显著提高成功率。
+            retry_hint = (
+                ""
+                if attempt == 0
+                else (
+                    "\n\n## 重要：上一次输出为空或无法解析为 JSON。\n"
+                    "请只输出一个完整的、合法的纯 JSON 对象，不要输出任何分析文字、"
+                    "Markdown 代码块标记或前后缀说明。"
+                )
+            )
+            response = model.invoke(
+                [
+                    SystemMessage(content=REPORT_GENERATOR_PROMPT),
+                    HumanMessage(
+                        content=(
+                            json_instruction(ReportOutput)
+                            + "\n\n"
+                            + (
+                                "请基于以下结构化数据生成财报质量体检报告。\n\n"
+                                if not rewrite_reason
+                                else "这是一次基于质量 gate 的重写，请优先修复以下问题后再生成新报告：\n"
+                                f"- {rewrite_reason}\n\n"
+                                "请保持所有判断忠实于输入 JSON，不要新增分析，只修复结构覆盖、风险披露和冲突呈现。\n\n"
+                            )
+                            + (
+                                f"上一版报告：\n```json\n{json.dumps(prior_report, ensure_ascii=False, indent=2)}\n```\n\n"
+                                if rewrite_reason and prior_report
+                                else ""
+                            )
+                            + f"输入数据：\n```json\n{prompt_text}\n```"
+                            + retry_hint
                         )
-                        + (
-                            f"上一版报告：\n```json\n{json.dumps(prior_report, ensure_ascii=False, indent=2)}\n```\n\n"
-                            if rewrite_reason and prior_report
-                            else ""
-                        )
-                        + f"输入数据：\n```json\n{prompt_text}\n```"
-                    )
-                ),
-            ]
-        )
-        raw_text = extract_text(response.content)
-        try:
-            report_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")
-        except Exception as exc:
+                    ),
+                ]
+            )
+            raw_text = extract_text(response.content)
+            try:
+                report_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")
+                break
+            except Exception as exc:
+                parse_error = exc
+                report_value = None
+        if report_value is None:
             new_issues.append(
                 Issue(
                     id=_make_id("issue"),
                     severity=IssueSeverity.MEDIUM,
                     category="parse_error",
-                    message=f"ReportOutput parse failed: {exc}",
+                    message=f"ReportOutput parse failed after retry: {parse_error}",
                     related_step=step.id,
                 )
             )
             report_value = _fallback_report(
-                f"报告生成结果不符合结构化 schema，已降级保存错误信息。原始输出：{raw_text[:500]}"
+                f"报告生成结果不符合结构化 schema，已降级保存错误信息。原始输出：{raw_text[:1000]}"
             )
     except Exception as exc:
         new_issues.append(
