@@ -16,7 +16,8 @@
 - **分层流水线**：事实 → 衍生指标(21 条) → 信号(20 条) → 勾稽关系异常(10 条) → 冲突探索(LLM) → 假设验证(LLM+工具) → 洞察综合 → 论点(8 维度) → 审查 → 报告，每层可独立运行和测试
 - **《手把手教你读财报》框架**：10 条一阶勾稽关系 z-score 检测 + 9 个二阶异常模式（虚增收入、存货异常、大存大贷、折旧调节等），每条异常附带附注排查路径
 - **多期趋势基线**：AnomalyEngine 基于近 4 期历史基线 (μ±σ) 检测指标偏离，区分偶然波动与真实异常
-- **冲突探索与证据验证**：LLM 驱动的跨维度矛盾发现（盈利vs现金流、估值vs基本面等5大模式），生成可验证假设并通过 web_search + Tushare + 东方财富研报工具验证
+- **冲突探索与证据验证**：LLM 驱动的跨维度矛盾发现（盈利vs现金流、估值vs基本面等5大模式），生成可验证假设并通过 web_search + Tushare + 东方财富研报 + **本地财报检索**工具验证
+- **本地财报检索**：`reports/` 下已解析的公司公告/财报 markdown 按章节拆分，`query_financial_report` 工具在其上构建受限 deep agent 检索公司自身披露内容，供假设验证等节点核验一手事实
 - **行业语境校准**：从 Tushare 提取权威行业分类，审查层对金融/医药/半导体等高杠杆或高研发行业做阈值调整
 - **YAML 驱动的规则引擎**：所有衍生指标、信号、勾稽关系规则均为声明式 YAML，支持拓扑排序依赖解析与安全 AST 公式求值
 - **统一字段适配层**：Adapter + Schema Registry 将 Tushare/AkShare 原始字段映射为 AlphaBee 规范字段名（7 大领域、125 字段）
@@ -40,7 +41,7 @@ main.py (CLI)
        │   └─ AnomalyEngine (确定性, 10 条 YAML)
        │
        ├─ explore_conflicts          ← 跨维度矛盾发现 (LLM)
-       ├─ verify_hypotheses          ← 假设证据验证 (LLM + 工具)
+       ├─ verify_hypotheses          ← 假设证据验证 (LLM + web/Tushare/研报/本地财报工具)
        ├─ synthesize_insights        ← 上游证据综合与中心洞察提炼
        ├─ run_thesis                 ← 8 维度加权综合评分
        ├─ review_thesis              ← 证据充分性 / 信号一致性 / 语境适配
@@ -334,9 +335,12 @@ LLM 驱动的跨维度矛盾发现引擎，基于上游分析结果检测 **5 �
 
 - **`web_search`**：定性信息检索
 - **`query_tushare`**：结构化财务/市场数据
+- **`query_financial_report`**：本地已解析的公司财报检索（半年报/年报的一手披露内容）
 - **东方财富研报工具**（8 个）：研报列表、研报详情、行业研报、PDF 下载等
 
 每个假设归类为 `verified` / `partial` / `rejected` / `unknown` 四种裁决，输出包含支持证据、反驳证据、置信度评分和证据缺口列表。遵循严格的"唯证据论"原则——不做推测。
+
+> **本地财报读取纪律**：`query_financial_report` 是读取 `reports/` 下财报的唯一途径，验证代理被明确约束不得用 `ls/glob/grep/read_file` 自行浏览或拼接报告原始 md 文件路径。
 
 ### 7. 洞察综合 (SynthesizeInsights)
 
@@ -348,6 +352,16 @@ LLM 驱动的跨维度矛盾发现引擎，基于上游分析结果检测 **5 �
 - **CriticEngine**：从信号层/维度层/系统层汇总质疑追问清单，按严重度去重排序
 - **ThesisReviewer**：两层审查。Layer 1（确定性）检查零置信度/单证据/信号冲突/行业校准。Layer 2（可选 LLM）做定性评估
 - **ThesisEnhancer**（可选 `--enhance`）：LLM 做跨信号模式识别、行业语境化、用户意图适配
+
+### 9. 本地财报检索 (query_financial_report)
+
+`alphabee/financial_report/` 子模块将公司财报/公告的 markdown 原文清洗并拆分为章节目录；`alphabee/tools/financial_report.py` 在其上提供 `query_financial_report` 工具，用受限 deep agent（`ls`/`grep`/`glob`/`read`）在报告目录内检索，回答关于公司自身披露内容的问题。
+
+- **数据准备**：`report_parser.py` 清洗单文件 markdown（去除重复页眉页脚）并按章节拆分到 `reports/<公司名>：<年份><报告期>/`；工具按「公司名 + 年份 + 报告类型」在 `reports/` 下定位报告目录。
+- **`query_financial_report(request)`**：输入 `FinancialReportRequest`（`company_name`/`company_code`、`year`、`report_type`、`query`）。先定位报告目录——无本地报告时返回 `None`（近零成本），有报告时驱动报告代理针对性检索，返回文本答案。
+- **`resolve_company_name_by_code(code)`**：股票代码（`300750` / `300750.SZ`）→ 公司名称反查，供报告目录定位使用。
+- **接入位置**：`verify_hypotheses` 节点已注册该工具，用公司自身披露的经营/财务/风险/展望事实核验假设；prompt 强制通过工具读取，禁止模型自行浏览 `reports/` 原始文件。
+- **成本提示**：工具内部运行一次 LLM 检索代理（数秒~数十秒），查询越具体成本越低；无本地报告的标的不产生任何成本。
 
 ---
 
@@ -488,10 +502,11 @@ alphabee/
   config/               配置读取
   core/                 核心 schema (Run/Step/Artifact/Decision/Issue)
   data_fetch/           数据获取管线 (CLI + scanner + database + fingerprint)
+  financial_report/     财报 markdown 拆分 (report_parser) + 报告检索代理 (fetch / fetch_deepagents)
   harness/              Harness 提示词资产（作为库被 orchestrator 复用）
   middleware/           Web Search 隔离 / 消息限制
   schemas/              规范字段定义 (INDEX.yaml, 125 字段)
-  tools/                通用工具 (web_search, symbol 提取)
+  tools/                通用工具 (web_search, symbol 提取, 本地财报查询 query_financial_report)
   utils/                LLM 客户端 / 日志
   workflow/             监控工作流 (FrameworkMonitor)
 .ai/skills/             统一维护的技能目录
