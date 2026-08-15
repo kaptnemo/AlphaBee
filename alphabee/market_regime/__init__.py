@@ -21,6 +21,9 @@ from alphabee.market_regime.models import (
     MarketScoreResult,
     PositionAdvice,
     RegimeSnapshot,
+    RegimeTransition,
+    SimilarityHit,
+    SimilarityResult,
 )
 from alphabee.market_regime.position import advise_position, load_position_rules
 from alphabee.market_regime.score_engine import MarketScoreEngine, load_rules
@@ -32,6 +35,9 @@ __all__ = [
     "MarketScoreResult",
     "PositionAdvice",
     "RegimeSnapshot",
+    "RegimeTransition",
+    "SimilarityHit",
+    "SimilarityResult",
     "MarketScoreEngine",
     "load_rules",
     "advise_position",

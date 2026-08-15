@@ -144,3 +144,52 @@ class MarketScoreResult(BaseModel):
     rule_results: dict[str, dict[str, Any]] = Field(default_factory=dict)
     position: PositionAdvice | None = None
     snapshot: RegimeSnapshot | None = None
+
+
+class RegimeTransition(BaseModel):
+    """One six-phase state-machine step (Phase 2.1).
+
+    ``phase`` is the candidate classification from the rule layer; ``confidence``
+    is the rule-layer confidence (0-1); ``transition_from`` is the previous week's
+    phase. ``transition_valid``/``suspicious`` reflect the Markov constraint layer:
+    an illegal jump (e.g. ``高位分歧`` straight to ``趋势启动``) keeps the candidate
+    but is flagged ``suspicious`` for manual/LLM review instead of being silently
+    accepted.
+    """
+
+    date: str = ""
+    phase: str = ""
+    confidence: float = 0.0
+    transition_from: str | None = None
+    transition_valid: bool = True
+    suspicious: bool = False
+    rationale: list[str] = Field(default_factory=list)
+
+
+class SimilarityHit(BaseModel):
+    """One historical analog found by the Phase 2.2 similar-history search."""
+
+    date: str = ""
+    phase: str = ""
+    distance: float = 0.0
+    forward_return: float | None = None
+    max_drawdown: float | None = None
+
+
+class SimilarityResult(BaseModel):
+    """Similar-history search output with forward-return statistics.
+
+    ``positive_probability`` / ``median_forward_return`` / ``median_max_drawdown``
+    are computed over the top-``k`` hits. ``limitation_note`` always discloses that
+    similarity is a statistical reference, never a prediction promise.
+    """
+
+    date: str = ""
+    phase: str = ""
+    features: dict[str, float | None] = Field(default_factory=dict)
+    hits: list[SimilarityHit] = Field(default_factory=list)
+    sample_size: int = 0
+    positive_probability: float | None = None
+    median_forward_return: float | None = None
+    median_max_drawdown: float | None = None
+    limitation_note: str = ""

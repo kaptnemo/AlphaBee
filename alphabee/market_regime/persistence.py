@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from alphabee.market_regime.models import MarketIndicatorSnapshot, MarketScoreResult
+from alphabee.market_regime.models import MarketIndicatorSnapshot, MarketScoreResult, RegimeTransition
 
 DEFAULT_DATA_DIR = Path("data") / "market_regime"
 DEFAULT_CSV = DEFAULT_DATA_DIR / "market_indicator_daily.csv"
@@ -164,5 +164,63 @@ def append_score_result(result: MarketScoreResult, path: str | Path | None = Non
         mask = existing["date"] != result.date
         frame = pd.concat([existing.loc[mask], pd.DataFrame([row])], ignore_index=True)
     frame = frame[DEFAULT_SCORE_COLUMNS].sort_values("date").reset_index(drop=True)
+    frame.to_csv(csv_path, index=False)
+    return csv_path
+
+
+# ── 阶段状态历史（regime_history.csv） ─────────────────────────────────────
+#
+# 列：date, phase, confidence, transition_from, transition_valid, suspicious
+# 该表为状态机迁移回放与相似历史搜索（Phase 2）提供"哪天处于哪个阶段"的锚点。
+
+DEFAULT_REGIME_HISTORY = DEFAULT_DATA_DIR / "regime_history.csv"
+
+REGIME_COLUMNS = [
+    "date",
+    "phase",
+    "confidence",
+    "transition_from",
+    "transition_valid",
+    "suspicious",
+]
+
+
+def regime_history_path() -> Path:
+    return DEFAULT_REGIME_HISTORY
+
+
+def load_regime_history(path: str | Path | None = None) -> pd.DataFrame:
+    """Load regime history as a DataFrame (empty frame with columns if missing)."""
+    csv_path = Path(path) if path else regime_history_path()
+    if not csv_path.exists():
+        return pd.DataFrame(columns=REGIME_COLUMNS)
+    df = pd.read_csv(csv_path)
+    for col in REGIME_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
+    df["date"] = df["date"].astype(str)
+    return df[REGIME_COLUMNS]
+
+
+def append_regime_transition(entry: RegimeTransition, path: str | Path | None = None) -> Path:
+    """Upsert one state-machine step into ``regime_history.csv`` (idempotent by date)."""
+    csv_path = Path(path) if path else regime_history_path()
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing = load_regime_history(csv_path)
+    row = {
+        "date": entry.date,
+        "phase": entry.phase,
+        "confidence": entry.confidence,
+        "transition_from": entry.transition_from,
+        "transition_valid": entry.transition_valid,
+        "suspicious": entry.suspicious,
+    }
+    if existing.empty:
+        frame = pd.DataFrame([row])
+    else:
+        mask = existing["date"] != entry.date
+        frame = pd.concat([existing.loc[mask], pd.DataFrame([row])], ignore_index=True)
+    frame = frame[REGIME_COLUMNS].sort_values("date").reset_index(drop=True)
     frame.to_csv(csv_path, index=False)
     return csv_path
