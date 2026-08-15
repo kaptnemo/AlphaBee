@@ -25,10 +25,10 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | 0.1 anomaly 进入 signal/thesis | ✅ | `nodes/analyze.py` 将 AnomalyEngine 输出投影回 `fact_values`，`anomaly_cluster_risk` / `cross_validation_break` 等异常信号规则可命中 |
 | 0.2 ThesisEngine 显式消费 anomaly/conflict/verification/context | ✅ | `nodes/thesis.py` 全量传入；`agents/thesis/engine.py` 的 `run()` 已接收 `anomaly_report / conflict_analysis / verification_results / company_context / insight` |
 | 0.3 canonical field / signal rule 一致性 | 🟡 | 无系统性 schema 校验（工程侧 E3 未落地）；`services/gap_recorder.py` 已把 blocked/missing_fact 信号记录进失败库 |
-| 0.4 Insight schema 脆弱性 | 🟡 | 已做 `moderate→medium` 枚举归一化（`agents/insights/models.py` 的 `_coerce_confidence/_coerce_importance`）；但 parse fail 仍**整层丢弃**，无降级 insight |
+| 0.4 Insight schema 脆弱性 | ✅ | 枚举归一化 + 四级降级阶梯（`agents/insights/rescue.py`：严格解析 → 宽松救援 → 确定性兜底 → 最小骨架），任何失败模式下 insight artifact 必然存在；降级标记随 artifact 落库（degraded / fallback_tier / degradation_reason），报告 prompt 有对应降级分支（见 `tests/orchestrator/test_insight_degradation.py`） |
 | 0.5 待验证/已验证冲突分层 | ✅ | `explore_conflicts` 不再把 provisional 冲突升格为 issue；`verify_hypotheses` 作为结算层：verified/partial 高严重度冲突升格为 `verified_conflict` issue、rejected 沉淀为 decision、状态显式回写 `conflicts_result`；`review_thesis` 只保留 thesis_conflict（见 `tests/orchestrator/test_conflict_lifecycle.py`） |
 | 0.6 用户输出与调试输出分层 | ⬜ | `main.py` `_render_final_report()` 仍把全部 issues（含 parse_error / rewrite 信息）打印到“🐞 系统问题”段 |
-| Phase 1 InsightAgent 稳定观点骨架 | 🟡 | 已接入主图（`nodes/insights.py` + `agents/insights/`），报告 prompt 以 `insight.core_view` 为主线（`prompts.py`）；`what_would_change_my_mind → falsification_conditions` 已贯通；但 parse fail 无降级、`materiality_rank` 未显式驱动报告排序 |
+| Phase 1 InsightAgent 稳定观点骨架 | 🟡 | 已接入主图（`nodes/insights.py` + `agents/insights/`），报告 prompt 以 `insight.core_view` 为主线（`prompts.py`）；`what_would_change_my_mind → falsification_conditions` 已贯通；parse fail 已有四级降级（0.4）；`materiality_rank` 未显式驱动报告排序 |
 | Phase 1.5 探索/验证/结算分层 | 🟡 | 结算层已随 0.5 落地（provisional 不升格、verified/partial 升格为 issue、rejected 沉淀 decision、状态回写 `conflicts_result`）；剩余：验证预算 / 最短排除路径 / 未探索区域记录、evidence refs 硬约束 |
 | Phase 2 BusinessModelContext | 🟡 | `services/company_context.py` 已有 industry / sub_industry / market_cap_category / lifecycle_stage / business_model_summary；无 BusinessModelClassifier、无 playbooks/primitives（见 `DOMAIN_CONTEXT_ROADMAP.md`） |
 | Phase 3 Claim-Evidence Graph | ⬜ | 未实现；`gates.py` 已有 `evidence_coverage / grounding_score` 检查，但上游 Decision 普遍未填 `based_on / evidence_refs` |
@@ -94,10 +94,10 @@ signal level × thesis_impact direction → 按维度平均 → judgment
 
 当前仍存在（经代码确认）：
 
-- `_coerce_confidence / _coerce_importance` 已做枚举归一化（`agents/insights/models.py`），但 **parse fail 仍整层丢弃**：`InsightOutput.model_validate` 失败时只记录一条 `parse_error` issue，不产出 insight artifact
-- insight 失败后，下游退回“维度判断 + 模板解释”模式，观点骨架直接缺失
+- ✅ 枚举归一化 + 四级降级阶梯已落地（`agents/insights/rescue.py`）：严格解析 → 宽松救援 → 确定性兜底 → 最小骨架，任何失败模式下 insight artifact 必然存在（见 `tests/orchestrator/test_insight_degradation.py`）
+- 🟡 `materiality_rank` 仍未显式驱动报告排序（依赖 LLM 自觉引用）
 
-这意味着“观点层”已经有形，但还没有稳定成为最终报告的主轴。
+这意味着“观点层”已经稳定存在（不再整层丢失），但降级产出的观点质量仍低于 LLM 综合，且重要性排序尚未成为硬约束。
 
 ### 7. 冲突探索与验证的状态边界不够清晰 ✅
 
@@ -187,7 +187,7 @@ ThesisEngine.run(
 
 ### 0.4 修复 Insight schema 脆弱性
 
-状态：🟡 部分（枚举归一化已完成，降级 insight 未做）。
+状态：✅ 已实现（2026-08），落地方式见 `docs/INSIGHT_DEGRADATION_DESIGN.md`。
 
 目标：不要让观点骨架因为轻微枚举值漂移而整层失效。
 
@@ -195,13 +195,9 @@ ThesisEngine.run(
 
 - `_coerce_confidence / _coerce_importance`（`agents/insights/models.py`）：`moderate -> medium` 等常见枚举值归一化
 - 对 `importance/confidence/weight` 等字段增加容错映射
-
-待做：
-
-- **parse fail 时保留降级 insight，而不是整层丢弃**（当前 `nodes/insights.py` 解析失败只记 `parse_error` issue，不产出 artifact）
-- 将 parse error 视为“观点层失败”，而不是普通可忽略 warning
-
-> 实施方案见 `docs/INSIGHT_DEGRADATION_DESIGN.md`（四级降级阶梯：严格 → 宽松救援 → 确定性兜底 → 最小骨架）。
+- **四级降级阶梯**（`agents/insights/rescue.py`）：严格解析（Tier 0）→ 宽松救援 `lenient_parse`（Tier 1，只修结构不补内容）→ 确定性兜底 `build_fallback_insight`（Tier 2，从 `build_insight_context` 的 dict 转述合成，只转述不虚构）→ 最小骨架 `build_minimal_insight`（Tier 3）
+- 任何失败模式下 `INSIGHT_ANALYSIS` artifact 必然存在；降级标记（`degraded / fallback_tier / degradation_reason`）随 artifact 落库，报告 prompt 有对应降级分支（`prompts.py`）
+- 测试：`tests/orchestrator/test_insight_degradation.py`（14 用例，含诚实性硬规则 H1 断言）
 
 ### 0.5 分离“待验证冲突”与“已验证冲突”
 
@@ -261,7 +257,7 @@ verify_hypotheses
 
 - ✅ 已接入主图（`nodes/insights.py`），报告 prompt 以 `core_view / central_tension` 为主线（`prompts.py`）
 - ✅ `what_would_change_my_mind → falsification_conditions` 已贯通，insight 的 central_tension / counter_evidence / confidence 进入 thesis（`_apply_insight`）
-- 🟡 parse fail 仍整层丢弃、无降级 insight（对应 0.4，未做）
+- ✅ parse fail 已有四级降级（0.4，`agents/insights/rescue.py`），观点层不再整层丢失
 - 🟡 `materiality_rank` 未显式驱动报告排序（已产出并下发，排序仍依赖 LLM 自觉）
 
 ### 目标输出结构
@@ -654,7 +650,7 @@ ExpectationFitAgent
 
 | 优先级 | 事项 | 价值 | 当前状态 |
 |---|---|---|---|
-| P0 | Insight 降级：parse fail 保留观点骨架（0.4 收尾） | 保住观点主轴，不因 LLM JSON 漂移退回模板模式 | ⬜ 未做（枚举归一化已做） |
+| P0 | Insight 降级：parse fail 保留观点骨架（0.4 收尾） | 保住观点主轴，不因 LLM JSON 漂移退回模板模式 | ✅ 已实现（四级降级，见 `agents/insights/rescue.py` + `test_insight_degradation.py`） |
 | P0 | Decision 补齐 evidence refs | 解决 evidence_coverage 低和结论不可追溯 | 🟡 部分（gate 已检查，多数 Decision 仍未填） |
 | P0 | anomaly 进入 signal/thesis | 修正当前链路断点 | ✅ 已实现 |
 | P0 | ThesisEngine 显式消费 conflict/anomaly | 让高价值发现影响结论 | ✅ 已实现 |
@@ -672,11 +668,13 @@ ExpectationFitAgent
 
 ## 下一步建议
 
-短期最值得做的 3 件事（更新于 2026-08 状态跟踪，按收益排序）：
+短期最值得做的 2 件事（更新于 2026-08 状态跟踪，按收益排序）：
 
-1. 实现 Insight 降级（0.4 收尾）：`InsightOutput` parse fail 时先用宽松解析抢救部分字段，再做确定性兜底（从 signals / anomalies / verified conflicts 合成 `core_view / central_tension`），保证观点骨架不整层丢失。
-   **状态**：⬜ 未做（枚举归一化已完成，`nodes/insights.py` 解析失败仍整层丢弃）。
+1. 给关键 Decision 补齐 evidence refs（Phase 3 前置）：thesis 维度 verdict、conflict rejected、insight 判断都填上 `based_on / evidence_refs`，让 gate 的 evidence_coverage / grounding_score 从“文案检查”变成“来源审计”。
+   **状态**：🟡 部分（gate 已检查，多数 Decision 未填）。
 2. 落地用户输出与调试输出分层（0.6）：`main.py` `_render_final_report()` 只打印用户侧不确定性披露（verified_conflict / thesis_conflict / thesis_gap 等），parse_error / report_rewrite_needed / subagent_failure 转入 debug 视图或附录。
    **状态**：⬜ 未做（CLI 仍打印“🐞 系统问题”段）。
-3. 给关键 Decision 补齐 evidence refs（Phase 3 前置）：thesis 维度 verdict、conflict rejected、insight 判断都填上 `based_on / evidence_refs`，让 gate 的 evidence_coverage / grounding_score 从“文案检查”变成“来源审计”。
-   **状态**：🟡 部分（gate 已检查，多数 Decision 未填）。
+
+已完成（2026-08）：
+
+- ✅ Insight 降级（0.4 收尾）：四级降级阶梯落地于 `agents/insights/rescue.py`，任何失败模式下 insight artifact 必然存在（见 `tests/orchestrator/test_insight_degradation.py`）。

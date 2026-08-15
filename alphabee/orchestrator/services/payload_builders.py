@@ -398,6 +398,7 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             bear_case=insight_val.bear_case,
             what_would_change_my_mind=list(insight_val.what_would_change_my_mind),
             confidence=insight_val.confidence,
+            degraded=insight_val.degraded,
         )
 
     payload.issues = [
