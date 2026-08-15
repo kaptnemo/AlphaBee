@@ -21,7 +21,8 @@
 - 数据源是本地 ``reports/<公司名>：<年份><报告期>.md`` 目录（由 report_parser 拆分生成），
   并非实时网络数据；查询前请先确认目标公司/年份的报告已存在。
 - ``company_code`` 会自动反查公司名称后再定位报告目录；``company_name`` 与
-  ``company_code`` 至少提供一个，否则无法确定目标公司。
+  ``company_code`` 至少提供一个，否则无法确定目标公司，查询会返回带
+  ``REPORT_NOT_FOUND`` 原因码的提示文本。
 - 报告类型 ``report_type`` 使用英文键（如 ``semiannual``/``annual``/``quarterly``），
   内部会自动映射为中文目录名片段。
 
@@ -43,6 +44,7 @@ from pydantic import BaseModel, Field
 
 from alphabee import PROJECT_ROOT
 from alphabee.financial_report.fetch_deepagents import create_report_fetch_agent
+from alphabee.tools.cache import SyncTTLCache
 
 REPORT_DIR = PROJECT_ROOT / "reports"  # Default directory for financial reports
 
@@ -61,12 +63,25 @@ REPORT_TYPE_MAPPING = {
 }
 
 
+# ── 查询失败原因码 ─────────────────────────────────────────────────
+# query_financial_report 不再返回 None，而是返回带原因码前缀的文本，
+# 让 agent 能区分「确定性失败（报告不存在，别重试）」与
+# 「非确定性失败（检索没答出来，可改问题重试）」。
+REASON_REPORT_NOT_FOUND = "REPORT_NOT_FOUND"
+REASON_AGENT_NO_ANSWER = "AGENT_NO_ANSWER"
+
+# 根目录定位结果缓存：同一 (公司, 年份, 报告类型) 的定位结果复用，
+# 未命中的结果也会缓存（负缓存），避免 agent 对不存在的报告反复重试。
+_REPORT_LOCATE_CACHE = SyncTTLCache(ttl_seconds=600.0)
+
+
 class FinancialReportRequest(BaseModel):
     """财务报表查询请求参数。
 
     用于描述「查哪家公司的哪份报告、想从中获得什么信息」。
     定位报告目录时，``company_name``/``company_code`` 至少需要提供一个；
-    仅提供 ``year``/``report_type`` 而无法确定公司时，查询将返回 ``None``。
+    仅提供 ``year``/``report_type`` 而无法确定公司时，查询会返回带
+    ``REPORT_NOT_FOUND`` 原因码的提示文本。
     """
 
     company_name: str | None = Field(
@@ -102,7 +117,8 @@ class FinancialReportResponse(BaseModel):
     """财务报表查询结果（保留模型）。
 
     注意：当前 :func:`query_financial_report` 直接返回文本字符串
-    （``str | None``），并未返回本模型；该模型仅为兼容旧接口保留。
+    （失败时返回带 ``REPORT_NOT_FOUND`` / ``AGENT_NO_ANSWER`` 原因码的
+    提示文本，不再返回 ``None``），并未返回本模型；该模型仅为兼容旧接口保留。
     """
 
     report_data: dict = Field(..., description="The financial report data")
@@ -336,7 +352,69 @@ def decide_root_path(request: FinancialReportRequest) -> str | None:
     return matches[0]
 
 
-async def query_financial_report(request: FinancialReportRequest) -> str | None:
+def _normalise_locator_key(request: FinancialReportRequest) -> tuple:
+    """生成报告定位的规范化缓存键。
+
+    键为 ``(company_name, year, tuple(report_types))``，其中公司名优先用
+    ``company_name``，否则用 ``company_code`` 反查；报告类型归一化为中文片段
+    元组。同一家公司无论用代码还是名称请求，都会命中同一条缓存。
+    """
+    company = request.company_name
+    if not company and request.company_code:
+        company = resolve_company_name_by_code(request.company_code)
+    return (company, request.year, tuple(_normalise_report_types(request.report_type)))
+
+
+def _list_available_reports(company_name: str | None) -> list[str]:
+    """列出 ``reports/`` 下与该公司相关的报告目录名（不含年份筛选）。
+
+    用于构造 REPORT_NOT_FOUND 的提示信息，让 agent 能挑一个真实存在的
+    年份/类型去查，而不是盲目重试同一组合。
+    """
+    names: list[str] = []
+    for dir_path, _, _ in walk_with_depth_limit(REPORT_DIR, max_depth=1):
+        if dir_path == REPORT_DIR:
+            continue
+        name = dir_path.name
+        if company_name and company_name not in name:
+            continue
+        names.append(name)
+    return sorted(names)
+
+
+def build_not_found_reason(request: FinancialReportRequest) -> str:
+    """为「报告目录定位失败」构造带原因码的提示文本。
+
+    区分三种可诊断的情况：
+    - 缺少公司信息（company_name/company_code 均未提供或反查失败）；
+    - 公司存在但年份/类型未命中；
+    - 匹配不唯一（只给了年份/类型，命中多家公司）。
+    """
+    company = request.company_name
+    if not company and request.company_code:
+        company = resolve_company_name_by_code(request.company_code)
+
+    if not company:
+        return (
+            f"{REASON_REPORT_NOT_FOUND}: 无法定位报告目录——未提供有效的公司信息"
+            "（company_name / company_code 为空或代码无法反查）。请补充公司名称或正确代码后重试。"
+        )
+
+    year = str(request.year) if request.year is not None else None
+    report_types = _normalise_report_types(request.report_type)
+
+    available = _list_available_reports(company)
+    available_text = (
+        "本地可用报告：" + "、".join(available) + "。请选择其中存在的年份/报告类型后重试。"
+        if available
+        else "本地 reports/ 下暂无该公司的已解析报告。可改用 web_search / query_tushare / eastmoney 工具获取财报。"
+    )
+
+    target_parts = [part for part in (company, year, "/".join(report_types) or None) if part]
+    return f"{REASON_REPORT_NOT_FOUND}: 未找到满足「{' '.join(target_parts)}」的唯一报告。{available_text}"
+
+
+async def query_financial_report(request: FinancialReportRequest) -> str:
     """查询本地已解析的财务报表，返回针对 ``query`` 的答案文本（核心入口）。
 
     流程：先用 :func:`decide_root_path` 定位报告目录 → 在该目录上构建一个
@@ -346,8 +424,11 @@ async def query_financial_report(request: FinancialReportRequest) -> str | None:
     注意：
     - 这是异步函数，调用方须 ``await``。
     - 返回的是 agent 生成的**最终文本答案**（字符串），非结构化对象。
-    - 报告目录定位失败（无唯一命中）时返回 ``None``，此时应提示用户
-      确认目标公司/年份/报告类型是否已存在本地报告中。
+    - 失败时**不返回 None**，而是返回带原因码前缀的文本：
+      - ``REPORT_NOT_FOUND:`` 报告目录定位失败（无唯一命中），此时不应
+        以相同公司/年份/报告类型重试，应换年份/类型或改用其它工具；
+      - ``AGENT_NO_ANSWER:`` 报告存在但检索代理未产出最终答案，可把
+        问题收窄/拆分后重试。
     - 依赖 LLM（``config.yaml`` 中的 ``financial_report`` 组件），首次调用
       及 agent 检索过程可能耗时数秒到数十秒。
 
@@ -360,7 +441,9 @@ async def query_financial_report(request: FinancialReportRequest) -> str | None:
             ``query`` 必填。
 
     Returns:
-        str | None: 报告内容相关的文本答案；目录未命中时返回 ``None``。
+        str: 报告内容相关的文本答案；失败时返回带原因码
+        （``REPORT_NOT_FOUND`` / ``AGENT_NO_ANSWER``）的提示文本，供
+        agent 据此决定是换问题、换报告还是换工具。
 
     Example:
         import asyncio
@@ -376,9 +459,12 @@ async def query_financial_report(request: FinancialReportRequest) -> str | None:
         )
         answer = asyncio.run(query_financial_report(req))
     """
-    root_path = decide_root_path(request)
+    root_path = _REPORT_LOCATE_CACHE.get_or_compute(
+        _normalise_locator_key(request),
+        lambda: decide_root_path(request),
+    )
     if not root_path:
-        return None
+        return build_not_found_reason(request)
     agent = create_report_fetch_agent(root_path)
     result = await agent.ainvoke(
         {"messages": [HumanMessage(content=request.query)]},
@@ -387,7 +473,12 @@ async def query_financial_report(request: FinancialReportRequest) -> str | None:
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
             return msg.content if isinstance(msg.content, str) else ""
-    return None
+    return (
+        f"{REASON_AGENT_NO_ANSWER}: 报告检索代理未产出最终文本答案"
+        "（可能问题过于宽泛、超出 40 步检索上限，或模型未收敛）。"
+        "建议将问题收窄到「公司 + 报告期 + 具体指标/章节/事件」，"
+        "或将多个不相关问题拆分为多次调用后重试。"
+    )
 
 
 if __name__ == "__main__":

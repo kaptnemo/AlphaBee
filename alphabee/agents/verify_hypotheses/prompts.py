@@ -49,5 +49,9 @@ VERIFY_HYPOTHESES_USER_TEMPLATE = """请验证以下假设，输出 Verification
   - 查询务必具体（公司+报告期+具体问题），不要泛泛提问，也不要在一条 query 里塞多个不相关的问题
   - **严禁用 ls/glob/grep/read_file 自行浏览或读取 `reports/` 目录下的原始 md 文件**，
     也禁止手动拼接报告文件路径；报告内容全部交给 query_financial_report 处理
+  - 该工具失败时不会返回 None，而是返回带原因码的提示文本，按原因码处理：
+    - `REPORT_NOT_FOUND:` 本地没有该组合（公司/年份/报告类型）的报告，**不要再以相同组合重试**；
+      按提示选择真实存在的年份/类型，或改用 web_search / query_tushare / eastmoney 取证
+    - `AGENT_NO_ANSWER:` 报告存在但检索未答出，把问题收窄/拆分后重试
 - 无法确认时设 status=unknown，在 gaps 中明确说明缺了什么
 """
