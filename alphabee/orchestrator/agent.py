@@ -16,12 +16,15 @@ Simplified pipeline:
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.store.memory import InMemoryStore
 
+from alphabee import PROJECT_ROOT
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import (
     Artifact,
@@ -367,3 +370,81 @@ _graph.add_conditional_edges(
 _graph.add_edge("finalize_message", END)
 
 alphabee_agent = _graph.compile(store=InMemoryStore())
+
+
+# ── graph visualization ────────────────────────────────────────────────────
+
+
+def save_graph_visualization(
+    output_dir: str | Path | None = None,
+    base_name: str = "alphabee_agent",
+    render_png: bool = True,
+) -> dict[str, Any]:
+    """导出编排图：Mermaid 源码（``.mmd``）+ 可选 PNG 渲染。
+
+    Mermaid 源码是纯字符串，离线必定成功；PNG 渲染按可用性依次尝试：
+
+    1. graphviz（``draw_png``，本地 ``dot`` 命令行）——离线、质量最好；
+    2. mermaid 渲染器（``draw_mermaid_png``，默认走 mermaid.ink 在线 API）——
+       需要网络。
+
+    两种都不可用时 ``png_path`` 为 ``None`` 并在 ``warnings`` 中说明。
+
+    Args:
+        output_dir: 输出目录（默认 ``PROJECT_ROOT/data/graphs``，会自动创建）。
+        base_name:  文件名主干，最终产出 ``<base_name>.mmd`` / ``<base_name>.png``。
+        render_png: 是否尝试渲染 PNG（关闭时只导出 Mermaid 源码）。
+
+    Returns:
+        dict：``{"mermaid_path": ..., "png_path": ...|None, "warnings": [...]}``。
+
+    Example:
+        >>> from alphabee.orchestrator.agent import save_graph_visualization
+        >>> save_graph_visualization()   # 默认输出到 data/graphs/
+    """
+    warnings: list[str] = []
+    if output_dir is None:
+        output_dir = PROJECT_ROOT / "data" / "graphs"
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    graph = alphabee_agent.get_graph()
+    mermaid_path = out / f"{base_name}.mmd"
+
+    # ── 1. Mermaid 源码（离线，恒成功） ─────────────────────────────────
+    try:
+        mermaid_path.write_text(graph.draw_mermaid(), encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - 纯字符串写出几乎不可能失败
+        warnings.append(f"Mermaid 源码导出失败: {exc}")
+        return {"mermaid_path": None, "png_path": None, "warnings": warnings}
+
+    png_path: Path | None = None
+    if render_png:
+        png_path = out / f"{base_name}.png"
+        try:
+            # ── 2a. 首选 graphviz（离线） ─────────────────────────────
+            graph.draw_png(output_file_path=str(png_path))
+        except Exception as graphviz_exc:
+            try:
+                # ── 2b. 回退 mermaid 渲染（mermaid.ink API，需网络） ──
+                graph.draw_mermaid_png(output_file_path=str(png_path))
+            except Exception as mermaid_exc:
+                png_path = None
+                warnings.append(
+                    "PNG 渲染失败：graphviz 不可用（需安装 graphviz 与 python graphviz 包），"
+                    f"mermaid 渲染器回退也失败（需网络访问 mermaid.ink）。graphviz: {graphviz_exc}; "
+                    f"mermaid: {mermaid_exc}"
+                )
+
+    return {
+        "mermaid_path": str(mermaid_path) if mermaid_path.exists() else None,
+        "png_path": str(png_path) if png_path is not None and png_path.exists() else None,
+        "warnings": warnings,
+    }
+
+
+if __name__ == "__main__":
+    import json as _json
+
+    result = save_graph_visualization()
+    print(_json.dumps(result, ensure_ascii=False, indent=2))
