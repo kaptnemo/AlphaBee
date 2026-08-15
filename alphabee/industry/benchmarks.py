@@ -22,6 +22,47 @@ INDUSTRY_BENCHMARK_FIELDS = (
     "industry_avg_gross_margin",
 )
 
+# canonical 字段名 → 基准类别（Phase 1：artifact v2 三组字典分组依据）
+# valuation=估值 / financial=财务 / growth=成长（定性类由 artifact 单独判定）
+BENCHMARK_CATEGORIES: dict[str, str] = {
+    "industry_pe_ttm": "valuation",
+    "industry_pb": "valuation",
+    "industry_avg_roe": "financial",
+    "industry_avg_debt_ratio": "financial",
+    "industry_avg_gross_margin": "financial",
+    "industry_revenue_yoy": "growth",
+}
+
+_CATEGORY_ORDER = ("valuation", "financial", "growth")
+
+
+def group_benchmarks(
+    flat: dict[str, float | None],
+) -> tuple[dict[str, float | None], dict[str, float | None], dict[str, float | None]]:
+    """把扁平 canonical 基准字典按类别分组（valuation, financial, growth）。
+
+    未知键丢弃（防拼写漂移进入 artifact）；None 值保留（展示口径一致性）。
+    """
+    groups: dict[str, dict[str, float | None]] = {cat: {} for cat in _CATEGORY_ORDER}
+    for key, value in flat.items():
+        category = BENCHMARK_CATEGORIES.get(key)
+        if category is not None:
+            groups[category][key] = value
+    return groups["valuation"], groups["financial"], groups["growth"]
+
+
+def flatten_benchmarks(
+    valuation: dict[str, float | None],
+    financial: dict[str, float | None],
+    growth: dict[str, float | None],
+) -> dict[str, float | None]:
+    """三组基准合并回扁平字典（供注入 fact_values / 展示）。"""
+    merged: dict[str, float | None] = {}
+    for group in (valuation, financial, growth):
+        merged.update(group)
+    return merged
+
+
 # canonical 字段名 → IndustryBenchmarks 属性名（供 artifact 构建等外部复用）
 BENCHMARK_FIELD_ATTR = {
     "industry_revenue_yoy": "revenue_yoy",
@@ -68,11 +109,20 @@ class IndustryBenchmarks:
             out["industry_pb"] = self.pb
         return out
 
+    def to_category_dicts(
+        self,
+    ) -> tuple[dict[str, float | None], dict[str, float | None], dict[str, float | None]]:
+        """按类别分组的基准视图（artifact v2 的三组字典，含 None 占位）。"""
+        flat: dict[str, float | None] = {
+            field_name: getattr(self, BENCHMARK_FIELD_ATTR[field_name]) for field_name in INDUSTRY_BENCHMARK_FIELDS
+        }
+        flat["industry_pe_ttm"] = self.pe_ttm
+        flat["industry_pb"] = self.pb
+        return group_benchmarks(flat)
+
     def has_financial_benchmarks(self) -> bool:
         """是否有任何财务/成长基准（区别于只有估值快照）。"""
-        return any(
-            getattr(self, BENCHMARK_FIELD_ATTR[name]) is not None for name in INDUSTRY_BENCHMARK_FIELDS
-        )
+        return any(getattr(self, BENCHMARK_FIELD_ATTR[name]) is not None for name in INDUSTRY_BENCHMARK_FIELDS)
 
 
 def _median(values: list[float]) -> float | None:

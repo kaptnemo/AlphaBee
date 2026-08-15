@@ -13,6 +13,11 @@ from alphabee.agents.schemas import (
     VerificationResultItem,
 )
 from alphabee.core import Artifact
+
+# Phase 1 起，行业知识资产契约迁至行业包（工作流 + 存储 + 契约同源）：
+# alphabee/industry/contracts.py 是唯一 schema 所有者（v2：三组基准字典 + 元数据），
+# 此处再导出保持既有 import 兼容（resolve_industry_context / 测试 / 下游 find_artifact_model）。
+from alphabee.industry.contracts import IndustryContextArtifact  # noqa: F401  (re-export)
 from alphabee.market_regime.models import MarketScore, RegimeSnapshot
 
 # Phase 1 market-regime typed payloads are re-exported here so the orchestrator's
@@ -127,30 +132,6 @@ class InsightArtifact(BaseModel):
     degraded: bool = False
     fallback_tier: int = 0
     degradation_reason: str = ""
-
-
-class IndustryContextArtifact(BaseModel):
-    """行业上下文 artifact（industry-context-injection Phase 0 垂直切片）。
-
-    只承载行业识别信息 + 数值基准 + 降级元数据（数值基准层，定性解释层归
-    DOMAIN_CONTEXT_ROADMAP）。下游通过 find_artifact_model(...) 消费，
-    数值基准同时注入 fact_values 供 derived facts / signals 规则引用。
-    """
-
-    schema_version: str = "1"
-    industry: str = ""
-    sub_industry: str = ""
-    classification_standard: str = ""  # sw_l1 / sw_l2 / ths / custom
-    sw_code: str | None = None
-    as_of_date: str = ""
-    generated_at: str = ""
-    source_refs: list[str] = Field(default_factory=list)
-    # 数值基准（canonical 键，None = 该基准不可得）
-    benchmarks: dict[str, float | None] = Field(default_factory=dict)
-    peer_count: int | None = None
-    # 降级契约（与 InsightArtifact.degraded 同模式）
-    degraded: bool = False
-    degraded_reason: str = ""
 
 
 class ReportArtifact(ReportOutput):

@@ -101,14 +101,16 @@ async def resolve_industry_context(
     fetch_error: str | None = None
     try:
         from alphabee.industry.data import fetch_peer_financials
+        from alphabee.industry.normalize import normalize_industry_records
 
-        peer_records, fetch_error = fetch_peer_financials(symbol or "", industry, sw_code)
+        # fetch 返回源单位行（百分比），先经 normalize 统一为 canonical（RATIO 口径），
+        # 修复 Phase 0 单位错配（见 docs/industry-context-phase1-design.md §2.1）
+        raw_records, fetch_error = fetch_peer_financials(symbol or "", industry, sw_code)
+        peer_records = normalize_industry_records(raw_records, source="tushare")
     except Exception as exc:
         fetch_error = str(exc)
 
     from alphabee.industry.benchmarks import (
-        BENCHMARK_FIELD_ATTR,
-        INDUSTRY_BENCHMARK_FIELDS,
         IndustryBenchmarks,
         derive_benchmarks,
     )
@@ -140,23 +142,21 @@ async def resolve_industry_context(
         degraded = True
         degraded_reason = fetch_error or "无成分股财务数据"
 
-    benchmark_values: dict[str, float | None] = {
-        key: getattr(benchmarks, BENCHMARK_FIELD_ATTR[key])
-        for key in INDUSTRY_BENCHMARK_FIELDS
-    }
-    benchmark_values["industry_pe_ttm"] = benchmarks.pe_ttm
-    benchmark_values["industry_pb"] = benchmarks.pb
+    valuation, financial, growth = benchmarks.to_category_dicts()
     fact_deltas = benchmarks.to_fact_values()
 
     artifact_value = IndustryContextArtifact(
         industry=industry,
         sub_industry="",
         classification_standard="sw_l1" if sw_code else "custom",
+        industry_code=sw_code or "",
         sw_code=sw_code,
         as_of_date=date.today().isoformat(),
         generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
         source_refs=benchmarks.source_refs,
-        benchmarks=benchmark_values,
+        valuation_benchmarks=valuation,
+        financial_benchmarks=financial,
+        growth_benchmarks=growth,
         peer_count=benchmarks.peer_count,
         degraded=degraded,
         degraded_reason=degraded_reason,

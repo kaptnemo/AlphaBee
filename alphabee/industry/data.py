@@ -1,32 +1,121 @@
-"""行业成分股财务取数（industry-context-injection Phase 0 垂直切片）。
+"""行业成分股财务取数（industry-context Phase 0 垂直切片 + Phase 1 归一化分层）。
 
-best-effort 层：任何一步失败都返回 ([] , 错误信息)，由
-resolve_industry_context 节点走降级路径，绝不让行业数据获取阻塞个股分析。
+best-effort 层：任何一步失败都返回 ([] , 错误信息)，由调用方（resolve_industry_context
+节点 / 行业研究工作流）走降级路径，绝不让行业数据获取阻塞分析。
 
 数据源：Tushare（申万行业成分 index_member + 财务指标 fina_indicator）。
-所有返回字段使用 AlphaBee canonical 命名，外部列名只存在于本模块。
+**本模块只做取数与列名透传**（TuShareHelper 返回的行已经过 adapter 重命名为 canonical
+列名，但数值仍是源单位：百分比）；单位/口径转换统一在 ``alphabee.industry.normalize``
+（单一转换点，防重复 ÷100）。外部原始列名只存在于 adapter mapping YAML。
+
+Phase 1 变更：
+- 新增 ``fetch_industry_peers``（返回源单位行 + 实际参与推导的成分股代码，
+  写入 artifact.peer_universe 保证可复现）；
+- ``fetch_peer_financials`` 保持 Phase 0 兼容签名 (records, error)，内部委托前者。
 """
 
 from __future__ import annotations
 
-from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float
+from alphabee.industry.normalize import _TUSHARE_RAW_KEYS
 
 _PEER_LIMIT = 20  # 成分股抽样上限，控制单次分析 API 调用量
 
 
-def _canonical_record(row) -> dict | None:
-    """把一行 fina_indicator 记录映射为 canonical 字典（缺字段为 None）。"""
+def _normalize_ts_code(symbol: str) -> str:
+    """把各种股票代码格式转为 Tushare 标准格式（与 agents.facts.tools._utils 同逻辑）。
+
+    内联实现而非 import：避免顶层拉起 ``alphabee.agents.facts`` 包（其 import 链会触发
+    tushare token 初始化副作用）；行业子系统保持自包含。
+    """
+    s = symbol.strip().lower()
+    if s.startswith("sh"):
+        return s[2:].upper() + ".SH"
+    if s.startswith("sz"):
+        return s[2:].upper() + ".SZ"
+    if s.startswith("bj"):
+        return s[2:].upper() + ".BJ"
+    upper = symbol.strip().upper()
+    if upper.endswith((".SH", ".SZ", ".BJ")):
+        return upper
+    if upper.startswith(("6", "9")):
+        return upper + ".SH"
+    if upper.startswith(("0", "3")):
+        return upper + ".SZ"
+    if upper.startswith(("4", "8")):
+        return upper + ".BJ"
+    raise ValueError(f"Cannot determine exchange for symbol: {symbol}")
+
+
+# 与 normalize 的输入键保持一致（adapter 重命名后的列名）
+_NUMERIC_INPUT_KEYS = tuple(_TUSHARE_RAW_KEYS.values())
+
+
+def _has_numeric_field(row: dict) -> bool:
+    """轻量存在性检查：至少一个数值输入键非 None（完整转换交给 normalize）。"""
+    return any(row.get(key) is not None for key in _NUMERIC_INPUT_KEYS)
+
+
+def _con_codes(member_df) -> list[str]:
+    """从 index_member 结果中提取成分股代码列表（按入指顺序）。"""
+    con_col = next((c for c in ("con_code", "ts_code") if c in member_df.columns), None)
+    if con_col is None:
+        raise ValueError("index_member 无成分股代码列")
+    codes = [str(code) for code in member_df[con_col].dropna().unique() if str(code).strip()]
+    if not codes:
+        raise ValueError("index_member 成分列表为空")
+    return codes
+
+
+def fetch_industry_peers(
+    sw_code: str,
+    limit: int = _PEER_LIMIT,
+) -> tuple[list[dict], list[str], str | None]:
+    """获取行业成分股最新一期财务指标（源单位行）+ 参与推导的成分股代码。
+
+    Args:
+        sw_code: 申万行业指数代码，用于 index_member 取成分股。
+        limit: 最多取多少只成分股（按成分股列表顺序抽样）。
+
+    Returns:
+        (rows, peer_codes, error)：rows 为 fina_indicator 最新一行（adapter 重命名后
+        的列名，数值为源单位百分比）；peer_codes 为对应成分股代码（与 rows 一一对应）。
+        失败时 rows/peer_codes 为空并返回错误信息。
+    """
+    if not sw_code:
+        return [], [], "sw_code 缺失，无法取行业成分股"
+
     try:
-        return {
-            # tushare fina_indicator 列名：tr_yoy 营业收入同比增长率(%)、
-            # roe 净资产收益率(%)、debt_to_assets 资产负债率(%)、grossprofit_margin 销售毛利率(%)
-            "revenue_yoy": safe_float(row.get("tr_yoy")),
-            "roe": safe_float(row.get("roe")),
-            "debt_ratio": safe_float(row.get("debt_to_assets")),
-            "gross_margin": safe_float(row.get("grossprofit_margin")),
-        }
-    except Exception:
-        return None
+        from alphabee.collectors.tushare.helper import TuShareHelper
+    except Exception as exc:  # tushare 不可用（token/网络）
+        return [], [], f"tushare 不可用: {exc}"
+
+    try:
+        with TuShareHelper() as helper:
+            member_df = helper.index_member(index_code=sw_code).data
+            if member_df is None or member_df.empty:
+                return [], [], "index_member 返回空成分列表"
+            con_codes = _con_codes(member_df)
+
+            rows: list[dict] = []
+            peer_codes: list[str] = []
+            for con_code in con_codes[:limit]:
+                try:
+                    fina_df = helper.fina_indicator(ts_code=_normalize_ts_code(con_code)).data
+                    if fina_df is None or fina_df.empty:
+                        continue
+                    row = fina_df.iloc[0].to_dict()
+                    if not _has_numeric_field(row):
+                        continue
+                    rows.append(row)
+                    peer_codes.append(_normalize_ts_code(con_code))
+                except Exception:
+                    continue  # 单只成分取数失败不影响整体
+
+            if not rows:
+                return [], [], "成分股财务指标均取数失败"
+            return rows, peer_codes, None
+    except Exception as exc:
+        return [], [], f"行业成分股取数失败: {exc}"
 
 
 def fetch_peer_financials(
@@ -35,57 +124,20 @@ def fetch_peer_financials(
     sw_code: str | None,
     limit: int = _PEER_LIMIT,
 ) -> tuple[list[dict], str | None]:
-    """获取行业成分股最新一期财务指标（canonical 键）。
+    """获取行业成分股最新一期财务指标（源单位行，Phase 0 兼容签名）。
+
+    内部委托 ``fetch_industry_peers``；调用方（resolve_industry_context 节点）需经
+    ``alphabee.industry.normalize.normalize_industry_records`` 转换后再推导基准。
 
     Args:
         symbol: 目标股票代码（仅用于日志/血缘）。
         industry: 行业名（仅用于日志/血缘）。
-        sw_code: 申万行业指数代码，用于 index_member 取成分股。
-        limit: 最多取多少只成分股（按成分股列表顺序抽样）。
+        sw_code: 申万行业指数代码。
+        limit: 最多取多少只成分股。
 
     Returns:
-        (records, error)：records 为 ``[{revenue_yoy, roe, debt_ratio,
-        gross_margin}, ...]``；失败时 records 为空列表并返回错误信息。
+        (rows, error)：rows 为源单位行；失败时为空列表并返回错误信息。
     """
-    del industry  # 血缘信息，暂不参与取数逻辑
-    if not sw_code:
-        return [], "sw_code 缺失，无法取行业成分股"
-
-    try:
-        from alphabee.collectors.tushare.helper import TuShareHelper
-    except Exception as exc:  # tushare 不可用（token/网络）
-        return [], f"tushare 不可用: {exc}"
-
-    try:
-        with TuShareHelper() as helper:
-            member_df = helper.index_member(index_code=sw_code).data
-            if member_df is None or member_df.empty:
-                return [], "index_member 返回空成分列表"
-
-            # 按指数代码筛选（index_member 可能返回多指数），取最近入指的成分
-            con_col = next((c for c in ("con_code", "ts_code") if c in member_df.columns), None)
-            if con_col is None:
-                return [], "index_member 无成分股代码列"
-            con_codes = [
-                str(code) for code in member_df[con_col].dropna().unique() if str(code).strip()
-            ]
-            if not con_codes:
-                return [], "index_member 成分列表为空"
-
-            records: list[dict] = []
-            for con_code in con_codes[:limit]:
-                try:
-                    fina_df = helper.fina_indicator(ts_code=normalize_ts_code(con_code)).data
-                    if fina_df is None or fina_df.empty:
-                        continue
-                    record = _canonical_record(fina_df.iloc[0])
-                    if record is not None:
-                        records.append(record)
-                except Exception:
-                    continue  # 单只成分取数失败不影响整体
-
-            if not records:
-                return [], "成分股财务指标均取数失败"
-            return records, None
-    except Exception as exc:
-        return [], f"行业成分股取数失败: {exc}"
+    del symbol, industry  # 血缘信息，暂不参与取数逻辑
+    rows, _, error = fetch_industry_peers(sw_code or "", limit)
+    return rows, error

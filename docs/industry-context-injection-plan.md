@@ -5,6 +5,8 @@
 > **评审修订记录（2026-08）**：本次评审按代码核实修订了现状认知，并落地以下优化——① 实施路径重排为「垂直切片先行、研究工作流后置」；② 新增「基准相对阈值」免费机制（两引擎阈值表达式本就能引用 `fact_values` 任意字段，见 `registry.py` 的 `threshold_context`）；③ 行业匹配键改为 `classification_standard + 行业代码`，消除中文名硬编码漂移；④ 补降级契约（复用 0.4 的 degraded 模式）；⑤ 与 `DOMAIN_CONTEXT_ROADMAP.md` 划界（本文档收敛为**数值基准层**）；⑥ 补测试计划。
 
 > **Phase 0 实施状态（2026-08）：✅ 已落地**。垂直切片完成：`alphabee/industry/benchmarks.py`（中位数推导）、`alphabee/industry/data.py`（Tushare 成分股取数，best-effort）、`alphabee/orchestrator/nodes/resolve_industry_context.py`（识别 + 注入 + 降级契约，已插入 `collect_raw_facts → run_analysis_engines` 之间）、`ArtifactType.INDUSTRY_CONTEXT` + `IndustryContextArtifact`、引擎阈值回退链（`registry.py`，level 表达式支持列表）、`debt_ratio / roe_level` 相对基准 + `market_share_change` 复活（peg_ratio 保持绝对，行业判断留给 signal 层）。测试：`tests/industry/test_benchmarks.py`、`tests/orchestrator/test_resolve_industry_context.py`、`tests/agents/derived_facts/test_industry_thresholds.py`。Phase 1-6 未开始。
+>
+> **Phase 1 实施状态（2026-08）：✅ 已落地**。行业知识工作流基础设施完成，细化设计见 `docs/industry-context-phase1-design.md`。交付：`IndustryContextArtifact` 升级 v2（三组基准字典 + canonical 键，含 stale/confidence/source_refs/review_status/degraded 元数据）、离线工作流 `alphabee/industry/`（contracts / normalize / nodes / workflow / persistence / cli，采集→归一化→基准→定性→审核→持久化六节点）、JSON 快照存储（原子写、latest-wins、`data/industry_profiles/{standard}/{code}.json`）、按类别默认 `stale_after`（估值 30d/财务 90d/成长 90d/定性 30d）。同时修复 Phase 0 潜在单位口径错配（`data.py` 原值百分比注入 vs 规则 RATIO 口径——roe/debt_ratio/gross_margin 现经 normalize 转换）。测试：`tests/industry/test_contracts.py`、`test_normalize.py`、`test_persistence.py`、`test_workflow.py`。Phase 2-6 未开始。
 
 ## 问题诊断
 
@@ -344,11 +346,19 @@ industry_trigger_rules:
 
 ### Phase 1：行业知识工作流基础设施（后置）
 
-1. 新增 `IndustryContextArtifact` 合约 → `alphabee/orchestrator/contracts.py` 或行业知识专用 contracts 模块
-2. 新增 `ArtifactType.INDUSTRY_CONTEXT` → `alphabee/core/schemas.py`
-3. 新增 `IndustryResearchAgent` / `IndustryContextWorkflow`（离线/准离线，采集 → 归一化 → 基准 → 定性 → 审核 → 持久化）
-4. 新增行业知识持久化接口：按 `classification_standard + industry + as_of_date + schema_version` 存取（v1 每行业一个 JSON 快照文件，原子写）
-5. 新增 stale / confidence / source_refs / review_status 等元数据，`stale_after` 按基准类别给默认值
+> **2026-08 已实施**：完整细化设计见 `docs/industry-context-phase1-design.md`（含 artifact v2 契约、
+> 六节点契约、单位/口径规则、持久化与过期语义、测试计划）。以下为本阶段的任务清单，均已落地。
+
+1. ✅ 新增 `IndustryContextArtifact` 合约 → `alphabee/industry/contracts.py`（v2，三组基准字典 +
+   stale/confidence/source_refs/review_status/degraded；`orchestrator/contracts.py` 再导出）
+2. ✅ 新增 `ArtifactType.INDUSTRY_CONTEXT` → `alphabee/core/schemas.py`（Phase 0 已注册，本阶段沿用）
+3. ✅ 新增 `IndustryResearchAgent` / `IndustryContextWorkflow`（离线/准离线，采集 → 归一化 →
+   基准 → 定性 → 审核 → 持久化；`alphabee/industry/{nodes,workflow}.py`，确定性顺序流水线，
+   定性/审核的 LLM 通道可选）
+4. ✅ 新增行业知识持久化接口：按 `classification_standard + industry + as_of_date + schema_version`
+   存取（`alphabee/industry/persistence.py`，v1 每行业一个 JSON 快照文件，原子写，latest-wins）
+5. ✅ 新增 stale / confidence / source_refs / review_status 等元数据，`stale_after` 按基准类别
+   给默认值（估值 30d / 财务 90d / 成长 90d / 定性 30d，有效值取最早到期）
 
 ### Phase 2：字段治理与数据源适配（可与 Phase 0 并行）
 

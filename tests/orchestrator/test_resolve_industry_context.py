@@ -51,27 +51,36 @@ def _ind_fact(industry="白酒", sw_code="801120.SI", pe=None, pb=None):
     return {"industry": industry, "sector": "消费", "sw_code": sw_code, "sw_daily": sw_daily}
 
 
+# 成分股行：**源单位（百分比）**输入键（adapter 重命名后的列名：revenue_yoy / roe /
+# debt_to_assets / gross_margin）——节点内部经 normalize 统一为 canonical（RATIO 口径），
+# 见 docs/industry-context-phase1-design.md §2.1 的单位契约。
+def _source_unit_peers():
+    return [
+        {"revenue_yoy": 10.0, "roe": 12.0, "debt_to_assets": 40.0, "gross_margin": 30.0},
+        {"revenue_yoy": 20.0, "roe": 16.0, "debt_to_assets": 60.0, "gross_margin": 35.0},
+        {"revenue_yoy": 30.0, "roe": 20.0, "debt_to_assets": 80.0, "gross_margin": 40.0},
+    ]
+
+
 # ── 成功路径 ───────────────────────────────────────────────────────────────
 
 
 def test_success_injects_benchmarks_and_artifact(monkeypatch):
-    peers = [
-        {"revenue_yoy": 0.10, "roe": 0.12, "debt_ratio": 0.40, "gross_margin": 0.30},
-        {"revenue_yoy": 0.20, "roe": 0.16, "debt_ratio": 0.60, "gross_margin": 0.35},
-        {"revenue_yoy": 0.30, "roe": 0.20, "debt_ratio": 0.80, "gross_margin": 0.40},
-    ]
-    result = _run_node(monkeypatch, _ind_fact(pe=25.0, pb=6.0), peers)
+    result = _run_node(monkeypatch, _ind_fact(pe=25.0, pb=6.0), _source_unit_peers())
 
     artifact = find_artifact_model(result["artifacts"], ArtifactType.INDUSTRY_CONTEXT, IndustryContextArtifact)
     assert artifact is not None
     assert artifact.industry == "白酒"
     assert artifact.degraded is False
     assert artifact.peer_count == 3
-    assert artifact.benchmarks["industry_avg_debt_ratio"] == 0.60
-    assert artifact.benchmarks["industry_pe_ttm"] == 25.0
+    # v2 形状：三组基准字典（canonical 键，RATIO 口径）
+    assert artifact.financial_benchmarks["industry_avg_debt_ratio"] == 0.60
+    assert artifact.financial_benchmarks["industry_avg_roe"] == 0.16
+    assert artifact.valuation_benchmarks["industry_pe_ttm"] == 25.0
+    assert artifact.growth_benchmarks["industry_revenue_yoy"] == 20.0  # 百分比（百分点）口径
 
     # 数值基准注入 fact_values（供 derived facts / signals 引用）
-    assert result["fact_values"]["industry_revenue_yoy"] == 0.20
+    assert result["fact_values"]["industry_revenue_yoy"] == 20.0
     assert result["fact_values"]["industry_avg_roe"] == 0.16
     assert result["fact_values"]["industry_avg_debt_ratio"] == 0.60
     assert result["fact_values"]["industry_pe_ttm"] == 25.0
@@ -124,7 +133,7 @@ def test_peer_fetch_failure_marks_degraded_artifact(monkeypatch):
     assert artifact.degraded is True
     assert "index_member" in artifact.degraded_reason
     # 估值快照仍透传（artifact + fact_values）
-    assert artifact.benchmarks["industry_pe_ttm"] == 25.0
+    assert artifact.valuation_benchmarks["industry_pe_ttm"] == 25.0
     assert result["fact_values"]["industry_pe_ttm"] == 25.0
     # 财务基准不注入
     assert "industry_avg_debt_ratio" not in result["fact_values"]
