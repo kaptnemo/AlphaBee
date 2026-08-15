@@ -183,14 +183,22 @@ class DerivedFactRule:
             "value": derived_value,
         }
 
-        for level, expression in self.thresholds.items():
-            try:
-                matched = safe_eval_formula(expression, threshold_context)
-            except Exception:
-                continue
-
-            if matched:
-                result["level"] = level
+        # 阈值支持"回退链"（industry-context Phase 0，见 docs/industry-context-injection-plan.md 3.0）：
+        # 每个 level 的表达式可以是字符串或字符串列表。列表按顺序求值，
+        # 第一个求值成功且为 True 即命中；表达式抛异常（如引用的行业字段缺失）
+        # 则顺延到下一项——实现"行业基准缺失 → 回退绝对阈值"的天然降级链。
+        for level, expressions in self.thresholds.items():
+            if isinstance(expressions, str):
+                expressions = [expressions]
+            for expression in expressions:
+                try:
+                    matched = safe_eval_formula(expression, threshold_context)
+                except Exception:
+                    continue
+                if matched:
+                    result["level"] = level
+                    break
+            if result["level"] != "unknown":
                 break
 
         if interpretation:

@@ -164,4 +164,44 @@ industry_revenue_yoy:
   required_by:
     derived_facts: [market_share_change]
   source_mappings: {}
-  notes: 当前无直接数据源接口，需从行业成分股财务数据加权汇总计算，或引入外部宏观/行业数据库。
+  notes: 无直接 API；由 resolve_industry_context 从行业成分股财务数据计算中位数（alphabee/industry/benchmarks.py），Phase 0 已打通推导通道。
+
+industry_avg_roe:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 行业平均净资产收益率（成分股 ROE 中位数），用于 ROE 的行业相对判断
+  aliases:
+    zh: [行业平均ROE, 行业ROE中位数]
+    en: [industry median ROE]
+  required_by:
+    derived_facts: [roe_level]
+  source_mappings: {}
+  notes: 由 resolve_industry_context 从行业成分股 fina_indicator 计算中位数。
+
+industry_avg_debt_ratio:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 行业平均资产负债率（成分股中位数），用于杠杆水平的行业相对判断
+  aliases:
+    zh: [行业平均负债率, 行业杠杆中位数]
+    en: [industry median debt ratio]
+  required_by:
+    derived_facts: [debt_ratio]
+  source_mappings: {}
+  notes: 由 resolve_industry_context 从行业成分股财务数据计算中位数。
+
+industry_avg_gross_margin:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 行业平均毛利率（成分股中位数），用于盈利能力的行业相对判断
+  aliases:
+    zh: [行业平均毛利率]
+    en: [industry median gross margin]
+  source_mappings: {}
+  notes: 由 resolve_industry_context 从行业成分股财务数据计算中位数；Phase 0 预留，规则消费待后续。

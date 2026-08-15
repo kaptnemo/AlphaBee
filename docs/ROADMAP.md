@@ -662,7 +662,7 @@ ExpectationFitAgent
 | P2 | BusinessModelContext | 提升行业/公司语境判断 | 🟡 基础字段已有，Classifier/Playbook 未做 |
 | P2 | Claim-Evidence Graph | 让观点可追踪、可审查 | ⬜ 未实现 |
 | P3 | ExpectationFitAgent | 打通财务质量与投资价值 | ⬜ 未实现 |
-| P3 | 同行基准 / 行业分位 | 降低固定阈值误判 | ⬜ 未实现（见 industry-context-injection-plan.md） |
+| P3 | 同行基准 / 行业分位 | 降低固定阈值误判 | 🟡 Phase 0 已落地（`resolve_industry_context` + 相对基准阈值 + `market_share_change` 复活，见 industry-context-injection-plan.md）；完整研究工作流/报告层未做 |
 
 ---
 

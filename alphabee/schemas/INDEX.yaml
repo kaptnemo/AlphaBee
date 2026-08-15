@@ -29,8 +29,8 @@ domains:
 
   industry:
     file: schemas/industry.yaml
-    description: 行业域（估值、表现、成分股）
-    field_count: 12
+    description: 行业域（估值、表现、成分股、财务基准）
+    field_count: 15
     primary_source: [tushare, akshare]
     apis: [index_classify, index_daily, index_dailybasic, stock_board_industry_*]
 
@@ -107,7 +107,7 @@ field_gaps:
 
   - field: industry_revenue_yoy
     used_by: derived_facts/rules/market_share_change.yaml
-    gap: 无直接 API；需从行业成分股财务数据加权汇总，或引入外部行业数据库
+    gap: 无直接 API；Phase 0 已由 resolve_industry_context 从成分股财务数据推导中位数（alphabee/industry/benchmarks.py），在线计算失败时仍为 gap
 
   - field: cyb_pe_ttm
     used_by: market_regime/rules/valuation.yaml

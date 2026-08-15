@@ -78,6 +78,7 @@ class ArtifactType(enum.StrEnum):
     EVALUATION_REPORT = "evaluation_report"
     MARKET_REGIME = "market_regime"
     MARKET_REGIME_HISTORY = "market_regime_history"
+    INDUSTRY_CONTEXT = "industry_context"  # 行业上下文（识别 + 数值基准 + 降级元数据）
 
 
 # Canonical mapping from the ``ArtifactType`` to a role group.
@@ -98,6 +99,7 @@ _ARTIFACT_TYPE_TO_ROLE_GROUP: dict[ArtifactType | str, ArtifactRoleGroup] = {
     ArtifactType.EVALUATION_REPORT: ArtifactRoleGroup.EVALUATION,
     ArtifactType.MARKET_REGIME: ArtifactRoleGroup.DATA,
     ArtifactType.MARKET_REGIME_HISTORY: ArtifactRoleGroup.DATA,
+    ArtifactType.INDUSTRY_CONTEXT: ArtifactRoleGroup.DATA,
     # Legacy / external types kept for backward compatibility:
     "fundamental_analysis": ArtifactRoleGroup.DATA,
     "market_analysis": ArtifactRoleGroup.DATA,

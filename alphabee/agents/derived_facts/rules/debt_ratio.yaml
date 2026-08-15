@@ -5,9 +5,17 @@ required_facts:
   - total_assets
 formula: total_liabilities / total_assets
 thresholds:
-  conservative: "value < 0.40"
-  moderate: "0.40 <= value <= 0.65"
-  aggressive: "value > 0.65"
+  # 行业基准相对阈值优先（industry-context Phase 0，见 industry-context-injection-plan.md 3.0）：
+  # 相对表达式引用 industry_avg_debt_ratio，字段缺失时抛异常 → 顺延到绝对阈值。
+  conservative:
+    - "value < industry_avg_debt_ratio * 0.8"
+    - "value < 0.40"
+  moderate:
+    - "value <= industry_avg_debt_ratio * 1.2 and value >= industry_avg_debt_ratio * 0.8"
+    - "0.40 <= value <= 0.65"
+  aggressive:
+    - "value > industry_avg_debt_ratio * 1.2"
+    - "value > 0.65"
 interpretation:
   conservative: 负债率低，财务结构稳健，具备较大的加杠杆空间，抗风险能力强
   moderate: 杠杆适中，属于大多数制造业和消费业的正常区间，需结合现金流与利息保障倍数综合判断

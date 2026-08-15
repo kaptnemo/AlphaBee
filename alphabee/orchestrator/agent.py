@@ -47,6 +47,7 @@ from alphabee.orchestrator.gates import review_report, route_after_report_review
 from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.insights import synthesize_insights
+from alphabee.orchestrator.nodes.resolve_industry_context import resolve_industry_context
 from alphabee.orchestrator.nodes.thesis import run_thesis
 from alphabee.orchestrator.nodes.verification import verify_hypotheses
 from alphabee.orchestrator.reporter import generate_report
@@ -293,6 +294,7 @@ def _reconstruct_thesis(thesis_dict: dict):
 _graph = StateGraph(OrchestratorState)
 
 _graph.add_node("collect_raw_facts", collect_raw_facts)
+_graph.add_node("resolve_industry_context", resolve_industry_context)
 _graph.add_node("run_analysis_engines", run_analysis_engines)
 _graph.add_node("explore_conflicts", explore_conflicts)
 _graph.add_node("verify_hypotheses", verify_hypotheses)
@@ -304,7 +306,8 @@ _graph.add_node("review_report", review_report)
 _graph.add_node("finalize_message", finalize_message)
 
 _graph.add_edge(START, "collect_raw_facts")
-_graph.add_edge("collect_raw_facts", "run_analysis_engines")
+_graph.add_edge("collect_raw_facts", "resolve_industry_context")
+_graph.add_edge("resolve_industry_context", "run_analysis_engines")
 _graph.add_edge("run_analysis_engines", "explore_conflicts")
 _graph.add_edge("explore_conflicts", "verify_hypotheses")
 _graph.add_edge("verify_hypotheses", "synthesize_insights")

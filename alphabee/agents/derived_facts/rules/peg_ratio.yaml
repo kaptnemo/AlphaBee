@@ -5,6 +5,9 @@ required_facts:
   - net_profit_yoy
 formula: pe_ttm / net_profit_yoy
 thresholds:
+  # 说明（Phase 0 决策）：PEG 本身已按公司自身成长归一化，行业 PE 溢价属于
+  # 另一维度，不适合在此做相对判断；行业感知估值判断留给 signal 层
+  # （valuation_risk，Phase 4/5）。保持绝对阈值。
   undervalued: "value < 1.0"
   fair: "1.0 <= value <= 2.0"
   overvalued: "value > 2.0"
