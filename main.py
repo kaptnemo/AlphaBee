@@ -70,6 +70,7 @@ def _hr(char: str = "─", width: int = 70, color: str = _C.GRAY) -> str:
 
 _STAGE_MAP: dict[str, tuple[str, str, str]] = {
     "collect_raw_facts": ("📊", "事实采集", _C.CYAN),
+    "resolve_industry_context": ("🏭", "行业语境解析", _C.CYAN),
     "run_analysis_engines": ("⚙️ ", "规则引擎计算", _C.CYAN),
     "explore_conflicts": ("🔬", "冲突探索", _C.MAGENTA),
     "verify_hypotheses": ("🧪", "假设验证", _C.MAGENTA),
@@ -239,6 +240,79 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             f"市值数据 {'✓' if has_mkt else '✗'}"
             f"{issue_tag}"
         )
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "resolve_industry_context":
+        ic = _last_artifact("industry_context")
+        if not ic:
+            print(f"  🏭 行业语境未生成{issue_tag}")
+            return
+
+        industry = ic.get("industry", "") if isinstance(ic, dict) else getattr(ic, "industry", "")
+        standard = (
+            ic.get("classification_standard", "")
+            if isinstance(ic, dict)
+            else getattr(ic, "classification_standard", "")
+        )
+        degraded = ic.get("degraded", False) if isinstance(ic, dict) else getattr(ic, "degraded", False)
+        peer_count = ic.get("peer_count") if isinstance(ic, dict) else getattr(ic, "peer_count", None)
+        if not peer_count:
+            peer_count = 0
+
+        def _count_non_null(group) -> int:
+            if isinstance(group, dict):
+                return sum(1 for v in group.values() if v is not None)
+            if hasattr(group, "values"):
+                return sum(1 for v in group.values() if v is not None)
+            return 0
+
+        def _group_get(group, key, default=None):
+            if isinstance(group, dict):
+                return group.get(key, default)
+            if hasattr(group, "get"):
+                return group.get(key, default)
+            return default
+
+        valuation = (
+            ic.get("valuation_benchmarks", {}) if isinstance(ic, dict) else getattr(ic, "valuation_benchmarks", {})
+        )
+        financial = (
+            ic.get("financial_benchmarks", {}) if isinstance(ic, dict) else getattr(ic, "financial_benchmarks", {})
+        )
+        growth = ic.get("growth_benchmarks", {}) if isinstance(ic, dict) else getattr(ic, "growth_benchmarks", {})
+
+        pe = _group_get(valuation, "industry_pe_ttm")
+        pb = _group_get(valuation, "industry_pb")
+        roe = _group_get(financial, "industry_avg_roe")
+        debt = _group_get(financial, "industry_avg_debt_ratio")
+        margin = _group_get(financial, "industry_avg_gross_margin")
+        rev_yoy = _group_get(growth, "industry_revenue_yoy")
+
+        def _fmt(v, suffix="") -> str:
+            if v is None:
+                return _c("—", _C.DIM)
+            return f"{v:g}{suffix}"
+
+        def _fmt_ratio(v) -> str:
+            """RATIO 口径基准（ROE/负债率/毛利）→ 显示为百分比。"""
+            if v is None:
+                return _c("—", _C.DIM)
+            return f"{v * 100:g}%"
+
+        deg_tag = _c("  ⚠ 部分降级", _C.YELLOW) if degraded else ""
+        peer_tag = _c(f"{peer_count} 只成分股", _C.BOLD) if peer_count else _c("无成分股", _C.DIM)
+        print(
+            f"  🏭 行业: {_c(industry, _C.BOLD, _C.WHITE)}"
+            f"  │ 标准: {_c(standard, _C.GRAY) if standard else _c('—', _C.DIM)}"
+            f"  │ {peer_tag}"
+            f"{deg_tag}{issue_tag}"
+        )
+        print(
+            f"       估值  PE {_fmt(pe)}  PB {_fmt(pb)}"
+            f"  │ 财务  ROE {_fmt_ratio(roe)}  负债率 {_fmt_ratio(debt)}  毛利 {_fmt_ratio(margin)}"
+            f"  │ 成长  营收增速 {_fmt(rev_yoy, '%')}"
+        )
+        print()
 
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "run_analysis_engines":
