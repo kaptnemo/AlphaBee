@@ -187,6 +187,35 @@ def test_verification_writes_back_settled_status_into_conflicts_artifact(monkeyp
     assert settled.conflicts[0].hypotheses[0].status == "verified"
 
 
+# ── 回归：hypothesis.status 必须接受 unknown（ROADMAP 0.5 结算态）────────────
+# 曾因 HypothesisItem.status 的 Literal 漏掉 "unknown"，验证节点把 unknown
+# 回写进 conflicts_result 后，generate_report 重新校验时抛 ValidationError，
+# 整条 query 崩溃。这里锁住两条边界：schema 解析 + 节点回写后的 artifact 重校验。
+
+
+def test_hypothesis_status_schema_accepts_unknown():
+    raw = _conflict_result(severity="high").model_dump(mode="json")
+    raw["conflicts"][0]["hypotheses"][0]["status"] = "unknown"
+
+    parsed = ConflictAnalysisResult.model_validate(raw)
+
+    assert parsed.conflicts[0].hypotheses[0].status == "unknown"
+
+
+def test_verification_unknown_writeback_keeps_conflicts_artifact_valid(monkeypatch):
+    _patch_verify(monkeypatch, status="unknown")
+
+    result = asyncio.run(
+        verification_node.verify_hypotheses(_state_with_conflicts(_conflict_result(severity="high")), {})
+    )
+
+    # unknown 验证结果回写后，conflicts_result artifact 必须仍能通过
+    # ConflictAnalysisResult 重新校验（下游 generate_report 正是这样读取的）。
+    settled = find_artifact_model(result["artifacts"], ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
+    assert settled is not None
+    assert settled.conflicts[0].hypotheses[0].status == "unknown"
+
+
 # ── 审查层：review_thesis 只负责论点矛盾 ──────────────────────────────────
 
 

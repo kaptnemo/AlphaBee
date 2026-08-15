@@ -34,7 +34,13 @@ class HypothesisItem(BaseModel):
     predictions: list[str]  # 如果假设成立，应该观察到的现象或结果
     required_evidence: list[str]  # 支持假设成立的证据或数据
     score: float  # 假设的可信度评分 0~1
-    status: Literal["pending", "verified", "partial", "rejected"] = "pending"
+    # 生命周期（ROADMAP 0.5 冲突生命周期分层）：
+    #   * explore_conflicts 产出时为 pending（provisional）；
+    #   * verify_hypotheses 结算后回写为 verified / partial / rejected / unknown
+    #     （unknown = 证据未闭环，保持 provisional，与 pending 同等级对待）。
+    # 注意：unknown 必须在这里显式列出来，否则验证结果回写后 conflicts_result
+    # artifact 会在下游重新校验（如 generate_report）时抛 ValidationError。
+    status: Literal["pending", "verified", "partial", "rejected", "unknown"] = "pending"
     supporting_claims: list[str] = Field(default_factory=list)  # 支持它的 artifact/observation id
     refuting_claims: list[str] = Field(default_factory=list)  # 反对它的 id
     verification_items: list[VerificationItem] = Field(default_factory=list)
