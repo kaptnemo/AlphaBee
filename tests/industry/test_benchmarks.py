@@ -154,3 +154,38 @@ def test_to_category_dicts_from_benchmarks():
         "industry_avg_gross_margin": None,
     }
     assert growth == {"industry_revenue_yoy": 12.3}
+
+
+# ── Phase 1：成分股中位数估值（优先于指数快照）────────────────────────────
+
+
+def test_peer_median_valuation_wins_over_snapshot():
+    peers = [
+        {"roe": 0.10, "pe_ttm": 20.0, "pb_ratio": 3.0},
+        {"roe": 0.12, "pe_ttm": 30.0, "pb_ratio": 5.0},
+        {"roe": 0.14, "pe_ttm": 40.0, "pb_ratio": 7.0},
+    ]
+    b = derive_benchmarks(peers, industry="x", pe_ttm=25.0, pb=2.0)
+    assert b.pe_ttm == 30.0  # 中位数优先
+    assert b.pb == 5.0
+    assert "valuation:peer_median" in b.source_refs
+
+
+def test_negative_pe_filtered_from_median():
+    # 亏损股负 PE 无估值水平意义，剔除避免扭曲中位数
+    peers = [
+        {"pe_ttm": 20.0},
+        {"pe_ttm": -15.0},
+        {"pe_ttm": 30.0},
+        {"pe_ttm": 40.0},
+    ]
+    b = derive_benchmarks(peers, industry="x")
+    assert b.pe_ttm == 30.0  # 只统计正值 [20, 30, 40] 的中位数
+
+
+def test_snapshot_fallback_when_no_peer_valuation():
+    peers = [{"roe": 0.10}, {"roe": 0.12}]
+    b = derive_benchmarks(peers, industry="x", pe_ttm=25.0, pb=2.0)
+    assert b.pe_ttm == 25.0
+    assert b.pb == 2.0
+    assert "valuation:peer_median" not in b.source_refs

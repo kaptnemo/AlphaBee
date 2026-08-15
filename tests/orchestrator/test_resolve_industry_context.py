@@ -94,6 +94,43 @@ def test_success_step_status_succeeded(monkeypatch):
     assert step.outputs  # 已 finalize
 
 
+def test_peer_median_valuation_overrides_snapshot(monkeypatch):
+    # 成分股中位数估值优先于指数快照（pe [20,30,40] → 30.0，pb [3,5,7] → 5.0）
+    peers = [
+        {
+            "revenue_yoy": 10.0,
+            "roe": 12.0,
+            "debt_to_assets": 40.0,
+            "gross_margin": 30.0,
+            "pe_ttm": 20.0,
+            "pb_ratio": 3.0,
+        },
+        {
+            "revenue_yoy": 20.0,
+            "roe": 16.0,
+            "debt_to_assets": 60.0,
+            "gross_margin": 35.0,
+            "pe_ttm": 30.0,
+            "pb_ratio": 5.0,
+        },
+        {
+            "revenue_yoy": 30.0,
+            "roe": 20.0,
+            "debt_to_assets": 80.0,
+            "gross_margin": 40.0,
+            "pe_ttm": 40.0,
+            "pb_ratio": 7.0,
+        },
+    ]
+    result = _run_node(monkeypatch, _ind_fact(pe=25.0, pb=6.0), peers)
+
+    artifact = find_artifact_model(result["artifacts"], ArtifactType.INDUSTRY_CONTEXT, IndustryContextArtifact)
+    assert artifact.valuation_benchmarks["industry_pe_ttm"] == 30.0
+    assert artifact.valuation_benchmarks["industry_pb"] == 5.0
+    assert result["fact_values"]["industry_pe_ttm"] == 30.0
+    assert any("peer_median" in ref for ref in artifact.source_refs)
+
+
 # ── 降级路径 ───────────────────────────────────────────────────────────────
 
 

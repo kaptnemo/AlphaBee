@@ -87,6 +87,7 @@ async def resolve_industry_context(
         return {"steps": [completed_step], "issues": new_issues}
 
     sw_code = str(ind_fact.get("sw_code") or "") or None
+    sw_level = str(ind_fact.get("sw_level") or "").strip() or None
     sw_daily = ind_fact.get("sw_daily") or []
 
     # 估值基准：行业指数快照最新一行
@@ -148,7 +149,7 @@ async def resolve_industry_context(
     artifact_value = IndustryContextArtifact(
         industry=industry,
         sub_industry="",
-        classification_standard="sw_l1" if sw_code else "custom",
+        classification_standard=(f"sw_{sw_level.lower()}" if sw_level else ("sw_l1" if sw_code else "custom")),
         industry_code=sw_code or "",
         sw_code=sw_code,
         as_of_date=date.today().isoformat(),

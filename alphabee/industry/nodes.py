@@ -65,6 +65,7 @@ def collect_industry_facts(
             ind_fact = get_industry_fact(target.symbol) or {}
             industry = str(ind_fact.get("industry") or "").strip()
             sw_code = str(ind_fact.get("sw_code") or "") or None
+            sw_level = str(ind_fact.get("sw_level") or "").strip() or None
             sw_daily = ind_fact.get("sw_daily") or []
             pe = pb = None
             trade_date = ""
@@ -78,7 +79,9 @@ def collect_industry_facts(
                 identity = {
                     "industry": industry or target.industry_name,
                     "sub_industry": target.sub_industry,
-                    "classification_standard": "sw_l1" if sw_code else "custom",
+                    "classification_standard": (
+                        f"sw_{sw_level.lower()}" if sw_level else ("sw_l1" if sw_code else "custom")
+                    ),
                     "industry_code": sw_code or "",
                     "sw_code": sw_code,
                     "sector": str(ind_fact.get("sector") or ""),
@@ -130,7 +133,7 @@ def collect_industry_facts(
             peers_block = {
                 "rows": rows,
                 "peer_codes": peer_codes,
-                "source": f"tushare:index_member({sw_code})+fina_indicator",
+                "source": f"tushare:index_member({sw_code})+fina_indicator+daily_basic",
                 "fetch_error": error,
             }
             if error:
@@ -183,7 +186,12 @@ def derive_industry_benchmarks(
     source_refs: list[str] = []
     if peers.get("source"):
         source_refs.append(peers["source"])
-    if valuation.get("source") and valuation["source"] != "none":
+    # 仅当指数快照确有估值时标注其来源（成分股中位数路径由 derive_benchmarks 自行留痕）
+    if (
+        (valuation.get("industry_pe_ttm") is not None or valuation.get("industry_pb") is not None)
+        and valuation.get("source")
+        and valuation["source"] != "none"
+    ):
         source_refs.append(f"valuation:{valuation['source']}")
 
     state.benchmarks = derive_benchmarks(
@@ -393,7 +401,6 @@ def persist_industry_profile(
     """组装 v2 artifact 并原子写入 JSON 快照（latest-wins）。"""
     identity = state.raw_facts.get("identity") or {}
     peers = state.raw_facts.get("peers") or {}
-    valuation = state.raw_facts.get("valuation") or {}
     benchmarks = state.benchmarks
 
     v_bench, f_bench, g_bench = benchmarks.to_category_dicts() if benchmarks is not None else ({}, {}, {})
@@ -401,11 +408,14 @@ def persist_industry_profile(
         # 置空 growth 基准（保留键、值 None）→ 注入时被跳过 → 下游规则回到 blocked（B3）
         g_bench = {key: None for key in g_bench}
 
-    source_refs: list[str] = []
+    # 来源血缘以 benchmarks.source_refs 为准（含 peers 取数源 + derive 追加的
+    # valuation:peer_median / 估值快照来源），去重保序
+    refs: list[str] = []
     if peers.get("source"):
-        source_refs.append(peers["source"])
-    if valuation.get("source") and valuation["source"] != "none":
-        source_refs.append(f"valuation:{valuation['source']}")
+        refs.append(peers["source"])
+    if benchmarks is not None:
+        refs.extend(benchmarks.source_refs)
+    source_refs = list(dict.fromkeys(refs))
 
     artifact = IndustryContextArtifact(
         schema_version="2",

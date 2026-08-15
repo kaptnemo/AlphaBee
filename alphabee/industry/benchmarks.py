@@ -157,19 +157,27 @@ def derive_benchmarks(
 ) -> IndustryBenchmarks:
     """从成分股财务记录推导行业基准。
 
+    估值基准（Phase 1 估值补全）：
+    - 优先取成分股记录的 ``pe_ttm`` / ``pb_ratio`` 中位数（**仅正值**——亏损股负
+      PE 无估值水平意义，剔除避免扭曲中位数）；
+    - 成分股无估值数据时回退 ``pe_ttm`` / ``pb`` 指数快照参数（Phase 0 语义，透传）；
+    - 使用中位数时在 ``source_refs`` 追加 ``valuation:peer_median`` 留痕。
+
     Args:
         peer_records: 成分股记录列表，每条为 ``{revenue_yoy, roe, debt_ratio,
-            gross_margin}``（canonical 键，值可为 None/缺失）。
+            gross_margin, pe_ttm, pb_ratio}``（canonical 键，值可为 None/缺失）。
         industry: 行业名（展示用）。
         sw_code: 申万行业指数代码。
         as_of_date: 数据日期。
-        pe_ttm / pb: 行业指数估值快照（透传，不参与中位数）。
+        pe_ttm / pb: 行业指数估值快照（**兜底**，成分股中位数优先）。
         source_refs: 数据来源描述，用于血缘。
 
     Returns:
         IndustryBenchmarks，各字段为对应记录的非空值中位数。
     """
     buckets: dict[str, list[float]] = {name: [] for name in _PEER_KEY_MAP.values()}
+    peer_pe: list[float] = []
+    peer_pb: list[float] = []
     for record in peer_records:
         if not isinstance(record, dict):
             continue
@@ -177,6 +185,22 @@ def derive_benchmarks(
             value = _safe_float(record.get(peer_key))
             if value is not None:
                 buckets[peer_key].append(value)
+        pe_value = _safe_float(record.get("pe_ttm"))
+        pb_value = _safe_float(record.get("pb_ratio"))
+        if pe_value is not None and pe_value > 0:
+            peer_pe.append(pe_value)
+        if pb_value is not None and pb_value > 0:
+            peer_pb.append(pb_value)
+
+    final_pe = _median(peer_pe)
+    final_pb = _median(peer_pb)
+    refs = list(source_refs or [])
+    if final_pe is not None or final_pb is not None:
+        refs.append("valuation:peer_median")
+    if final_pe is None:  # 成分股中位数不可得 → 回退指数快照
+        final_pe = _safe_float(pe_ttm)
+    if final_pb is None:
+        final_pb = _safe_float(pb)
 
     return IndustryBenchmarks(
         industry=industry,
@@ -187,7 +211,7 @@ def derive_benchmarks(
         avg_roe=_median(buckets["roe"]),
         avg_debt_ratio=_median(buckets["debt_ratio"]),
         avg_gross_margin=_median(buckets["gross_margin"]),
-        pe_ttm=_safe_float(pe_ttm),
-        pb=_safe_float(pb),
-        source_refs=list(source_refs or []),
+        pe_ttm=final_pe,
+        pb=final_pb,
+        source_refs=refs,
     )

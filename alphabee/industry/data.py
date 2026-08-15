@@ -16,9 +16,12 @@ Phase 1 变更：
 
 from __future__ import annotations
 
-from alphabee.industry.normalize import _TUSHARE_RAW_KEYS
+from datetime import date, timedelta
+
+from alphabee.industry.normalize import _TUSHARE_RAW_KEYS, _TUSHARE_VALUATION_KEYS
 
 _PEER_LIMIT = 20  # 成分股抽样上限，控制单次分析 API 调用量
+_VALUATION_LOOKBACK_DAYS = 7  # daily_basic 回看窗口（取最新交易日）
 
 
 def _normalize_ts_code(symbol: str) -> str:
@@ -53,6 +56,22 @@ _NUMERIC_INPUT_KEYS = tuple(_TUSHARE_RAW_KEYS.values())
 def _has_numeric_field(row: dict) -> bool:
     """轻量存在性检查：至少一个数值输入键非 None（完整转换交给 normalize）。"""
     return any(row.get(key) is not None for key in _NUMERIC_INPUT_KEYS)
+
+
+def _latest_daily_basic(helper, ts_code: str) -> dict[str, object]:
+    """取个股最新交易日的估值行（pe_ttm / pb_ratio，adapter 重命名后）。"""
+    end = date.today().strftime("%Y%m%d")
+    start = (date.today() - timedelta(days=_VALUATION_LOOKBACK_DAYS)).strftime("%Y%m%d")
+    df = helper.daily_basic(
+        ts_code=ts_code,
+        start_date=start,
+        end_date=end,
+        fields="ts_code,trade_date,pe_ttm,pb",
+    ).data
+    if df is None or df.empty:
+        return {}
+    latest = df.sort_values("trade_date").iloc[-1].to_dict()
+    return {key: latest.get(key) for key in _TUSHARE_VALUATION_KEYS.values() if key in latest}
 
 
 def _con_codes(member_df) -> list[str]:
@@ -100,14 +119,21 @@ def fetch_industry_peers(
             peer_codes: list[str] = []
             for con_code in con_codes[:limit]:
                 try:
-                    fina_df = helper.fina_indicator(ts_code=_normalize_ts_code(con_code)).data
+                    ts_code = _normalize_ts_code(con_code)
+                    fina_df = helper.fina_indicator(ts_code=ts_code).data
                     if fina_df is None or fina_df.empty:
                         continue
                     row = fina_df.iloc[0].to_dict()
                     if not _has_numeric_field(row):
                         continue
+                    # 估值补全：合并最新交易日 daily_basic 的 pe_ttm / pb_ratio
+                    # （best-effort，单只失败不影响整体；中位数估值见 benchmarks.derive）
+                    try:
+                        row.update(_latest_daily_basic(helper, ts_code))
+                    except Exception:
+                        pass
                     rows.append(row)
-                    peer_codes.append(_normalize_ts_code(con_code))
+                    peer_codes.append(ts_code)
                 except Exception:
                     continue  # 单只成分取数失败不影响整体
 

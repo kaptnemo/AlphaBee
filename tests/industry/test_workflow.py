@@ -16,7 +16,8 @@ def _ind_fact(industry="白酒", sw_code="801120.SI", pe=25.0, pb=6.0):
 
 
 def _peer_rows(count=6, end_date="20251231"):
-    """源单位行（百分比）：revenue_yoy 10..20，roe 10..20%，debt 40..60%，gross 30..40%。"""
+    """源单位行（百分比）：revenue_yoy 10..20，roe 10..20%，debt 40..60%，gross 30..40%；
+    估值（已是 RATIO）：pe_ttm 20..，pb_ratio 3..（供中位数估值推导）。"""
     rows = []
     for i in range(count):
         rows.append(
@@ -25,6 +26,8 @@ def _peer_rows(count=6, end_date="20251231"):
                 "roe": 10.0 + 2.0 * i,
                 "debt_to_assets": 40.0 + 4.0 * i,
                 "gross_margin": 30.0 + 2.0 * i,
+                "pe_ttm": 20.0 + 2.0 * i,
+                "pb_ratio": 3.0 + i,
                 "period": end_date,
                 "stock_code": f"60000{i}.SH",
             }
@@ -74,7 +77,10 @@ def test_workflow_success_persists_artifact(tmp_path, monkeypatch):
     assert artifact.financial_benchmarks["industry_avg_debt_ratio"] == pytest.approx(0.50)
     assert artifact.financial_benchmarks["industry_avg_gross_margin"] == pytest.approx(0.35)
     assert artifact.growth_benchmarks["industry_revenue_yoy"] == pytest.approx(15.0)
+    # 估值：成分股中位数优先（pe 20..30 → 25.0；pb 3..8 → 5.5），快照仅兜底
     assert artifact.valuation_benchmarks["industry_pe_ttm"] == pytest.approx(25.0)
+    assert artifact.valuation_benchmarks["industry_pb"] == pytest.approx(5.5)
+    assert any("valuation:peer_median" in ref for ref in artifact.source_refs)
 
     # 审核：无 note → approved，confidence 0.8，stale_after 取最早到期（估值 30d）
     assert result.review.status == "approved"
@@ -123,7 +129,8 @@ def test_workflow_direct_target(tmp_path, monkeypatch):
     artifact = result.artifact
     assert artifact is not None
     assert artifact.industry == "白酒"
-    assert artifact.valuation_benchmarks["industry_pe_ttm"] == pytest.approx(22.0)
+    # 直接目标：估值快照 22.0 存在但成分股中位数优先（5 只 pe 20..28 → 24.0）
+    assert artifact.valuation_benchmarks["industry_pe_ttm"] == pytest.approx(24.0)
 
 
 # ── 降级路径 ───────────────────────────────────────────────────────────────

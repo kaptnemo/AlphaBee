@@ -45,6 +45,14 @@ _TUSHARE_RAW_KEYS: dict[str, str] = {
 # 需要从百分比转换为 ratio 的 canonical 字段（RATIO 口径）
 _PERCENT_TO_RATIO = frozenset({"roe", "debt_ratio", "gross_margin"})
 
+# 估值透传字段（canonical 键 → 输入行键；已是 RATIO，无需单位转换）：
+# 来源为 Tushare daily_basic（经 adapter：pe_ttm → pe_ttm、pb → pb_ratio）。
+# 供基准推导按成分股中位数计算行业估值（估值补全，见 design D1 姊妹方案）。
+_TUSHARE_VALUATION_KEYS: dict[str, str] = {
+    "pe_ttm": "pe_ttm",
+    "pb_ratio": "pb_ratio",
+}
+
 CANONICAL_FIELDS = tuple(_TUSHARE_RAW_KEYS)
 
 
@@ -100,6 +108,12 @@ def _tushare_mapper(row: dict[str, Any]) -> dict[str, Any] | None:
             has_numeric = True
             if field in _PERCENT_TO_RATIO:
                 value = value / 100.0
+        canonical[field] = value
+    # 估值透传（无单位转换；None 表示缺失）
+    for field, input_key in _TUSHARE_VALUATION_KEYS.items():
+        value = _safe_float(row.get(input_key))
+        if value is not None:
+            has_numeric = True
         canonical[field] = value
     if not has_numeric:
         return None

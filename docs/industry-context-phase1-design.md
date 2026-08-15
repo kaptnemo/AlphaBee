@@ -118,6 +118,12 @@ class IndustryContextArtifact(BaseModel):
 构造 artifact 的方式同步改为分组写入（机械改动），Phase 0 的节点测试断言同步更新。由于 Phase 0
 从未落盘，**不存在需要迁移的历史快照**。
 
+**估值基准来源（2026-08 实测补充）**：Tushare `sw_daily`（行业指数 PE/PB）接口需更高权限、
+`index_dailybasic` 不含申万行业指数，纯指数快照路径在当前 token 下拿不到估值。因此估值基准改为
+**成分股中位数优先、指数快照兜底**：collect 层对每只成分股合并最新交易日 `daily_basic` 的
+`pe_ttm` / `pb_ratio`（best-effort），`derive_benchmarks` 取**仅正值**中位数（亏损股负 PE 剔除），
+中位数不可得时回退快照参数；命中中位数路径在 `source_refs` 追加 `valuation:peer_median` 留痕。
+
 ### D2 单位与口径契约（B3 落地）
 
 `normalize_industry_schema` 节点对采集到的原始记录做**强制单位转换**，规则如下（与 schema 单位、

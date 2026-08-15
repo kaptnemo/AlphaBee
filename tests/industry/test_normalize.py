@@ -69,6 +69,18 @@ def test_nan_and_invalid_values_become_none():
     assert records[0]["gross_margin"] == 0.30
 
 
+def test_valuation_passthrough_without_conversion():
+    # daily_basic 估值（pe_ttm / pb_ratio）已是 RATIO，原样透传
+    rows = [
+        {"roe": 10.0, "period": "20251231", "pe_ttm": 25.3, "pb_ratio": 6.1},
+        {"roe": 12.0, "period": "20251231", "pe_ttm": None},
+    ]
+    records = normalize_industry_records(rows, source="tushare")
+    assert records[0]["pe_ttm"] == 25.3
+    assert records[0]["pb_ratio"] == 6.1
+    assert records[1]["pe_ttm"] is None
+
+
 def test_unknown_source_yields_no_records():
     assert normalize_industry_records([{"roe": 10.0}], source="akshare") == []
 
