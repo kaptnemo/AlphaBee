@@ -199,9 +199,14 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
     numeric_consistency = not any(
         category in issue_categories for category in {"numeric_inconsistency", "conflict", "cross_source_conflict"}
     )
+    # cross_source_consistency 只统计"已结算"的矛盾：
+    # - thesis_conflict / verified_conflict：经过验证的冲突（真实存在的不一致）
+    # - cross_source_conflict / time_mismatch：数据源或时点口径冲突
+    # 探索阶段的 provisional 冲突（ROADMAP 0.5）不会生成 "conflict" 类别 issue，
+    # 因此不再把"待验证怀疑"误判为最终不一致。
     cross_source_consistency = not any(
         category in issue_categories
-        for category in {"cross_source_conflict", "conflict", "time_mismatch", "thesis_conflict"}
+        for category in {"cross_source_conflict", "verified_conflict", "time_mismatch", "thesis_conflict"}
     )
 
     issue_handling = not undisclosed

@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from alphabee.agents.schemas import ConflictAnalysisResult
-from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
+from alphabee.core import Artifact, ArtifactType, Decision, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
 from alphabee.orchestrator.contracts import (
     VerificationArtifact,
@@ -179,9 +179,72 @@ async def verify_hypotheses(
         )
     )
 
+    # ── 结算层（conflict 生命周期分层，ROADMAP 0.5）───────────────────
+    # 探索阶段（explore_conflicts）产出的冲突全部是 provisional，不进入 issue；
+    # 只有在这里“验证结算”之后，才允许冲突影响 thesis / review / gate：
+    #
+    # 1) 高严重度冲突只有在出现 verified / partial 假设时才升格为 issue，
+    #    让 quality gate 要求报告显式披露（verified_conflict）；
+    #    provisional / unknown 不产生 issue，避免“怀疑冒充事实”。
+    # 2) rejected 假设沉淀为 decision（“已排除”记录），
+    #    避免所有疑点都悬而未决，也让报告不再把已排除的怀疑写成风险。
+    # 3) 把 settled 状态回写进 conflicts_result artifact（保持原 id，按
+    #    _merge_by_id reducer 就地替换），下游只看 conflicts_result 即可拿到
+    #    verified / partial / rejected / unknown 的显式状态。
+    settled_issues: list[Issue] = []
+    settled_decisions: list[Decision] = []
+    for conflict in conflicts_result.conflicts:
+        settled_hypotheses = [
+            hypothesis
+            for hypothesis in conflict.hypotheses
+            if (result := result_by_hid.get(hypothesis.id)) and result.status in ("verified", "partial")
+        ]
+        if settled_hypotheses and conflict.severity in ("high", "critical"):
+            first = settled_hypotheses[0]
+            vr = result_by_hid[first.id]
+            gap_hint = f" 缺口: {', '.join(vr.gaps[:3])}" if vr.gaps else ""
+            settled_issues.append(
+                Issue(
+                    id=_make_id("issue"),
+                    severity=IssueSeverity.HIGH if conflict.severity == "high" else IssueSeverity.CRITICAL,
+                    category="verified_conflict",
+                    message=(f"[冲突已验证] {conflict.theme}: {first.explanation}. 结论: {vr.summary}" + gap_hint),
+                    related_step=step.id,
+                )
+            )
+        for hypothesis in conflict.hypotheses:
+            result = result_by_hid.get(hypothesis.id)
+            if result is not None and result.status == "rejected":
+                settled_decisions.append(
+                    Decision(
+                        id=_make_id("decision"),
+                        maker="conflict_verifier",
+                        rationale=(
+                            f"假设已排除: {conflict.theme} — {hypothesis.explanation}. 推翻理由: {result.summary}"
+                        ),
+                        confidence=result.contradiction_score or 0.7,
+                    )
+                )
+    new_issues.extend(settled_issues)
+    new_decisions = settled_decisions
+
+    # 回写 settled 状态到 conflicts_result artifact（同 id 覆盖，reducer 就地替换）
+    for artifact in state.get("artifacts", []):
+        if artifact.type == ArtifactType.CONFLICTS_RESULT:
+            new_artifacts.append(
+                Artifact(
+                    id=artifact.id,
+                    type=artifact.type,
+                    producer_step=step.id,
+                    value=conflicts_result.model_dump(mode="json"),
+                )
+            )
+            break
+
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
         "steps": [completed_step],
         "issues": new_issues,
         "artifacts": new_artifacts,
+        "decisions": new_decisions,
     }

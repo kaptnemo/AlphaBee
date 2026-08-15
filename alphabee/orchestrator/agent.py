@@ -41,7 +41,6 @@ from alphabee.orchestrator.collectors import (
 from alphabee.orchestrator.contracts import (
     SignalAnalysisArtifact,
     ThesisArtifact,
-    VerificationArtifact,
     find_artifact_model,
 )
 from alphabee.orchestrator.gates import review_report, route_after_report_review
@@ -183,86 +182,43 @@ async def review_thesis(
         )
 
     # ── Inject verified conflicts as additional review evidence ──
+    # 冲突生命周期分层（ROADMAP 0.5）：探索阶段输出保持 provisional，
+    # verify_hypotheses 结算层已负责——
+    #   * 把 verified / partial / rejected / unknown 显式回写到 conflicts_result；
+    #   * 为“已验证的高严重度冲突”沉淀 verified_conflict issue（供 gate 要求披露）；
+    #   * 为 rejected 假设沉淀 decision（已排除记录）。
+    # 因此这里不再重复制造 verified_conflict issue 或 rejected decision，
+    # 只负责 thesis 层面的“论点矛盾”审查：
+    # 若某个维度仍给出正向判断，但已验证冲突指向相反方向，
+    # 就显式制造 thesis_conflict，压低最终 confidence 并强制报告把矛盾写出来。
     conflicts_raw = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
     if conflicts_raw:
-        verification_results = (
-            find_artifact_model(artifacts, ArtifactType.VERIFICATION_RESULTS, VerificationArtifact)
-            or VerificationArtifact()
-        )
-        verify_by_hid: dict[str, dict] = {
-            vr.hypothesis_id: vr.model_dump(mode="json") for vr in verification_results.results
-        }
-
-        # 已验证冲突是 thesis review 最重要的反证来源之一：
-        # 它意味着“某个疑点不再只是怀疑，而是已经被额外证据部分或全部支持”。
         for conflict in conflicts_raw.conflicts:
+            verified_hypotheses = [hyp for hyp in conflict.hypotheses if hyp.status in ("verified", "partial")]
+            if not verified_hypotheses:
+                continue
             theme = conflict.theme
-            severity = conflict.severity
-            related_dimensions = list(conflict.related_dimensions)
-            conflict_severity = IssueSeverity.HIGH if severity in ("high", "critical") else IssueSeverity.MEDIUM
-
-            for hyp in conflict.hypotheses:
-                vstatus = hyp.status
-                if vstatus not in ("verified", "partial"):
+            explanation = verified_hypotheses[0].explanation
+            for dim_id in conflict.related_dimensions:
+                dim = thesis.dimensions.get(dim_id)
+                if dim is None:
                     continue
-
-                hid = hyp.id
-                vr = verify_by_hid.get(hid, {})
-                explanation = hyp.explanation
-                gap_hint = f" 缺口: {', '.join(vr.get('gaps', [])[:3])}" if vr.get("gaps") else ""
-
-                new_issues.append(
-                    Issue(
-                        id=_make_id("issue"),
-                        severity=conflict_severity,
-                        category="verified_conflict",
-                        message=(f"[冲突已验证] {theme}: {explanation}. 结论: {vr.get('summary', '')}" + gap_hint),
-                        related_step=step.id,
-                    )
-                )
-
-                # 业务含义：如果 thesis 某维度仍然给出正向判断，
-                # 但 verified conflict 已经指出该方向存在反证，就要显式制造 thesis_conflict。
-                # 这样最终 confidence 会被压低，报告也必须把矛盾写出来。
-                for dim_id in related_dimensions:
-                    dim = thesis.dimensions.get(dim_id)
-                    if dim is None:
-                        continue
-                    dim_name = dim.name if hasattr(dim, "name") else dim_id
-                    judgment = dim.judgment if hasattr(dim, "judgment") else ""
-                    if judgment in ("strong_positive", "positive"):
-                        new_issues.append(
-                            Issue(
-                                id=_make_id("issue"),
-                                severity=IssueSeverity.HIGH,
-                                category="thesis_conflict",
-                                message=(
-                                    f"[论点矛盾] 维度'{dim_name}'判断为{judgment}，"
-                                    f"但已验证冲突'{theme}'暗示相反方向. "
-                                    f"假设: {explanation}"
-                                ),
-                                related_step=step.id,
-                            )
+                dim_name = dim.name if hasattr(dim, "name") else dim_id
+                judgment = dim.judgment if hasattr(dim, "judgment") else ""
+                if judgment in ("strong_positive", "positive"):
+                    new_issues.append(
+                        Issue(
+                            id=_make_id("issue"),
+                            severity=IssueSeverity.HIGH,
+                            category="thesis_conflict",
+                            message=(
+                                f"[论点矛盾] 维度'{dim_name}'判断为{judgment}，"
+                                f"但已验证冲突'{theme}'暗示相反方向. "
+                                f"假设: {explanation}"
+                            ),
+                            related_step=step.id,
                         )
-
-        # 对被推翻的假设也保留 decision，
-        # 这是为了告诉下游“哪些怀疑已经排除”，避免报告把所有疑点都写成悬而未决。
-        for conflict in conflicts_raw.conflicts:
-            for hyp in conflict.hypotheses:
-                if hyp.status != "rejected":
-                    continue
-                hid = hyp.id
-                vr = verify_by_hid.get(hid, {})
-                new_decisions.append(
-                    Decision(
-                        id=_make_id("decision"),
-                        maker="conflict_verifier",
-                        rationale=(
-                            f"假设已排除: {conflict.theme} — {hyp.explanation}. 推翻理由: {vr.get('summary', '')}"
-                        ),
-                        confidence=vr.get("contradiction_score", 0.7),
                     )
-                )
 
     # ── Produce thesis_review Artifact ──
     review_artifact = Artifact(

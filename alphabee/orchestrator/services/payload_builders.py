@@ -162,6 +162,9 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
 
     return (
         "请对以下数据进行冲突探索分析，识别背离和矛盾，输出结构化的 ConflictAnalysisResult。\n\n"
+        "重要：这是探索阶段（provisional）。你输出的所有冲突和假设都是「候选线索 / 待验证怀疑」，"
+        "尚未经过证据验证，不要把它们表述为已成立的事实结论；每条假设请给出可验证的 predictions，"
+        "供后续 verify_hypotheses 阶段裁决。\n\n"
         f"```json\n{_json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
     )
 

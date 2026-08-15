@@ -104,22 +104,13 @@ async def explore_conflicts(
         )
     )
 
-    if conflicts_result:
-        for conflict in conflicts_result.conflicts:
-            if conflict.severity in ("high", "critical"):
-                # 高严重度冲突立刻上升为 issue，
-                # 这样即使后面某个节点没显式消费冲突 artifact，
-                # quality gate 仍然能通过 issues 感知到“当前结论不稳定”。
-                new_issues.append(
-                    Issue(
-                        id=_make_id("issue"),
-                        severity=IssueSeverity.HIGH if conflict.severity == "high" else IssueSeverity.CRITICAL,
-                        category="conflict",
-                        message=f"[冲突] {conflict.theme}: {conflict.description}",
-                        related_step=step.id,
-                    )
-                )
-
+    # 冲突生命周期分层（ROADMAP 0.5）：
+    # 探索阶段的输出全部是 provisional（候选冲突 / 待验证假设），
+    # 即使 severity 很高，也**不在这里直接升格为 issue**——
+    # 否则下游 thesis / report / quality gate 会把“待验证怀疑”当成“已成立问题”。
+    # 真正的升格发生在 verify_hypotheses 的结算层：只有 verified / partial
+    # 的高严重度冲突才会进入 issue（进而被 gate 要求披露），
+    # rejected 假设沉淀为 decision，unknown 保留为证据缺口。
     if conflicts_result is not None:
         new_artifacts.append(
             Artifact(

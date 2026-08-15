@@ -26,26 +26,31 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | 0.2 ThesisEngine 显式消费 anomaly/conflict/verification/context | ✅ | `nodes/thesis.py` 全量传入；`agents/thesis/engine.py` 的 `run()` 已接收 `anomaly_report / conflict_analysis / verification_results / company_context / insight` |
 | 0.3 canonical field / signal rule 一致性 | 🟡 | 无系统性 schema 校验（工程侧 E3 未落地）；`services/gap_recorder.py` 已把 blocked/missing_fact 信号记录进失败库 |
 | 0.4 Insight schema 脆弱性 | 🟡 | 已做 `moderate→medium` 枚举归一化（`agents/insights/models.py` 的 `_coerce_confidence/_coerce_importance`）；但 parse fail 仍**整层丢弃**，无降级 insight |
-| 0.5 待验证/已验证冲突分层 | ⬜ | `verify_hypotheses` 已把 `verified/partial/rejected` 回写到 `hypothesis.status`（`nodes/verification.py`），但 `explore_conflicts` 仍把 high/critical 冲突**直接升格为 issue**，未做 provisional 分层 |
+| 0.5 待验证/已验证冲突分层 | ✅ | `explore_conflicts` 不再把 provisional 冲突升格为 issue；`verify_hypotheses` 作为结算层：verified/partial 高严重度冲突升格为 `verified_conflict` issue、rejected 沉淀为 decision、状态显式回写 `conflicts_result`；`review_thesis` 只保留 thesis_conflict（见 `tests/orchestrator/test_conflict_lifecycle.py`） |
 | 0.6 用户输出与调试输出分层 | ⬜ | `main.py` `_render_final_report()` 仍把全部 issues（含 parse_error / rewrite 信息）打印到“🐞 系统问题”段 |
 | Phase 1 InsightAgent 稳定观点骨架 | 🟡 | 已接入主图（`nodes/insights.py` + `agents/insights/`），报告 prompt 以 `insight.core_view` 为主线（`prompts.py`）；`what_would_change_my_mind → falsification_conditions` 已贯通；但 parse fail 无降级、`materiality_rank` 未显式驱动报告排序 |
-| Phase 1.5 探索/验证/结算分层 | 🟡 | “已验证才进入结论”已部分成立（review_thesis 只消费 verified/partial 冲突）；验证预算 / 最短排除路径 / 未探索区域记录未实现 |
+| Phase 1.5 探索/验证/结算分层 | 🟡 | 结算层已随 0.5 落地（provisional 不升格、verified/partial 升格为 issue、rejected 沉淀 decision、状态回写 `conflicts_result`）；剩余：验证预算 / 最短排除路径 / 未探索区域记录、evidence refs 硬约束 |
 | Phase 2 BusinessModelContext | 🟡 | `services/company_context.py` 已有 industry / sub_industry / market_cap_category / lifecycle_stage / business_model_summary；无 BusinessModelClassifier、无 playbooks/primitives（见 `DOMAIN_CONTEXT_ROADMAP.md`） |
 | Phase 3 Claim-Evidence Graph | ⬜ | 未实现；`gates.py` 已有 `evidence_coverage / grounding_score` 检查，但上游 Decision 普遍未填 `based_on / evidence_refs` |
 | Phase 4 ExpectationFitAgent | ⬜ | 未实现 |
 | Phase 5 报告备忘录化 | 🟡 | 报告已重构为“观点驱动”（`REPORT_GENERATOR_PROMPT`：insight 主线 + 12 章节 + 三情景 + 可证伪条件），LLM 空输出有确定性降级报告（`reporter.py` `build_deterministic_report`）；“系统问题”段仍在 CLI 暴露 |
 
-“当前关键问题”中的 #3（Report Generator 被限制为格式化器）与 #4（Reviewer 维度覆盖落后）已解决：
+“当前关键问题”中的 #2（anomaly/conflict 进入 thesis）、#3（Report Generator 被限制为格式化器）、#4（Reviewer 维度覆盖落后）、#7（冲突状态边界）已解决：
+- `nodes/thesis.py` 全量传入 anomaly/conflict/verification/context，`engine.py` 已显式消费（0.2）。
 - `prompts.py` 的 `REPORT_GENERATOR_PROMPT` 已改为“有观点、有论证、可证伪”的忠实裁决模式，不再要求“只做格式化”。
 - `agents/thesis/reviewer.py` 的 `ThesisReviewer` 遍历全部 8 个维度生成 `dimension_verdicts`，审查逻辑已随 `dimensions/` 目录（8 个 YAML）同步扩展。
+- `explore_conflicts` / `verify_hypotheses` / `review_thesis` 已按 provisional / settled 分层（0.5）。
 
 ---
 
 ## 当前关键问题
 
-### 1. ThesisEngine 只是聚合器，不是观点引擎
+> 状态标记：✅ 已解决（见上方状态跟踪）　🟡 部分解决　⬜ 未解决
+> 以下 9 项为历史梳理，已按当前 `alphabee/orchestrator/` 代码逐项核对（2026-08）。
 
-当前 `ThesisEngine` 主要做：
+### 1. ThesisEngine 只是聚合器，不是观点引擎 🟡
+
+当前 `ThesisEngine` 的主体仍是：
 
 ```text
 signal level × thesis_impact direction → 按维度平均 → judgment
@@ -58,68 +63,27 @@ signal level × thesis_impact direction → 按维度平均 → judgment
 应收扩张快于收入、现金流没有同步兑现，当前估值需要更强利润兑现能力支撑。
 ```
 
-### 2. anomaly/conflict 没有充分进入 thesis 判断
+已通过 `_apply_insight`（`agents/thesis/engine.py`）把 InsightAgent 的 `central_tension / counter_evidence / confidence` 作为定性语境注入维度并调节置信度；但 `core_view` 尚未显式参与维度判断，`materiality_rank` 也未驱动报告排序——观点主轴目前主要靠报告 prompt（`prompts.py`）承载，而不是 thesis 本身生成。
 
-已完成第一步：`AnomalyEngine` 现在会在 `SignalEngine` 之前运行，并把 anomaly facts 注入 signal 计算，使 anomaly signals 可以进入 thesis。
+### 2. anomaly/conflict 没有充分进入 thesis 判断 ✅
 
-下一步仍需让 `ThesisEngine` 显式消费：
+已完成（0.2）：`nodes/thesis.py` 全量传入 `anomaly_report / conflict_analysis / verification_results / company_context / insight`；`engine.py` 的 `_apply_conflict_analysis` 会把 verified/partial 冲突计入维度扣分与 evidence、rejected 进入 counter_evidence、unknown 进入 missing_evidence，`_apply_anomaly_report` 把异常模式投影为维度 evidence。
 
-- `anomaly_report`
-- `conflict_analysis`
-- `verification_results`
-- `company_context`
+### 3. Report Generator 被限制为格式化器 ✅
 
-这样勾稽异常和已验证冲突才会真正改变核心论点，而不是只出现在报告附录。
+已完成：`REPORT_GENERATOR_PROMPT`（`prompts.py`）已改为“有观点、有论证、可证伪”的忠实裁决模式——允许压缩/排序/合并，只禁止引入 payload 之外的新事实；LLM 空输出有确定性降级报告（`reporter.py` `build_deterministic_report`）。
 
-### 3. Report Generator 被限制为格式化器
+### 4. Reviewer 维度覆盖落后 ✅
 
-当前报告 prompt 明确要求“不是分析师，只做格式化和文字润色”。这能避免幻觉，但也意味着如果上游没有强观点，最终报告一定会变成结构化信息堆砌。
+已完成：`agents/thesis/reviewer.py` 的 `ThesisReviewer` 遍历全部 8 个维度（`dimensions/` 8 个 YAML）生成 `dimension_verdicts`，审查逻辑已随维度定义同步扩展。
 
-更具体地说，当前链路仍然是：
+### 5. 缺少重要性排序 🟡
 
-```text
-facts / signals / anomaly / conflict / review / issues
-→ 一次性塞给 report generator
-→ 报告被动汇总
-```
+`InsightOutput.materiality_rank` 已产出并随报告 payload 下发（`payload_builders.py`），报告 prompt 也要求 investment_viewpoint / scenario_analysis 引用其中关键变量；但尚无机制强制“按 materiality_rank 决定报告内部排序”，仍依赖 LLM 自觉执行。
 
-而不是：
+### 6. InsightAgent 已接入，但稳定性不足 🟡
 
-```text
-事实 → 冲突假设 → 验证裁决 → 中心观点 → 最终报告
-```
-
-因此最终产物更像“信息汇总器”，而不是“观点驱动的研究 memo”。
-
-### 4. Reviewer 维度覆盖落后
-
-Thesis dimensions 已扩展到：
-
-```text
-financial_quality
-earnings_quality
-growth_quality
-credit_risk
-valuation_fit
-competitive_moat
-capital_efficiency
-operational_stability
-```
-
-但 reviewer prompt 仍明显偏向旧的 `financial_quality / earnings_quality / credit_risk` 三维度，需要同步升级审查逻辑。
-
-### 5. 缺少重要性排序
-
-当前系统更擅长覆盖，而不是取舍。真正的分析师需要回答：
-
-- 最关键变量是什么？
-- 哪个事实最能改变判断？
-- 哪些异常是主矛盾？
-- 哪些指标只是背景噪音？
-
-### 6. InsightAgent 已接入，但稳定性不足
-
-`synthesize_insights` 已经进入主流程，且理论上负责输出：
+`synthesize_insights`（`nodes/insights.py`）已进入主流程，负责输出：
 
 - `core_view`
 - `central_tension`
@@ -128,42 +92,25 @@ operational_stability
 - `base_case / bull_case / bear_case`
 - `what_would_change_my_mind`
 
-但当前仍存在：
+当前仍存在（经代码确认）：
 
-- schema 过严导致整层容易因枚举值小偏差直接 parse fail
-- insight 失败后，下游会退回“维度判断 + 模板解释”模式
-- report 虽然支持消费 insight，但观点骨架经常缺失
+- `_coerce_confidence / _coerce_importance` 已做枚举归一化（`agents/insights/models.py`），但 **parse fail 仍整层丢弃**：`InsightOutput.model_validate` 失败时只记录一条 `parse_error` issue，不产出 insight artifact
+- insight 失败后，下游退回“维度判断 + 模板解释”模式，观点骨架直接缺失
 
 这意味着“观点层”已经有形，但还没有稳定成为最终报告的主轴。
 
-### 7. 冲突探索与验证的状态边界不够清晰
+### 7. 冲突探索与验证的状态边界不够清晰 ✅
 
-当前高严重度 conflict 会很早被上升为高优先级 issue。这样容易把：
+已完成（0.5）：`explore_conflicts` 只产出 provisional 冲突，不再直接升格 issue；`verify_hypotheses` 作为结算层（verified/partial 高严重度 → `verified_conflict` issue、rejected → decision、状态显式回写 `conflicts_result`）；`review_thesis` 只对“正向维度 vs 已验证冲突”制造 `thesis_conflict`；quality gate 只统计已结算类别。见 `tests/orchestrator/test_conflict_lifecycle.py`。
 
-```text
-待验证怀疑
-```
+显式区分已经落地：
 
-误传导成：
+- provisional conflict（候选冲突 / 待验证）→ 不进入 issue
+- verified conflict（已验证冲突 / 可进入最终判断）→ 进入 issue / thesis / gate
 
-```text
-已经成立的问题
-```
+### 8. 证据链没有稳定闭环 🟡
 
-后果是：
-
-- thesis 过早被高压负面信号牵引
-- report 把“冲突线索”写成“事实结论”
-- quality gate 把探索阶段的不确定性当成最终不一致
-
-需要显式区分：
-
-- provisional conflict（候选冲突 / 待验证）
-- verified conflict（已验证冲突 / 可进入最终判断）
-
-### 8. 证据链没有稳定闭环
-
-quality gate 已经开始检查 `evidence_coverage / grounding_score / disclosed_issue_ids`，但上游很多 Decision 仍没有系统性填充 `based_on` / `evidence_refs`。
+quality gate 已检查 `evidence_coverage / grounding_score / disclosed_issue_ids`（`gates.py`），但上游 Decision 仍普遍未填 `based_on / evidence_refs`——目前沉淀的 decision 主要来自 thesis 维度 verdict（`thesis_reviewer`）与 conflict rejected（`conflict_verifier`），且大多没有证据引用。
 
 后果是：
 
@@ -171,10 +118,9 @@ quality gate 已经开始检查 `evidence_coverage / grounding_score / disclosed
 - gate 会持续提示 evidence_coverage 低
 - report rewrite 会越来越像“修措辞”，而不是“补证据”
 
-### 9. 用户报告与系统调试信息混在一起
+### 9. 用户报告与系统调试信息混在一起 ⬜
 
-当前最终输出会把 parse error、rewrite_needed、内部冲突、调试问题直接暴露在“系统问题”段落中。
-这虽然对开发排障有帮助，但会显著破坏用户看到的成品感，也会让报告从“研究结论”退化成“运行日志”。
+`main.py` `_render_final_report()` 仍把全部 issues（含 parse_error / report_rewrite_needed / subagent_failure 等调试信息）打印到“🐞 系统问题”段（对应 0.6，未落地）。这虽然对开发排障有帮助，但会显著破坏用户看到的成品感，也会让报告从“研究结论”退化成“运行日志”。
 
 ---
 
@@ -205,7 +151,9 @@ DerivedFacts
 
 ### 0.2 ThesisEngine 显式消费 anomaly/conflict
 
-建议扩展接口：
+状态：✅ 已实现。
+
+接口已落地（`agents/thesis/engine.py` 的 `run()` 实际接收，`nodes/thesis.py` 全量传入）：
 
 ```python
 ThesisEngine.run(
@@ -216,15 +164,17 @@ ThesisEngine.run(
     conflict_analysis=None,
     verification_results=None,
     company_context=None,
+    insight=None,
 )
 ```
 
-目标：
+落地效果：
 
-- 已验证 high/critical conflict 可以下调相关维度
-- anomaly pattern 可以直接生成 thesis evidence
-- rejected hypotheses 可以作为反向证据进入 thesis
-- unknown hypotheses 可以进入 missing evidence
+- 已验证 high/critical conflict 下调相关维度（`_apply_conflict_analysis`）
+- anomaly pattern 直接生成 thesis evidence（`_apply_anomaly_report`）
+- rejected hypotheses 作为反向证据进入 thesis（counter_evidence）
+- unknown hypotheses 进入 missing evidence
+- insight 的 central_tension / counter_evidence / confidence 注入维度（`_apply_insight`）
 
 ### 0.3 修复 canonical field / signal rule 不一致
 
@@ -237,20 +187,35 @@ ThesisEngine.run(
 
 ### 0.4 修复 Insight schema 脆弱性
 
+状态：🟡 部分（枚举归一化已完成，降级 insight 未做）。
+
 目标：不要让观点骨架因为轻微枚举值漂移而整层失效。
 
-建议：
+已实现：
 
-- 对 `moderate -> medium` 这类常见枚举值做 normalize
+- `_coerce_confidence / _coerce_importance`（`agents/insights/models.py`）：`moderate -> medium` 等常见枚举值归一化
 - 对 `importance/confidence/weight` 等字段增加容错映射
-- parse fail 时保留降级 insight，而不是整层丢弃
+
+待做：
+
+- **parse fail 时保留降级 insight，而不是整层丢弃**（当前 `nodes/insights.py` 解析失败只记 `parse_error` issue，不产出 artifact）
 - 将 parse error 视为“观点层失败”，而不是普通可忽略 warning
+
+> 实施方案见 `docs/INSIGHT_DEGRADATION_DESIGN.md`（四级降级阶梯：严格 → 宽松救援 → 确定性兜底 → 最小骨架）。
 
 ### 0.5 分离“待验证冲突”与“已验证冲突”
 
+**状态：✅ 已实现（2026-08）**，落地方式：
+
+- `explore_conflicts` 只产出 provisional conflicts，不再把 high/critical 冲突直接升格为 issue（`nodes/conflicts.py`）
+- `verify_hypotheses` 作为结算层：verified/partial 高严重度冲突升格为 `verified_conflict` issue；rejected 假设沉淀为 decision；unknown 保持 provisional（`nodes/verification.py`）
+- 结算状态显式回写进 `conflicts_result` artifact（`verified / partial / rejected / unknown`），下游只读该 artifact 即可拿到真实状态
+- `review_thesis` 只对“正向维度 vs 已验证冲突”制造 `thesis_conflict`，不再重复制造 verified_conflict / rejected decision（`orchestrator/agent.py`）
+- 测试：`tests/orchestrator/test_conflict_lifecycle.py`
+
 目标：探索可以更自由，但最终判断只消费已结算结果。
 
-建议：
+建议（历史记录）：
 
 - `explore_conflicts` 只产出 provisional conflicts，不直接升格为 high issue
 - `verify_hypotheses` 之后再决定哪些冲突进入 thesis/review/gate
@@ -292,6 +257,13 @@ verify_hypotheses
 → generate_report
 ```
 
+当前进度（2026-08 与代码对齐）：
+
+- ✅ 已接入主图（`nodes/insights.py`），报告 prompt 以 `core_view / central_tension` 为主线（`prompts.py`）
+- ✅ `what_would_change_my_mind → falsification_conditions` 已贯通，insight 的 central_tension / counter_evidence / confidence 进入 thesis（`_apply_insight`）
+- 🟡 parse fail 仍整层丢弃、无降级 insight（对应 0.4，未做）
+- 🟡 `materiality_rank` 未显式驱动报告排序（已产出并下发，排序仍依赖 LLM 自觉）
+
 ### 目标输出结构
 
 ```json
@@ -327,6 +299,8 @@ verify_hypotheses
 ---
 
 ## Phase 1.5：建立“探索自由，结论收敛”的中间层契约
+
+状态：🟡 核心结算层已随 0.5 落地（provisional 不升格 issue、verified/partial 升格、rejected 沉淀 decision、状态回写 `conflicts_result`）；剩余增强项见下文（验证预算 / 最短排除路径 / 未探索区域记录 / evidence refs 硬约束）。
 
 目标不是简单增加 agent 自由度，而是：
 
@@ -680,14 +654,15 @@ ExpectationFitAgent
 
 | 优先级 | 事项 | 价值 | 当前状态 |
 |---|---|---|---|
+| P0 | Insight 降级：parse fail 保留观点骨架（0.4 收尾） | 保住观点主轴，不因 LLM JSON 漂移退回模板模式 | ⬜ 未做（枚举归一化已做） |
+| P0 | Decision 补齐 evidence refs | 解决 evidence_coverage 低和结论不可追溯 | 🟡 部分（gate 已检查，多数 Decision 仍未填） |
 | P0 | anomaly 进入 signal/thesis | 修正当前链路断点 | ✅ 已实现 |
 | P0 | ThesisEngine 显式消费 conflict/anomaly | 让高价值发现影响结论 | ✅ 已实现 |
-| P0 | 修复 Insight schema 脆弱性 | 保住观点骨架，不因 parse fail 退回模板模式 | 🟡 部分（枚举归一化已做，降级 insight 未做） |
-| P0 | provisional / verified conflict 分层 | 提高探索自由度，同时避免怀疑冒充事实 | ⬜ 未实现 |
-| P0 | Decision 补齐 evidence refs | 解决 evidence_coverage 低和结论不可追溯 | 🟡 部分（gate 已检查，多数 Decision 仍未填） |
+| P0 | provisional / verified conflict 分层 | 提高探索自由度，同时避免怀疑冒充事实 | ✅ 已实现 |
+| P1 | 用户输出与调试输出分层（0.6） | 提升成品感，减少“运行日志感” | ⬜ 未实现 |
+| P1 | materiality_rank 驱动报告排序 | 让重要性真正影响表达顺序 | 🟡 部分（已产出并下发，未强制排序） |
 | P1 | 稳定 InsightAgent 成为观点主轴 | 从数字堆砌变成观点生成 | 🟡 已接入主图，report 已以其为主线 |
 | P1 | 报告结构改成核心观点优先 | 立刻改善用户感知 | ✅ 已实现（观点驱动报告重构） |
-| P1 | 用户输出与调试输出分层 | 提升成品感，减少“运行日志感” | ⬜ 未实现 |
 | P2 | BusinessModelContext | 提升行业/公司语境判断 | 🟡 基础字段已有，Classifier/Playbook 未做 |
 | P2 | Claim-Evidence Graph | 让观点可追踪、可审查 | ⬜ 未实现 |
 | P3 | ExpectationFitAgent | 打通财务质量与投资价值 | ⬜ 未实现 |
@@ -697,11 +672,11 @@ ExpectationFitAgent
 
 ## 下一步建议
 
-短期最值得做的 3 件事（更新于 2026-08 状态跟踪）：
+短期最值得做的 3 件事（更新于 2026-08 状态跟踪，按收益排序）：
 
-1. 修复 `InsightOutput` 的 schema 脆弱性，并让 insight 失败时有可控降级，而不是直接失去观点骨架。
-   **状态**：枚举归一化（moderate→medium）已完成；parse fail 仍整层丢弃、无降级 insight，待补。
-2. 调整 conflict 生命周期：`explore_conflicts` 产出 provisional，`verify_hypotheses` 之后再升级为最终可消费冲突。
-   **状态**：未实现（`explore_conflicts` 仍直接升格 high/critical 为 issue）。
-3. 重构 `REPORT_GENERATOR_PROMPT` 和最终渲染逻辑，让报告按“观点 → 证据 → 反证 → 证伪条件”组织，并把内部调试信息移出主报告。
-   **状态**：prompt 部分已完成（观点驱动重构）；渲染部分未完成（CLI 仍打印“系统问题”段）。
+1. 实现 Insight 降级（0.4 收尾）：`InsightOutput` parse fail 时先用宽松解析抢救部分字段，再做确定性兜底（从 signals / anomalies / verified conflicts 合成 `core_view / central_tension`），保证观点骨架不整层丢失。
+   **状态**：⬜ 未做（枚举归一化已完成，`nodes/insights.py` 解析失败仍整层丢弃）。
+2. 落地用户输出与调试输出分层（0.6）：`main.py` `_render_final_report()` 只打印用户侧不确定性披露（verified_conflict / thesis_conflict / thesis_gap 等），parse_error / report_rewrite_needed / subagent_failure 转入 debug 视图或附录。
+   **状态**：⬜ 未做（CLI 仍打印“🐞 系统问题”段）。
+3. 给关键 Decision 补齐 evidence refs（Phase 3 前置）：thesis 维度 verdict、conflict rejected、insight 判断都填上 `based_on / evidence_refs`，让 gate 的 evidence_coverage / grounding_score 从“文案检查”变成“来源审计”。
+   **状态**：🟡 部分（gate 已检查，多数 Decision 未填）。
