@@ -1,5 +1,7 @@
 # Data Collection Failed Auto-Fix Design
 
+> **实现状态（2026-08 与代码对齐）**：本文档的设计已基本落地到 `alphabee/data_fetch/`（`database.py` SQLite 表：`DataFetchEvent` / `DataFetchIssue` / `DataFixTask`；`fingerprint.py` 去重签名；`recorder.py` 采集；`scanner.py` 聚合扫描并创建修复任务；`fix_executor.py` 执行修复；`strategies.py` 换源/补字段策略；`cli.py` / `__main__.py` 命令行入口）。`orchestrator/services/gap_recorder.py` 已把 blocked/missing_fact 信号接入失败库。未完全落地：与 Langfuse trace 的关联展示、Claude Agent SDK 自动提交 MR 的闭环。
+
 ## 1. 背景
 
 AlphaBee 在任务执行过程中经常会遇到数据获取失败，常见原因包括：

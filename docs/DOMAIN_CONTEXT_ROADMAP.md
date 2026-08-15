@@ -1,5 +1,11 @@
 # AlphaBee Domain Context Roadmap
 
+> **实现状态（2026-08 与代码对齐）**
+> - Phase 0（`detect_transition_state` 节点）：曾以 `orchestrator/nodes/transition.py` 实验实现，但**从未提交且已从工作区删除**，当前主图（`orchestrator/agent.py`）不包含该节点，代码中已无 `transition_state` / `domain_context` 产物。若重新推进需从零落地。
+> - Phase A（增强 company context）：部分落地 —— `services/company_context.py` 已提供 industry / sub_industry / market_cap_category / lifecycle_stage / business_model_summary；`cycle_type` / `driver_variables` / `event_sensitive_exposures` 未实现。
+> - Phase B–E（ContextRouter / Playbooks / EventOverlay / FrameworkCompetition / 报告主线切换）：未开始。
+> - 相关基础：`ThesisEngine` / `ThesisReviewer` 已有少量行业感知（`engine.py` 的 `_FINANCIAL_INDUSTRIES`、`reviewer.py` 的 `_HIGH_LEVERAGE_INDUSTRIES` 等常量），属于本设计的雏形。
+
 ## 目标
 
 让 AlphaBee 的分析方向更符合具体标的的真实驱动，而不是所有公司都套用同一套通用财务模板。

@@ -1,5 +1,7 @@
 # 行业/产业语境注入方案
 
+> **实现状态（2026-08 与代码对齐）**：本文档的“问题诊断”与当前代码一致——上游（derived_facts / signal / explore_conflicts / verify_hypotheses）仍无行业感知；`market_share_change` 规则因 `industry_revenue_yoy` 永远不在 `fact_values` 中而持续阻塞。已具备的基础：`build_company_context()` 已把 industry / sub_industry / lifecycle / market_cap 注入 `synthesize_insights` / `run_thesis` / `review_thesis`；`ThesisEngine` / `ThesisReviewer` 有少量行业常量调整。**Phase 1–6 的改造（IndustryContextArtifact、resolve_industry_context 节点、industry_thresholds、报告层行业字段）均未开始**（`alphabee/industry/` 目前为空包；`ArtifactType` 无 `INDUSTRY_CONTEXT`；`ReportGenerationPayload` 无 `industry` 字段）。
+
 ## 问题诊断
 
 当前管道中存在明显的"语境断层"：**上游节点（derived_facts、signal、explore_conflicts、verify_hypotheses）完全无行业感知**，而下游节点（synthesize_insights、run_thesis、review_thesis）已有行业语境。这导致上层分析结论泛泛，无法区分"银行的高负债率是正常的"与"制造业的高负债率是危险的"。

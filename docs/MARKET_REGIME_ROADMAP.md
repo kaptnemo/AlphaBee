@@ -249,9 +249,11 @@ poetry run pytest tests/market_regime/test_score_engine.py
 
 ---
 
-## Phase 2：市场状态机（Regime Machine）+ 相似历史搜索
+## Phase 2：市场状态机（Regime Machine）+ 相似历史搜索 ✅ 已实现（工作区，待提交）
 
 设计文档结尾建议的状态机是"比评分更接近机构框架"的下一步，建议在评分引擎稳定后接入，而不是一步到位。
+
+> 落地说明（2026-08）：`regime_classifier.py`（六阶段 + Markov 迁移约束）与 `forward_returns.py`（相似历史搜索 + 前瞻收益/回撤统计）已在工作区实现，配套 `rules/transition_matrix.yaml` 与 `tests/market_regime/test_regime_classifier.py`，尚未提交。文档其余 Phase 2 设计（迁移记录落盘、回测窗口披露）与之基本一致。
 
 ### 2.1 六阶段分类器（规则先行）
 
@@ -288,9 +290,11 @@ poetry run pytest tests/market_regime/test_regime_classifier.py
 
 ---
 
-## Phase 3：Market Analyst Agent（LLM 解释层）
+## Phase 3：Market Analyst Agent（LLM 解释层）⬜ 未开始
 
 目标：给评分加上"人话"——为什么涨、为什么降、风险在哪。这是"评分+仓位"变成"可读建议"的关键。
+
+> 现状（2026-08）：`RegimeSnapshot.explanation` 字段已预留，但无 `explainer.py`，评分尚无 LLM 解释。
 
 ### 3.1 Agent 形态
 
@@ -327,7 +331,9 @@ poetry run pytest tests/market_regime/test_explainer.py
 
 ---
 
-## Phase 4：编排、CLI 与集成
+## Phase 4：编排、CLI 与集成 ⬜ 未开始
+
+> 现状（2026-08）：无 `graph.py`、无 `main.py` 子命令（`main.py` 中无 market-regime 入口）、无注入个股流水线的 `load_market_regime_context` 节点；引擎只能以库函数方式调用。
 
 ### 4.1 独立 graph
 
@@ -369,7 +375,7 @@ poetry run pytest tests/market_regime/ tests/orchestrator/
 
 ---
 
-## Phase 5：验证与增强（不阻塞上线）
+## Phase 5：验证与增强（不阻塞上线）⬜ 未开始
 
 - **评分有效性回测**：`market_score` 对未来 3/6 个月指数收益的秩相关（IC），以及"高分区未来回撤显著低于低分区"的验证；结果沉淀到 `data/market_regime/validation/`。
 - **状态机升级**：规则分类器稳定后，再考虑隐马尔可夫（HMM）或 GMM 拟合，用 `regime_history.csv` 作为训练序列，输出与规则版做一致性对比。
@@ -380,15 +386,15 @@ poetry run pytest tests/market_regime/ tests/orchestrator/
 
 ## 推荐优先级
 
-| 优先级 | 事项 | 价值 | 依赖 |
-|---|---|---|---|
-| P0 | Phase 0 数据基座 + 回填 | 一切评分的燃料；先验证 tushare 权限积分 | 无 |
-| P0 | Phase 1 确定性评分引擎 | 核心可交付物，纯确定性可单测 | Phase 0 |
-| P1 | Phase 2 状态机 + 相似历史 | 从"评分"升级到"阶段"，更接近机构框架 | Phase 1 |
-| P1 | Phase 3 LLM 解释层 | 评分变"可读建议" | Phase 1 |
-| P2 | Phase 4 CLI + 周级调度 | 可交付给用户日常使用 | Phase 1 |
-| P2 | 注入个股流水线 | 打通"宏观仓位 → 个股分析" | Phase 4 |
-| P3 | Phase 5 回测与模型升级 | 用数据证明评分有效，再考虑换模型 | Phase 1+ |
+| 优先级 | 事项 | 价值 | 依赖 | 当前状态（2026-08） |
+|---|---|---|---|---|
+| P0 | Phase 0 数据基座 + 回填 | 一切评分的燃料；先验证 tushare 权限积分 | 无 | ✅ 已实现 |
+| P0 | Phase 1 确定性评分引擎 | 核心可交付物，纯确定性可单测 | Phase 0 | ✅ 已实现 |
+| P1 | Phase 2 状态机 + 相似历史 | 从"评分"升级到"阶段"，更接近机构框架 | Phase 1 | 🟡 已实现（工作区未提交） |
+| P1 | Phase 3 LLM 解释层 | 评分变"可读建议" | Phase 1 | ⬜ 未开始 |
+| P2 | Phase 4 CLI + 周级调度 | 可交付给用户日常使用 | Phase 1 | ⬜ 未开始 |
+| P2 | 注入个股流水线 | 打通"宏观仓位 → 个股分析" | Phase 4 | ⬜ 未开始 |
+| P3 | Phase 5 回测与模型升级 | 用数据证明评分有效，再考虑换模型 | Phase 1+ | ⬜ 未开始 |
 
 ---
 

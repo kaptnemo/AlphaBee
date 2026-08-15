@@ -24,6 +24,8 @@ ROADMAP.md
 
 ## 当前工程架构概览
 
+> 更新（2026-08 与代码对齐）：`agents_legacy/` 已从仓库移除（commit `af6f987`）；`harness/` 仅保留 `prompts.py` 提示词资产；新增 `alphabee/market_regime/`（市场级独立引擎）与 `alphabee/collectors/market_regime/`。
+
 当前 AlphaBee 大致包含以下几条并行线：
 
 ```text
@@ -40,30 +42,33 @@ alphabee/agents/
   → derived_facts
   → signal
   → anomaly
+  → insights
   → thesis
   → explore_conflicts
   → verify_hypotheses
 
+alphabee/market_regime/        # 新增：市场级评分引擎（独立于个股流水线）
+  → score_engine / regime_classifier / position / persistence / rules
+
 alphabee/collectors/
-  → tushare / akshare / baostock / eastmoney / local
+  → tushare / akshare / baostock / eastmoney / local / market_regime
 
 alphabee/adapters/
   → source field mapping
 
 alphabee/data_fetch/
-  → failure recording / auto-fix task system
+  → failure recording / auto-fix task system（已落地：database/scanner/fix_executor/fingerprint/strategies）
 
 alphabee/harness/
-  → older structured runtime / compressor
-
-alphabee/agents_legacy/
-  → legacy DeepAgents pipeline
+  → 仅提示词资产（prompts.py，被 orchestrator 作为库复用）
 
 alphabee/tools/
-  → older tool layer / legacy business tools
+  → 通用工具层（web_search / symbol 提取 / 本地财报查询）
 
 alphabee/workflow/
   → framework monitor path
+
+alphabee/agents_legacy/        # 已删除（原 legacy DeepAgents pipeline，见 git af6f987）
 ```
 
 这说明项目已经积累了很多能力，但也出现了明显的架构漂移：新旧管线并存、编排层变厚、数据层和业务层边界不稳定。
@@ -77,9 +82,10 @@ alphabee/workflow/
 当前仓库里同时存在：
 
 - `alphabee/orchestrator/`：当前主路径
-- `alphabee/agents_legacy/`：旧 DeepAgents pipeline
-- `alphabee/harness/`：旧/复用型 planner-reporter-critic-evaluator runtime
-- `alphabee/tools/`：旧工具层
+- `alphabee/agents_legacy/`：旧 DeepAgents pipeline —— **已删除**（commit `af6f987`），不再存在于仓库
+- `alphabee/harness/`：旧 runtime 已移除，现仅保留 `prompts.py` 提示词资产
+- `alphabee/tools/`：通用工具层（web_search / symbol 提取 / 本地财报检索）
+- `alphabee/market_regime/`：市场级独立引擎（与个股流水线并列的新 track）
 - `alphabee/workflow/framework_monitor.py`：独立监控工作流
 
 问题：
@@ -155,20 +161,24 @@ alphabee/orchestrator/
 
 每个 node 文件只暴露一个 LangGraph node 函数，复杂逻辑下沉到 service。
 
-当前已完成第一步拆分：
+当前已完成第一步拆分（更新于 2026-08）：
 
 ```text
 alphabee/orchestrator/
-  analyzers.py                # 兼容 facade
+  analyzers.py                # 兼容 facade（23 行）
   nodes/
     analyze.py
     conflicts.py
     verification.py
+    insights.py
     thesis.py
   services/
     company_context.py
     gap_recorder.py
     payload_builders.py
+  agent.py                    # graph 装配 + review_thesis + finalize_message
+  gates.py                    # report quality gate（deterministic + 可选 LLM）
+  reporter.py                 # generate_report（观点驱动 prompt + 确定性降级）
 ```
 
 后续仍可继续把 `review_thesis` / `report gates` 也并入 `nodes/`，进一步收敛顶层编排文件。
@@ -753,17 +763,17 @@ integration:
 
 # 推荐实施顺序
 
-| 优先级 | 阶段 | 目的 |
-|---|---|---|
-| P0 | E0 架构盘点与边界标注 | 降低认知成本 |
-| P0 | E1 拆分 orchestrator | 为 InsightAgent / 业务迭代减阻 |
-| P0 | E3 Schema Registry 校验 | 防止字段漂移 |
-| P1 | E2 Pipeline Contract | 提升主链路稳定性 |
-| P1 | E4 Data Provider 分层 | 降低数据源扩展成本 |
-| P1 | E6 测试体系升级 | 支撑持续重构 |
-| P2 | E5 错误与可观测性统一 | 提升自动修复能力 |
-| P2 | E7 CLI/App 拆分 | 支持未来产品化 |
-| P2 | E8 工程工具链与 CI | 长期质量保障 |
+| 优先级 | 阶段 | 目的 | 当前状态（2026-08） |
+|---|---|---|---|
+| P0 | E0 架构盘点与边界标注 | 降低认知成本 | 🟡 基本完成（agents_legacy 已清理；README/CLAUDE.md 已同步；无显式 active/legacy/experimental 标记） |
+| P0 | E1 拆分 orchestrator | 为 InsightAgent / 业务迭代减阻 | ✅ 已完成（nodes/ + services/ 拆分，analyzers.py 仅剩 facade） |
+| P0 | E3 Schema Registry 校验 | 防止字段漂移 | ⬜ 未开始（无 `alphabee/schema_registry/`，无 validate 命令） |
+| P1 | E2 Pipeline Contract | 提升主链路稳定性 | ✅ 已完成（contracts.py typed artifacts + typed report payload） |
+| P1 | E4 Data Provider 分层 | 降低数据源扩展成本 | 🟡 部分（`providers/` 仅有 industry.py；fallback 逻辑分散） |
+| P1 | E6 测试体系升级 | 支撑持续重构 | 🟡 部分（tests/agents、orchestrator、market_regime 等已建；无 offline fixture replay / golden 测试） |
+| P2 | E5 错误与可观测性统一 | 提升自动修复能力 | 🟡 部分（`data_fetch/` 已落地 events/issues/tasks + scanner + fix_executor；仍有多处 silent `except: pass`） |
+| P2 | E7 CLI/App 拆分 | 支持未来产品化 | ⬜ 未做（`main.py` 仍为 1279 行单体；apps/web、apps/admin 独立存在） |
+| P2 | E8 工程工具链与 CI | 长期质量保障 | 🟡 部分（ruff/mypy/pre-commit 已在用；无分层 CI 配置） |
 
 ---
 

@@ -494,7 +494,7 @@ alphabee/
     insights/           洞察综合层（整合冲突、验证与信号）
     thesis/             ThesisEngine + Critic + Enhancer + Reviewer
     fact_analysis/      综合分析（占位）
-  agents_legacy/        Legacy DeepAgents 架构（不再使用）
+  market_regime/       市场状态引擎（指数估值/趋势/流动性/仓位建议，独立市场级 track）
   orchestrator/         StateGraph 主编排 + 报告生成 / 质量门控
   task_records/         任务记录采集 / 分析 / 蒸馏
   adapters/             Tushare/AkShare 字段映射 (YAML)

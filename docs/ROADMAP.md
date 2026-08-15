@@ -15,6 +15,32 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 
 ---
 
+## 实现状态跟踪（2026-08 与当前代码对齐）
+
+> 本节是对下文各 Phase 的**最新落地状态**盘点，用于和当前 `alphabee/orchestrator/` 代码保持同步。
+> 状态标记：✅ 已实现　🟡 部分实现　⬜ 未实现
+
+| 条目 | 状态 | 现状说明（代码位置） |
+|---|---|---|
+| 0.1 anomaly 进入 signal/thesis | ✅ | `nodes/analyze.py` 将 AnomalyEngine 输出投影回 `fact_values`，`anomaly_cluster_risk` / `cross_validation_break` 等异常信号规则可命中 |
+| 0.2 ThesisEngine 显式消费 anomaly/conflict/verification/context | ✅ | `nodes/thesis.py` 全量传入；`agents/thesis/engine.py` 的 `run()` 已接收 `anomaly_report / conflict_analysis / verification_results / company_context / insight` |
+| 0.3 canonical field / signal rule 一致性 | 🟡 | 无系统性 schema 校验（工程侧 E3 未落地）；`services/gap_recorder.py` 已把 blocked/missing_fact 信号记录进失败库 |
+| 0.4 Insight schema 脆弱性 | 🟡 | 已做 `moderate→medium` 枚举归一化（`agents/insights/models.py` 的 `_coerce_confidence/_coerce_importance`）；但 parse fail 仍**整层丢弃**，无降级 insight |
+| 0.5 待验证/已验证冲突分层 | ⬜ | `verify_hypotheses` 已把 `verified/partial/rejected` 回写到 `hypothesis.status`（`nodes/verification.py`），但 `explore_conflicts` 仍把 high/critical 冲突**直接升格为 issue**，未做 provisional 分层 |
+| 0.6 用户输出与调试输出分层 | ⬜ | `main.py` `_render_final_report()` 仍把全部 issues（含 parse_error / rewrite 信息）打印到“🐞 系统问题”段 |
+| Phase 1 InsightAgent 稳定观点骨架 | 🟡 | 已接入主图（`nodes/insights.py` + `agents/insights/`），报告 prompt 以 `insight.core_view` 为主线（`prompts.py`）；`what_would_change_my_mind → falsification_conditions` 已贯通；但 parse fail 无降级、`materiality_rank` 未显式驱动报告排序 |
+| Phase 1.5 探索/验证/结算分层 | 🟡 | “已验证才进入结论”已部分成立（review_thesis 只消费 verified/partial 冲突）；验证预算 / 最短排除路径 / 未探索区域记录未实现 |
+| Phase 2 BusinessModelContext | 🟡 | `services/company_context.py` 已有 industry / sub_industry / market_cap_category / lifecycle_stage / business_model_summary；无 BusinessModelClassifier、无 playbooks/primitives（见 `DOMAIN_CONTEXT_ROADMAP.md`） |
+| Phase 3 Claim-Evidence Graph | ⬜ | 未实现；`gates.py` 已有 `evidence_coverage / grounding_score` 检查，但上游 Decision 普遍未填 `based_on / evidence_refs` |
+| Phase 4 ExpectationFitAgent | ⬜ | 未实现 |
+| Phase 5 报告备忘录化 | 🟡 | 报告已重构为“观点驱动”（`REPORT_GENERATOR_PROMPT`：insight 主线 + 12 章节 + 三情景 + 可证伪条件），LLM 空输出有确定性降级报告（`reporter.py` `build_deterministic_report`）；“系统问题”段仍在 CLI 暴露 |
+
+“当前关键问题”中的 #3（Report Generator 被限制为格式化器）与 #4（Reviewer 维度覆盖落后）已解决：
+- `prompts.py` 的 `REPORT_GENERATOR_PROMPT` 已改为“有观点、有论证、可证伪”的忠实裁决模式，不再要求“只做格式化”。
+- `agents/thesis/reviewer.py` 的 `ThesisReviewer` 遍历全部 8 个维度生成 `dimension_verdicts`，审查逻辑已随 `dimensions/` 目录（8 个 YAML）同步扩展。
+
+---
+
 ## 当前关键问题
 
 ### 1. ThesisEngine 只是聚合器，不是观点引擎
@@ -652,27 +678,30 @@ ExpectationFitAgent
 
 ## 推荐优先级
 
-| 优先级 | 事项 | 价值 |
-|---|---|---|
-| P0 | anomaly 进入 signal/thesis | 修正当前链路断点 |
-| P0 | ThesisEngine 显式消费 conflict/anomaly | 让高价值发现影响结论 |
-| P0 | 修复 Insight schema 脆弱性 | 保住观点骨架，不因 parse fail 退回模板模式 |
-| P0 | provisional / verified conflict 分层 | 提高探索自由度，同时避免怀疑冒充事实 |
-| P0 | Decision 补齐 evidence refs | 解决 evidence_coverage 低和结论不可追溯 |
-| P1 | 稳定 InsightAgent 成为观点主轴 | 从数字堆砌变成观点生成 |
-| P1 | 报告结构改成核心观点优先 | 立刻改善用户感知 |
-| P1 | 用户输出与调试输出分层 | 提升成品感，减少“运行日志感” |
-| P2 | BusinessModelContext | 提升行业/公司语境判断 |
-| P2 | Claim-Evidence Graph | 让观点可追踪、可审查 |
-| P3 | ExpectationFitAgent | 打通财务质量与投资价值 |
-| P3 | 同行基准 / 行业分位 | 降低固定阈值误判 |
+| 优先级 | 事项 | 价值 | 当前状态 |
+|---|---|---|---|
+| P0 | anomaly 进入 signal/thesis | 修正当前链路断点 | ✅ 已实现 |
+| P0 | ThesisEngine 显式消费 conflict/anomaly | 让高价值发现影响结论 | ✅ 已实现 |
+| P0 | 修复 Insight schema 脆弱性 | 保住观点骨架，不因 parse fail 退回模板模式 | 🟡 部分（枚举归一化已做，降级 insight 未做） |
+| P0 | provisional / verified conflict 分层 | 提高探索自由度，同时避免怀疑冒充事实 | ⬜ 未实现 |
+| P0 | Decision 补齐 evidence refs | 解决 evidence_coverage 低和结论不可追溯 | 🟡 部分（gate 已检查，多数 Decision 仍未填） |
+| P1 | 稳定 InsightAgent 成为观点主轴 | 从数字堆砌变成观点生成 | 🟡 已接入主图，report 已以其为主线 |
+| P1 | 报告结构改成核心观点优先 | 立刻改善用户感知 | ✅ 已实现（观点驱动报告重构） |
+| P1 | 用户输出与调试输出分层 | 提升成品感，减少“运行日志感” | ⬜ 未实现 |
+| P2 | BusinessModelContext | 提升行业/公司语境判断 | 🟡 基础字段已有，Classifier/Playbook 未做 |
+| P2 | Claim-Evidence Graph | 让观点可追踪、可审查 | ⬜ 未实现 |
+| P3 | ExpectationFitAgent | 打通财务质量与投资价值 | ⬜ 未实现 |
+| P3 | 同行基准 / 行业分位 | 降低固定阈值误判 | ⬜ 未实现（见 industry-context-injection-plan.md） |
 
 ---
 
 ## 下一步建议
 
-短期最值得做的 3 件事：
+短期最值得做的 3 件事（更新于 2026-08 状态跟踪）：
 
 1. 修复 `InsightOutput` 的 schema 脆弱性，并让 insight 失败时有可控降级，而不是直接失去观点骨架。
+   **状态**：枚举归一化（moderate→medium）已完成；parse fail 仍整层丢弃、无降级 insight，待补。
 2. 调整 conflict 生命周期：`explore_conflicts` 产出 provisional，`verify_hypotheses` 之后再升级为最终可消费冲突。
+   **状态**：未实现（`explore_conflicts` 仍直接升格 high/critical 为 issue）。
 3. 重构 `REPORT_GENERATOR_PROMPT` 和最终渲染逻辑，让报告按“观点 → 证据 → 反证 → 证伪条件”组织，并把内部调试信息移出主报告。
+   **状态**：prompt 部分已完成（观点驱动重构）；渲染部分未完成（CLI 仍打印“系统问题”段）。
