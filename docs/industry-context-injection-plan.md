@@ -62,7 +62,7 @@ collect_raw_facts → run_analysis_engines → explore_conflicts → verify_hypo
 4. **数值型基准按 canonical facts 进入 `fact_values`**：只有 derived facts / signals 需要计算的少量行业均值字段进入 flat values。
 5. **外部数据源字段不得泄漏到下游**：Tushare、AkShare、东方财富等字段必须先经过 adapter / mapping，统一成 AlphaBee canonical fields。
 6. **基准相对阈值优先，逐行业绝对覆盖其次**：两个引擎的阈值/触发表达式本就能引用 `fact_values` 任意字段（`registry.py` 的 `threshold_context = {**fact_values, "value": ...}`，SignalEngine 同理），因此「相对行业均值」的规则（如 `value > industry_avg_debt_ratio * 1.05`）**零引擎改动**即可生效，且覆盖所有行业；`industry_thresholds`（逐行业绝对带）只留给结构性差异行业（银行/房地产/公用事业），减少 YAML 维护量。
-7. **范围划界**：本文档只负责**数值基准层**（估值/财务/成长中位数、阈值机制、注入通道）；定性解释层（商业模式、产业链叙事、关键驱动与风险的 playbook 化）归 `DOMAIN_CONTEXT_ROADMAP.md`，两者按「数值 vs 定性」分工，避免静态行业知识库与动态 primitives/playbooks 两套体系互斥。
+7. **范围划界**：本文档只负责**数值基准层**（估值/财务/成长中位数、阈值机制、注入通道）；定性解释层（商业模式、产业链叙事、关键驱动与风险的 playbook 化）归 `DOMAIN_CONTEXT_ROADMAP.md`，两者按「数值 vs 定性」分工，避免静态行业知识库与动态 primitives/playbooks 两套体系互斥。**公司级赛道/对标组**（穿透申万标签：业务线解构 + 真对手基准，`peer_*` 字段）见 `docs/COMPANY_TRACK_ROADMAP.md`——申万行业均值是基线，公司赛道是对基线的修正/覆盖，构成 `peer → industry → 绝对` 三级回退链。
 
 ### 一、独立行业/产业知识工作流
 
