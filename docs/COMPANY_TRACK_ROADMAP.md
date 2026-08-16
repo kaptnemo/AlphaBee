@@ -30,6 +30,27 @@
    - 外部字段只在 adapter/采集层：东方财富/同花顺/Tushare 列名不出现在下游。
 4. **新鲜度与版本**：分项数据是半年度/年度口径，`as_of_date` 用**报告期**而非今天；对标组是**可版本化、可人工编辑**的资产。
 
+### 2.1 与 `industry-context-injection-plan.md` 的关系（基线 vs 覆盖）
+
+两者是**同一个「语境注入栈」的上下两层**，不是替代关系：
+
+```
+语境注入栈（可计算数值层）
+├─ industry-context-injection-plan：申万行业基线
+│   └─ 行业中位数基准（industry_*）+ 阈值机制 + 注入通道 + 离线行业知识工作流
+└─ COMPANY_TRACK_ROADMAP（本文档）：公司级覆盖
+    └─ 业务线解构 + 商业模式标签 + 对标组基准（peer_*）
+定性叙事层：DOMAIN_CONTEXT_ROADMAP（primitives/playbooks）
+```
+
+**依赖方向（只依赖已完成部分）**：本路线图**依赖**行业计划的 Phase 0-1 机制——`fact_values` 注入通道、表达式列表回退链（`registry.py`）、降级契约（issue/stale 留痕）、artifact 契约约定、`alphabee/industry/{data,benchmarks,normalize}.py` 纯函数（`derive_benchmarks` 直接复用于对标组）。这些**已全部落地**。
+
+**不依赖其剩余阶段**：Phase 2-6 未开始，且与本文档的排期关系为：
+- Phase 2（字段治理/多来源 mapping）↔ 本文档 Phase A：**公共前置，并行实施**（`peer_*` 字段与 `biz_segment_*` 字段走同一套 schema 治理）；
+- Phase 3（在线读行业存储）↔ 本文档 Phase D 注入：**各自独立**（行业存 JSON 快照、对标组存 `data/peer_groups/`，在线节点各读各的）；
+- Phase 4（`industry_thresholds` 逐行业绝对带）↔ **可再缓**：相对基准已覆盖多数行业，`peer_*` 也不需要它，仅结构性行业（银行/地产）有增量价值；
+- Phase 5/6（冲突/观点/报告层行业感知）↔ 本文档 Phase F：**合并实施**（同一批 prompt/报告 payload 改造点，同时支持 `industry` 与 `company_track` 字段，避免重复改两遍）。
+
 ## 3. 现状盘点（2026-08 与代码核对）
 
 | 已有 | 位置 | 缺口 |

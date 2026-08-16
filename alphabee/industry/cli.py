@@ -46,6 +46,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-dir", default=None, help="知识存储根目录（默认 data/industry_profiles）")
     parser.add_argument("--list", action="store_true", help="列出全部行业知识快照")
     parser.add_argument("--show", action="store_true", help="展示指定行业快照（需 --standard/--code）")
+    parser.add_argument(
+        "--crosscheck",
+        action="store_true",
+        help="多来源行业交叉校验（申万/同花顺/东方财富；配合 --symbol 或 --name）",
+    )
     return parser.parse_args(argv)
 
 
@@ -126,6 +131,49 @@ def _print_show(args: argparse.Namespace, store: IndustryProfileStore) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _resolve_industry_name(args: argparse.Namespace) -> str:
+    """解析交叉校验用的行业名：--name 直接给定；--symbol 经 get_industry_fact。"""
+    if args.name:
+        return args.name
+    if args.symbol:
+        from alphabee.agents.facts.tools.industry_fact import get_industry_fact
+
+        ind_fact = get_industry_fact(args.symbol) or {}
+        industry = str(ind_fact.get("industry") or "").strip()
+        if industry:
+            return industry
+        raise SystemExit(f"--symbol {args.symbol} 无法解析行业名")
+    raise SystemExit("--crosscheck 需要 --name 或 --symbol")
+
+
+def _print_crosscheck(industry: str) -> None:
+    from alphabee.industry.crosscheck import fetch_industry_crosscheck
+
+    print(f"  🔀 多来源行业交叉校验: {industry}")
+    result = fetch_industry_crosscheck(industry)
+    print(f"     命中来源: {result.sources_hit}/3")
+    for match in result.matches:
+        detail = f"{match.source}: {match.industry}"
+        if match.code:
+            detail += f" ({match.code}{f' {match.level}' if match.level else ''})"
+        if match.valuation:
+            vals = "  ".join(f"{key}={value:.2f}" for key, value in match.valuation.items() if value is not None)
+            if vals:
+                detail += f" | {vals}"
+        print(f"       {detail}")
+    for warning in result.warnings:
+        print(f"       ⚠ {warning}")
+    print(f"      canonical: {result.canonical_name or '—'}")
+    facts = result.as_facts()
+    print(
+        "      facts: "
+        + "  ".join(
+            f"{key}={value}" for key, value in facts.items() if key not in ("query", "warnings") and value is not None
+        )
+    )
+    print()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     store = _store(args)
@@ -135,6 +183,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.show:
         _print_show(args, store)
+        return 0
+    if args.crosscheck:
+        _print_crosscheck(_resolve_industry_name(args))
         return 0
 
     from alphabee.industry import IndustryContextWorkflow

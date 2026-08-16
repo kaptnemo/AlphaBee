@@ -4,64 +4,11 @@ from typing import Any
 
 from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 from alphabee.collectors.tushare.helper import TuShareHelper
+from alphabee.industry.classification import _SW_LEVELS, match_sw_industry
 from alphabee.providers.industry import get_industry_daily
 from alphabee.tools.cache import SyncTTLCache
 
 _CACHE = SyncTTLCache(ttl_seconds=600.0)
-
-# 申万分类层级（由细到粗，匹配优先级）
-_SW_LEVELS = ("L3", "L2", "L1")
-
-
-def _classify_columns(df) -> tuple[str | None, str | None]:
-    """从分类 DataFrame 中找行业名列与代码列（容忍 adapter 命名差异）。"""
-    name_col = next(
-        (col for col in ("industry_name", "name", "index_name") if col in df.columns),
-        None,
-    )
-    code_col = next((col for col in ("sw_code", "index_code") if col in df.columns), None)
-    return name_col, code_col
-
-
-def match_sw_industry(industry: str, frames: dict[str, Any]) -> tuple[str | None, str | None]:
-    """在申万 L1/L2/L3 分类中匹配行业名 → ``(sw_code, level)``。
-
-    替换旧的 ``industry[:2]`` 前缀 contains 匹配——那套逻辑对子行业名恒失败
-    （如 "半导体" 是申万 L2，L1 只有 "电子"，前缀不含 "半导"），导致 sw_code 解析
-    失败、整条行业基准链路降级（见 docs/industry-context-phase1-design.md §2.1 姊妹问题）。
-
-    匹配策略：
-    1. **精确匹配优先**，层级由细到粗（L3 → L2 → L1）："半导体" → L2 精确
-       （801081.SI）、"银行" → L1 精确（801780.SI）；
-    2. 无精确命中时**前缀匹配**，同样层级由细到粗："白酒" → L2 "白酒Ⅱ" 前缀
-       （801125.SI，不会误中 "非白酒"）；
-    3. 都不中 → ``(None, None)``，调用方降级为 custom 标准。
-
-    Args:
-        industry: 公司所属行业名（stock_basic.industry，如 "半导体"）。
-        frames: ``{level: DataFrame}``，level ∈ {"L1", "L2", "L3"}。
-
-    Returns:
-        (sw_code, level)；无法匹配时 (None, None)。
-    """
-    if not industry:
-        return None, None
-    for mode in ("exact", "prefix"):
-        for level in _SW_LEVELS:
-            frame = frames.get(level)
-            if frame is None or frame.empty:
-                continue
-            name_col, code_col = _classify_columns(frame)
-            if name_col is None or code_col is None:
-                continue
-            names = frame[name_col].astype(str)
-            if mode == "exact":
-                matched = frame[names == industry]
-            else:
-                matched = frame[names.str.startswith(industry, na=False)]
-            if not matched.empty:
-                return safe_str(matched.iloc[0].get(code_col)), level
-    return None, None
 
 
 def get_industry_fact(symbol: str) -> dict[str, Any]:

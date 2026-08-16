@@ -18,6 +18,7 @@ from alphabee.agents.thesis.models import (
     ThesisReview,
 )
 from alphabee.agents.thesis.prompts import REVIEWER_SYSTEM_PROMPT, REVIEWER_USER_TEMPLATE
+from alphabee.industry.names import industry_in_group
 from alphabee.utils import create_chat_model
 from alphabee.utils.pipeline import extract_text, parse_json
 
@@ -203,25 +204,23 @@ class ThesisReviewer:
                 issues.append("thesis 判断方向与证据多数方向不一致，存在结构性矛盾")
 
         # ── Rule 4: industry-context-aware calibration ──
-        _HIGH_LEVERAGE_INDUSTRIES = {"银行", "证券", "保险", "房地产", "建筑装饰"}
-        _HIGH_RD_INDUSTRIES = {"医药", "半导体", "芯片", "计算机", "通信", "电子"}
-        _FINANCIAL_INDUSTRIES = {"银行", "证券", "保险"}
-
+        # 行业组归属统一走行业名规范字典（Phase 2 字段治理，B1）：
+        # alphabee/industry/industry_names.yaml groups.{high_leverage, high_rd, financial}
         if dim_id == "credit_risk":
             if not ctx.industry:
                 issues.append("缺少行业负债率基准，杠杆判断可能需要校准")
-            elif ctx.industry in _HIGH_LEVERAGE_INDUSTRIES:
+            elif industry_in_group(ctx.industry, "high_leverage"):
                 issues.append(f"{ctx.industry}行业天然高杠杆，负债率较高可能属于正常经营特征")
 
         if dim_id == "earnings_quality" and ctx.industry:
-            if ctx.industry in _HIGH_RD_INDUSTRIES and (judgment in ("negative", "strong_negative")):
+            if industry_in_group(ctx.industry, "high_rd") and (judgment in ("negative", "strong_negative")):
                 issues.append(f"{ctx.industry}行业研发投入高，短期盈利弱化可能是战略投入而非经营恶化")
                 if status == "contested":
                     status = "qualified"
                     suggested_action = "reconsider_with_context"
 
         if dim_id == "financial_quality" and ctx.industry:
-            if ctx.industry in _FINANCIAL_INDUSTRIES:
+            if industry_in_group(ctx.industry, "financial"):
                 issues.append(f"{ctx.industry}行业财务报表结构与一般企业不同，部分通用财务指标适用性有限")
             if ctx.lifecycle_stage == "growth" and (judgment in ("negative", "strong_negative")):
                 issues.append("成长期公司盈利指标偏低可能是加速扩张的正常代价")

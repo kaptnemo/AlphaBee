@@ -32,6 +32,7 @@ from alphabee.agents.thesis.registry import (
     ThesisDimensionDef,
     ensure_loaded,
 )
+from alphabee.industry.names import industry_in_group
 
 logger = structlog.get_logger(__name__)
 
@@ -50,7 +51,8 @@ _CONFLICT_PENALTY: dict[str, float] = {
     "low": 0.1,
 }
 _POSITIVE_ANOMALY_PATTERNS = {"efficiency_gain"}
-_FINANCIAL_INDUSTRIES = {"银行", "证券", "保险"}
+# 金融行业组已收敛到行业名规范字典（Phase 2 字段治理，B1）：
+# 见 alphabee/industry/industry_names.yaml groups.financial
 _PROJECT_BASED_KEYWORDS = ("项目", "验收", "军工", "工程", "软件", "集成", "to_b")
 
 
@@ -467,7 +469,7 @@ class ThesisEngine:
                     note="成长期公司扩张会放大阶段性波动，相关负面判断已按生命周期做折减。",
                 )
 
-        if industry in _FINANCIAL_INDUSTRIES:
+        if industry and industry_in_group(industry, "financial"):
             for dim_id in ("financial_quality", "credit_risk", "capital_efficiency"):
                 self._temper_negative_dimension(
                     dimensions,

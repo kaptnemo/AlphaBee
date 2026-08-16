@@ -129,18 +129,23 @@ def _get_akshare_pe_pb(industry: str) -> tuple[float | None, float | None]:
         if df.empty:
             return None, None
 
-        # After adapter, columns are canonical names
-        name_col = next((c for c in ("industry_name", "板块名称", "name") if c in df.columns), None)
-        if name_col is None:
+        # 字段治理（Phase 2）：adapter 重命名后只剩 canonical 列名，
+        # 此处不回退外部列名（"板块名称"/"市盈率-动态" 只存在于 adapter mapping）。
+        if "industry_name" not in df.columns:
             return None, None
 
-        matched = df[df[name_col].str.contains(industry[:2], na=False)]
-        if matched.empty:
-            return None, None
-
-        row = matched.iloc[0]
-        pe = _safe_float(row.get("industry_pe_ttm"), row.get("市盈率-动态"))
-        pb = _safe_float(row.get("industry_pb"), row.get("市净率"))
+        # 匹配：精确优先，前缀兜底（避免 industry[:2] contains 误中"半导体设备"等相近板块）
+        names = df["industry_name"].astype(str)
+        exact = df[names == industry]
+        if exact.empty:
+            pref = df[names.str.startswith(industry, na=False)]
+            if pref.empty:
+                return None, None
+            row = pref.iloc[0]
+        else:
+            row = exact.iloc[0]
+        pe = _safe_float(row.get("industry_pe_ttm"))
+        pb = _safe_float(row.get("industry_pb"))
         return pe, pb
 
     except Exception:

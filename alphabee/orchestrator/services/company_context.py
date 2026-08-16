@@ -6,45 +6,7 @@ from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 from alphabee.agents.facts.tools.company_profile import get_company_profile
 from alphabee.agents.facts.tools.industry_fact import get_industry_fact
 from alphabee.agents.thesis.models import CompanyContext
-
-
-def _keyword_extract_industry(text: str) -> str:
-    """Fallback: extract industry from free text using keyword matching."""
-    industry_keywords: list[tuple[str, str]] = [
-        ("白酒", "白酒"),
-        ("银行", "银行"),
-        ("证券", "证券"),
-        ("保险", "保险"),
-        ("房地产", "房地产"),
-        ("半导体", "半导体"),
-        ("芯片", "半导体"),
-        ("新能源汽车", "新能源汽车"),
-        ("光伏", "光伏"),
-        ("医药", "医药"),
-        ("消费电子", "消费电子"),
-        ("钢铁", "钢铁"),
-        ("煤炭", "煤炭"),
-        ("电力", "电力"),
-        ("化工", "化工"),
-        ("机械", "机械"),
-        ("军工", "军工"),
-        ("农林", "农林牧渔"),
-        ("食品", "食品饮料"),
-        ("家电", "家电"),
-        ("纺织", "纺织服装"),
-        ("建材", "建材"),
-        ("建筑", "建筑装饰"),
-        ("传媒", "传媒"),
-        ("计算机", "计算机"),
-        ("通信", "通信"),
-        ("环保", "环保"),
-        ("公用", "公用事业"),
-        ("交通", "交通运输"),
-    ]
-    for kw, industry in industry_keywords:
-        if kw in text:
-            return industry
-    return ""
+from alphabee.industry.names import keyword_extract_industry
 
 
 def _detect_market_cap(
@@ -133,7 +95,7 @@ def build_company_context(
         pass
 
     if not ctx.industry:
-        ctx.industry = _keyword_extract_industry(fact_text.lower())
+        ctx.industry = keyword_extract_industry(fact_text.lower())
 
     # 当结构化信息不足时，允许使用 fact_text 做弱推断，
     # 但这里只提炼行业/市值/生命周期标签，不直接生成买卖判断。

@@ -1,0 +1,93 @@
+# 行业名规范字典（industry-context Phase 2，B1 优化）
+# 单一事实来源：行业 key（classification_standard:code）↔ 显示名 + 别名 + 行业组。
+# key 一律为 "sw_l1:801780.SI" 形式（与 IndustryContextArtifact.industry_code 同构，
+# 匹配键 = classification_standard + 行业代码，见主计划 B1）。
+# 申万代码与 index_classify(src=SW2021) 实测对齐（2026-08）。
+#
+# 用途：
+# - industry_display_name(key)          展示名解析（报告/调试视图）
+# - industry_keys_for_name(名称)        中文名 → 行业 key（别名/罗马后缀宽容）
+# - industry_in_group(名称, 组)         行业组归属判断（替代 thesis 硬编码中文名集合）
+# - keyword_extract_industry(文本)      自由文本兜底抽取（EXTRACTION_HINTS 来自本文件 aliases + l1 派生）
+
+schema_version: 1
+
+# ── 申万一级（31 个，与 index_classify L1 对齐）────────────────────────────
+l1:
+  sw_l1:801010.SI: 农林牧渔
+  sw_l1:801030.SI: 基础化工
+  sw_l1:801040.SI: 钢铁
+  sw_l1:801050.SI: 有色金属
+  sw_l1:801080.SI: 电子
+  sw_l1:801880.SI: 汽车
+  sw_l1:801110.SI: 家用电器
+  sw_l1:801120.SI: 食品饮料
+  sw_l1:801130.SI: 纺织服饰
+  sw_l1:801140.SI: 轻工制造
+  sw_l1:801150.SI: 医药生物
+  sw_l1:801160.SI: 公用事业
+  sw_l1:801170.SI: 交通运输
+  sw_l1:801180.SI: 房地产
+  sw_l1:801200.SI: 商贸零售
+  sw_l1:801210.SI: 社会服务
+  sw_l1:801780.SI: 银行
+  sw_l1:801790.SI: 非银金融
+  sw_l1:801230.SI: 综合
+  sw_l1:801710.SI: 建筑材料
+  sw_l1:801720.SI: 建筑装饰
+  sw_l1:801730.SI: 电力设备
+  sw_l1:801890.SI: 机械设备
+  sw_l1:801740.SI: 国防军工
+  sw_l1:801750.SI: 计算机
+  sw_l1:801760.SI: 传媒
+  sw_l1:801770.SI: 通信
+  sw_l1:801950.SI: 煤炭
+  sw_l1:801960.SI: 石油石化
+  sw_l1:801970.SI: 环保
+  sw_l1:801980.SI: 美容护理
+
+# ── 精选申万二级（仅收录行业组/别名解析需要的成员；完整 L2 目录可按需扩充）──
+l2:
+  sw_l2:801081.SI: 半导体
+  sw_l2:801193.SI: 证券Ⅱ
+  sw_l2:801194.SI: 保险Ⅱ
+  sw_l2:801125.SI: 白酒Ⅱ
+  sw_l2:801126.SI: 非白酒
+  sw_l2:801737.SI: 电池
+  sw_l2:801181.SI: 房地产开发
+
+# ── 别名/惯用名 → 规范名（用于名称归一与行业 key 解析；值为去掉罗马后缀的基础名）──
+aliases:
+  芯片: 半导体
+  券商: 证券
+  医药: 医药生物
+  家电: 家用电器
+  纺织: 纺织服饰
+  食品: 食品饮料
+  化工: 基础化工
+  军工: 国防军工
+  公用: 公用事业
+  交通: 交通运输
+  电力: 电力设备
+
+# ── 行业组（迁移自 thesis engine/reviewer 的硬编码中文名集合；值为行业 key）──
+groups:
+  # 天然高杠杆行业（负债率高属正常经营特征）
+  high_leverage:
+    - sw_l1:801780.SI   # 银行
+    - sw_l1:801180.SI   # 房地产
+    - sw_l2:801193.SI   # 证券Ⅱ
+    - sw_l2:801194.SI   # 保险Ⅱ
+    - sw_l1:801720.SI   # 建筑装饰
+  # 高研发投入行业（短期盈利弱化可能是战略投入）
+  high_rd:
+    - sw_l1:801080.SI   # 电子
+    - sw_l2:801081.SI   # 半导体
+    - sw_l1:801150.SI   # 医药生物
+    - sw_l1:801750.SI   # 计算机
+    - sw_l1:801770.SI   # 通信
+  # 金融行业（报表结构特殊，通用财务指标适用性有限）
+  financial:
+    - sw_l1:801780.SI   # 银行
+    - sw_l2:801193.SI   # 证券Ⅱ
+    - sw_l2:801194.SI   # 保险Ⅱ
