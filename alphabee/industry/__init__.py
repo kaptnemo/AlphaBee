@@ -39,7 +39,11 @@ from alphabee.industry.crosscheck import (
     crosscheck_industry,
     fetch_industry_crosscheck,
 )
-from alphabee.industry.data import fetch_industry_peers, fetch_peer_financials
+from alphabee.industry.data import (
+    fetch_industry_peers,
+    fetch_peer_financials,
+    fetch_peer_financials_for_codes,
+)
 from alphabee.industry.names import (
     EXTRACTION_HINTS,
     catalog,
@@ -90,6 +94,7 @@ __all__ = [
     "fetch_industry_crosscheck",
     "fetch_industry_peers",
     "fetch_peer_financials",
+    "fetch_peer_financials_for_codes",
     "flatten_benchmarks",
     "group_benchmarks",
     "group_defs",

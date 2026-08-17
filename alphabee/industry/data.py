@@ -85,6 +85,35 @@ def _con_codes(member_df) -> list[str]:
     return codes
 
 
+def _fetch_rows_for_codes(helper, codes: list[str]) -> tuple[list[dict], list[str]]:
+    """对显式代码列表取最新一期财务（源单位行）+ 估值补全（daily_basic）。
+
+    单只成分取数失败静默跳过（best-effort）；返回 (rows, peer_codes) 一一对应。
+    """
+    rows: list[dict] = []
+    peer_codes: list[str] = []
+    for con_code in codes:
+        try:
+            ts_code = _normalize_ts_code(con_code)
+            fina_df = helper.fina_indicator(ts_code=ts_code).data
+            if fina_df is None or fina_df.empty:
+                continue
+            row = fina_df.iloc[0].to_dict()
+            if not _has_numeric_field(row):
+                continue
+            # 估值补全：合并最新交易日 daily_basic 的 pe_ttm / pb_ratio
+            # （best-effort，单只失败不影响整体；中位数估值见 benchmarks.derive）
+            try:
+                row.update(_latest_daily_basic(helper, ts_code))
+            except Exception:
+                pass
+            rows.append(row)
+            peer_codes.append(ts_code)
+        except Exception:
+            continue  # 单只成分取数失败不影响整体
+    return rows, peer_codes
+
+
 def fetch_industry_peers(
     sw_code: str,
     limit: int = _PEER_LIMIT,
@@ -114,34 +143,48 @@ def fetch_industry_peers(
             if member_df is None or member_df.empty:
                 return [], [], "index_member 返回空成分列表"
             con_codes = _con_codes(member_df)
-
-            rows: list[dict] = []
-            peer_codes: list[str] = []
-            for con_code in con_codes[:limit]:
-                try:
-                    ts_code = _normalize_ts_code(con_code)
-                    fina_df = helper.fina_indicator(ts_code=ts_code).data
-                    if fina_df is None or fina_df.empty:
-                        continue
-                    row = fina_df.iloc[0].to_dict()
-                    if not _has_numeric_field(row):
-                        continue
-                    # 估值补全：合并最新交易日 daily_basic 的 pe_ttm / pb_ratio
-                    # （best-effort，单只失败不影响整体；中位数估值见 benchmarks.derive）
-                    try:
-                        row.update(_latest_daily_basic(helper, ts_code))
-                    except Exception:
-                        pass
-                    rows.append(row)
-                    peer_codes.append(ts_code)
-                except Exception:
-                    continue  # 单只成分取数失败不影响整体
-
+            rows, peer_codes = _fetch_rows_for_codes(helper, con_codes[:limit])
             if not rows:
                 return [], [], "成分股财务指标均取数失败"
             return rows, peer_codes, None
     except Exception as exc:
         return [], [], f"行业成分股取数失败: {exc}"
+
+
+def fetch_peer_financials_for_codes(
+    peer_codes: list[str],
+    limit: int = _PEER_LIMIT,
+) -> tuple[list[dict], list[str], str | None]:
+    """对显式对标组代码列表取最新一期财务（源单位行）+ 估值补全（COMPANY_TRACK Phase D1）。
+
+    与 ``fetch_industry_peers`` 的取数/归一化链路完全一致，只是代码列表由调用方给定
+    （对标组而非申万指数成分）；后续 normalize + derive_benchmarks 复用同一套纯函数。
+
+    Args:
+        peer_codes: 对标组代码列表（Tushare 格式，如 ["002415.SZ", "688396.SH", ...]）。
+        limit: 最多取多少只（按列表顺序抽样）。
+
+    Returns:
+        (rows, fetched_codes, error)：rows 为源单位行；fetched_codes 为实际取数成功的
+        代码（与 rows 一一对应）；失败时为空并返回错误信息。
+    """
+    normalized = [code for code in (peer_codes or []) if str(code).strip()]
+    if not normalized:
+        return [], [], "对标组代码列表为空"
+
+    try:
+        from alphabee.collectors.tushare.helper import TuShareHelper
+    except Exception as exc:  # tushare 不可用（token/网络）
+        return [], [], f"tushare 不可用: {exc}"
+
+    try:
+        with TuShareHelper() as helper:
+            rows, fetched = _fetch_rows_for_codes(helper, normalized[:limit])
+            if not rows:
+                return [], [], "对标组财务指标均取数失败"
+            return rows, fetched, None
+    except Exception as exc:
+        return [], [], f"对标组取数失败: {exc}"
 
 
 def fetch_peer_financials(

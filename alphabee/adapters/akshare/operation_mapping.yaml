@@ -1,0 +1,16 @@
+# AlphaBee AkShare Adapter — 主营构成字段映射
+# API: stock_zygc_em()（东方财富-个股-主营构成）
+# 列名与 akshare 1.18.x stock_zygc_em 返回值对齐（2026-08 核实）。
+# 注意：该接口无"同比增长率"列——分项增速由 normalize 跨期同口径推导
+# （见 docs/COMPANY_TRACK_ROADMAP.md Phase A 实施说明）。
+
+stock_zygc_em:
+  报告日期:  report_date
+  分类类型:  biz_segment_category
+  主营构成:  biz_segment_name
+  主营收入:  biz_segment_revenue
+  收入比例:  biz_segment_revenue_share
+  主营成本:  biz_segment_cost
+  主营利润:  biz_segment_profit
+  毛利率:    biz_gross_margin
+  # 成本比例 / 利润比例 暂不映射（Phase A 无消费方，避免列泄漏）

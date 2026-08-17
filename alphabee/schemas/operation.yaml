@@ -1,6 +1,20 @@
 # AlphaBee 内部标准字段 — 主营业务构成域
-# 覆盖：主营业务分项收入、成本、利润、毛利率
-# 频率：半年度 / 年度（来自 Tushare fina_mainbz）
+# 覆盖：主营业务分项收入、成本、利润、毛利率、占比、增速、分类类型
+# 频率：半年度 / 年度（Tushare fina_mainbz / 东方财富 stock_zygc_em）
+
+biz_segment_category:
+  category: operation
+  type: str
+  unit: TEXT
+  frequency: [semi_annual, annual]
+  description: 业务分项分类类型（按产品 / 按行业 / 按地区）
+  aliases:
+    zh: [分类类型, 分项类型]
+    en: [segment category, breakdown type]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    akshare: [分类类型]
 
 biz_segment_name:
   category: operation
@@ -15,6 +29,7 @@ biz_segment_name:
     derived_facts: []
   source_mappings:
     tushare: [bz_item]
+    akshare: [主营构成]
 
 biz_segment_revenue:
   category: operation
@@ -29,6 +44,38 @@ biz_segment_revenue:
     derived_facts: []
   source_mappings:
     tushare: [bz_sales]
+    akshare: [主营收入]
+
+biz_segment_revenue_share:
+  category: operation
+  type: float
+  unit: PERCENT
+  frequency: [semi_annual, annual]
+  description: 分项收入占主营总收入比例（%）
+  aliases:
+    zh: [分项占比, 收入比例, 营收占比]
+    en: [segment revenue share, revenue ratio]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    akshare: [收入比例]
+  notes: 东方财富直接给出（API 原始为 0-1 比例，normalize ×100 转 PERCENT）；
+    Tushare fina_mainbz 无该列且产品/地区混列无法区分口径，**不推导占比**（宁缺毋错，Phase B 用 revenue 兜底）。
+
+biz_segment_revenue_yoy:
+  category: operation
+  type: float
+  unit: PERCENT
+  frequency: [semi_annual, annual]
+  description: 分项收入同比增速（%）= 当期分项收入 / 去年同期分项收入 × 100 − 100
+  aliases:
+    zh: [分项增速, 业务同比, 分项同比增长率]
+    en: [segment revenue YoY, segment growth]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 两数据源均无现成列；由 normalize 跨期同口径推导（最新报告期 vs 去年同报告期），
+    推导值以 is_calculated 标记。口径：仅当去年同期存在同名分项且收入为正时可计算。
 
 biz_segment_cost:
   category: operation
@@ -43,6 +90,7 @@ biz_segment_cost:
     derived_facts: []
   source_mappings:
     tushare: [bz_cost]
+    akshare: [主营成本]
 
 biz_segment_profit:
   category: operation
@@ -57,6 +105,7 @@ biz_segment_profit:
     derived_facts: []
   source_mappings:
     tushare: [bz_profit]
+    akshare: [主营利润]
 
 biz_gross_margin:
   category: operation
@@ -69,5 +118,6 @@ biz_gross_margin:
     en: [segment gross margin, business segment gross margin]
   required_by:
     derived_facts: []
-  source_mappings: {}
-  notes: 由 biz_segment_profit / biz_segment_revenue × 100 计算，不直接来自数据源。
+  source_mappings:
+    akshare: [毛利率]
+  notes: Tushare fina_mainbz 无该列，由 biz_segment_profit / biz_segment_revenue × 100 计算。

@@ -5,15 +5,19 @@ required_facts:
   - total_assets
 formula: total_liabilities / total_assets
 thresholds:
-  # 行业基准相对阈值优先（industry-context Phase 0，见 industry-context-injection-plan.md 3.0）：
-  # 相对表达式引用 industry_avg_debt_ratio，字段缺失时抛异常 → 顺延到绝对阈值。
+  # 三级回退链（COMPANY_TRACK Phase D，零引擎改动，见 registry.py 表达式列表语义）：
+  # peer_avg_debt_ratio（对标组）→ industry_avg_debt_ratio（申万基线）→ 绝对阈值；
+  # 前序表达式引用的字段缺失时抛异常 → 顺延下一级。
   conservative:
+    - "value < peer_avg_debt_ratio * 0.8"
     - "value < industry_avg_debt_ratio * 0.8"
     - "value < 0.40"
   moderate:
+    - "value <= peer_avg_debt_ratio * 1.2 and value >= peer_avg_debt_ratio * 0.8"
     - "value <= industry_avg_debt_ratio * 1.2 and value >= industry_avg_debt_ratio * 0.8"
     - "0.40 <= value <= 0.65"
   aggressive:
+    - "value > peer_avg_debt_ratio * 1.2"
     - "value > industry_avg_debt_ratio * 1.2"
     - "value > 0.65"
 interpretation:

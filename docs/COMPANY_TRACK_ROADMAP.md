@@ -46,7 +46,8 @@
 **依赖方向（只依赖已完成部分）**：本路线图**依赖**行业计划的 Phase 0-1 机制——`fact_values` 注入通道、表达式列表回退链（`registry.py`）、降级契约（issue/stale 留痕）、artifact 契约约定、`alphabee/industry/{data,benchmarks,normalize}.py` 纯函数（`derive_benchmarks` 直接复用于对标组）。这些**已全部落地**。
 
 **不依赖其剩余阶段**：Phase 2-6 未开始，且与本文档的排期关系为：
-- Phase 2（字段治理/多来源 mapping）↔ 本文档 Phase A：**公共前置，并行实施**（`peer_*` 字段与 `biz_segment_*` 字段走同一套 schema 治理）；
+- 行业 Phase 2（字段治理/多来源 mapping）↔ 本文档 Phase A：**公共前置**——两者均已 ✅ 落地
+  （`biz_segment_*` / `peer_*` 字段走同一套 schema 治理与 adapter mapping，Phase A 详见 §5）；
 - Phase 3（在线读行业存储）↔ 本文档 Phase D 注入：**各自独立**（行业存 JSON 快照、对标组存 `data/peer_groups/`，在线节点各读各的）；
 - Phase 4（`industry_thresholds` 逐行业绝对带）↔ **可再缓**：相对基准已覆盖多数行业，`peer_*` 也不需要它，仅结构性行业（银行/地产）有增量价值；
 - Phase 5/6（冲突/观点/报告层行业感知）↔ 本文档 Phase F：**合并实施**（同一批 prompt/报告 payload 改造点，同时支持 `industry` 与 `company_track` 字段，避免重复改两遍）。
@@ -143,20 +144,52 @@ peer_median_pb:          # 对标组 PB 中位数（RATIO）
 
 ## 5. 分阶段实施
 
-### Phase A：业务线数据基础（先补数据，一切的前提）
+### Phase A：业务线数据基础（✅ 已落地，2026-08）
 
-- [ ] A1 新增 akshare adapter：`adapters/akshare/operation_mapping.yaml`（`stock_zygc_em` → canonical：报告期/分类类型/主营构成/主营收入/收入比例/毛利率/同比增长率/成本/利润）；
-- [ ] A2 `schemas/operation.yaml` 补 `biz_segment_revenue_share` / `biz_segment_revenue_yoy`；
-- [ ] A3 新增 `alphabee/company_track/data.py`：`fetch_business_segments(symbol)` —— 东财主营构成（share/yoy/毛利率齐全）为主，Tushare `fina_mainbz` 兜底（无 share/yoy 时标 `is_calculated`，占比由 revenue 求和推导）；
-- [ ] A4 `normalize.py`（公司赛道版）：报告期口径对齐（`latest_period` 唯一性检查）、单位统一（东财百分比已是 %，fina_mainbz 金额转占比需显式标注）、过滤"其他业务"低占比噪音（可选阈值）；
-- [ ] A5 单测：adapter 列映射、单位/口径、多报告期选择、空数据降级。
+> **实施说明（实测修正，与初版设计的 3 处差异）**：
+> ① EM `stock_zygc_em` **无"同比增长率"列** → 分项增速由 normalize **跨期同口径推导**
+> （最新报告期 vs 去年同报告期同名分项，`derive_segment_yoy`）；② EM 的"收入比例/毛利率"
+> 是 **0-1 比例**（各类别内部合计 = 1.0，实测茅台酒 0.8569 ≈ 85.7%）→ normalize ×100 转
+> PERCENT（canonical 单位）；③ Tushare `fina_mainbz` **不推导占比**——该接口产品/地区混列且
+> 无分类类型标记，求和推导会口径错配（实测兆易创新"集成电路产品"被算成 ~1%），宁缺毋错，
+> 占比仅在 EM 源可得（缺失时 Phase B 用 revenue 兜底）；另对 fina_mainbz 按
+> `(报告期, 分项)` 去重、保留 update_flag 最新修订。
 
-### Phase B：真实赛道标签推导（收入解构 → 标签）
+- [x] A1 ✅ 新增 akshare adapter：`adapters/akshare/operation_mapping.yaml`（`stock_zygc_em`
+      → canonical：report_date / 分类类型 / 主营构成 / 主营收入 / 收入比例 / 主营成本 /
+      主营利润 / 毛利率；成本/利润比例暂不映射）
+- [x] A2 ✅ `schemas/operation.yaml` 补 `biz_segment_revenue_share` / `biz_segment_revenue_yoy` /
+      `biz_segment_category`（含两源 source_mappings 与口径 notes）
+- [x] A3 ✅ 新增 `alphabee/company_track/`（contracts + data + normalize）：`fetch_business_segments(symbol)`
+      —— 东财主营构成为主，Tushare `fina_mainbz` 兜底（修订行去重；`SegmentCollection.source` 标记
+      实际来源，双源失败显式 error 留痕）
+- [x] A4 ✅ `normalize.py`：单位统一（EM 0-1 比例 ×100 转 PERCENT）、跨期 yoy 推导（is_calculated
+      标记）、噪音过滤（`min_share` 低占比剔除 + `drop_other` 剔除"其他"分项）、报告期对齐
+      （`latest_report_period` / `assess_period_consistency`）
+- [x] A5 ✅ 单测：`tests/company_track/`（adapter 列映射、EM/tushare 归一化、跨期 yoy、噪音过滤、
+      双源降级、去重、符号转换）——17 个用例全绿；实测 603986：存储芯片 71.3% / 微控制器 20.8%、
+      茅台 85.7% 口径正确
 
-- [ ] B1 规则层 `derive_track_label(segments)`：真实赛道 = 收入占比 top1 且增速非负的业务线；占比与增速冲突时取**"占比 × 增速"加权得分最高**者（避免高增速低占比噪音）；
-- [ ] B2 可选 LLM 复核（`agent.track`）：给规则输出 + 分项明细，输出结构化 `track_label` + `override_basis`（引用具体分项数据）；LLM 失败回退纯规则；
-- [ ] B3 **override 机制**：`track_label` 与申万行业并存于 artifact（SW 是基线字段，track 是修正字段）；下游引用 track 时必须在报告注明"公司赛道标签（数据截至 X 报告期）"；
-- [ ] B4 新鲜度：标签随**年报期**刷新（`as_of_date = 最新报告期`），跨期变化记录 `review_notes`（业务漂移可观测——直击硬伤 4）。
+### Phase B：真实赛道标签推导（✅ 已落地，2026-08）
+
+> **实施说明**：`alphabee/company_track/label.py` + `track.py` + `contracts.CompanyTrackArtifact`。
+> 分项数据按**分类类型优选**（按产品分类 → 按行业分类）取业务线；tushare 兜底无占比时按
+> 类别内收入近似排序并告警。漂移检测跨年报期比较，**全期统一优选分类**（避免早期只有
+> "按地区"行时把地区当主线）；实测兆易创新正确识别 2015→2016 "存储芯片销售收入 → 存储芯片"
+> 主线变化。
+
+- [x] B1 ✅ 规则层 `derive_track_label(segments)`：真实赛道 = 收入占比 top1 且增速非负的业务线；
+      占比与增速冲突时取**「占比 × 增速」加权得分最高**者（负增速 ×0.5 衰减，极端负增速钳制
+      0.05，避免高增速低占比噪音；占比最大但增速为负且加权落败时切换标签并告警）
+- [x] B2 ✅ 可选 LLM 复核（`agent.track`）：`synthesize_track_label` 给规则输出 + 业务线明细，
+      产出 `track_label` / `override_basis`；LLM 失败/关闭回退纯规则（`track_method` 留痕 rule/llm）
+- [x] B3 ✅ **override 机制**：`CompanyTrackArtifact` 内 `track_label`（公司赛道，修正字段）与
+      `sw_industry`/`sw_code`（申万基线，调用方注入）并存；`review_notes` 首条固定注明
+      「公司赛道标签基于 X 报告期数据」——下游引用必须携带该口径
+- [x] B4 ✅ 新鲜度：`as_of_date = 最新报告期`、`stale_after = 报告期 + 90 天`；`detect_track_drift`
+      跨年报期主线变化写入 `review_notes`（业务漂移可观测——直击硬伤 4）
+- [x] 单测：`tests/company_track/test_label.py`（11）+ `test_track.py`（4）全绿；实测 603986：
+      `track_label=存储芯片`、dominant/fastest 一致、漂移检测仅报真实主线变化
 
 ### Phase C：对标组构建（真对手清单，可版本化资产）
 
@@ -165,23 +198,37 @@ peer_median_pb:          # 对标组 PB 中位数（RATIO）
 - [ ] C3 持久化：`data/peer_groups/{symbol}.json`（原子写，latest-wins，人工可编辑——分析师确认后覆盖 LLM 结果）；
 - [ ] C4 校验：对标组代码合法化（A 股走 tushare，境外代码（广达 2382.TW 等）需标注 `exchange` 并单列，v1 对标组**优先支持 A 股**，境外仅存名单不进基准计算——避免跨市场口径错配）。
 
-### Phase D：对标组基准（数值落地，规则消费）
+### Phase D：对标组基准（✅ 已落地，2026-08）
 
-- [ ] D1 `alphabee/industry/data.py` 泛化取数：新增 `fetch_peer_financials_for_codes(codes, limit)`（对显式代码列表跑 fina_indicator + daily_basic，复用现有 normalize/derive 纯函数）——**唯一引擎无关的机械改动**；
-- [ ] D2 `derive_peer_benchmarks(codes)`：`derive_benchmarks` 直接复用，输出 `peer_*` canonical 键（中位数语义与 industry 完全一致）；
-- [ ] D3 在线注入：`resolve_company_track` 把 `peer_*` 写进 `fact_values`（None 不注入——缺失即回退）；
-- [ ] D4 规则改造（示例，复用表达式列表回退链，**零引擎改动**）：
+> **实施说明**：`alphabee/industry/data.py::fetch_peer_financials_for_codes`（取数循环与
+> `fetch_industry_peers` 共享 `_fetch_rows_for_codes`，唯一差异是成分来源换成显式代码列表）、
+> `alphabee/company_track/peer.py::derive_peer_benchmarks`（复用 normalize + derive_benchmarks，
+> 中位数语义与行业完全一致）、`company_track/peer_group_store.py`（对标组 JSON 存储，Phase C3
+> 的 LLM 抽取在此之上扩展）、`orchestrator/nodes/resolve_company_track.py`（已接入主图
+> `resolve_industry_context → resolve_company_track → run_analysis_engines`）。
+> **机制语义说明（D5）**：表达式列表回退链给出「**同一档位内 peer 优先** + 字段缺失顺延
+> industry → 绝对」；peer 与 industry 结论**跨档位冲突**时（如 peer 判 aggressive 而 industry
+> 判 moderate）按档位扫描序 conservative → moderate → aggressive 解析——这是零引擎改动机制的
+> 边界，Phase F 消费端如需 peer 绝对权威再按规则处理。
 
-```yaml
-# roe_level.yaml（相对对标组优先 → 相对行业 → 绝对）
-thresholds:
-  excellent:
-    - "value >= peer_avg_roe * 1.5"
-    - "value >= industry_avg_roe * 1.5"
-    - "value >= 0.15"
-```
-
-- [ ] D5 回退语义明确：`peer_*` 缺失 → 顺延 `industry_*` → 绝对阈值；「无对标组」= 与今天行为完全一致（向后兼容）。
+- [x] D1 ✅ `alphabee/industry/data.py` 泛化取数：`fetch_peer_financials_for_codes(codes, limit)`
+      （fina_indicator + daily_basic，与指数成分取数共享同一循环/归一化链路）
+- [x] D2 ✅ `derive_peer_benchmarks(codes)` → `peer_*` canonical 键（peer_avg_roe /
+      peer_avg_debt_ratio / peer_avg_gross_margin / peer_revenue_yoy / peer_median_pe_ttm /
+      peer_median_pb；None 不注入——缺失即回退），已补 `schemas/industry.yaml` 6 个字段
+- [x] D3 ✅ 在线注入：`resolve_company_track` 节点读 `data/peer_groups/{symbol}.json` →
+      `derive_peer_benchmarks` → `peer_*` 写 `fact_values` + `COMPANY_TRACK` artifact
+      （`ArtifactType.COMPANY_TRACK` 已注册）；无对标组 → `company_track_missing`（MEDIUM）
+      issue + step SKIPPED（回退申万基线，显式留痕）；计算失败 → `peer_group_benchmarks_missing`
+      + degraded artifact
+- [x] D4 ✅ 规则改造：`roe_level` / `debt_ratio` 加入 peer 优先表达式（每个档位
+      peer → industry → 绝对），**零引擎改动**
+- [x] D5 ✅ 回退语义：`peer_*` 缺失 → 顺延 `industry_*` → 绝对阈值；「无对标组」行为与
+      Phase 0/1 完全一致（向后兼容，`test_peer_thresholds.py` 全覆盖）
+- [x] 单测：`tests/company_track/test_peer.py`（5）+ `test_peer_group_store.py`（5）+
+      `tests/agents/derived_facts/test_peer_thresholds.py`（9）+ `tests/orchestrator/test_resolve_company_track.py`（4）；
+      实测 603986 对标组（5 只存储芯片设计 peers）：ROE 3.9% / 毛利率 44.7% / 负债率 6.9% /
+      PE(TTM) 125× / PB 8.5× / 营收增速 192%
 
 ### Phase E：商业模式定位（四类 archetype 标签）
 
@@ -248,4 +295,4 @@ Phase A（数据基础）→ Phase D（基准落地，最快见效：peer_* 注�
                 ↘ Phase B（标签）→ Phase C（对标组）→ Phase E（商业模式）→ Phase F（消费端）
 ```
 
-建议实施顺序：**A → D → B → C → E → F**（先让"对标组基准"这一最可计算、收益最直接的部分落地，标签与商业模式作为结构化增强跟进；Phase F 的消费端与既有 Phase 5/6（行业语境注入）合并实施，避免重复改 prompt）。
+建议实施顺序：**A → D → B → C → E → F**（先让"对标组基准"这一最可计算、收益最直接的部分落地，标签与商业模式作为结构化增强跟进；Phase F 的消费端与既有 Phase 5/6（行业语境注入）合并实施，避免重复改 prompt）。**当前进度（2026-08）**：Phase A（业务线数据基础）、Phase B（真实赛道标签）、Phase D（对标组基准，`peer_*` 三级回退链已激活）均已 ✅ 落地，下一步为 **Phase C（对标组构建：研报/业绩会 LLM 抽取 + 校验）与 Phase E（商业模式定位）**。

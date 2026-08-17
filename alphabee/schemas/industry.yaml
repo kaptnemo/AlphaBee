@@ -205,3 +205,81 @@ industry_avg_gross_margin:
     en: [industry median gross margin]
   source_mappings: {}
   notes: 由 resolve_industry_context 从行业成分股财务数据计算中位数；Phase 0 预留，规则消费待后续。
+
+# ─────────────────────────────────────────
+# 对标组基准（COMPANY_TRACK Phase D，公司级；与 industry_* 同族语义，前缀 peer_）
+# 来源：对标组（真对手）成分股财务/估值中位数，由 derive_peer_benchmarks 计算注入
+# fact_values；规则消费链：peer_* → industry_* → 绝对阈值（缺失字段回退链）
+# ─────────────────────────────────────────
+
+peer_avg_roe:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 对标组 ROE 中位数，用于公司相对真对手的盈利判断
+  aliases:
+    zh: [对标组ROE, 对标ROE中位数]
+    en: [peer median ROE]
+  source_mappings: {}
+  notes: 由对标组成分股 fina_indicator 计算中位数（derive_peer_benchmarks）。
+
+peer_avg_debt_ratio:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 对标组资产负债率中位数，用于公司相对真对手的杠杆判断
+  aliases:
+    zh: [对标组负债率, 对标杠杆中位数]
+    en: [peer median debt ratio]
+  source_mappings: {}
+  notes: 由对标组成分股财务数据计算中位数。
+
+peer_avg_gross_margin:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [quarterly, annual]
+  description: 对标组毛利率中位数，用于公司相对真对手的盈利质量判断
+  aliases:
+    zh: [对标组毛利率]
+    en: [peer median gross margin]
+  source_mappings: {}
+  notes: 由对标组成分股财务数据计算中位数。
+
+peer_revenue_yoy:
+  category: industry
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 对标组营收增速中位数（%），用于市场份额/成长性的对标判断
+  aliases:
+    zh: [对标组增速, 对标营收增速]
+    en: [peer revenue YoY]
+  source_mappings: {}
+  notes: 由对标组成分股财务数据计算中位数（百分点口径，与 industry_revenue_yoy 一致）。
+
+peer_median_pe_ttm:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [daily, monthly]
+  description: 对标组 PE(TTM) 中位数，用于公司相对真对手的估值判断
+  aliases:
+    zh: [对标组PE, 对标PE中位数]
+    en: [peer median PE TTM]
+  source_mappings: {}
+  notes: 由对标组成分股 daily_basic pe_ttm 正值中位数计算。
+
+peer_median_pb:
+  category: industry
+  type: float
+  unit: RATIO
+  frequency: [daily, monthly]
+  description: 对标组 PB 中位数，用于公司相对真对手的估值判断
+  aliases:
+    zh: [对标组PB, 对标PB中位数]
+    en: [peer median PB]
+  source_mappings: {}
+  notes: 由对标组成分股 daily_basic pb 正值中位数计算。
