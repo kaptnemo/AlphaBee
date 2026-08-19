@@ -1,5 +1,6 @@
-from pathlib import Path
+from __future__ import annotations
 
+import structlog
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain.agents.middleware import ToolRetryMiddleware
@@ -7,6 +8,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.research_reports.prompts import RESEARCH_REPORTS_PROMPT
+from alphabee.mcp.server_manager import PdfOcrMCPServerManager
 from alphabee.tools.eastmoney import (
     download_eastmoney_report_pdf,
     download_eastmoney_report_pdf_by_info_code,
@@ -19,22 +21,32 @@ from alphabee.tools.eastmoney import (
 from alphabee.tools.tushare_query import query_tushare
 from alphabee.utils.llm import create_chat_model
 
+logger = structlog.get_logger(__name__)
+
 _RETURN_SCHEMA_HINTS: dict[str, str] = {
     "ocr_pdf_to_markdown": """
 
 返回结构 (OCRMarkdownResult):
-  - markdown: str  ← OCR 提取的完整 Markdown 文本，**读取此字段获取内容**
-  - metadata.task_id: str
-  - metadata.source: dict(pdf_path, pdf_name, file_id, file_size, page_count)""",
+  - markdown_path: str  ← 清洗后 Markdown 的**落盘路径**（主交付物，直接读取该文件获得全文）
+  - char_count / page_count: int
+  - markdown: str|null  ← 仅当调用时传 include_content=True 才内联正文，否则为 null
+  - metadata.task_id: str  ← 后续可用 get_ocr_task(task_id) 找回全部产物""",
     "ocr_pdf_to_documents": """
 
-返回结构: LangChain Document 对象列表，每个包含:
-  - page_content: str  ← 该页的文本内容
-  - metadata: dict(page, source, ...)""",
+返回结构 (OCRDocumentsResult):
+  - documents_path: str|null  ← 完整文档块 JSONL 的落盘路径
+  - document_count: int
+  - documents: list  ← 预览（前 preview_size 条），完整数据读取 documents_path""",
     "ocr_pdf_to_jsonl": """
 
 返回结构:
   - output_path: str  ← JSONL 文件的保存路径""",
+    "publish_report_sections": """
+
+返回结构 (PublishReportResult):
+  - report_dir: str  ← 发布后的章节目录（reports/<报告名>/）
+  - section_count / file_count: int
+  - 发布后可用 AlphaBee 的 query_financial_report 工具对该报告做章节级问答""",
 }
 
 
@@ -47,34 +59,70 @@ def _enhance_mcp_tool_descriptions(tools: list) -> list:
     return tools
 
 
-def save_ocr_markdown(file_path: str, content: str) -> str:
-    """将 OCR 提取的 Markdown 文本保存到磁盘文件，返回保存路径。
-
-    调用时机：在 ocr_pdf_to_markdown 返回结果后，立即调用此工具将内容持久化。
+async def research_reports_fetch_agent_factory(
+    mcp_server_url: str | None = None,
+    *,
+    require_mcp: bool = True,
+):
+    """研究报告抓取代理工厂：创建并返回一个 ResearchReportsFetchAgent 实例。
 
     Args:
-        file_path: 保存路径，建议使用 PDF 路径替换扩展名，如 /data/.../xxx.md
-        content:   OCR 返回的 markdown 文本内容（从 OCR 返回结果的 markdown 字段中读取）
+        mcp_server_url: 外部 PDF OCR MCP 服务 URL（如 ``http://127.0.0.1:8765/mcp``）。
+            传 ``None`` 时**自动在创建时启动**一个内置的 MCP 服务子进程
+            （streamable-http，端口自动挑选），用完后调用
+            ``alphabee.mcp.server_manager.stop_all_pdf_ocr_servers()`` 回收
+            （进程退出时也会经 ``atexit`` 自动回收）。
+        require_mcp: MCP 服务启动失败时是否直接抛错（True 抛错，False 降级为
+            不带 OCR 工具的普通抓取代理）。
+
+    Returns:
+        配置好 MCP OCR 工具的 deep agent。可通过
+        ``alphabee.mcp.server_manager.get_active_pdf_ocr_servers()`` 拿到
+        本工厂启动的服务管理器句柄（用于提前 stop）。
     """
-    path = Path(file_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return f"✅ Markdown 已保存到 {path}（{path.stat().st_size} 字节）"
-
-
-async def research_reports_fetch_agent_factory():
-    """研究报告抓取代理工厂：创建并返回一个 ResearchReportsFetchAgent 实例。"""
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
 
-    servers = {
-        "pdf_ocr": {
-            "transport": "streamable-http",
-            "url": "http://localhost:9999/mcp",
+    tools = [
+        query_tushare,
+        get_eastmoney_report_list,
+        get_eastmoney_report_detail_by_encoded_url,
+        get_eastmoney_report_detail_by_info_code,
+        get_eastmoney_report_industry_info_by_info_code,
+        get_eastmoney_industry_reports,
+        download_eastmoney_report_pdf,
+        download_eastmoney_report_pdf_by_info_code,
+    ]
+
+    if mcp_server_url:
+        servers = {
+            "pdf_ocr": {
+                "transport": "streamable-http",
+                "url": mcp_server_url,
+            }
         }
-    }
-    client = MultiServerMCPClient(servers)
-    mcp_tools = await client.get_tools()
-    mcp_tools = _enhance_mcp_tool_descriptions(mcp_tools)
+        client = MultiServerMCPClient(servers)
+        mcp_tools = await client.get_tools()
+        tools.extend(_enhance_mcp_tool_descriptions(mcp_tools))
+    else:
+        # ── 创建 agent 时自动启动内置 PDF OCR MCP 服务 ───────────────────
+        manager = PdfOcrMCPServerManager()
+        try:
+            manager.start()
+        except Exception as exc:
+            if require_mcp:
+                raise
+            logger.warning("PDF OCR MCP server failed to start; agent created without OCR tools: %s", exc)
+        else:
+            servers = {
+                "pdf_ocr": {
+                    "transport": "streamable-http",
+                    "url": manager.url,
+                }
+            }
+            client = MultiServerMCPClient(servers)
+            mcp_tools = await client.get_tools()
+            tools.extend(_enhance_mcp_tool_descriptions(mcp_tools))
+            logger.info("pdf_ocr_mcp_started", url=manager.url)
 
     return create_deep_agent(
         model=create_chat_model("agent.research_reports"),
@@ -82,18 +130,7 @@ async def research_reports_fetch_agent_factory():
         middleware=[
             ToolRetryMiddleware(),
         ],
-        tools=[
-            query_tushare,
-            get_eastmoney_report_list,
-            get_eastmoney_report_detail_by_encoded_url,
-            get_eastmoney_report_detail_by_info_code,
-            get_eastmoney_report_industry_info_by_info_code,
-            get_eastmoney_industry_reports,
-            download_eastmoney_report_pdf,
-            download_eastmoney_report_pdf_by_info_code,
-            save_ocr_markdown,
-            *mcp_tools,
-        ],
+        tools=tools,
         backend=backend,
         skills=[
             "alphabee/skills/tushare",
@@ -108,17 +145,6 @@ if __name__ == "__main__":
     async def main():
         agent = await research_reports_fetch_agent_factory()
         print("ResearchReportsFetchAgent created successfully.")
-
-        # await agent.ainvoke(
-        #     {
-        #         "messages": [
-        #             {
-        #                 "role": "user",
-        #                 "content": "请帮我获取最近一个月关于贵州茅台的研报列表，并下载其中一份研报的 PDF。",
-        #             }
-        #         ]
-        #     }
-        # )
 
         async for chunk in agent.astream(
             {

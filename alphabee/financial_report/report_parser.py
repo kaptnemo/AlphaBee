@@ -160,11 +160,13 @@ def parse_sections_to_folder_structure(sections: list[dict], save_dir: Path) -> 
         for part in section_path[:-1]:
             part = part.strip().replace(" ", "_").replace("/", "_")
             parent_path = parent_path / part
+            # 旧叶子文件（同名 .md）转为目录时先删除再建目录，避免 FileExistsError
+            if parent_path.is_file():
+                parent_path.unlink()
             parent_path.mkdir(parents=True, exist_ok=True)
             if str(parent_path) in content_parts:
                 with open(parent_path / "content.md", "w", encoding="utf-8") as f:
                     f.write("\n".join(content_parts[str(parent_path)]))
-                parent_path.parent / f"{part}.md".remove()  # 删除原来的文件，避免重复
 
         last_part = section_path[-1].strip().replace(" ", "_").replace("/", "_")
         content = section.get("content", [])
