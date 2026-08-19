@@ -21,17 +21,19 @@ from alphabee.utils.storage import get_data_root, normalize_symbol
 
 @dataclass
 class PeerGroup:
-    """一个标的的对标组清单。"""
+    """一个标的的对标组清单（Phase C4：A 股进基准、境外仅名单）。"""
 
     symbol: str = ""
-    codes: list[str] = field(default_factory=list)  # 对标组代码（Tushare 格式）
-    source: str = "manual"  # manual / llm（Phase C3 增加研报/业绩会抽取）
+    codes: list[str] = field(default_factory=list)  # A 股代码（进基准计算）
+    international: list[str] = field(default_factory=list)  # 境外代码（仅名单，不进基准）
+    source: str = "manual"  # manual / llm / analyst
     name: str = ""  # 对标组命名（如 "AI 服务器 ODM"）
     updated_at: str = ""
-    notes: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)  # 构建/校验告警
+    reason_map: dict[str, str] = field(default_factory=dict)  # code → 对标理由
 
     def is_empty(self) -> bool:
-        return not self.codes
+        return not self.codes and not self.international
 
 
 class PeerGroupStore:
@@ -60,6 +62,8 @@ class PeerGroupStore:
                         "name": peer_group.name,
                         "updated_at": peer_group.updated_at,
                         "notes": peer_group.notes,
+                        "international": peer_group.international,
+                        "reason_map": peer_group.reason_map,
                     },
                     handle,
                     ensure_ascii=False,
@@ -84,10 +88,12 @@ class PeerGroupStore:
             return PeerGroup(
                 symbol=str(raw.get("symbol") or symbol),
                 codes=[str(code) for code in (raw.get("codes") or [])],
+                international=[str(code) for code in (raw.get("international") or [])],
                 source=str(raw.get("source") or "manual"),
                 name=str(raw.get("name") or ""),
                 updated_at=str(raw.get("updated_at") or ""),
                 notes=[str(note) for note in (raw.get("notes") or [])],
+                reason_map={str(key): str(value) for key, value in (raw.get("reason_map") or {}).items()},
             )
         except (OSError, json.JSONDecodeError):
             return None
