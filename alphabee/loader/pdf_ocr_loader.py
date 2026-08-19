@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -345,13 +346,15 @@ class PDFOCRLoader:
                 if attempt >= self.max_retries:
                     print(
                         f"[OCR重试] 批次 {len(image_paths)} 张失败，重试耗尽"
-                        f"({self.max_retries}次): {type(exc).__name__}: {exc}"
+                        f"({self.max_retries}次): {type(exc).__name__}: {exc}",
+                        file=sys.stderr,
                     )
                     raise
                 delay = self.retry_delay * (2 ** (attempt - 1))
                 print(
                     f"[OCR重试] 批次 {len(image_paths)} 张第 {attempt}/{self.max_retries} 次失败: "
-                    f"{type(exc).__name__}: {exc}；{delay:.1f}s 后重试"
+                    f"{type(exc).__name__}: {exc}；{delay:.1f}s 后重试",
+                    file=sys.stderr,
                 )
                 time.sleep(delay)
 
@@ -762,7 +765,8 @@ class PDFOCRLoader:
 
                 pending = set()
                 batch: list[Path] = []
-                progress = tqdm(total=total_pages, desc="OCR", unit="page")
+                # 进度条写 stderr：stdio MCP 传输下 stdout 是协议通道，绝不能污染
+                progress = tqdm(total=total_pages, desc="OCR", unit="page", file=sys.stderr)
 
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     for page_num in range(start_page, total_pages):
@@ -838,7 +842,7 @@ class PDFOCRLoader:
         ``save_documents=True`` 时同时把文档序列化到 ``<workspace>/<stem>.documents.jsonl``，
         便于下游（RAG / query_financial_report 等）直接按路径消费。
         """
-        print(f"开始加载PDF文件: {self.pdf_path}, task_id: {self.task_id}")
+        print(f"开始加载PDF文件: {self.pdf_path}, task_id: {self.task_id}", file=sys.stderr)
         final_md_text = self.load_full_text(start_page=start_page, **kwargs)
         sections = self._split_markdown_by_sections(
             final_md_text,

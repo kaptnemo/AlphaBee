@@ -109,6 +109,21 @@ def test_load_documents_and_jsonl(sample_pdf, pdf_ocr_root, fake_ocr_pipeline):
     assert manifest["document_count"] == len(documents)
 
 
+def test_loader_writes_nothing_to_stdout(sample_pdf, pdf_ocr_root, fake_ocr_pipeline, capfd):
+    """stdio 协议安全：loader 的所有诊断输出都走 stderr，stdout 必须保持干净。
+
+    这是 stdio 模式 MCP 服务能正常工作的前提（stdout 是 MCP 协议通道）。
+    """
+    fake_ocr_pipeline()
+
+    loader = PDFOCRLoader(task_id="task-006", pdf_path=sample_pdf, max_workers=2, batch_size=1)
+    loader.load()
+
+    captured = capfd.readouterr()
+    assert captured.out == ""  # stdout 不得有任何输出
+    assert "开始加载PDF文件" in captured.err  # 诊断信息进 stderr
+
+
 def test_relevel_markdown_headers():
     """标题重建：去伪（复选框/句号结尾）+ 编号分级 + 文档标题整体降一级。"""
     md_text = "\n".join(

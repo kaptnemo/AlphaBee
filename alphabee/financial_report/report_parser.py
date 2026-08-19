@@ -1,4 +1,5 @@
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -177,7 +178,7 @@ def parse_sections_to_folder_structure(sections: list[dict], save_dir: Path) -> 
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write("\n".join(content))
             except Exception as e:
-                print(f"Error writing to file {file_path}: {e}")
+                print(f"Error writing to file {file_path}: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

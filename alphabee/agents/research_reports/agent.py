@@ -62,23 +62,30 @@ def _enhance_mcp_tool_descriptions(tools: list) -> list:
 async def research_reports_fetch_agent_factory(
     mcp_server_url: str | None = None,
     *,
+    mcp_transport: str = "stdio",
     require_mcp: bool = True,
 ):
     """研究报告抓取代理工厂：创建并返回一个 ResearchReportsFetchAgent 实例。
 
     Args:
         mcp_server_url: 外部 PDF OCR MCP 服务 URL（如 ``http://127.0.0.1:8765/mcp``）。
-            传 ``None`` 时**自动在创建时启动**一个内置的 MCP 服务子进程
-            （streamable-http，端口自动挑选），用完后调用
+            传 ``None`` 时**自动在创建时启动**一个内置的 MCP 服务
+            （传输方式由 ``mcp_transport`` 决定），用完后调用
             ``alphabee.mcp.server_manager.stop_all_pdf_ocr_servers()`` 回收
             （进程退出时也会经 ``atexit`` 自动回收）。
+        mcp_transport: 内置 MCP 服务的传输模式：
+            - ``"stdio"``（默认）：每次工具调用以 stdio 拉起服务子进程，
+              进程间直接管道通信，无 HTTP 序列化开销，传输效率更高；
+              上传 PDF 与 OCR 产物持久化在磁盘，跨调用不丢状态。
+            - ``"streamable-http"``：常驻服务子进程 + HTTP 连接，一次拉起多次复用。
+            仅在 ``mcp_server_url`` 为 None 时生效。
         require_mcp: MCP 服务启动失败时是否直接抛错（True 抛错，False 降级为
             不带 OCR 工具的普通抓取代理）。
 
     Returns:
         配置好 MCP OCR 工具的 deep agent。可通过
         ``alphabee.mcp.server_manager.get_active_pdf_ocr_servers()`` 拿到
-        本工厂启动的服务管理器句柄（用于提前 stop）。
+        本工厂启动的服务管理器句柄（用于提前 stop / 查询连接配置）。
     """
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
 
@@ -105,7 +112,7 @@ async def research_reports_fetch_agent_factory(
         tools.extend(_enhance_mcp_tool_descriptions(mcp_tools))
     else:
         # ── 创建 agent 时自动启动内置 PDF OCR MCP 服务 ───────────────────
-        manager = PdfOcrMCPServerManager()
+        manager = PdfOcrMCPServerManager(transport=mcp_transport)
         try:
             manager.start()
         except Exception as exc:
@@ -113,16 +120,10 @@ async def research_reports_fetch_agent_factory(
                 raise
             logger.warning("PDF OCR MCP server failed to start; agent created without OCR tools: %s", exc)
         else:
-            servers = {
-                "pdf_ocr": {
-                    "transport": "streamable-http",
-                    "url": manager.url,
-                }
-            }
-            client = MultiServerMCPClient(servers)
+            client = MultiServerMCPClient(manager.servers_config)
             mcp_tools = await client.get_tools()
             tools.extend(_enhance_mcp_tool_descriptions(mcp_tools))
-            logger.info("pdf_ocr_mcp_started", url=manager.url)
+            logger.info("pdf_ocr_mcp_started", transport=mcp_transport, url=manager.url)
 
     return create_deep_agent(
         model=create_chat_model("agent.research_reports"),
