@@ -191,12 +191,27 @@ peer_median_pb:          # 对标组 PB 中位数（RATIO）
 - [x] 单测：`tests/company_track/test_label.py`（11）+ `test_track.py`（4）全绿；实测 603986：
       `track_label=存储芯片`、dominant/fastest 一致、漂移检测仅报真实主线变化
 
-### Phase C：对标组构建（真对手清单，可版本化资产）
+### Phase C：对标组构建（✅ 已落地，2026-08）
 
-- [ ] C1 数据源：`peer_group` 来源优先级 = 券商研报/业绩会纪要 LLM 抽取（管理层点名的对标公司）> 商业模式同类（同 archetype + 分项结构相似度）> 人工维护白名单；
-- [ ] C2 LLM 抽取（`agent.peer_group`）：输入 = 研报/业绩会文本片段 + 分项构成，输出 JSON 对标组（代码/名称/理由），需 `source_refs` 记录出处；失败/置信低 → 空对标组（降级，不编造）；
-- [ ] C3 持久化：`data/peer_groups/{symbol}.json`（原子写，latest-wins，人工可编辑——分析师确认后覆盖 LLM 结果）；
-- [ ] C4 校验：对标组代码合法化（A 股走 tushare，境外代码（广达 2382.TW 等）需标注 `exchange` 并单列，v1 对标组**优先支持 A 股**，境外仅存名单不进基准计算——避免跨市场口径错配）。
+> **实施说明**：`alphabee/company_track/peer_extract.py`（C2，`agent.peer_group`）、
+> `peer_validate.py`（C4，代码规范化 + A 股 tushare 校验 + 境外拆分）、
+> `peer_group_build.py`（C1 优先级汇总端到端）、`peer_group_store.py` 扩展
+> （`international` / `reason_map`，Phase D 的存储升级）。「商业模式同类」来源（同
+> archetype + 分项相似度）依赖 Phase E archetype 与全市场分项索引，暂未实现——v1
+> 来源优先级为：人工候选 > 研报/业绩会 LLM 抽取 > 空（不编造）。
+
+- [x] C1 ✅ 来源优先级落地：调用方直接给候选（人工白名单/结构化）> 研报/业绩会 LLM 抽取
+      > 空对标组（`is_empty` 留痕，绝不编造）；「商业模式同类」待 E 后按需补充
+- [x] C2 ✅ LLM 抽取（`agent.peer_group`）：输入研报/业绩会片段 + 业务线构成 → JSON 对标组
+      （name/code/exchange/reason/source）；无文本/输出非数组/异常 → 空列表 + `meta.note`
+      留痕（降级不编造）
+- [x] C3 ✅ 持久化：`data/peer_groups/{symbol}.json`（原子写、latest-wins、人工可编辑覆盖；
+      Phase D 的 PeerGroupStore 扩展 international / reason_map，旧文件向后兼容）
+- [x] C4 ✅ 校验：`normalize_peer_code`（6 位前缀推断 SH/SZ/BJ，境外保留后缀）、A 股经
+      Tushare `stock_basic` 存在性校验（best-effort，失败按格式放行并告警）、境外进
+      `international`（仅名单不进基准——避免跨市场口径错配）、无法识别交易所的候选剔除
+- [x] 单测：`tests/company_track/test_peer_group_build.py`（9 个）；实测 601138（工业富联）：
+      A 股华勤技术进基准、境外广达/英业达进名单、假代码 999999.SH 被 tushare 校验剔除并告警
 
 ### Phase D：对标组基准（✅ 已落地，2026-08）
 
@@ -230,11 +245,23 @@ peer_median_pb:          # 对标组 PB 中位数（RATIO）
       实测 603986 对标组（5 只存储芯片设计 peers）：ROE 3.9% / 毛利率 44.7% / 负债率 6.9% /
       PE(TTM) 125× / PB 8.5× / 营收增速 192%
 
-### Phase E：商业模式定位（四类 archetype 标签）
+### Phase E：商业模式定位（✅ 已落地，2026-08）
 
-- [ ] E1 archetype 定义：`brand`（品牌/解决方案，关注研发费率/渠道）、`odm`（代工，关注产能利用率/良率/大客户集中度）、`component`（核心零部件，关注产品迭代/技术壁垒）、`integrator`（软硬件集成）、`other`；
-- [ ] E2 分类器：规则启发（毛利率带 + 研发费率带 + 客户集中度）为主，LLM 复核为辅，输出 `business_model` + `business_model_evidence`；
-- [ ] E3 消费：`business_model` 进入 `ThesisIndustryContext` 扩展（run_thesis / review_thesis 按 archetype 切换审查口径——如 ODM 不看品牌溢价、component 看研发投入）。
+> **实施说明**：`alphabee/company_track/business_model.py`（E1/E2）+ `CompanyContext.business_model`
+> （E3，thesis models）+ `build_company_context` 自动分类 + `reviewer._layer1_check` Rule 5
+> archetype 视角。v1 分类带为规则常量（可调）；LLM 复核组件 `agent.business_model` 可选。
+
+- [x] E1 ✅ archetype 定义：`brand`（品牌/解决方案，关注研发费率/渠道）、`odm`（代工，关注
+      产能利用率/良率/大客户集中度）、`component`（核心零部件，关注产品迭代/技术壁垒）、
+      `integrator`（软硬件集成，关注生态绑定/交付）、`other`（指标不足不猜测）
+- [x] E2 ✅ 分类器：规则启发（毛利率带 + 研发费率带 + 大客户集中度佐证）为主
+      （odm：毛利<20% 且研发<8%；component：≥40% 且 ≥12%；brand：≥40% 且 <12%；
+      integrator：20-40% 且 ≥10%；带外 → other 需人工确认），LLM 复核（`agent.business_model`）
+      失败回退规则，输出 `business_model` + `business_model_evidence`
+- [x] E3 ✅ 消费：`CompanyContext.business_model` 由 `build_company_context` 从财务快照自动
+      分类（% → RATIO）；`reviewer._layer1_check` Rule 5 按 archetype 切换审查口径
+      （ODM 盈利弱化不按品牌商毛利标准衡量、component 盈利弱化提示研发战略投入）
+- [x] 单测：`tests/company_track/test_business_model.py`（11）+ `test_e3_consumption.py`（5）
 
 ### Phase F：消费端打通
 
@@ -295,4 +322,4 @@ Phase A（数据基础）→ Phase D（基准落地，最快见效：peer_* 注�
                 ↘ Phase B（标签）→ Phase C（对标组）→ Phase E（商业模式）→ Phase F（消费端）
 ```
 
-建议实施顺序：**A → D → B → C → E → F**（先让"对标组基准"这一最可计算、收益最直接的部分落地，标签与商业模式作为结构化增强跟进；Phase F 的消费端与既有 Phase 5/6（行业语境注入）合并实施，避免重复改 prompt）。**当前进度（2026-08）**：Phase A（业务线数据基础）、Phase B（真实赛道标签）、Phase D（对标组基准，`peer_*` 三级回退链已激活）均已 ✅ 落地，下一步为 **Phase C（对标组构建：研报/业绩会 LLM 抽取 + 校验）与 Phase E（商业模式定位）**。
+建议实施顺序：**A → D → B → C → E → F**（先让"对标组基准"这一最可计算、收益最直接的部分落地，标签与商业模式作为结构化增强跟进；Phase F 的消费端与既有 Phase 5/6（行业语境注入）合并实施，避免重复改 prompt）。**当前进度（2026-08）**：Phase A（业务线数据基础）、Phase B（真实赛道标签）、Phase C（对标组构建：LLM 抽取 + A股/境外校验拆分）、Phase D（对标组基准，`peer_*` 三级回退链已激活）、Phase E（商业模式定位 + reviewer archetype 视角）均已 ✅ 落地，下一步为 **Phase F（消费端打通：与行业 Phase 5/6 合并实施）**。
