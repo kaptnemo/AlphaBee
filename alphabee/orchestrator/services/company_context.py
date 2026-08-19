@@ -102,6 +102,19 @@ def build_company_context(
     ctx.market_cap_category = _detect_market_cap(fact_text, market_facts)
     ctx.lifecycle_stage = _detect_lifecycle(fact_text, financial_facts)
 
+    # 商业模式定位（COMPANY_TRACK Phase E3）：基于财务指标规则启发分类，
+    # 指标不足时不猜测（other），由 thesis/review 按 archetype 切换审查口径。
+    if financial_facts is not None and financial_facts.snapshots:
+        snapshot = financial_facts.snapshots[0]
+        from alphabee.company_track.business_model import classify_business_model
+
+        raw_margin = getattr(snapshot, "gross_margin", None)
+        gross_margin = raw_margin / 100.0 if raw_margin is not None else None  # % → RATIO
+        rd_expense = getattr(snapshot, "rd_expense", None)
+        revenue = getattr(snapshot, "revenue", None)
+        rd_ratio = rd_expense / revenue if rd_expense is not None and revenue else None
+        ctx.business_model, _ = classify_business_model(gross_margin=gross_margin, rd_ratio=rd_ratio)
+
     try:
         company = profile.get("company", {})
         if not ctx.business_model_summary and company:

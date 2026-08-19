@@ -16,6 +16,12 @@ override 机制（与申万基线并存）+ 跨年报期业务主线漂移检测
 - ``SegmentSnapshot`` / ``SegmentCollection`` / ``CompanyTrackArtifact`` —— 契约
 """
 
+from alphabee.company_track.business_model import (
+    BUSINESS_MODEL_FOCUS,
+    BUSINESS_MODEL_LABELS,
+    BUSINESS_MODELS,
+    classify_business_model,
+)
 from alphabee.company_track.contracts import (
     CompanyTrackArtifact,
     SegmentCollection,
@@ -36,7 +42,14 @@ from alphabee.company_track.normalize import (
     segments_for_period,
 )
 from alphabee.company_track.peer import derive_peer_benchmarks, peer_benchmark_fields
+from alphabee.company_track.peer_extract import extract_peer_candidates
+from alphabee.company_track.peer_group_build import build_peer_group
 from alphabee.company_track.peer_group_store import PeerGroup, PeerGroupStore
+from alphabee.company_track.peer_validate import (
+    normalize_peer_code,
+    split_domestic_international,
+    validate_a_share_codes,
+)
 from alphabee.company_track.track import build_company_track
 
 __all__ = [
@@ -46,16 +59,25 @@ __all__ = [
     "SegmentCollection",
     "SegmentSnapshot",
     "TrackLabelResult",
+    "BUSINESS_MODEL_FOCUS",
+    "BUSINESS_MODEL_LABELS",
+    "BUSINESS_MODELS",
     "assess_period_consistency",
     "build_company_track",
+    "build_peer_group",
+    "classify_business_model",
     "derive_peer_benchmarks",
     "derive_segment_yoy",
     "derive_track_label",
+    "extract_peer_candidates",
     "detect_track_drift",
     "fetch_business_segments",
     "latest_report_period",
     "normalize_segments",
+    "normalize_peer_code",
     "peer_benchmark_fields",
+    "split_domestic_international",
+    "validate_a_share_codes",
     "segments_for_period",
     "synthesize_track_label",
 ]

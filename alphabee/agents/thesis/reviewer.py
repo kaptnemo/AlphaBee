@@ -228,6 +228,22 @@ class ThesisReviewer:
                     status = "qualified"
                     suggested_action = "reconsider_with_context"
 
+        # ── Rule 5: business-model lens（COMPANY_TRACK Phase E3）──
+        # 按商业模式 archetype 切换审查口径：ODM 不以品牌商毛利标准衡量、
+        # 核心零部件商短期盈利弱化可能是产品迭代的战略投入。
+        if ctx.business_model == "odm" and dim_id in ("earnings_quality", "financial_quality"):
+            if judgment in ("negative", "strong_negative"):
+                issues.append("ODM 代工商业模式毛利率低属常态，不应以品牌商毛利标准衡量")
+                if status == "contested":
+                    status = "qualified"
+                    suggested_action = "reconsider_with_context"
+        if ctx.business_model == "component" and dim_id == "earnings_quality":
+            if judgment in ("negative", "strong_negative"):
+                issues.append("核心零部件商研发投入高，短期盈利弱化可能是产品迭代的战略投入")
+                if status == "contested":
+                    status = "qualified"
+                    suggested_action = "reconsider_with_context"
+
         # Sort by severity: contested > insufficient > qualified > confirmed
         return DimensionVerdict(
             dimension_id=dim_id,

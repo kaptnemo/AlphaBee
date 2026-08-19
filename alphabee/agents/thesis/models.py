@@ -278,6 +278,7 @@ class CompanyContext:
     market_cap_category: str = ""  # "large" | "mid" | "small"
     lifecycle_stage: str = ""  # "growth" | "mature" | "decline" | "cyclical"
     business_model_summary: str = ""
+    business_model: str = ""  # brand / odm / component / integrator / other（COMPANY_TRACK Phase E）
 
     def to_dict(self) -> dict[str, str]:
         return {k: v for k, v in self.__dict__.items() if v}
