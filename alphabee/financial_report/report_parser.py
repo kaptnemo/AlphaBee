@@ -1,6 +1,8 @@
+import json
 import re
 import sys
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 
 from markdown_it import MarkdownIt
@@ -105,7 +107,10 @@ def parse_markdown_to_cleaned_sections(
         title = section.get("title")
         title_counts[title] = title_counts.get(title, 0) + 1
 
-    header_footer_titles = [title for title, count in title_counts.items() if count / page_count >= 0.6]
+    # 页眉页脚判定：标题须至少在 2 个页面出现且占比 >= 60%（避免单页报告被整体误删）
+    header_footer_titles = [
+        title for title, count in title_counts.items() if count >= 2 and count / page_count >= 0.6
+    ]
 
     content_lines: dict[str, list[str]] = {}
     for section in sections:
@@ -179,6 +184,106 @@ def parse_sections_to_folder_structure(sections: list[dict], save_dir: Path) -> 
                     f.write("\n".join(content))
             except Exception as e:
                 print(f"Error writing to file {file_path}: {e}", file=sys.stderr)
+
+    return {"section_count": len(sections), "content_parts": content_parts}
+
+
+def _sanitize_report_name(report_name: str) -> str:
+    """清洗报告目录名：去扩展名/清洗后缀、去路径分隔符，防止目录穿越。"""
+    name = report_name.strip()
+    if name.lower().endswith(".md"):
+        name = name[:-3]
+    if name.endswith(".cleaned"):
+        name = name[:-8]
+    name = name.replace("/", "_").replace("\\", "_")
+    if not name or name in {".", ".."}:
+        raise ValueError(f"Invalid report_name: {report_name!r}")
+    return name
+
+
+def write_markdown_report_folder(
+    markdown_text: str,
+    report_name: str,
+    *,
+    page_count: int | None = None,
+    save_dir: str | Path | None = None,
+    overwrite: bool = True,
+    strip_doc_title: bool = True,
+) -> Path:
+    """把一份财报 Markdown 按章节拆分，写入 ``reports/<报告名>/`` 文件夹结构。
+
+    这是「OCR → 解析成文件夹 → 检索问答」链路中的解析步骤：
+    - 章节拆分 + 页眉页脚 ngram 去重走 :func:`parse_markdown_to_cleaned_sections`
+      （提供 ``page_count`` 时启用去重；否则仅按标题切分）；
+    - 文件夹结构由 :func:`parse_sections_to_folder_structure` 生成（父章节为目录、
+      叶子章节为 ``.md`` 文件），与既有 ``reports/`` 目录约定一致；
+    - 报告目录下同时保留完整全文副本 ``<报告名>.md``。
+
+    Args:
+        markdown_text: 清洗后的 Markdown 全文（OCR loader 的输出或任意 md）。
+        report_name: 报告目录名，如 ``宁德时代：2026年半年度报告``。
+        page_count: 原始 PDF 页数；提供时启用页眉页脚去重。
+        save_dir: 报告根目录（默认 ``<PROJECT_ROOT>/reports``）。
+        overwrite: 同名目录已存在时是否覆盖重建（默认 True）。
+        strip_doc_title: 是否去掉 markdown 顶层的 ``# <文档标题>`` 行
+            （loader 会注入文档标题；reports/<报告名>/ 目录本身就是标题）。
+
+    Returns:
+        报告目录绝对路径（写入完成后 ``query_financial_report`` 即可定位检索）。
+    """
+    report_name = _sanitize_report_name(report_name)
+
+    root = Path(save_dir).expanduser().resolve() if save_dir else Path(__file__).resolve().parents[2] / "reports"
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / report_name
+    if target.exists():
+        if not overwrite:
+            raise FileExistsError(
+                f"Report directory already exists: {target}（overwrite=False）。"
+                "请换一个 report_name 或使用 overwrite=True 覆盖。"
+            )
+        import shutil
+
+        shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(parents=True, exist_ok=True)
+
+    # loader 会在全文最前注入 "# <文档标题>"，拆分章节前去掉该行，
+    # 避免 reports/<报告名>/<报告名>/... 的重复嵌套。
+    lines = markdown_text.splitlines()
+    if strip_doc_title and lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    md_text = "\n".join(lines)
+
+    if page_count and page_count > 0:
+        sections = parse_markdown_to_cleaned_sections(md_text, page_count, file_name=report_name, file_type="md")
+    else:
+        sections = _split_markdown_by_sections(md_text, file_name=report_name, file_type="md")
+
+    parse_sections_to_folder_structure(sections, target)
+    # 保留完整全文副本，便于整体阅读/其它工具直接读文件
+    (target / f"{report_name}.md").write_text(md_text, encoding="utf-8")
+
+    file_count = sum(1 for p in target.rglob("*") if p.is_file())
+    if file_count == 0:
+        # 没有任何章节（如空文档），至少保留全文副本，保证目录可用
+        file_count = 1
+
+    # 写入报告元数据（与 OCR manifest 配套，供 publish/list 等工具读取）
+    (target / ".report_manifest.json").write_text(
+        json.dumps(
+            {
+                "report_name": report_name,
+                "section_count": len(sections),
+                "file_count": file_count,
+                "page_count": page_count,
+                "created_at": datetime.now(UTC).isoformat(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return target
 
 
 if __name__ == "__main__":

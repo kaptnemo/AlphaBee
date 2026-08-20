@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from alphabee.loader.pdf_ocr_loader import PDFOCRLoader
 
 
@@ -122,6 +124,41 @@ def test_loader_writes_nothing_to_stdout(sample_pdf, pdf_ocr_root, fake_ocr_pipe
     captured = capfd.readouterr()
     assert captured.out == ""  # stdout 不得有任何输出
     assert "开始加载PDF文件" in captured.err  # 诊断信息进 stderr
+
+
+def test_progress_cb_reports_and_cancels(sample_pdf, pdf_ocr_root, fake_ocr_pipeline):
+    """progress_cb 在每批次完成后收到 (processed, total)，返回 True 可中止任务。"""
+    fake_ocr_pipeline()
+
+    calls: list[tuple[int, int]] = []
+    loader = PDFOCRLoader(task_id="task-007", pdf_path=sample_pdf, max_workers=1, batch_size=1)
+
+    def progress_cb(processed: int, total: int) -> bool:
+        calls.append((processed, total))
+        return False  # 不取消
+
+    markdown = loader.load_full_text(progress_cb=progress_cb)
+    assert len(calls) == 3  # sample_pdf 共 3 页，每页一个批次
+    assert calls[-1] == (3, 3)
+    assert len(markdown) > 0
+    manifest = json.loads(loader.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "completed"
+
+
+def test_progress_cb_cancel_aborts(sample_pdf, pdf_ocr_root, fake_ocr_pipeline):
+    """progress_cb 返回 True（取消）时，load_full_text 中止并抛错，manifest 标记 cancelled。"""
+    fake_ocr_pipeline()
+
+    loader = PDFOCRLoader(task_id="task-008", pdf_path=sample_pdf, max_workers=1, batch_size=1)
+
+    def cancel_after_first(processed: int, total: int) -> bool:
+        return processed >= 1  # 第一个批次完成后取消
+
+    with pytest.raises(RuntimeError, match="OCR job cancelled"):
+        loader.load_full_text(progress_cb=cancel_after_first)
+
+    manifest = json.loads(loader.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "cancelled"
 
 
 def test_relevel_markdown_headers():

@@ -13,11 +13,17 @@
 - 新增 ``list_ocr_tasks`` / ``get_ocr_task``：按 task_id 找回任意历史任务的全部产物；
 - 新增 ``publish_report_sections``：把清洗后的 Markdown 按章节拆分写入
   ``reports/<报告名>/``，与 AlphaBee 现有的 ``query_financial_report`` 工具打通——
-  OCR 完成后可以继续"拆章节 → 检索/问答 → 生成分析"的下游操作。
+  OCR 完成后可以继续"拆章节 → 检索/问答 → 生成分析"的下游操作；
+- **异步任务三件套**（面向大文件/长耗时 OCR）：``submit_pdf_ocr`` 提交后立即返回
+  ``task_id``，worker 子进程后台执行，``get_pdf_ocr_status`` 轮询进度，
+  ``get_pdf_ocr_result`` 取结果，``cancel_pdf_ocr_task`` 取消——
+  基于 ``alphabee.mcp.jobs`` 通用任务框架，可扩展到其它长任务域。
 
 工具清单：``upload_pdf`` / ``list_uploaded_pdfs`` / ``ocr_pdf_to_markdown`` /
 ``ocr_pdf_to_documents`` / ``ocr_pdf_to_jsonl`` / ``list_ocr_tasks`` /
-``get_ocr_task`` / ``publish_report_sections``。
+``get_ocr_task`` / ``publish_report_sections`` / ``submit_pdf_ocr`` /
+``get_pdf_ocr_status`` / ``wait_pdf_ocr_task`` / ``get_pdf_ocr_result`` /
+``list_pdf_ocr_tasks`` / ``cancel_pdf_ocr_task``。
 """
 
 from __future__ import annotations
@@ -26,7 +32,10 @@ import argparse
 import base64
 import binascii
 import json
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -45,7 +54,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from alphabee import PROJECT_ROOT
-from alphabee.financial_report.report_parser import parse_sections_to_folder_structure
+from alphabee.financial_report.report_parser import write_markdown_report_folder
 from alphabee.loader.pdf_ocr_loader import (
     DEFAULT_OCR_SERVER_URL,
     PDFOCRLoader,
@@ -53,10 +62,29 @@ from alphabee.loader.pdf_ocr_loader import (
     get_task_workspace,
     get_upload_root,
 )
+from alphabee.mcp.jobs import (
+    JobStatus,
+    JobStore,
+    register_job_tools,
+)
 
 mcp = FastMCP("alphabee-pdf-ocr", json_response=True)
 DEFAULT_UPLOAD_HOST = "127.0.0.1"
 DEFAULT_UPLOAD_PORT = 8766
+
+# ── 异步任务域：pdf_ocr ────────────────────────────────────────────────────
+OCR_JOB_KIND = "pdf_ocr"
+
+
+def _get_ocr_job_store() -> JobStore:
+    """OCR 任务的 JobStore：job.json 与 OCR manifest 同目录（任务工作区内）。"""
+    return JobStore(
+        workspace_resolver=get_task_workspace,
+        list_dir=get_pdf_ocr_root() / "tasks",
+    )
+
+
+_job_store = _get_ocr_job_store()
 
 # 下游 query_financial_report 读取的报告根目录
 REPORT_DIR = PROJECT_ROOT / "reports"
@@ -145,6 +173,17 @@ class OCRTaskInfo(BaseModel):
 class ListOCRTasksResult(BaseModel):
     count: int
     tasks: list[dict[str, Any]]
+
+
+class SubmitOCRJobResult(BaseModel):
+    task_id: str = Field(..., description="任务 id：轮询/取结果/取消时使用")
+    status: str = Field(..., description="初始状态（queued）")
+    pdf_path: str = Field(..., description="OCR 使用的 PDF 路径")
+    markdown_path: str = Field(..., description="任务成功后的最终 Markdown 路径（预期）")
+    hint: str = Field(
+        ...,
+        description="后续操作提示：用 get_pdf_ocr_status 轮询，成功后用 get_pdf_ocr_result 取结果",
+    )
 
 
 class PublishReportResult(BaseModel):
@@ -684,10 +723,13 @@ def publish_report_sections(
     report_name: str | None = None,
     save_dir: str | None = None,
     overwrite: bool = True,
+    page_count: int | None = None,
 ) -> PublishReportResult:
     """把清洗后的财报 Markdown 按章节拆分，发布到 ``reports/<报告名>/`` 目录。
 
-    这是「OCR 之后继续操作」的关键一步：发布后即可用 AlphaBee 的
+    这是「下载 → OCR → 解析 → 检索问答」链路中的解析步骤：解析逻辑复用
+    ``alphabee.financial_report.report_parser.write_markdown_report_folder``
+    （章节切分 + 页眉页脚 ngram 去重 + 文件夹结构生成），发布后即可用 AlphaBee 的
     ``query_financial_report`` 工具对该报告做章节级检索/问答。
 
     Args:
@@ -695,6 +737,8 @@ def publish_report_sections(
         report_name: 报告目录名，如 "宁德时代：2026年半年度报告"；缺省取 markdown 文件名（去扩展名）。
         save_dir: 目标根目录，默认 ``<PROJECT_ROOT>/reports``。
         overwrite: 同名目录已存在时是否覆盖重建（默认 True）。
+        page_count: 原始 PDF 页数（``ocr_pdf_to_markdown`` 返回的 page_count）；
+            提供时启用页眉页脚 ngram 去重。
 
     目录结构：每个章节（按标题层级）生成对应目录/文件，与 ``report_parser`` 一致；
     同时在报告目录下保留完整 ``<报告名>.md`` 全文副本。
@@ -703,47 +747,301 @@ def publish_report_sections(
     if not md_path.is_file():
         raise FileNotFoundError(f"Markdown file does not exist: {md_path}")
 
-    report_name = (report_name or md_path.stem).strip().rstrip(".md")
+    report_name = (report_name or md_path.stem).strip()
     if not report_name:
         raise ValueError("report_name must not be empty")
 
-    root = Path(save_dir).expanduser().resolve() if save_dir else REPORT_DIR
-    root.mkdir(parents=True, exist_ok=True)
-    target = root / report_name
-    if target.exists():
-        if not overwrite:
-            raise FileExistsError(
-                f"Report directory already exists: {target}（overwrite=False）。"
-                "请换一个 report_name 或使用 overwrite=True 覆盖。"
-            )
-        shutil.rmtree(target, ignore_errors=True)
-    target.mkdir(parents=True, exist_ok=True)
-
-    md_text = md_path.read_text(encoding="utf-8")
-    # loader 会在全文最前注入一个 "# <文档标题>"（reports/<报告名>/ 目录本身就是文档标题），
-    # 拆分章节前去掉该顶层标题行，避免 reports/<报告名>/<报告名>/... 的重复嵌套。
-    lines = md_text.splitlines()
-    if lines and lines[0].startswith("# "):
-        lines = lines[1:]
-    md_text = "\n".join(lines)
-
-    sections = PDFOCRLoader._split_markdown_by_sections(
-        md_text,
-        file_name=md_path.name,
-        file_type="md",
+    report_dir = write_markdown_report_folder(
+        md_path.read_text(encoding="utf-8"),
+        report_name,
+        page_count=page_count,
+        save_dir=save_dir or REPORT_DIR,
+        overwrite=overwrite,
     )
-    parse_sections_to_folder_structure(sections, target)
-
-    # 保留完整全文副本，便于整体阅读/其它工具直接读文件
-    (target / f"{report_name}.md").write_text(md_text, encoding="utf-8")
-
-    file_count = sum(1 for p in target.rglob("*") if p.is_file())
+    # 章节目录树中的文件数（含全文副本；不含目录本身）
+    file_count = sum(1 for p in report_dir.rglob("*") if p.is_file())
+    section_count = 0
+    manifest_path = report_dir / ".report_manifest.json"
+    if manifest_path.exists():
+        try:
+            section_count = json.loads(manifest_path.read_text(encoding="utf-8")).get("section_count", 0)
+        except (json.JSONDecodeError, OSError):
+            section_count = 0
     return PublishReportResult(
         report_name=report_name,
-        report_dir=str(target),
+        report_dir=str(report_dir),
         file_count=file_count,
-        section_count=len(sections),
+        section_count=section_count,
     )
+
+
+# ── 异步任务三件套（submit / status / result / cancel） ─────────────────────
+#
+# 面向大文件/长耗时 OCR：submit 登记任务并拉起独立 worker 子进程后立即返回
+# task_id；worker 通过 --run-job 执行并回写 job.json（状态机 + 进度 + 产物路径）。
+# 通用三件套（status/list/cancel）由 alphabee.mcp.jobs.register_job_tools 生成，
+# 本模块只负责 submit 与结果渲染两个域专属部分。
+
+
+def _spawn_worker(task_id: str) -> int:
+    """以独立进程拉起 OCR worker（--run-job <task_id>），返回 pid。
+
+    worker 与 MCP 服务进程隔离：vLLM/OCR 崩溃不影响服务；stdio 传输下
+    任务也不会随"每次工具调用新建子进程"的调用进程退出而丢失。
+    """
+    args = [sys.executable, "-m", "alphabee.mcp.pdf_ocr_server", "--run-job", task_id]
+    env = dict(os.environ)
+    project_root = str(PROJECT_ROOT)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = project_root + os.pathsep + existing if existing else project_root
+
+    log_path = get_task_workspace(task_id) / "worker.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = open(log_path, "a", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            args,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,  # 脱离调用进程会话，防止随 stdio 调用结束被回收
+        )
+        return proc.pid
+    finally:
+        log_handle.close()
+
+
+def _render_ocr_job_result(store: JobStore, task_id: str) -> dict[str, Any]:
+    """渲染 OCR 任务结果：job.json 的 result + OCR manifest 的详情合并。"""
+    job = store.load(OCR_JOB_KIND, task_id) or {}
+    result = dict(job.get("result") or {})
+    manifest_path = get_task_workspace(task_id) / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            result.setdefault("file_name", manifest.get("file_name"))
+            result.setdefault("pages_dir", str(manifest_path.parent / "pages") if (manifest_path.parent / "pages").is_dir() else None)
+            result.setdefault("jsonl_path", manifest.get("jsonl_path"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    result["task_id"] = task_id
+    return result
+
+
+def _run_fake_ocr_job(store: JobStore, task_id: str, payload: dict[str, Any]) -> None:
+    """测试/演示用假 worker：不调用真实 OCR，直接产出假 Markdown 并标记成功。
+
+    仅当环境变量 ``ALPHABEE_PDF_OCR_FAKE=1`` 时启用（worker 子进程继承该变量）。
+    同时写一份与 loader 同格式的 manifest.json，保证下游工具（get_ocr_task 等）可用。
+    """
+    workspace = get_task_workspace(task_id)
+    workspace.mkdir(parents=True, exist_ok=True)
+    pdf_path = Path(payload.get("pdf_path", ""))
+    stem = pdf_path.stem if pdf_path else task_id
+    markdown_path = workspace / f"{stem}.cleaned.md"
+    markdown_text = f"# {stem}\n\n## 一、主要财务数据\n（fake OCR）营业收入 1000 万元，同比增长 12.5%。\n"
+    markdown_path.write_text(markdown_text, encoding="utf-8")
+
+    (workspace / "manifest.json").write_text(
+        json.dumps(
+            {
+                "task_id": task_id,
+                "file_name": pdf_path.name if pdf_path else f"{stem}.pdf",
+                "pdf_path": str(pdf_path) if pdf_path else None,
+                "status": "completed",
+                "page_count": 1,
+                "markdown_path": str(markdown_path),
+                "char_count": len(markdown_text),
+                "source_type": payload.get("source_type", "path"),
+                "fake": True,
+                "created_at": datetime.now(UTC).isoformat(),
+                "completed_at": datetime.now(UTC).isoformat(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    store.update(OCR_JOB_KIND, task_id, progress=100.0, message="OCR 1/1 页")
+    store.succeed(
+        OCR_JOB_KIND,
+        task_id,
+        result={
+            "markdown_path": str(markdown_path),
+            "page_count": 1,
+            "char_count": len(markdown_text),
+            "raw_concatenated_path": None,
+            "fake": True,
+        },
+    )
+
+
+def _run_job_worker(task_id: str) -> None:
+    """worker 进程入口（--run-job）：执行一个异步 OCR 任务并回写 job.json。
+
+    独立进程运行（由 submit_pdf_ocr 拉起），stdout 不参与 MCP 协议，
+    所有诊断输出走 stderr / worker.log。
+    """
+    store = _get_ocr_job_store()
+    job = store.load(OCR_JOB_KIND, task_id)
+    if job is None:
+        print(f"[worker] task {task_id} not found", file=sys.stderr)
+        sys.exit(1)
+
+    store.start(OCR_JOB_KIND, task_id)
+    # 取消可能在 start 之前/之间发生（cancel 工具置位）；取消后直接退出
+    if store.is_cancelled(OCR_JOB_KIND, task_id):
+        return
+    try:
+        payload = job.get("payload", {})
+        pdf_path = payload.get("pdf_path")
+        if not pdf_path or not Path(pdf_path).is_file():
+            raise FileNotFoundError(f"job payload pdf_path not found: {pdf_path}")
+
+        # 测试/演示模式：ALPHABEE_PDF_OCR_FAKE=1 时不调用真实 OCR
+        if os.getenv("ALPHABEE_PDF_OCR_FAKE") == "1":
+            _run_fake_ocr_job(store, task_id, payload)
+            return
+
+        loader = _create_loader(
+            pdf_path=pdf_path,
+            task_id=task_id,
+            ocr_server_url=payload.get("ocr_server_url") or DEFAULT_OCR_SERVER_URL,
+            dpi=payload.get("dpi", 144),
+            image_format=payload.get("image_format", "PNG"),
+            max_workers=payload.get("max_workers", 2),
+            batch_size=payload.get("batch_size", 64),
+            keep_pages=payload.get("keep_pages", True),
+        )
+
+        def progress_cb(processed: int, total: int) -> bool:
+            """每批次完成后：上报进度 + 检查取消（取消时返回 True 让 loader 中止）。"""
+            store.update(
+                OCR_JOB_KIND,
+                task_id,
+                progress=round(100.0 * processed / max(total, 1), 1),
+                message=f"OCR {processed}/{total} 页",
+            )
+            return store.is_cancelled(OCR_JOB_KIND, task_id)
+
+        markdown = loader.load_full_text(
+            start_page=payload.get("start_page", 0),
+            source_type=payload.get("source_type", "path"),
+            progress_cb=progress_cb,
+        )
+
+        if store.is_cancelled(OCR_JOB_KIND, task_id):
+            return  # 已取消：保持 cancelled 状态，不覆盖为 succeeded
+
+        store.succeed(
+            OCR_JOB_KIND,
+            task_id,
+            result={
+                "markdown_path": str(loader.markdown_path),
+                "page_count": loader._manifest.get("page_count", 0),
+                "char_count": loader._manifest.get("char_count", len(markdown)),
+                "raw_concatenated_path": loader._manifest.get("raw_concatenated_path"),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - worker 兜底：任何异常都落为 failed
+        if not store.is_cancelled(OCR_JOB_KIND, task_id):
+            store.fail(OCR_JOB_KIND, task_id, error=f"{type(exc).__name__}: {exc}")
+        else:
+            print(f"[worker] task {task_id} cancelled", file=sys.stderr)
+
+
+@mcp.tool()
+def submit_pdf_ocr(
+    pdf_path: str | None = None,
+    pdf_url: str | None = None,
+    file_id: str | None = None,
+    pdf_base64: str | None = None,
+    file_name: str | None = None,
+    start_page: int = 0,
+    task_id: str | None = None,
+    ocr_server_url: str = DEFAULT_OCR_SERVER_URL,
+    dpi: int = 144,
+    image_format: str = "PNG",
+    max_workers: int = 2,
+    batch_size: int = 64,
+    keep_pages: bool = True,
+) -> SubmitOCRJobResult:
+    """**异步**提交 PDF OCR 任务，立即返回 task_id（不阻塞等待 OCR 完成）。
+
+    适合大文件/长耗时 OCR。Provide exactly one of: pdf_path / pdf_url / pdf_base64 / file_id.
+
+    文件保存：产物持久化在 ``outputs/pdf_ocr/tasks/<task_id>/``；任务完成后
+    ``get_pdf_ocr_result(task_id)`` 返回 markdown_path 等路径。
+
+    后续操作（异步三件套）：
+    1. ``get_pdf_ocr_status(task_id)``：轮询 status/progress（queued/running/succeeded/failed/cancelled）；
+    2. status == succeeded 后 ``get_pdf_ocr_result(task_id)`` 取结果路径；
+    3. 不需要时 ``cancel_pdf_ocr_task(task_id)`` 取消（终止 worker 进程）。
+    """
+    source_type, source_value = _validate_pdf_sources(pdf_path, pdf_base64, pdf_url, file_id)
+    task_id = task_id or f"{OCR_JOB_KIND}-{uuid4().hex[:12]}"
+
+    # 解析 PDF 源并持久化：base64/url 的 bytes 先落到任务工作区，
+    # worker 子进程直接按本地文件执行（不依赖调用方的临时数据）。
+    if source_type == "path":
+        resolved = _normalize_pdf_path(source_value)
+    elif source_type == "file_id":
+        resolved, _ = _load_uploaded_pdf(source_value)
+    else:
+        if source_type == "base64":
+            pdf_bytes = _decode_pdf_base64(source_value)
+            _validate_pdf_bytes(pdf_bytes, "pdf_base64")
+            name = _normalize_pdf_file_name(file_name, "uploaded.pdf")
+        else:
+            pdf_bytes = _download_pdf_bytes(source_value)
+            name = _resolve_pdf_url_file_name(source_value, file_name)
+        workspace = get_task_workspace(task_id)
+        pdf_dir = workspace / "pdf"
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        resolved = pdf_dir / name
+        resolved.write_bytes(pdf_bytes)
+
+    store = _get_ocr_job_store()
+    store.create(
+        OCR_JOB_KIND,
+        task_id=task_id,
+        payload={
+            "pdf_path": str(resolved),
+            "source_type": "path",  # worker 统一按本地文件执行
+            "start_page": start_page,
+            "ocr_server_url": ocr_server_url,
+            "dpi": dpi,
+            "image_format": image_format,
+            "max_workers": max_workers,
+            "batch_size": batch_size,
+            "keep_pages": keep_pages,
+        },
+    )
+    pid = _spawn_worker(task_id)
+    store.update(OCR_JOB_KIND, task_id, pid=pid)
+
+    return SubmitOCRJobResult(
+        task_id=task_id,
+        status=JobStatus.QUEUED,
+        pdf_path=str(resolved),
+        markdown_path=str(get_task_workspace(task_id) / f"{resolved.stem}.cleaned.md"),
+        hint=(
+            "用 get_pdf_ocr_status 轮询到 succeeded 后，"
+            "再调用 get_pdf_ocr_result 取结果路径。"
+        ),
+    )
+
+
+# 通用三件套 + 结果工具：get_pdf_ocr_status / list_pdf_ocr_tasks /
+# cancel_pdf_ocr_task / get_pdf_ocr_result
+register_job_tools(
+    mcp,
+    kind=OCR_JOB_KIND,
+    store=_job_store,
+    human_name="PDF OCR",
+    result_renderer=_render_ocr_job_result,
+)
 
 
 # ── HTTP 上传 API（兼容旧调用方） ──────────────────────────────────────────
@@ -877,7 +1175,17 @@ def main() -> None:
         default=8000,
         help="Port to bind for streamable-http transport (default: 8000)",
     )
+    parser.add_argument(
+        "--run-job",
+        default=None,
+        metavar="TASK_ID",
+        help="worker 模式：执行指定 task_id 的异步任务并回写 job.json（submit_pdf_ocr 内部拉起）",
+    )
     args = parser.parse_args()
+
+    if args.run_job:
+        _run_job_worker(args.run_job)
+        return
 
     if args.transport == "streamable-http":
         mcp.settings.host = args.host

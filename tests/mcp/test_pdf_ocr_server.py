@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import json
+from pathlib import Path
 
 import pytest
 
@@ -135,9 +137,14 @@ def test_publish_report_sections_writes_folder(sample_pdf, pdf_ocr_root, fake_oc
     assert report_dir.is_dir()
     assert result.section_count >= 1
     assert result.file_count >= 1
-    # 章节目录结构（与 report_parser 约定一致：父章节为目录、叶子章节为 .md 文件）
-    assert (report_dir / "主要财务数据").is_dir()
-    assert (report_dir / "主要财务数据" / "股东信息.md").exists()
+    # 章节目录结构（与 report_parser 约定一致：父章节为目录、叶子章节为 .md 文件；
+    # 目录名保留中文编号前缀，如 一、主要财务数据）
+    assert (report_dir / "一、主要财务数据").is_dir()
+    assert (report_dir / "一、主要财务数据" / "二、股东信息.md").exists()
+    # 报告元数据
+    manifest = json.loads((report_dir / ".report_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["report_name"] == "示例公司：2026年一季报"
+    assert manifest["section_count"] >= 1
     # 完整全文副本保留
     assert (report_dir / "示例公司：2026年一季报.md").exists()
 
@@ -157,6 +164,86 @@ def test_publish_report_sections_overwrite_guard(sample_pdf, pdf_ocr_root, fake_
             save_dir=str(tmp_path),
             overwrite=False,
         )
+
+
+# ── 异步任务三件套（submit / status / result / cancel） ────────────────────
+
+
+def _wait_job_status(job_store, task_id: str, want: set[str], timeout: float = 60.0) -> dict:
+    """轮询 job 状态直到进入 want 集合（worker 子进程拉起需要数秒）。"""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        st = job_store.status("pdf_ocr", task_id)
+        assert st is not None
+        if st["status"] in want:
+            return st
+        time.sleep(0.5)
+    raise TimeoutError(f"task {task_id} did not reach {want}; last={st}")
+
+
+def _call_tool(tool, *args):
+    """调用 FastMCP Tool（fn 可能是同步包装或协程函数，统一处理）。"""
+    import asyncio
+    import inspect
+
+    result = tool.fn(*args)
+    if inspect.iscoroutine(result):
+        return asyncio.run(result)
+    return result
+
+
+def test_async_submit_status_result(sample_pdf, pdf_ocr_root, monkeypatch, tmp_path):
+    """异步三件套成功路径：submit → 轮询 succeeded → get result。
+
+    worker 子进程以 ALPHABEE_PDF_OCR_FAKE=1 运行（不调用真实 OCR）。
+    """
+    monkeypatch.setenv("ALPHABEE_PDF_OCR_FAKE", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    submitted = pos.submit_pdf_ocr(pdf_path=str(sample_pdf), task_id="job-001")
+    assert submitted.task_id == "job-001"
+    assert submitted.status == "queued"
+    assert submitted.markdown_path.endswith("示例公司_2026一季报.cleaned.md")
+
+    store = pos._get_ocr_job_store()
+    st = _wait_job_status(store, "job-001", want={"succeeded", "failed"})
+    assert st["status"] == "succeeded", st
+
+    # 直接调用生成的工具（FastMCP Tool.fn 同步包装）
+    tools = {t.name: t for t in pos.mcp._tool_manager.list_tools()}
+    res = _call_tool(tools["get_pdf_ocr_result"], "job-001")
+    assert res["markdown_path"].endswith("示例公司_2026一季报.cleaned.md")
+    assert Path(res["markdown_path"]).is_file()
+    assert res["page_count"] >= 1
+
+    # job.json 与 OCR manifest 都在任务工作区
+    workspace = pos.get_task_workspace("job-001")
+    assert (workspace / "job.json").is_file()
+    assert (workspace / "manifest.json").is_file()
+
+
+def test_async_submit_cancel(sample_pdf, pdf_ocr_root, monkeypatch, tmp_path):
+    """异步取消：submit 后立即 cancel，任务最终停在 cancelled。"""
+    monkeypatch.setenv("ALPHABEE_PDF_OCR_FAKE", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    submitted = pos.submit_pdf_ocr(pdf_path=str(sample_pdf), task_id="job-002")
+    store = pos._get_ocr_job_store()
+
+    tools = {t.name: t for t in pos.mcp._tool_manager.list_tools()}
+    cancelled = _call_tool(tools["cancel_pdf_ocr_task"], submitted.task_id)
+    assert cancelled["cancelled"] is True
+
+    st = _wait_job_status(store, "job-002", want={"cancelled", "succeeded"})
+    assert st["status"] == "cancelled", st
+
+
+def test_async_status_missing_task():
+    tools = {t.name: t for t in pos.mcp._tool_manager.list_tools()}
+    with pytest.raises(FileNotFoundError):
+        _call_tool(tools["get_pdf_ocr_status"], "no-such-task")
 
 
 def test_validate_pdf_sources_rules():

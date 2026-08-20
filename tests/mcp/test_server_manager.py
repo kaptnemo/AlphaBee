@@ -39,6 +39,13 @@ def _expected_tools() -> set[str]:
         "list_ocr_tasks",
         "get_ocr_task",
         "publish_report_sections",
+        # 异步任务工具
+        "submit_pdf_ocr",
+        "get_pdf_ocr_status",
+        "wait_pdf_ocr_task",
+        "get_pdf_ocr_result",
+        "list_pdf_ocr_tasks",
+        "cancel_pdf_ocr_task",
     }
 
 

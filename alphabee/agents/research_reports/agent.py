@@ -47,6 +47,35 @@ _RETURN_SCHEMA_HINTS: dict[str, str] = {
   - report_dir: str  ← 发布后的章节目录（reports/<报告名>/）
   - section_count / file_count: int
   - 发布后可用 AlphaBee 的 query_financial_report 工具对该报告做章节级问答""",
+    "submit_pdf_ocr": """
+
+返回结构 (SubmitOCRJobResult):
+  - task_id: str  ← 任务 id（立即返回，OCR 在后台异步执行）
+  - status: "queued"
+  - pdf_path / markdown_path: str
+  - 后续必须：wait_pdf_ocr_task(task_id) 阻塞等到成功 → get_pdf_ocr_result(task_id) 取结果""",
+    "wait_pdf_ocr_task": """
+
+阻塞等待 OCR 任务进入终态（succeeded/failed/cancelled），最多等 timeout_seconds 秒；
+超时返回当前（running）状态，可再次调用继续等。返回结构同 get_pdf_ocr_status。
+**不要自己反复调用 get_pdf_ocr_status 轮询——用本工具一次性等待。**""",
+    "get_pdf_ocr_status": """
+
+返回结构 (TaskStatus):
+  - status: queued|running|succeeded|failed|cancelled
+  - progress: float(0-100)  ← 进度百分比
+  - message: str  ← 当前进度描述（如 "OCR 12/50 页"）
+  - error: str|null  ← 失败原因""",
+    "get_pdf_ocr_result": """
+
+返回结构:
+  - markdown_path: str  ← 清洗后 Markdown 路径（主交付物）
+  - page_count / char_count: int
+  - task_id: str""",
+    "cancel_pdf_ocr_task": """
+
+返回结构:
+  - task_id / cancelled: bool / status: str""",
 }
 
 
@@ -152,7 +181,7 @@ if __name__ == "__main__":
                 "messages": [
                     {
                         "role": "user",
-                        "content": "请帮我获取最近一个月关于阳光电源的研报列表，并下载其中一份研报的 PDF。",
+                        "content": "请帮我获取最近三个月关于工业富联的研报列表，并下载其中一份研报的 PDF。",
                     }
                 ]
             }

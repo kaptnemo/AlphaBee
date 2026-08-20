@@ -38,6 +38,7 @@ import shutil
 import sys
 import time
 from collections import Counter
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from pathlib import Path
@@ -722,6 +723,7 @@ class PDFOCRLoader:
         *,
         source_pdf_bytes: bytes | None = None,
         source_type: str = "path",
+        progress_cb: Callable[[int, int], bool] | None = None,
     ) -> str:
         """OCR 整个 PDF，返回清洗 + 合并表格后的最终 Markdown 文本。
 
@@ -735,6 +737,9 @@ class PDFOCRLoader:
             start_page: 起始页（0-based）。
             source_pdf_bytes: 当 PDF 来自内存 bytes（base64/URL/上传）时传入，落到工作区 pdf/。
             source_type: 输入来源标识（path/base64/url/file_id），写入 manifest。
+            progress_cb: 可选进度/取消回调 ``(processed_pages, total_pages) -> bool``，
+                在每批次 OCR 完成后调用；返回 True 表示取消（抛
+                ``RuntimeError("OCR job cancelled")``，由调用方决定如何归类）。
 
         Returns:
             最终 Markdown 文本（与 ``markdown_path`` 文件内容一致）。
@@ -762,11 +767,18 @@ class PDFOCRLoader:
                 if total_pages == 0:
                     self.update_manifest(status="failed", error="PDF has 0 pages")
                     return ""
-
                 pending = set()
                 batch: list[Path] = []
+                processed_total = 0
                 # 进度条写 stderr：stdio MCP 传输下 stdout 是协议通道，绝不能污染
                 progress = tqdm(total=total_pages, desc="OCR", unit="page", file=sys.stderr)
+
+                def _checkpoint(processed: int) -> None:
+                    """每批次完成后的进度上报 + 取消检查点。"""
+                    nonlocal processed_total
+                    processed_total += processed
+                    if progress_cb is not None and progress_cb(processed_total, total_pages):
+                        raise RuntimeError("OCR job cancelled")
 
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     for page_num in range(start_page, total_pages):
@@ -783,6 +795,7 @@ class PDFOCRLoader:
                             done, pending = wait(pending, return_when=FIRST_COMPLETED)
                             for completed in done:
                                 progress.update(completed.result())
+                                _checkpoint(completed.result())
 
                     if batch:
                         future = executor.submit(self._ocr_batch, batch[:])
@@ -793,8 +806,14 @@ class PDFOCRLoader:
                         done, pending = wait(pending, return_when=FIRST_COMPLETED)
                         for completed in done:
                             progress.update(completed.result())
+                            _checkpoint(completed.result())
 
                 progress.close()
+        except RuntimeError as exc:
+            # 取消检查点（progress_cb 返回 True）抛出的约定异常：manifest 标记取消后继续上抛
+            if str(exc) == "OCR job cancelled":
+                self.update_manifest(status="cancelled", error=str(exc))
+            raise
         finally:
             self._cleanup_images()
 

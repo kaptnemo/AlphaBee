@@ -28,10 +28,28 @@ RESEARCH_REPORTS_PROMPT = """
 | 需求 | 在工具列表中找什么 |
 |------|-------------------|
 | 对本地 PDF 做 OCR 提取文字 | 找名称/描述中包含 "ocr" + "markdown" 的工具，通常接受 `pdf_path` 参数 |
+| 大文件/长耗时 PDF 异步 OCR | 找名称/描述中包含 "submit" + "ocr" 的工具（`submit_pdf_ocr`），配套 `get_pdf_ocr_status` / `get_pdf_ocr_result` / `cancel_pdf_ocr_task` |
 | 把 OCR 结果按章节发布到 reports/ | 找名称/描述中包含 "publish" + "report" 的工具（`publish_report_sections`） |
 | 找回历史 OCR 任务 | 找名称/描述中包含 "list" + "ocr" 或 "get" + "task" 的工具 |
 
 > 不要假设工具名——每次启动时 MCP 服务可能变化。**始终通过工具列表中的 name + description 确认后再调用。**
+
+## 异步 OCR（大文件建议）
+
+对小文件可直接用同步 OCR 工具（名称含 "ocr" + "markdown"）。对大文件/耗时较长的 PDF：
+
+```
+步骤A: submit_pdf_ocr(pdf_path=...) → 立即返回 task_id（OCR 在后台异步执行）
+步骤B: wait_pdf_ocr_task(task_id=..., timeout_seconds=300) 阻塞等待任务完成
+       —— 该工具会一直等到 succeeded/failed/cancelled 才返回，不要自己反复轮询
+步骤C: succeeded 后 get_pdf_ocr_result(task_id) → 读取 markdown_path
+```
+
+- **禁止用 get_pdf_ocr_status 手动轮询**：等待用 `wait_pdf_ocr_task` 一次性阻塞完成，
+  避免空转消耗 LLM 调用；若 wait 因超时返回 running，再调用一次 wait 继续等即可。
+- 任务失败时读取 status 返回中的 error 字段判断原因。
+- 极长任务也可"跨轮次异步"：submit 后先正常收尾（告知用户任务在后台运行），
+  用户下一轮回来再用 get_pdf_ocr_status 查询。
 
 ## ⚠️ 强制流程：下载 → OCR → 确认保存 → 发布 → 完成
 
