@@ -6,6 +6,7 @@ import json as _json
 
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 from alphabee.agents.schemas import ConflictAnalysisResult
+from alphabee.company_track.contracts import CompanyTrackArtifact
 from alphabee.core import ArtifactType
 from alphabee.orchestrator.collectors import _find_artifact
 from alphabee.orchestrator.contracts import (
@@ -15,6 +16,7 @@ from alphabee.orchestrator.contracts import (
     InsightArtifact,
     ReportAnomalyPayload,
     ReportCompanyPayload,
+    ReportCompanyTrackPayload,
     ReportConflictAnalysisPayload,
     ReportConflictHypothesisPayload,
     ReportConflictItemPayload,
@@ -33,6 +35,22 @@ from alphabee.orchestrator.contracts import (
     find_artifact_model,
 )
 from alphabee.orchestrator.state import OrchestratorState
+
+
+def _build_track_summary(artifacts) -> dict | None:
+    """公司赛道摘要（COMPANY_TRACK Phase F4）：供冲突探索/验证参照对标组而非申万。"""
+    track = find_artifact_model(artifacts, ArtifactType.COMPANY_TRACK, CompanyTrackArtifact)
+    if track is None:
+        return None
+    return {
+        "track_label": track.track_label,
+        "business_model": track.business_model,
+        "dominant_segment": track.dominant_segment,
+        "peer_group": track.peer_group,
+        "peer_benchmarks": track.peer_benchmarks,
+        "as_of_date": track.as_of_date,
+        "stale": track.stale,
+    }
 
 
 def _bounded_text(text: str, limit: int = 300) -> str:
@@ -158,10 +176,13 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
         "key_signals": _build_key_signals(signal_analysis.results),
         "key_derived_facts": _build_key_derived(derived_facts.results),
         "anomaly": anomaly_summary,
+        "company_track": _build_track_summary(artifacts),
     }
 
     return (
         "请对以下数据进行冲突探索分析，识别背离和矛盾，输出结构化的 ConflictAnalysisResult。\n\n"
+        "评估指标偏离时，优先参考 company_track.peer_benchmarks（对标组基准）而非申万行业均值；"
+        "若 company_track 为 null 表示无对标组，仅可用行业基线。\n"
         "重要：这是探索阶段（provisional）。你输出的所有冲突和假设都是「候选线索 / 待验证怀疑」，"
         "尚未经过证据验证，不要把它们表述为已成立的事实结论；每条假设请给出可验证的 predictions，"
         "供后续 verify_hypotheses 阶段裁决。\n\n"
@@ -202,9 +223,11 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
         }
 
     anomaly_report = find_artifact_model(state.get("artifacts", []), ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
+    track_summary = _build_track_summary(state.get("artifacts", []))
 
     return {
         "symbol": symbol or "unknown",
+        "company_track": track_summary,
         "financial_snapshots": snapshots_summary,
         "market": market_summary,
         "anomaly": {
@@ -399,6 +422,20 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
             what_would_change_my_mind=list(insight_val.what_would_change_my_mind),
             confidence=insight_val.confidence,
             degraded=insight_val.degraded,
+        )
+
+    track = find_artifact_model(artifacts, ArtifactType.COMPANY_TRACK, CompanyTrackArtifact)
+    if track is not None:
+        payload.company_track = ReportCompanyTrackPayload(
+            track_label=track.track_label,
+            business_model=track.business_model,
+            dominant_segment=track.dominant_segment or "",
+            fastest_segment=track.fastest_segment or "",
+            peer_group=list(track.peer_group),
+            peer_benchmarks=dict(track.peer_benchmarks),
+            as_of_date=track.as_of_date,
+            stale=track.stale,
+            degraded=track.degraded,
         )
 
     payload.issues = [

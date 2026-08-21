@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from alphabee.company_track.contracts import CompanyTrackArtifact
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
     DerivedFactsArtifact,
@@ -62,6 +63,7 @@ class TaskRecorder:
         derived_val = find_artifact_model(artifacts or [], "derived_facts", DerivedFactsArtifact)
         fact_val = find_artifact_model(artifacts or [], "fact_collection", FactCollectionArtifact)
         industry_ctx = thesis_val.industry_context if thesis_val else None
+        track_val = find_artifact_model(artifacts or [], "company_track", CompanyTrackArtifact)
 
         record = TaskRecord(
             query=query,
@@ -95,6 +97,9 @@ class TaskRecorder:
             company_industry=industry_ctx.industry if industry_ctx else "",
             company_lifecycle=industry_ctx.lifecycle_stage if industry_ctx else "",
             company_market_cap=industry_ctx.market_cap_category if industry_ctx else "",
+            company_track_label=track_val.track_label if track_val else "",
+            company_business_model=track_val.business_model if track_val else "",
+            peer_group=list(track_val.peer_group) if track_val else [],
         )
         return record
 

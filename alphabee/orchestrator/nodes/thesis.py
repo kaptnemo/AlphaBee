@@ -137,6 +137,11 @@ async def run_thesis(
             except Exception:
                 pass
 
+        # 公司赛道（COMPANY_TRACK Phase F）：赛道标签 + 对标组基准注入论点语境
+        from alphabee.company_track.contracts import CompanyTrackArtifact
+
+        track = find_artifact_model(artifacts, ArtifactType.COMPANY_TRACK, CompanyTrackArtifact)
+
         thesis_artifact = ThesisArtifact(
             thesis=thesis.to_dict(),
             enhanced=enhanced.to_dict() if enhanced else None,
@@ -148,6 +153,10 @@ async def run_thesis(
                 business_model_summary=(
                     company_ctx.business_model_summary[:300] if company_ctx.business_model_summary else ""
                 ),
+                business_model=company_ctx.business_model,
+                track_label=track.track_label if track is not None else "",
+                peer_group=list(track.peer_group) if track is not None else [],
+                peer_benchmarks=dict(track.peer_benchmarks) if track is not None else {},
             ),
             anomaly_data=anomaly_data,
             conflict_data=_build_conflict_data(state),

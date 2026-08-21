@@ -1,7 +1,10 @@
-"""resolve_company_track 节点测试（COMPANY_TRACK Phase D3 在线注入）。"""
+"""resolve_company_track 节点测试（COMPANY_TRACK Phase F 在线注入）。"""
 
 import asyncio
 
+import alphabee.company_track as ct_module
+import alphabee.company_track.peer_group_store as store_module
+from alphabee.company_track.contracts import CompanyTrackArtifact, SegmentSnapshot
 from alphabee.core import ArtifactType, IssueSeverity, Run, RunStatus
 from alphabee.orchestrator.nodes import resolve_company_track as node
 
@@ -19,9 +22,35 @@ def _state(symbol="603986.SH"):
     return {"run": _run(symbol), "steps": [], "artifacts": [], "issues": [], "decisions": []}
 
 
-def _patch_peer_group(monkeypatch, group=None):
-    import alphabee.company_track.peer_group_store as store_module
+def _track(**overrides) -> CompanyTrackArtifact:
+    kwargs = dict(
+        symbol="603986.SH",
+        as_of_date="20251231",
+        stale_after="2026-03-31",
+        segments=[
+            SegmentSnapshot(
+                report_date="20251231",
+                segment_name="存储芯片",
+                category="按产品分类",
+                revenue_share=71.3,
+                revenue_yoy=26.4,
+                source="em",
+            )
+        ],
+        dominant_segment="存储芯片",
+        track_label="存储芯片",
+        business_model="component",
+        review_status="approved",
+    )
+    kwargs.update(overrides)
+    return CompanyTrackArtifact(**kwargs)
 
+
+def _patch_track(monkeypatch, track):
+    monkeypatch.setattr(ct_module, "build_company_track", lambda *a, **k: track)
+
+
+def _patch_peer_group(monkeypatch, group=None):
     class FakeStore:
         def __init__(self, *a, **k):
             pass
@@ -33,81 +62,96 @@ def _patch_peer_group(monkeypatch, group=None):
 
 
 def _patch_derive(monkeypatch, values=None, meta=None):
-    import alphabee.company_track.peer as peer_module
-
     monkeypatch.setattr(
-        peer_module,
+        ct_module,
         "derive_peer_benchmarks",
         lambda codes, industry="": (values or {}, meta or {}),
     )
 
 
-def _run_node(monkeypatch, group=None, values=None, meta=None, symbol="603986.SH"):
+def _run_node(monkeypatch, track, group=None, values=None, meta=None, symbol="603986.SH"):
+    _patch_track(monkeypatch, track)
     _patch_peer_group(monkeypatch, group)
     if values is not None or meta is not None:
         _patch_derive(monkeypatch, values, meta)
     return asyncio.run(node.resolve_company_track(_state(symbol), {}))
 
 
-# ── 无对标组 → 显式降级留痕 ────────────────────────────────────────────────
+def _find_company_track(result):
+    for artifact in result.get("artifacts", []):
+        if artifact.type == ArtifactType.COMPANY_TRACK:
+            return CompanyTrackArtifact.model_validate(artifact.value)
+    return None
 
 
-def test_no_peer_group_emits_missing_issue(monkeypatch):
-    result = _run_node(monkeypatch, group=None)
+# ── 降级分级 ───────────────────────────────────────────────────────────────
 
-    step = result["steps"][0]
-    assert step.status.value == "skipped"  # 与 resolve_industry_context 的 unknown 路径一致
+
+def test_no_track_degrades_with_missing_issue(monkeypatch):
+    track = _track(segments=[], degraded=True, degraded_reason="双源均失败")
+    result = _run_node(monkeypatch, track)
+
+    assert result["steps"][0].status.value == "skipped"
     issues = [i for i in result["issues"] if i.category == "company_track_missing"]
     assert len(issues) == 1
     assert issues[0].severity == IssueSeverity.MEDIUM
-    # 不发 artifact、不注入 peer_*（回退申万基线）
     assert not result.get("artifacts")
-    assert not result.get("fact_values")
 
 
-def test_no_symbol_skips_silently(monkeypatch):
-    result = _run_node(monkeypatch, group=None, symbol=None)
-    assert result["steps"][0].status.value == "skipped"
-    assert "issues" not in result or result.get("issues") == []
+def test_track_without_peer_group_emits_low_issue(monkeypatch):
+    result = _run_node(monkeypatch, _track(), group=None)
+
+    artifact = _find_company_track(result)
+    assert artifact is not None
+    assert artifact.track_label == "存储芯片"
+    issues = [i for i in result["issues"] if i.category == "peer_group_missing"]
+    assert len(issues) == 1
+    assert issues[0].severity == IssueSeverity.LOW
+    assert result["fact_values"] == {}
 
 
-# ── 有对标组 → 基准注入 ─────────────────────────────────────────────────────
-
-
-def test_peer_group_injects_values_and_artifact(monkeypatch):
+def test_peer_group_injects_values_and_full_artifact(monkeypatch):
     from alphabee.company_track.peer_group_store import PeerGroup
 
-    group = PeerGroup(symbol="603986.SH", codes=["002415.SZ", "688396.SH"], name="AI 服务器 ODM")
-    values = {"peer_avg_roe": 0.15, "peer_avg_debt_ratio": 0.50}
-    meta = {"peer_count": 2, "fetched_codes": ["002415.SZ"], "source_refs": ["peer_group:manual(2)"], "error": None}
+    group = PeerGroup(symbol="603986.SH", codes=["300223.SZ", "688766.SH"], name="存储芯片设计")
+    values = {"peer_avg_roe": 0.039, "peer_avg_debt_ratio": 0.069}
+    result = _run_node(monkeypatch, _track(), group=group, values=values, meta={"error": None, "peer_count": 2})
 
-    result = _run_node(monkeypatch, group=group, values=values, meta=meta)
-
-    # peer_* 注入 fact_values（供 derived facts / signals 引用）
-    assert result["fact_values"]["peer_avg_roe"] == 0.15
-    assert result["fact_values"]["peer_avg_debt_ratio"] == 0.50
-
-    # COMPANY_TRACK artifact 落 artifacts
-    artifacts = result["artifacts"]
-    assert len(artifacts) == 1
-    assert artifacts[0].type == ArtifactType.COMPANY_TRACK
-    payload = artifacts[0].value
-    assert payload["peer_group"] == ["002415.SZ", "688396.SH"]
-    assert payload["peer_benchmarks"]["peer_avg_roe"] == 0.15
-    assert payload["degraded"] is False
-    assert not [i for i in result["issues"] if "peer" in i.category]
+    assert result["fact_values"]["peer_avg_roe"] == 0.039
+    artifact = _find_company_track(result)
+    assert artifact.peer_group == ["300223.SZ", "688766.SH"]
+    assert artifact.peer_benchmarks["peer_avg_roe"] == 0.039
+    assert artifact.degraded is False
 
 
 def test_peer_derive_failure_marks_degraded(monkeypatch):
     from alphabee.company_track.peer_group_store import PeerGroup
 
-    group = PeerGroup(symbol="603986.SH", codes=["002415.SZ"])
-    result = _run_node(monkeypatch, group=group, values={}, meta={"error": "对标组财务指标均取数失败", "peer_count": 0})
+    group = PeerGroup(symbol="603986.SH", codes=["300223.SZ"])
+    result = _run_node(monkeypatch, _track(), group=group, values={}, meta={"error": "对标组取数失败", "peer_count": 0})
 
-    artifacts = result["artifacts"]
-    assert artifacts[0].value["degraded"] is True
-    assert "失败" in artifacts[0].value["degraded_reason"]
+    artifact = _find_company_track(result)
+    assert artifact.degraded is True
+    assert "失败" in artifact.degraded_reason
     issues = [i for i in result["issues"] if i.category == "peer_group_benchmarks_missing"]
     assert len(issues) == 1
-    # 无基准可注入
     assert result["fact_values"] == {}
+
+
+def test_stale_track_emits_stale_issue(monkeypatch):
+    track = _track(stale_after="2000-01-01")
+    result = _run_node(monkeypatch, track, group=None)
+
+    artifact = _find_company_track(result)
+    assert artifact.stale is True
+    issues = [i for i in result["issues"] if i.category == "company_track_stale"]
+    assert len(issues) == 1
+    assert issues[0].severity == IssueSeverity.MEDIUM
+
+
+def test_no_symbol_skips(monkeypatch):
+    _patch_track(monkeypatch, _track())
+    _patch_peer_group(monkeypatch, None)
+    result = asyncio.run(node.resolve_company_track(_state(None), {}))
+    assert result["steps"][0].status.value == "skipped"
+    assert "issues" not in result or result.get("issues") == []

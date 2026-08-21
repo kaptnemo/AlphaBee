@@ -98,6 +98,25 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
     high_msgs = [i.message for i in payload.issues if i.severity in ("high", "critical")]
     medium_msgs = [i.message for i in payload.issues if i.severity == "medium"]
     risks = "\n".join(f"- {m}" for m in high_msgs[:8]) or "无高危风险项"
+
+    # 公司赛道/对标组章节（COMPANY_TRACK Phase F5）：有 track 时注入对比基准
+    track_lines: list[str] = []
+    track_section = ""
+    if payload.company_track is not None:
+        track = payload.company_track
+        if track.track_label:
+            track_lines.append(f"- 真实赛道: {track.track_label}（商业模式: {track.business_model or '—'}）")
+        if track.dominant_segment:
+            track_lines.append(f"- 主导业务线: {track.dominant_segment}")
+        if track.peer_benchmarks:
+            bench = "  ".join(f"{key}={value:.3g}" for key, value in track.peer_benchmarks.items() if value is not None)
+            track_lines.append(f"- 对标组基准: {bench}")
+        if track.peer_group:
+            track_lines.append(f"- 对标组: {', '.join(track.peer_group)}")
+        if track.stale:
+            track_lines.append("- ⚠ 公司赛道数据可能过期，请以最新报告期为准")
+        track_section = "\n".join(track_lines) or "无公司赛道数据"
+
     review_findings = "\n".join(f"- [{i.severity}] {i.message}" for i in payload.issues[:10]) or "无审查问题"
     if failure_reason:
         review_findings += f"\n\n（LLM 报告生成失败，已降级为确定性报告：{failure_reason}）"
@@ -112,6 +131,7 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
             "signal_analysis": signal_analysis[:1000],
             "anomaly_detection": anomaly_detection[:800],
             "conflict_analysis": conflict_analysis[:1000],
+            "company_track": track_section[:1000],
             "dimension_analysis": dimension_analysis[:1000],
             "review_findings": review_findings[:1000],
             "falsification_conditions": falsification[:800] or "无明确证伪条件",
@@ -170,6 +190,16 @@ async def generate_report(
 
     payload = build_report_generation_payload(state)
     prompt_text = payload.model_dump_json(indent=2)
+    # 公司赛道语境指令（COMPANY_TRACK Phase F5）：有 track 时要求报告含对标组对比
+    track_hint = ""
+    if payload.company_track is not None:
+        track_hint = (
+            "\n报告必须包含「公司赛道/对标组」章节：公司真实赛道为"
+            f"「{payload.company_track.track_label or '未识别'}」，结合对标组基准"
+            "（company_track.peer_benchmarks）说明公司相对真对手（而非申万行业）的位置。"
+        )
+        if payload.company_track.stale:
+            track_hint += "公司赛道数据已过期，必须显式写出「行业/赛道上下文可能过期」。"
     rewrite_reason = state.get("report_rewrite_reason")
     new_issues: list[Issue] = []
     prior_report = None
@@ -205,6 +235,7 @@ async def generate_report(
                         content=(
                             json_instruction(ReportOutput)
                             + "\n\n"
+                            + track_hint
                             + (
                                 "请基于以下结构化数据生成财报质量体检报告。\n\n"
                                 if not rewrite_reason

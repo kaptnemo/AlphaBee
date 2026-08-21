@@ -184,6 +184,7 @@ class ReportSections(BaseModel):
     anomaly_detection: str
     conflict_analysis: str
     dimension_analysis: str
+    company_track: str = ""  # 公司赛道/对标组对比（COMPANY_TRACK Phase F，可空）
     review_findings: str
     falsification_conditions: str
     risks: str
@@ -206,6 +207,7 @@ class ReportOutput(BaseModel):
                     "anomaly_detection": "未发现明显财务异常模式。",
                     "conflict_analysis": "批价下行与营收增长之间存在轻微背离。",
                     "dimension_analysis": "品牌护城河深厚，直销占比提升驱动吨价上行，但需持续审查渠道价格与现金流质量。",
+                    "company_track": "公司真实赛道为高端白酒，对标组（五粮液/泸州老窖）ROE 中位数 25%，公司 32% 显著领先。",
                     "review_findings": "报告覆盖度完备，风险披露充分，无阻塞性问题。",
                     "falsification_conditions": "若批价持续下行并传导至现金流弱化，则当前核心观点需要下修。",
                     "risks": "宏观经济下行导致高端消费收缩；批价持续下滑压缩渠道利润。",

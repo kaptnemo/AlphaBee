@@ -78,6 +78,10 @@ class ThesisIndustryContext(BaseModel):
     market_cap_category: str = ""
     lifecycle_stage: str = ""
     business_model_summary: str = ""
+    business_model: str = ""  # brand / odm / component / integrator / other（Phase E）
+    track_label: str = ""  # 真实赛道标签（COMPANY_TRACK Phase F）
+    peer_group: list[str] = Field(default_factory=list)  # 对标组代码
+    peer_benchmarks: dict[str, float | None] = Field(default_factory=dict)  # peer_* 摘要
 
 
 class VerifiedHypothesisSummary(BaseModel):
@@ -247,6 +251,20 @@ class ReportInsightPayload(BaseModel):
     degraded: bool = False  # 观点层是否降级产出（true 时允许报告走结构化摘要模式）
 
 
+class ReportCompanyTrackPayload(BaseModel):
+    """报告层公司赛道摘要（COMPANY_TRACK Phase F5）。"""
+
+    track_label: str = ""
+    business_model: str = ""
+    dominant_segment: str = ""
+    fastest_segment: str = ""
+    peer_group: list[str] = Field(default_factory=list)
+    peer_benchmarks: dict[str, float | None] = Field(default_factory=dict)
+    as_of_date: str = ""
+    stale: bool = False
+    degraded: bool = False
+
+
 class ReportGenerationPayload(BaseModel):
     company: ReportCompanyPayload = Field(default_factory=ReportCompanyPayload)
     metrics: ReportMetricsPayload = Field(default_factory=ReportMetricsPayload)
@@ -256,6 +274,7 @@ class ReportGenerationPayload(BaseModel):
     anomaly: ReportAnomalyPayload = Field(default_factory=ReportAnomalyPayload)
     conflict_analysis: ReportConflictAnalysisPayload | None = None
     insight: ReportInsightPayload | None = None
+    company_track: ReportCompanyTrackPayload | None = None
     issues: list[ReportIssuePayload] = Field(default_factory=list)
     required_issue_disclosures: list[ReportIssuePayload] = Field(default_factory=list)
 

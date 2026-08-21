@@ -106,6 +106,9 @@ class TaskRecord(BaseModel):
     company_industry: str = ""
     company_lifecycle: str = ""
     company_market_cap: str = ""
+    company_track_label: str = ""  # 真实赛道标签（COMPANY_TRACK Phase F6）
+    company_business_model: str = ""  # 商业模式 archetype
+    peer_group: list[str] = Field(default_factory=list)  # 对标组代码
 
     def to_summary(self) -> dict[str, Any]:
         """产出可用作统计输入的精简摘要。"""
@@ -130,4 +133,6 @@ class TaskRecord(BaseModel):
             "issue_categories": issue_categories,
             "industry": self.company_industry,
             "lifecycle": self.company_lifecycle,
+            "track_label": self.company_track_label,
+            "business_model": self.company_business_model,
         }

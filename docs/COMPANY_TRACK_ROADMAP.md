@@ -263,14 +263,32 @@ peer_median_pb:          # 对标组 PB 中位数（RATIO）
       （ODM 盈利弱化不按品牌商毛利标准衡量、component 盈利弱化提示研发战略投入）
 - [x] 单测：`tests/company_track/test_business_model.py`（11）+ `test_e3_consumption.py`（5）
 
-### Phase F：消费端打通
+### Phase F：消费端打通（✅ 已落地，2026-08）
 
-- [ ] F1 `ArtifactType.COMPANY_TRACK` 注册（`core/schemas.py`）+ `find_artifact_model` 消费；
-- [ ] F2 在线图新增 `resolve_company_track` 节点（在 `resolve_industry_context` 之后），降级契约：无 track → `company_track_missing`（MEDIUM）issue + 回退申万基线；
-- [ ] F3 `synthesize_insights` / `run_thesis`：payload 注入 track_label / business_model / peer 基准摘要（行业主线升级为公司赛道主线）；
-- [ ] F4 `explore_conflicts` / `verify_hypotheses`：偏离判断优先参照 `peer_*` 基准（如"毛利率低于对标组而非行业"）；
-- [ ] F5 报告层：`ReportGenerationPayload` 增 `company_track` 字段（赛道标签 + 对标组基准对比章节）；`review_report` gate 增加检查（有 track 必须含对标组对比、无 track 不得虚构）；
-- [ ] F6 `task_records/recorder.py` 读取 track 摘要用于观测（对标组缺失率、标签漂移统计）。
+> **实施说明**：在线节点 `resolve_company_track` 升级为**完整赛道注入**（组装
+> CompanyTrackArtifact：业务线分项 + 赛道标签 + 商业模式 + 对标组基准 + 漂移），降级
+> 分级为 `company_track_missing`（无业务线，MEDIUM）/ `peer_group_missing`（无对标组，LOW）/
+> `peer_group_benchmarks_missing`（对标组计算失败，MEDIUM）/ `company_track_stale`（过期，MEDIUM，
+> 走既有 issue 披露检查）。消费端：报告层新增 `ReportCompanyTrackPayload` + `ReportSections.company_track`
+> 章节（确定性报告 + LLM prompt 指令 + stale 提示分支）；论点层 ThesisIndustryContext 扩展
+> track_label/business_model/peer 摘要；冲突/验证上下文注入对标组摘要；recorder 落 track 摘要。
+
+- [x] F1 ✅ `ArtifactType.COMPANY_TRACK` 注册（Phase D 已做）+ `find_artifact_model` 消费
+- [x] F2 ✅ `resolve_company_track` 已接入主图（Phase D）；本阶段升级为完整赛道组装 + 降级分级
+      （无业务线 → MEDIUM 回退申万基线；有赛道无对标组 → LOW；对标组失败 → MEDIUM degraded；
+      过期 → `company_track_stale` MEDIUM 进披露检查）
+- [x] F3 ✅ `run_thesis`：`ThesisIndustryContext` 扩展 `business_model` / `track_label` /
+      `peer_group` / `peer_benchmarks`，从 COMPANY_TRACK artifact 注入（行业主线升级为公司赛道主线）
+- [x] F4 ✅ `explore_conflicts` / `verify_hypotheses`：`build_verify_context` 与冲突探索 prompt
+      注入 `company_track` 摘要（track_label / peer_benchmarks），指令「偏离判断优先参照对标组
+      基准而非申万行业均值」
+- [x] F5 ✅ 报告层：`ReportGenerationPayload.company_track`（`ReportCompanyTrackPayload`）、
+      `ReportSections.company_track` 章节（确定性报告渲染赛道/对标组基准 + stale 提示；
+      LLM prompt 指令要求含对标组对比，stale 时显式写出过期提示）
+- [x] F6 ✅ `task_records`：TaskRecord 新增 `company_track_label` / `company_business_model` /
+      `peer_group`，recorder 读取 COMPANY_TRACK artifact 落观测
+- [x] 单测：`tests/orchestrator/test_resolve_company_track.py`（重写，6 个降级分级用例）+
+      `tests/orchestrator/test_company_track_report.py`（4 个报告层消费用例）
 
 ## 6. 三级回退链（与既有机制无缝衔接）
 
@@ -322,4 +340,4 @@ Phase A（数据基础）→ Phase D（基准落地，最快见效：peer_* 注�
                 ↘ Phase B（标签）→ Phase C（对标组）→ Phase E（商业模式）→ Phase F（消费端）
 ```
 
-建议实施顺序：**A → D → B → C → E → F**（先让"对标组基准"这一最可计算、收益最直接的部分落地，标签与商业模式作为结构化增强跟进；Phase F 的消费端与既有 Phase 5/6（行业语境注入）合并实施，避免重复改 prompt）。**当前进度（2026-08）**：Phase A（业务线数据基础）、Phase B（真实赛道标签）、Phase C（对标组构建：LLM 抽取 + A股/境外校验拆分）、Phase D（对标组基准，`peer_*` 三级回退链已激活）、Phase E（商业模式定位 + reviewer archetype 视角）均已 ✅ 落地，下一步为 **Phase F（消费端打通：与行业 Phase 5/6 合并实施）**。
+建议实施顺序：**A → D → B → C → E → F**（先让"对标组基准"这一最可计算、收益最直接的部分落地，标签与商业模式作为结构化增强跟进；Phase F 的消费端与既有 Phase 5/6（行业语境注入）合并实施，避免重复改 prompt）。**当前进度（2026-08）**：Phase A（业务线数据基础）、Phase B（真实赛道标签）、Phase C（对标组构建：LLM 抽取 + A股/境外校验拆分）、Phase D（对标组基准，`peer_*` 三级回退链已激活）、Phase E（商业模式定位 + reviewer archetype 视角）均已 ✅ 落地。**路线图 A–F 全部实施完成（2026-08）**。
