@@ -458,22 +458,48 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
             print(f"  🔍 审查未执行{issue_tag}")
             return
         overall = av.get("overall_status", av.get("review_overall_status", ""))
-        findings = av.get("findings", []) or []
-        n_warn = sum(1 for f in findings if isinstance(f, dict) and f.get("severity") in ("high", "critical"))
         oc = _C.GREEN if "pass" in overall.lower() else _C.YELLOW if "warn" in overall.lower() else _C.RED
+
+        # ── 审查发现明细 ──
+        # thesis_review artifact 的字段是 blocking_issues / warning_issues
+        # （不是 findings），每条已带 [维度名] 前缀，直接打印即可。
+        # 额外再合并 node_update 里的 Issue 记录（含 thesis_conflict 等
+        # 未写入 artifact 列表的高危项），保证 ⚠ 总数与明细一致。
+        blocking_msgs = list(av.get("blocking_issues", []) or [])
+        warning_msgs = list(av.get("warning_issues", []) or [])
+        seen = set(blocking_msgs) | set(warning_msgs)
+        for item in node_update.get("issues", []) or []:
+            if isinstance(item, dict):
+                sev, cat, msg = item.get("severity", ""), item.get("category", ""), item.get("message", "")
+            else:
+                sev, cat, msg = (
+                    getattr(item, "severity", ""),
+                    getattr(item, "category", ""),
+                    getattr(item, "message", ""),
+                )
+            sev, cat, msg = str(sev), str(cat), str(msg)
+            if not msg or msg in seen:
+                continue
+            seen.add(msg)
+            if cat == "thesis_conflict" or sev in ("high", "critical"):
+                blocking_msgs.append(msg)
+            else:
+                warning_msgs.append(msg)
+
+        n_block = len(blocking_msgs)
+        n_warn = len(warning_msgs)
         print(
             f"  🔍 审查结果: {_c(overall, _C.BOLD, oc) if overall else _c('—', _C.DIM)}"
-            f"  │ 发现 {len(findings)} 项"
-            f"  │ 高危 {_c(str(n_warn), _C.RED) if n_warn else '0'}"
+            f"  │ 高危 {_c(str(n_block), _C.RED, _C.BOLD) if n_block else _c('0', _C.DIM)}"
+            f"  │ 警告 {_c(str(n_warn), _C.YELLOW, _C.BOLD) if n_warn else _c('0', _C.DIM)}"
             f"{issue_tag}"
         )
-        for f in findings[:3]:
-            if isinstance(f, dict):
-                fsev = f.get("severity", "")
-                fc = _C.RED if fsev in ("high", "critical") else _C.YELLOW if fsev == "medium" else _C.DIM
-                print(f"      {_c(f'[{fsev}]', fc)} {f.get('message', '')[:80]}")
-        if len(findings) > 3:
-            print(_c(f"      …共 {len(findings)} 项审查发现", _C.DIM))
+        for msg in blocking_msgs:
+            print(f"      {_c('[高危]', _C.RED, _C.BOLD)} {msg}")
+        for msg in warning_msgs:
+            print(f"      {_c('[警告]', _C.YELLOW)} {msg}")
+        if not blocking_msgs and not warning_msgs:
+            print(_c("      （未发现审查问题）", _C.DIM))
         print()
 
     # ─────────────────────────────────────────────────────────────────
@@ -488,8 +514,90 @@ def _print_node_update_summary(node_name: str, node_update: dict, elapsed: float
                 f"  置信度: {_c(conf, cc) if conf else ''}"
                 f"{issue_tag}"
             )
+            # ── 报告明细 ──
+            risk_count = av.get("risk_count", {}) or {}
+            if isinstance(risk_count, dict) and risk_count:
+                parts = []
+                if risk_count.get("high"):
+                    parts.append(_c(f"高危 {risk_count['high']}", _C.RED, _C.BOLD))
+                if risk_count.get("medium"):
+                    parts.append(_c(f"中危 {risk_count['medium']}", _C.YELLOW))
+                if risk_count.get("low"):
+                    parts.append(f"低危 {risk_count['low']}")
+                if parts:
+                    print("      风险: " + "  ".join(parts))
+            sections = av.get("sections", {}) or {}
+            if isinstance(sections, dict) and sections:
+                present = sum(1 for v in sections.values() if v not in (None, "", [], {}))
+                print(_c(f"      章节覆盖: {present}/{len(sections)}", _C.DIM))
+            summary = av.get("summary", "")
+            if summary:
+                print(f"      {_c('摘要', _C.DIM)}: {str(summary)[:120]}")
+            print()
         else:
             print(f"  📝 报告生成中{issue_tag}")
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "review_report":
+        ev = _last_artifact("evaluation_report")
+        if not ev:
+            print(f"  🛡️  门控未执行{issue_tag}")
+            return
+        passed = bool(ev.get("passed", False))
+        blocking = list(ev.get("blocking_issues", []) or [])
+        weaknesses = list(ev.get("weaknesses", []) or [])
+        strengths = list(ev.get("strengths", []) or [])
+        summary = ev.get("summary", "") or ""
+        recommendation = ev.get("recommendation", "") or ""
+        round_n = node_update.get("report_review_round", 0)
+        rewrite_needed = bool(node_update.get("report_rewrite_needed", not passed))
+        oc = _C.GREEN if passed else _C.RED
+        status_word = "通过" if passed else ("需重写" if rewrite_needed else "未通过")
+        print(
+            f"  🛡️  门控结果: {_c(status_word, _C.BOLD, oc)}"
+            f"  │ 轮次 {round_n}"
+            f"  │ 阻断 {_c(str(len(blocking)), _C.RED, _C.BOLD) if blocking else _c('0', _C.DIM)}"
+            f"  │ 弱点 {_c(str(len(weaknesses)), _C.YELLOW) if weaknesses else '0'}"
+            f"  │ 亮点 {len(strengths)}"
+            f"{issue_tag}"
+        )
+        # 定量指标速览（EvaluateMetrics 关键项）
+        metrics = ev.get("metrics", {}) or {}
+        if isinstance(metrics, dict):
+            m_parts = []
+            schema_ok = metrics.get("schema_validity")
+            if schema_ok is not None:
+                m_parts.append(f"结构{'✓' if schema_ok else '✗'}")
+            cov = metrics.get("artifact_coverage")
+            if isinstance(cov, (int, float)):
+                m_parts.append(f"章节覆盖 {cov:.0%}")
+            ev_cov = metrics.get("evidence_coverage")
+            if isinstance(ev_cov, (int, float)):
+                m_parts.append(f"证据引用 {ev_cov:.0%}")
+            gr = metrics.get("grounding_score")
+            if isinstance(gr, (int, float)):
+                m_parts.append(f"可追溯 {gr:.0%}")
+            handling = metrics.get("issue_handling")
+            if handling is not None:
+                m_parts.append(f"风险披露{'✓' if handling else '✗'}")
+            cross = metrics.get("cross_source_consistency")
+            if cross is not None:
+                m_parts.append(f"冲突一致{'✓' if cross else '✗'}")
+            if m_parts:
+                print(_c("      定量: " + "  ".join(m_parts), _C.DIM))
+        if summary:
+            print(f"      {_c('摘要', _C.DIM)}: {summary}")
+        for msg in blocking:
+            print(f"      {_c('[阻断]', _C.RED, _C.BOLD)} {msg}")
+        for w in weaknesses:
+            print(f"      {_c('[弱点]', _C.YELLOW)} {w}")
+        for s in strengths[:3]:
+            print(f"      {_c('[亮点]', _C.GREEN)} {s}")
+        if len(strengths) > 3:
+            print(_c(f"      …共 {len(strengths)} 条亮点", _C.DIM))
+        if recommendation:
+            print(f"      {_c('建议', _C.CYAN)}: {recommendation}")
+        print()
 
 
 def _render_final_report(final_payload: dict) -> None:
