@@ -6,6 +6,7 @@ OCR 与问答阶段用 mock 隔离（不依赖真实 OCR 服务 / LLM），
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -35,8 +36,7 @@ def test_write_markdown_report_folder_structure(tmp_path):
     # 章节目录 + 叶子文件（保留中文编号前缀，与既有 reports/ 约定一致）
     assert (report_dir / "一、主要财务数据").is_dir()
     assert (report_dir / "一、主要财务数据" / "二、股东信息.md").exists()
-    # 完整全文副本 + 元数据
-    assert (report_dir / "示例公司：2026年一季报.md").exists()
+    # 元数据
     manifest = report_dir / ".report_manifest.json"
     assert manifest.is_file()
     import json
@@ -63,6 +63,49 @@ def test_sanitize_report_name_rejects_path_traversal(tmp_path):
     assert _sanitize_report_name("x.cleaned.md") == "x"
     with pytest.raises(ValueError):
         _sanitize_report_name("..")
+
+
+def test_write_markdown_report_folder_nested_structure(tmp_path):
+    md = "# 示例公司：2026年一季报\n## 一、主要财务数据\n营业收入 1000 万元。"
+    report_dir = write_markdown_report_folder(
+        md,
+        "示例公司：2026年一季报",
+        company_name="示例公司",
+        company_code="000001",
+        save_dir=tmp_path,
+    )
+    # 新嵌套结构：<公司>(<代码>)/财报/<报告期+类型>/
+    assert report_dir == tmp_path / "示例公司(000001)" / "财报" / "2026年一季报"
+    assert (report_dir / "一、主要财务数据.md").exists()
+    manifest = json.loads((report_dir / ".report_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["company_name"] == "示例公司"
+    assert manifest["company_code"] == "000001"
+    assert manifest["category"] == "财报"
+    assert manifest["report_period"] == "2026年一季报"
+
+
+def test_write_markdown_report_folder_code_normalization(tmp_path):
+    report_dir = write_markdown_report_folder(
+        "# 标题\n## 一、数据\nx",
+        "宁德时代：2026年半年度报告",
+        company_name="宁德时代",
+        company_code="300750.SZ",  # 带交易所后缀，应归一化为 6 位代码
+        save_dir=tmp_path,
+    )
+    assert report_dir == tmp_path / "宁德时代(300750)" / "财报" / "2026年半年度报告"
+
+
+def test_write_markdown_report_folder_flat_without_company(tmp_path):
+    # 未提供 company_name 时保持旧平铺结构（向后兼容）
+    report_dir = write_markdown_report_folder(
+        "# 标题\n## 一、数据\nx",
+        "宁德时代：2026年半年度报告",
+        save_dir=tmp_path,
+    )
+    assert report_dir == tmp_path / "宁德时代：2026年半年度报告"
+    manifest = json.loads((report_dir / ".report_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["company_name"] == ""
+    assert manifest["company_code"] == ""
 
 
 # ── 下载 ───────────────────────────────────────────────────────────────────
@@ -155,15 +198,16 @@ async def test_run_report_pipeline_full_chain(sample_pdf, tmp_path, monkeypatch)
         verbose=False,
     )
 
-    assert result["task_id"] == "pipeline-test-1"
-    assert result["markdown_path"] == str(md_path)
-    assert result["page_count"] == 4
-    report_dir = Path(result["report_dir"])
+    assert len(result) == 1
+    r = result[0]
+    assert r["task_id"] == "pipeline-test-1"
+    assert r["markdown_path"] == str(md_path)
+    assert r["page_count"] == 4
+    report_dir = Path(r["report_dir"])
     assert report_dir == tmp_path / "reports" / "示例公司：2026年一季报"
     assert (report_dir / "一、主要财务数据").is_dir()
-    assert (report_dir / "示例公司：2026年一季报.md").exists()
-    assert result["answer"] == "营业收入 1000 万元，同比增长 12.5%。"
-    assert len(result["steps"]) == 3  # download / ocr / parse（question 单独步骤不入 steps）
+    assert r["answer"] == "营业收入 1000 万元，同比增长 12.5%。"
+    assert len(r["steps"]) == 3  # download / ocr / parse（question 单独步骤不入 steps）
 
 
 async def test_run_report_pipeline_without_question(sample_pdf, tmp_path, monkeypatch):
@@ -181,8 +225,9 @@ async def test_run_report_pipeline_without_question(sample_pdf, tmp_path, monkey
         save_dir=tmp_path / "reports",
         verbose=False,
     )
-    assert "answer" not in result
-    assert Path(result["report_dir"]).is_dir()
+    assert len(result) == 1
+    assert "answer" not in result[0]
+    assert Path(result[0]["report_dir"]).is_dir()
 
 
 async def test_answer_report_question_extracts_final_text(monkeypatch):
@@ -230,3 +275,190 @@ async def test_answer_report_question_no_answer(monkeypatch, tmp_path):
 async def test_answer_report_question_missing_dir(tmp_path):
     with pytest.raises(FileNotFoundError):
         await pipeline.answer_report_question(tmp_path / "不存在", "问题")
+
+
+# ── 获取下载链接（links 流程） ─────────────────────────────────────────────
+
+
+def test_get_report_links_dispatches_financial(monkeypatch):
+    captured = {}
+
+    def fake_financial(**kwargs):
+        captured.update(kwargs)
+        return {"source": "cninfo", "reports": []}
+
+    monkeypatch.setattr(pipeline, "get_financial_report_links", fake_financial)
+    pipeline.get_report_links(kind="financial", code="300750", report_type="annual")
+    assert captured["code"] == "300750"
+    assert captured["report_type"] == "annual"
+
+
+def test_get_report_links_dispatches_research(monkeypatch):
+    captured = {}
+
+    def fake_research(code, **kwargs):
+        captured.update(kwargs)
+        captured["code"] = code
+        return {"source": "eastmoney", "reports": []}
+
+    monkeypatch.setattr(pipeline, "get_research_report_links", fake_research)
+    pipeline.get_report_links(kind="research", code="300750", start_date="2026-01-01")
+    assert captured["code"] == "300750"
+    assert captured["start_date"] == "2026-01-01"
+
+
+def test_get_report_links_research_requires_code():
+    with pytest.raises(ValueError, match="code"):
+        pipeline.get_report_links(kind="research")
+
+
+def test_pick_report_links():
+    links = {
+        "count": 3,
+        "reports": [
+            {"title": "最新年报", "download_url": "u1"},
+            {"title": "次新年报", "download_url": "u2"},
+            {"title": "2024年年度报告摘要", "download_url": "u3"},  # 摘要应被过滤
+        ],
+    }
+    assert [r["title"] for r in pipeline.pick_report_links(links)] == ["最新年报", "次新年报"]
+
+
+def test_pick_report_links_filters_summary_and_missing_url():
+    links = {
+        "reports": [
+            {"title": "2024年年度报告摘要", "download_url": "u1"},
+            {"title": "无链接", "download_url": None},
+        ],
+    }
+    with pytest.raises(ValueError, match="未获取到"):
+        pipeline.pick_report_links(links)
+
+
+def test_pick_report_links_empty():
+    with pytest.raises(ValueError, match="未获取到"):
+        pipeline.pick_report_links({"reports": []})
+
+
+async def test_run_report_pipeline_with_link_discovery(tmp_path, monkeypatch):
+    """公司信息 → 获取链接 → 下载 → OCR → 解析，验证链接流程接线与嵌套目录。"""
+    md_path = tmp_path / "x.cleaned.md"
+    md_path.write_text("# 标题\n## 一、数据\nx", encoding="utf-8")
+    fake_pdf = tmp_path / "fake.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 fake")
+
+    def fake_get_links(**kwargs):
+        return {
+            "source": "cninfo",
+            "count": 1,
+            "reports": [
+                {
+                    "title": "2026年半年度报告",
+                    "date": "2026-07-25",
+                    "download_url": "https://static.cninfo.com.cn/finalpage/2026-07-25/x.PDF",
+                }
+            ],
+        }
+
+    def fake_download(pdf_url=None, **kwargs):
+        assert pdf_url and pdf_url.startswith("https://")
+        return fake_pdf
+
+    def fake_ocr(pdf_path, **kwargs):
+        assert Path(pdf_path).is_file()
+        return {"markdown_path": str(md_path), "metadata": {"task_id": "t"}, "page_count": 2}
+
+    monkeypatch.setattr(pipeline, "get_report_links", fake_get_links)
+    monkeypatch.setattr(pipeline, "download_report_pdf", fake_download)
+    monkeypatch.setattr(pipeline, "ocr_markdown", fake_ocr)
+
+    result = await pipeline.run_report_pipeline(
+        company_code="300750",
+        company_name="宁德时代",
+        link_kind="financial",
+        report_type="semiannual",
+        save_dir=tmp_path / "reports",
+        verbose=False,
+    )
+    assert len(result) == 1
+    r = result[0]
+    assert r["report_name"] == "2026年半年度报告"
+    assert r["report_dir"].endswith("宁德时代(300750)/财报/2026年半年度报告")
+    assert r["link"]["title"] == "2026年半年度报告"
+    assert any(s["step"] == "download" for s in r["steps"])
+
+
+async def test_run_report_pipeline_processes_all_links(tmp_path, monkeypatch):
+    """无 report_index 时逐个处理全部符合条件的链接。"""
+    md_path = tmp_path / "x.cleaned.md"
+    md_path.write_text("# 标题\n## 一、数据\nx", encoding="utf-8")
+    fake_pdf = tmp_path / "fake.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 fake")
+
+    def fake_get_links(**kwargs):
+        return {
+            "source": "cninfo",
+            "count": 3,
+            "reports": [
+                {"title": "2026年半年报", "download_url": "https://x/1.PDF"},
+                {"title": "2025年年报", "download_url": "https://x/2.PDF"},
+                {"title": "2025年半年报", "download_url": "https://x/3.PDF"},
+            ],
+        }
+
+    def fake_download(pdf_url=None, **kwargs):
+        return fake_pdf
+
+    def fake_ocr(pdf_path, **kwargs):
+        return {"markdown_path": str(md_path), "metadata": {"task_id": "t"}, "page_count": 2}
+
+    monkeypatch.setattr(pipeline, "get_report_links", fake_get_links)
+    monkeypatch.setattr(pipeline, "download_report_pdf", fake_download)
+    monkeypatch.setattr(pipeline, "ocr_markdown", fake_ocr)
+
+    result = await pipeline.run_report_pipeline(
+        company_code="300750",
+        company_name="宁德时代",
+        link_kind="financial",
+        save_dir=tmp_path / "reports",
+        verbose=False,
+    )
+    assert [r["report_name"] for r in result] == ["2026年半年报", "2025年年报", "2025年半年报"]
+
+
+async def test_run_report_pipeline_skips_processed(tmp_path, monkeypatch):
+    """已处理的链接在重跑时被跳过。"""
+    md_path = tmp_path / "x.cleaned.md"
+    md_path.write_text("# 标题\n## 一、数据\nx", encoding="utf-8")
+    fake_pdf = tmp_path / "fake.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 fake")
+
+    reports = [
+        {"title": "2026年半年报", "download_url": "https://x/1.PDF"},
+        {"title": "2025年年报", "download_url": "https://x/2.PDF"},
+    ]
+
+    def fake_get_links(**kwargs):
+        return {"source": "cninfo", "count": 2, "reports": reports}
+
+    def fake_download(pdf_url=None, **kwargs):
+        return fake_pdf
+
+    def fake_ocr(pdf_path, **kwargs):
+        return {"markdown_path": str(md_path), "metadata": {"task_id": "t"}, "page_count": 2}
+
+    monkeypatch.setattr(pipeline, "get_report_links", fake_get_links)
+    monkeypatch.setattr(pipeline, "download_report_pdf", fake_download)
+    monkeypatch.setattr(pipeline, "ocr_markdown", fake_ocr)
+
+    save_dir = tmp_path / "reports"
+    # 第一次：两条都处理
+    first = await pipeline.run_report_pipeline(
+        company_code="300750", company_name="宁德时代", link_kind="financial", save_dir=save_dir, verbose=False
+    )
+    assert [r["report_name"] for r in first] == ["2026年半年报", "2025年年报"]
+    # 第二次：全部已处理，跳过
+    second = await pipeline.run_report_pipeline(
+        company_code="300750", company_name="宁德时代", link_kind="financial", save_dir=save_dir, verbose=False
+    )
+    assert second == []

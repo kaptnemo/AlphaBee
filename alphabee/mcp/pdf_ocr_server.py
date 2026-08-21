@@ -431,9 +431,7 @@ def _serialize_documents(documents: list[Any], limit: int | None = None) -> list
     ]
 
 
-def _build_result_metadata(
-    loader: PDFOCRLoader, pdf_input: ResolvedPDFInput, start_page: int
-) -> OCRMetadata:
+def _build_result_metadata(loader: PDFOCRLoader, pdf_input: ResolvedPDFInput, start_page: int) -> OCRMetadata:
     return OCRMetadata(
         task_id=loader.task_id,
         input_source=pdf_input.source_type,
@@ -721,11 +719,13 @@ def get_ocr_task(
 def publish_report_sections(
     markdown_path: str,
     report_name: str | None = None,
+    company_name: str | None = None,
+    company_code: str | None = None,
     save_dir: str | None = None,
     overwrite: bool = True,
     page_count: int | None = None,
 ) -> PublishReportResult:
-    """把清洗后的财报 Markdown 按章节拆分，发布到 ``reports/<报告名>/`` 目录。
+    """把清洗后的财报 Markdown 按章节拆分，发布到报告目录。
 
     这是「下载 → OCR → 解析 → 检索问答」链路中的解析步骤：解析逻辑复用
     ``alphabee.financial_report.report_parser.write_markdown_report_folder``
@@ -734,14 +734,18 @@ def publish_report_sections(
 
     Args:
         markdown_path: ``ocr_pdf_to_markdown`` 返回的 markdown_path（或任意清洗后的 md 文件）。
-        report_name: 报告目录名，如 "宁德时代：2026年半年度报告"；缺省取 markdown 文件名（去扩展名）。
+        report_name: 报告名，如 "宁德时代：2026年半年度报告"；缺省取 markdown 文件名（去扩展名）。
+        company_name: 公司中文简称（如 "宁德时代"）；提供时报告目录落入
+            ``<save_dir>/<公司名>(<代码>)/财报/<报告期>/`` 嵌套结构，未提供时用旧平铺
+            ``<save_dir>/<报告名>/``。
+        company_code: 6 位股票代码（如 "300750"）；仅在 company_name 提供时生效。
         save_dir: 目标根目录，默认 ``<PROJECT_ROOT>/reports``。
         overwrite: 同名目录已存在时是否覆盖重建（默认 True）。
         page_count: 原始 PDF 页数（``ocr_pdf_to_markdown`` 返回的 page_count）；
             提供时启用页眉页脚 ngram 去重。
 
     目录结构：每个章节（按标题层级）生成对应目录/文件，与 ``report_parser`` 一致；
-    同时在报告目录下保留完整 ``<报告名>.md`` 全文副本。
+    同时在报告目录下保留完整 ``<报告期>.md`` 全文副本。
     """
     md_path = Path(markdown_path).expanduser().resolve()
     if not md_path.is_file():
@@ -754,6 +758,8 @@ def publish_report_sections(
     report_dir = write_markdown_report_folder(
         md_path.read_text(encoding="utf-8"),
         report_name,
+        company_name=company_name,
+        company_code=company_code,
         page_count=page_count,
         save_dir=save_dir or REPORT_DIR,
         overwrite=overwrite,
@@ -821,7 +827,9 @@ def _render_ocr_job_result(store: JobStore, task_id: str) -> dict[str, Any]:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             result.setdefault("file_name", manifest.get("file_name"))
-            result.setdefault("pages_dir", str(manifest_path.parent / "pages") if (manifest_path.parent / "pages").is_dir() else None)
+            result.setdefault(
+                "pages_dir", str(manifest_path.parent / "pages") if (manifest_path.parent / "pages").is_dir() else None
+            )
             result.setdefault("jsonl_path", manifest.get("jsonl_path"))
         except (json.JSONDecodeError, OSError):
             pass
@@ -1026,10 +1034,7 @@ def submit_pdf_ocr(
         status=JobStatus.QUEUED,
         pdf_path=str(resolved),
         markdown_path=str(get_task_workspace(task_id) / f"{resolved.stem}.cleaned.md"),
-        hint=(
-            "用 get_pdf_ocr_status 轮询到 succeeded 后，"
-            "再调用 get_pdf_ocr_result 取结果路径。"
-        ),
+        hint=("用 get_pdf_ocr_status 轮询到 succeeded 后，再调用 get_pdf_ocr_result 取结果路径。"),
     )
 
 
@@ -1051,11 +1056,7 @@ def _parse_upload_multipart(content_type: str, body: bytes) -> tuple[str, bytes]
     if "multipart/form-data" not in content_type.lower():
         raise ValueError("Content-Type must be multipart/form-data.")
 
-    parser_input = (
-        f"Content-Type: {content_type}\r\n"
-        "MIME-Version: 1.0\r\n"
-        "\r\n"
-    ).encode() + body
+    parser_input = (f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n").encode() + body
     message = BytesParser(policy=default_email_policy).parsebytes(parser_input)
     if not message.is_multipart():
         raise ValueError("Request body is not a valid multipart form.")

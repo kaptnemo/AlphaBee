@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -267,17 +268,56 @@ def _normalise_report_types(report_type: str | list[str] | None) -> list[str]:
     return texts
 
 
+def _normalize_locator_code(code: str) -> str:
+    """归一化代码用于匹配：去交易所后缀（``300750.SZ`` → ``300750``）。"""
+    code = (code or "").strip().upper()
+    if "." in code:
+        code = code.split(".")[0]
+    return code
+
+
+def _extract_code(company_dir_name: str) -> str:
+    """从公司目录名 ``宁德时代(300750)`` 提取 6 位代码；无括号则返回空串。"""
+    match = re.search(r"\((\d{6})\)", company_dir_name)
+    return match.group(1) if match else ""
+
+
+def _iter_report_candidates(root: Path):
+    """产出 ``(company_str, dir_code, leaf_str, dir_path)`` 元组。
+
+    覆盖两种结构：
+
+    - 新嵌套：``<公司(code)>/财报/<报告期+类型>/`` → company_str 为 ``公司(code)``、
+      leaf_str 为 ``报告期+类型``；
+    - 旧平铺：``<报告名>/`` → company_str 与 leaf_str 均为目录名、dir_code 为空。
+    """
+    if not root.is_dir():
+        return
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+        financial_dir = entry / "财报"
+        if financial_dir.is_dir():
+            for leaf in sorted(financial_dir.iterdir()):
+                if leaf.is_dir():
+                    yield entry.name, _extract_code(entry.name), leaf.name, leaf
+        else:
+            yield entry.name, "", entry.name, entry
+
+
 def decide_root_path(request: FinancialReportRequest) -> str | None:
     """根据请求参数定位目标报告的根目录路径。
 
-    在 ``reports/`` 下按「公司名 + 年份 + 报告类型」进行子串匹配打分，
-    返回唯一命中的报告文件夹绝对路径；任何条件未全部命中或有多个候选
+    在 ``reports/`` 下同时支持**新嵌套结构**（``<公司>(<代码>)/财报/<报告期>/``）
+    与**旧平铺结构**（``<报告名>/``），按「公司名 + 年份 + 报告类型」进行子串匹配
+    打分，返回唯一命中的报告文件夹绝对路径；任何条件未全部命中或有多个候选
     （例如只给了年份、命中多家公司）时返回 ``None``。
 
     匹配逻辑要点：
-    - 报告目录名形如 ``宁德时代：2026年半年度报告``，只包含公司名称。
+    - 公司匹配：公司名命中目录名子串，或提供的代码命中 ``<公司>(<代码>)`` 括号内
+      代码（旧平铺目录无代码，只能靠公司名命中）。
     - 若只提供 ``company_code``，会先通过 :func:`resolve_company_name_by_code`
-      反查公司名再匹配；若代码反查失败则无法定位，返回 ``None``。
+      反查公司名再匹配；若代码反查失败仍可尝试代码直接匹配嵌套目录。
     - ``report_type`` 支持单个字符串（如 ``"semiannual"``）或多个类型组成的列表
       （如 ``["annual", "semiannual"]``）；英文键先经 ``REPORT_TYPE_MAPPING`` 映射为
       中文片段，**任一**给定类型命中目录即视为该条件满足（只计 1 分，不会因多个
@@ -292,59 +332,50 @@ def decide_root_path(request: FinancialReportRequest) -> str | None:
     Example:
         >>> from alphabee.tools.financial_report import FinancialReportRequest, decide_root_path
         >>> decide_root_path(FinancialReportRequest(company_code="300750", year=2026, query="x"))
-        '/data/freedom/AlphaBee/reports/宁德时代：2026年半年度报告'
+        '/data/freedom/AlphaBee/reports/宁德时代(300750)/财报/2026年半年度报告'
         >>> decide_root_path(FinancialReportRequest(company_name="宁德时代", year=2024, query="x"))
         None  # 该年份无报告
         >>> decide_root_path(FinancialReportRequest(year=2026, query="x"))
         None  # 仅年份命中多家公司，存在歧义
         >>> decide_root_path(FinancialReportRequest(company_name="宁德时代", report_type=["annual", "semiannual"], query="x"))
-        '/data/freedom/AlphaBee/reports/宁德时代：2026年半年度报告'
+        '/data/freedom/AlphaBee/reports/宁德时代(300750)/财报/2026年半年度报告'
     """
-    # walk REPORT_DIR to find the report folder based on company_name, company_code, year, and type
-
     company_name = request.company_name
     company_code = request.company_code
     year = str(request.year) if request.year is not None else None
     report_types = _normalise_report_types(request.report_type)
 
-    # company_code 只用于反查 company_name（报告目录名不含股票代码），再按名称匹配
+    # company_code 优先反查 company_name（报告目录名以公司名为主），并保留归一化代码
+    # 用于命中新嵌套目录的 ``<公司>(<代码>)``。
+    code_norm = _normalize_locator_code(company_code) if company_code else ""
     if company_code and not company_name:
         company_name = resolve_company_name_by_code(company_code)
 
-    # 每个「匹配组」贡献 1 分：公司名、年份各一组；report_type 作为一组，
-    # 命中任一给定类型即得 1 分，从而支持同时给出多个可接受的报告类型。
-    match_groups: list[list[str]] = []
-    if company_name:
-        match_groups.append([company_name])
-    if year:
-        match_groups.append([year])
-    if report_types:
-        match_groups.append(report_types)
-    if not match_groups:
+    want_company = bool(company_name or code_norm)
+    want_year = bool(year)
+    want_type = bool(report_types)
+    score_threshold = sum([want_company, want_year, want_type])
+    if score_threshold == 0:
         return None
-    score_threshold = len(match_groups)
 
-    # 选择符合的报告文件夹的最上层目录作为根路径，使用分数来选择最匹配的报告文件夹，快速定位到报告文件夹
     matches: list[str] = []
     best_match_score = 0
-    for dir_path, _, _ in walk_with_depth_limit(REPORT_DIR, max_depth=1):
-        if dir_path == REPORT_DIR:
-            continue
-        dir_path_str = str(dir_path)
+    for company_str, dir_code, leaf_str, dir_path in _iter_report_candidates(REPORT_DIR):
         score = 0
-        for group in match_groups:
-            if group is report_types:
-                # 报告类型用「目录实际类型」匹配，避免 "年度报告" 命中 "半年度报告" 这类子串误判
-                if _detect_report_type_text(dir_path_str) in report_types:
-                    score += 1
-            elif any(item in dir_path_str for item in group):
-                score += 1
+        if want_company and (
+            (company_name and company_name in company_str) or (code_norm and dir_code and code_norm == dir_code)
+        ):
+            score += 1
+        if want_year and year and year in leaf_str:
+            score += 1
+        if want_type and _detect_report_type_text(leaf_str) in report_types:
+            score += 1
 
         if score > best_match_score:
             best_match_score = score
-            matches = [dir_path_str]
+            matches = [str(dir_path)]
         elif score == best_match_score and score > 0:
-            matches.append(dir_path_str)
+            matches.append(str(dir_path))
 
     # 全部条件都必须命中，且不能有歧义（例如仅 year 命中多家公司）
     if best_match_score < score_threshold or len(matches) != 1:
@@ -366,19 +397,18 @@ def _normalise_locator_key(request: FinancialReportRequest) -> tuple:
 
 
 def _list_available_reports(company_name: str | None) -> list[str]:
-    """列出 ``reports/`` 下与该公司相关的报告目录名（不含年份筛选）。
+    """列出 ``reports/`` 下与该公司相关的报告（不含年份筛选）。
 
     用于构造 REPORT_NOT_FOUND 的提示信息，让 agent 能挑一个真实存在的
-    年份/类型去查，而不是盲目重试同一组合。
+    年份/类型去查，而不是盲目重试同一组合。嵌套结构显示为
+    ``<公司>(<代码>)/财报/<报告期>``，旧平铺结构显示为目录名。
     """
     names: list[str] = []
-    for dir_path, _, _ in walk_with_depth_limit(REPORT_DIR, max_depth=1):
-        if dir_path == REPORT_DIR:
+    for company_str, _dir_code, leaf_str, _dir_path in _iter_report_candidates(REPORT_DIR):
+        if company_name and company_name not in company_str:
             continue
-        name = dir_path.name
-        if company_name and company_name not in name:
-            continue
-        names.append(name)
+        display = leaf_str if company_str == leaf_str else f"{company_str}/财报/{leaf_str}"
+        names.append(display)
     return sorted(names)
 
 

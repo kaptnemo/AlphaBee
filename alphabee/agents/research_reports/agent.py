@@ -44,7 +44,8 @@ _RETURN_SCHEMA_HINTS: dict[str, str] = {
     "publish_report_sections": """
 
 返回结构 (PublishReportResult):
-  - report_dir: str  ← 发布后的章节目录（reports/<报告名>/）
+  - report_dir: str  ← 发布后的章节目录（reports/<公司名>(<代码>)/财报/<报告期>/，未提供
+    公司信息时为 reports/<报告名>/）
   - section_count / file_count: int
   - 发布后可用 AlphaBee 的 query_financial_report 工具对该报告做章节级问答""",
     "submit_pdf_ocr": """

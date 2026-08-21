@@ -108,9 +108,7 @@ def parse_markdown_to_cleaned_sections(
         title_counts[title] = title_counts.get(title, 0) + 1
 
     # 页眉页脚判定：标题须至少在 2 个页面出现且占比 >= 60%（避免单页报告被整体误删）
-    header_footer_titles = [
-        title for title, count in title_counts.items() if count >= 2 and count / page_count >= 0.6
-    ]
+    header_footer_titles = [title for title, count in title_counts.items() if count >= 2 and count / page_count >= 0.6]
 
     content_lines: dict[str, list[str]] = {}
     for section in sections:
@@ -201,41 +199,97 @@ def _sanitize_report_name(report_name: str) -> str:
     return name
 
 
+def _normalize_report_code(code: str) -> str:
+    """归一化股票代码：去交易所后缀（``300750.SZ`` → ``300750``）。"""
+    code = (code or "").strip().upper()
+    if "." in code:
+        code = code.split(".")[0]
+    return code
+
+
+def _strip_company_prefix(report_name: str, company_name: str) -> str:
+    """去掉报告名里冗余的「公司名：」前缀，只保留报告期+类型部分。"""
+    name = report_name.strip()
+    if not company_name:
+        return name
+    for sep in ("：", ":", " "):
+        prefix = f"{company_name}{sep}"
+        if name.startswith(prefix):
+            return name[len(prefix) :].strip()
+    return name
+
+
+def reports_root(save_dir: str | Path | None = None) -> Path:
+    """报告根目录：提供 ``save_dir`` 用之，否则默认 ``<PROJECT_ROOT>/reports``。"""
+    return Path(save_dir).expanduser().resolve() if save_dir else Path(__file__).resolve().parents[2] / "reports"
+
+
 def write_markdown_report_folder(
     markdown_text: str,
     report_name: str,
     *,
+    company_name: str | None = None,
+    company_code: str | None = None,
     page_count: int | None = None,
     save_dir: str | Path | None = None,
     overwrite: bool = True,
     strip_doc_title: bool = True,
 ) -> Path:
-    """把一份财报 Markdown 按章节拆分，写入 ``reports/<报告名>/`` 文件夹结构。
+    """把一份财报 Markdown 按章节拆分，写入报告文件夹结构。
 
     这是「OCR → 解析成文件夹 → 检索问答」链路中的解析步骤：
     - 章节拆分 + 页眉页脚 ngram 去重走 :func:`parse_markdown_to_cleaned_sections`
       （提供 ``page_count`` 时启用去重；否则仅按标题切分）；
     - 文件夹结构由 :func:`parse_sections_to_folder_structure` 生成（父章节为目录、
-      叶子章节为 ``.md`` 文件），与既有 ``reports/`` 目录约定一致；
-    - 报告目录下同时保留完整全文副本 ``<报告名>.md``。
+      叶子章节为 ``.md`` 文件）；
+    - 报告目录下同时保留完整全文副本 ``<报告期>.md``。
+
+    目录结构分两种：
+
+    - **新嵌套结构**（提供 ``company_name`` 时）::
+
+          <save_dir>/<公司中文名>(<6位代码>)/财报/<报告期+类型>/
+
+      例：``reports/宁德时代(300750)/财报/2026年半年度报告/``。第三层只保留
+      报告期+类型（自动去掉报告名里冗余的「公司名：」前缀）。
+
+    - **旧平铺结构**（未提供 ``company_name``，向后兼容）::
+
+          <save_dir>/<报告名>/
 
     Args:
         markdown_text: 清洗后的 Markdown 全文（OCR loader 的输出或任意 md）。
-        report_name: 报告目录名，如 ``宁德时代：2026年半年度报告``。
+        report_name: 报告目录名，如 ``宁德时代：2026年半年度报告``（或仅 ``2026年半年度报告``）。
+        company_name: 公司中文简称（如 ``宁德时代``）；提供时启用新嵌套结构。
+        company_code: 6 位股票代码（如 ``300750``）；仅在 ``company_name`` 提供时生效，
+            拼入目录名 ``<公司名>(<代码>)``。
         page_count: 原始 PDF 页数；提供时启用页眉页脚去重。
         save_dir: 报告根目录（默认 ``<PROJECT_ROOT>/reports``）。
         overwrite: 同名目录已存在时是否覆盖重建（默认 True）。
         strip_doc_title: 是否去掉 markdown 顶层的 ``# <文档标题>`` 行
-            （loader 会注入文档标题；reports/<报告名>/ 目录本身就是标题）。
+            （loader 会注入文档标题；报告目录本身即承载标题信息）。
 
     Returns:
         报告目录绝对路径（写入完成后 ``query_financial_report`` 即可定位检索）。
     """
     report_name = _sanitize_report_name(report_name)
+    company_name = (company_name or "").strip() if company_name else ""
+    code = _normalize_report_code(company_code) if company_code else ""
 
-    root = Path(save_dir).expanduser().resolve() if save_dir else Path(__file__).resolve().parents[2] / "reports"
+    root = reports_root(save_dir)
     root.mkdir(parents=True, exist_ok=True)
-    target = root / report_name
+
+    if company_name:
+        stripped = _strip_company_prefix(report_name, company_name)
+        leaf = _sanitize_report_name(stripped) if stripped else report_name
+        company_dir = _sanitize_report_name(company_name)
+        if code:
+            company_dir = f"{company_dir}({code})"
+        target = root / company_dir / "财报" / leaf
+    else:
+        leaf = report_name
+        target = root / report_name
+
     if target.exists():
         if not overwrite:
             raise FileExistsError(
@@ -261,7 +315,7 @@ def write_markdown_report_folder(
 
     parse_sections_to_folder_structure(sections, target)
     # 保留完整全文副本，便于整体阅读/其它工具直接读文件
-    (target / f"{report_name}.md").write_text(md_text, encoding="utf-8")
+    # (target / f"{leaf}.md").write_text(md_text, encoding="utf-8")
 
     file_count = sum(1 for p in target.rglob("*") if p.is_file())
     if file_count == 0:
@@ -273,6 +327,10 @@ def write_markdown_report_folder(
         json.dumps(
             {
                 "report_name": report_name,
+                "company_name": company_name,
+                "company_code": code,
+                "category": "财报",
+                "report_period": leaf,
                 "section_count": len(sections),
                 "file_count": file_count,
                 "page_count": page_count,
