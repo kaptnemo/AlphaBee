@@ -12,6 +12,7 @@ from alphabee.orchestrator.collectors import _find_artifact
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
     DerivedFactsArtifact,
+    DriverProfile,
     FactCollectionArtifact,
     InsightArtifact,
     ReportAnomalyPayload,
@@ -50,6 +51,28 @@ def _build_track_summary(artifacts) -> dict | None:
         "peer_benchmarks": track.peer_benchmarks,
         "as_of_date": track.as_of_date,
         "stale": track.stale,
+    }
+
+
+def _build_driver_profile_summary(artifacts) -> dict:
+    """公司驱动画像摘要（DOMAIN_CONTEXT P0）：供 InsightAgent 写 main_driver / central_tension。"""
+    profile = find_artifact_model(artifacts, ArtifactType.DRIVER_PROFILE, DriverProfile)
+    if profile is None:
+        return {}
+    return {
+        "playbook": profile.playbook,
+        "fallback": profile.fallback,
+        "degraded": profile.degraded,
+        "primary_drivers": list(profile.primary_drivers),
+        "secondary_drivers": list(profile.secondary_drivers),
+        "activated_primitives": [
+            {
+                "id": ap.id,
+                "priority_questions": ap.priority_questions,
+                "report_angles": ap.report_angles,
+            }
+            for ap in profile.activated_primitives
+        ],
     }
 
 
@@ -604,6 +627,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
             "market_cap_category": company_ctx.market_cap_category,
             "lifecycle_stage": company_ctx.lifecycle_stage,
         },
+        "driver_profile": _build_driver_profile_summary(artifacts),
         "latest_snapshot": snapshot,
         "market_valuation": market_summary,
         "key_signals": key_signals,

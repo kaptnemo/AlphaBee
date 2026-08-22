@@ -26,6 +26,12 @@ INSIGHT_AGENT_SYSTEM_PROMPT = """
    - 周期性行业：利润波动正常，重点看当前在周期中的位置
    - 成长型公司：亏损和高应收账款可能是扩张策略的一部分
    - 如果没有行业信息，请明确说明"行业信息不足，无法进行语境化分析"
+9. **驱动画像（driver_profile）优先**：如果上下文中提供了 driver_profile，说明系统已识别出该公司的
+   分析框架（playbook）与核心驱动变量。你必须据此校准分析主线，而不是套用通用财务模板：
+   - `main_driver` 优先取自 driver_profile.primary_drivers（如"猪价""完全成本"）或 activated_primitives 的关键变量；
+   - `central_tension` 应围绕 activated_primitives 的 priority_questions 展开（如"盈利修复来自价格还是成本"）；
+   - `materiality_rank` 应优先列出 driver_profile 的主/次驱动变量；
+   - 若 driver_profile.fallback 为 true，说明未命中专用框架，用通用财务维度分析，并在 business_model_context 中说明。
 
 ## 输出结构
 

@@ -22,7 +22,8 @@
 > - P0 第 1-2 步 ✅：`PrimitiveSchema` / `PlaybookSchema` + `loader`（加载 + 目录闭合校验）+ 6 primitive + 2 playbook + 1 兜底清单（见「P0 落地记录」）。
 > - P0 第 3 步 ✅：`ContextRouter`（`context_router.py`）——规则版公司 → playbook 匹配 + fallback + 降级。
 > - P0 第 4 步 ✅：`DriverProfile` 契约 + `build_driver_profile` + `ArtifactType.DRIVER_PROFILE` 注册 + `coerce_driver_profile`。
-> - 其余未落地：`EventOverlay` / `FrameworkCompetition` / `detect_transition_state` 均未开始；`DRIVER_PROFILE` artifact 尚未被任何节点产出（第 5 步）。
+> - P0 第 5 步 ✅：`resolve_driver_profile` 节点（`orchestrator/nodes/resolve_driver_profile.py`）——读 INDUSTRY_CONTEXT + COMPANY_TRACK → 路由 → 落 DRIVER_PROFILE artifact，并注入 `synthesize_insights`（driver_profile 进 insight context + prompt 原则 9）。**P0 五步全部完成。**
+> - 其余未落地（P1/P2）：`detect_transition_state` / `EventOverlay` / `FrameworkCompetition` / context score 均未开始。
 > - 但"身份漂移"的**可计算种子已存在**：`alphabee/company_track/label.py::detect_track_drift` 已实现跨年报期业务主线漂移检测，写入 `CompanyTrackArtifact.review_notes`。本文档的 `detect_transition_state` / `narrative_transition` 是**其上的定性层**，应消费它而非从零推导。
 > - 报告主线切换的**落点已存在**：`InsightArtifact`（`orchestrator/contracts.py`）已带 `central_tension` / `main_driver` / `business_model_context`，Phase E 应写进这里而非新增 report 字段。
 > - 新鲜度/版本机制已存在：`CompanyTrackArtifact.stale_after` / `degraded` / `review_notes`，本文档复用而非另造。
@@ -79,9 +80,9 @@
 > 第 5 步刻意只注入一个节点：先在一个落点证明"激活的 context 真的改变观点主线"，再扩到
 > explore/verify/thesis/report，否则一次性注入 4 个 prompt 点无法判断哪一步有效。
 
-### P0 落地记录（第 1–4 步 ✅）
+### P0 落地记录（第 1–5 步 ✅，P0 全部完成）
 
-已落地（`alphabee/domain_context/` + 两处注册）：
+已落地（`alphabee/domain_context/` + orchestrator 集成）：
 
 - `schemas.py`：`PrimitiveSchema` / `PlaybookSchema`（strict `extra="forbid"`，字段漂移即报错）。
 - `loader.py`：`load_primitives` / `load_playbooks` / `load_catalog` + `validate_closure`（目录闭合校验）。
@@ -90,9 +91,13 @@
 - `driver_profile.py`：`build_driver_profile`（路由 + 展开激活原语完整内容）。
 - `alphabee/core/schemas.py`：注册 `ArtifactType.DRIVER_PROFILE = "driver_profile"`（role group DATA）。
 - `alphabee/orchestrator/contracts.py`：re-export `DriverProfile` + `coerce_driver_profile`。
+- `alphabee/orchestrator/nodes/resolve_driver_profile.py`：在线节点（读 INDUSTRY_CONTEXT + COMPANY_TRACK → 路由 → 落 DRIVER_PROFILE artifact，降级留痕）。
+- `alphabee/orchestrator/agent.py`：graph 接线 `resolve_company_track → resolve_driver_profile → run_analysis_engines`。
+- `alphabee/orchestrator/services/payload_builders.py`：`_build_driver_profile_summary` + 注入 `build_insight_context`。
+- `alphabee/agents/insights/prompts.py`：InsightAgent 系统提示新增原则 9（driver_profile 优先）。
 - `domain_primitives/`：6 个原语。
 - `domain_playbooks/`：2 个框架 + 1 兜底。
-- 测试：`tests/domain_context/`（26 用例全绿）。
+- 测试：`tests/domain_context/`（26 用例）+ `tests/orchestrator/test_resolve_driver_profile.py`（6 用例）全绿。
 
 **清单决策（已定）**：
 
@@ -685,8 +690,8 @@ START
 → collect_raw_facts
 → resolve_industry_context      ← 已有（INDUSTRY_CONTEXT artifact + industry_* fact_values）
 → resolve_company_track         ← 已有（COMPANY_TRACK artifact + peer_* fact_values）
-→ build_company_driver_profile  ← 新增（本文档：DriverProfile + ContextRouter）
-→ detect_transition_state       ← 新增（消费 COMPANY_TRACK segments + MD&A）
+→ resolve_driver_profile        ← 新增 ✅（本文档：DriverProfile + ContextRouter，P0 已落地）
+→ detect_transition_state       ← 新增（消费 COMPANY_TRACK segments + MD&A，P1）
 → run_analysis_engines
 → explore_conflicts             ← 增强（注入 activated contexts + 过渡态升级）
 → verify_hypotheses             ← 增强（按 context / 竞争假设切换验证优先级）
@@ -713,7 +718,7 @@ START
 
 ### Phase 1：detect_transition_state 节点
 
-在 `build_company_driver_profile` 之后、`run_analysis_engines` 之前，新增轻量检测节点：
+在 `resolve_driver_profile` 之后、`run_analysis_engines` 之前，新增轻量检测节点：
 
 `detect_transition_state` 负责：
 
@@ -860,8 +865,8 @@ H3（折中派）：中短期（1-2年）面板周期主导利润，但AI硬件�
 2. ✅ 定死 P0 清单：6 primitive + 2 playbook + 1 通用兜底（见「P0 落地记录」）；
 3. ✅ `router_mapping`（落在 playbook `match_*` 字段）+ 规则版 `context_router.py`（含 fallback / 缺失降级 / version）；
 4. ✅ `ArtifactType.DRIVER_PROFILE` + `DriverProfile` + `coerce_driver_profile`；
-5. 只注入 1 个节点（`synthesize_insights`，写 central_tension/main_driver）跑通牧原/金诚信 golden，
-   再扩到 explore/verify/thesis/report。
+5. ✅ 新增 `resolve_driver_profile` 节点 + 注入 `synthesize_insights`（driver_profile 进 insight context + prompt 原则 9），
+   牧原/金诚信 golden 已跑通；后续按需扩到 explore/verify/thesis/report。
 
 ### P1（过渡态，依赖 P0 且须配 eval）
 
