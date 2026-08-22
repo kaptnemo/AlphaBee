@@ -1,0 +1,30 @@
+id: project_delivery
+version: 1
+description: >
+  项目制/工程服务类公司的收入确认与利润兑现依赖项目执行节奏、验收与回款，
+  订单与业绩之间存在时滞，海外项目还叠加地域与天气扰动。
+when_to_activate:
+  - 矿业服务/工程承包/项目制交付公司
+  - 收入确认依赖验收/完工百分比
+key_variables:
+  - 新签订单与在手订单
+  - 项目执行进度与验收节奏
+  - 回款与账期
+  - 项目地域分布与天气/政策扰动
+causal_paths:
+  - 订单增长 -> 收入确认滞后 -> 利润逐步兑现
+  - 极端天气/地缘 -> 项目延误 -> 交付与毛利承压
+priority_questions:
+  - 订单增长对应短期景气还是长期 CAPEX 周期延续？
+  - 海外项目集中度是否放大气候与地域风险？
+disconfirming_signals:
+  - 订单高增但收入/回款持续滞后
+  - 海外项目集中度过高且区域风险上升
+preferred_sources:
+  - 公司订单公告/在手订单
+  - 项目执行进度与验收
+  - 区域天气与政策事件
+report_angles:
+  - 订单向利润的转化质量
+obsolescence_triggers: []
+assumptions: []

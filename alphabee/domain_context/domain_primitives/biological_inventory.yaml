@@ -1,0 +1,32 @@
+id: biological_inventory
+version: 1
+description: >
+  养殖企业的核心资产是生物性资产（种猪/能繁母猪/生猪存栏、鸡等），其数量、
+  结构与疫病风险决定未来供给与成本，是猪周期分析区别于一般商品周期的关键。
+when_to_activate:
+  - 生猪/禽类/水产养殖企业
+  - 资产负债表存在生物性资产
+key_variables:
+  - 能繁母猪存栏
+  - 出栏量与出栏节奏
+  - 完全成本（饲料/人工/折旧/防疫）
+  - 疫病与防疫压力
+causal_paths:
+  - 能繁母猪去化 -> 未来供给收缩 -> 猪价上行
+  - 疫病冲击 -> 供给被动收缩 -> 价格波动加剧
+  - 出栏放量 + 成本下行 -> 量利双升
+priority_questions:
+  - 盈利修复来自猪价还是成本下降？
+  - 当前处于周期反转前段还是反弹后段？
+  - 公司的成本优势是周期内变量还是长期结构优势？
+disconfirming_signals:
+  - 能繁母猪存栏回升而需求未同步
+  - 疫病导致被动清栏
+preferred_sources:
+  - 能繁母猪存栏/仔猪价格
+  - 公司出栏与完全成本披露
+  - 疫病与防疫政策
+report_angles:
+  - 猪周期定位与公司量利兑现
+obsolescence_triggers: []
+assumptions: []

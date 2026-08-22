@@ -1,0 +1,30 @@
+id: capacity_cycle
+version: 1
+description: >
+  盈利受产能投放/去化与资本开支周期驱动：产能过剩压制价格与稼动率，
+  资本开支收缩后产能出清，再进入盈利修复。
+when_to_activate:
+  - 重资产制造业/矿业/化工/面板等存在明显产能周期
+  - 公司盈利对产能利用率/稼动率敏感
+key_variables:
+  - 行业在产/在建/规划产能
+  - 产能利用率/稼动率
+  - 行业资本开支强度与增速
+  - 公司自身 capex 与折旧
+causal_paths:
+  - 资本开支上行 -> 新增产能投放 -> 供给过剩 -> 价格/稼动率承压
+  - 资本开支收缩 -> 产能出清 -> 供需再平衡 -> 盈利修复
+priority_questions:
+  - 行业产能周期处于扩张、出清还是再平衡阶段？
+  - 公司 capex 是投向旧业务还是新方向（新旧框架切换信号）？
+disconfirming_signals:
+  - 价格下行但产能投放仍在加速
+  - 公司 capex 持续高于经营现金流且投向旧业务
+preferred_sources:
+  - 行业协会产能/开工率数据
+  - 资产负债表 capex/在建工程/折旧
+  - 行业新投产计划
+report_angles:
+  - 产能周期拐点与公司扩产节奏是否匹配
+obsolescence_triggers: []
+assumptions: []

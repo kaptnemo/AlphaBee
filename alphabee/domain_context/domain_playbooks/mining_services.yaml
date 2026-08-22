@@ -1,0 +1,39 @@
+id: mining_services
+version: 1
+description: >
+  矿业服务/工程分析框架：项目制交付（订单→执行→验收→回款）叠加商品资本开支周期、
+  成本曲线与产能周期。
+primitives:
+  - commodity_cycle
+  - project_delivery
+  - cost_curve
+  - capacity_cycle
+match_track_labels:
+  - 矿业服务
+  - 矿山工程
+  - 采矿服务
+match_sub_industries:
+  - 采掘服务
+match_business_models: []
+primary_drivers:
+  - 在手订单
+  - 矿业 CAPEX 周期
+  - 海外项目执行
+secondary_drivers:
+  - 天气扰动
+  - 资源价格
+key_conflicts:
+  - 订单增长是短期景气还是矿业 CAPEX 周期延续？
+  - 海外项目集中度是否放大气候与地域风险？
+recommended_verification_order:
+  - 在手订单与新签订单
+  - 项目地域分布
+  - 矿业 CAPEX 趋势
+report_questions:
+  - 订单增长对应的是短期景气还是矿业 CAPEX 周期延续？
+  - 极端天气会不会影响项目执行与利润兑现？
+  - 海外项目集中度是否放大气候与地域风险？
+valid_from: ""
+valid_to: ""
+deprecated_by: ""
+assumptions: []

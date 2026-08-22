@@ -1,0 +1,21 @@
+id: generic_fundamental
+version: 1
+description: >
+  通用基本面兜底框架：当公司命中不了任何专用 playbook 时，退回到最普适的成本曲线、
+  产能周期与营运资本三项分析维度。不是"无分析"，而是"通用模板"。
+primitives:
+  - cost_curve
+  - capacity_cycle
+  - working_capital_stress
+match_track_labels: []
+match_sub_industries: []
+match_business_models: []
+primary_drivers: []
+secondary_drivers: []
+key_conflicts: []
+recommended_verification_order: []
+report_questions: []
+valid_from: ""
+valid_to: ""
+deprecated_by: ""
+assumptions: []

@@ -1,0 +1,40 @@
+id: hog_cycle
+version: 1
+description: >
+  生猪养殖分析框架：商品价格周期（猪价）叠加生物性资产（能繁母猪/存栏）、
+  成本曲线（完全成本）与产能周期（去化/复产）。
+primitives:
+  - commodity_cycle
+  - biological_inventory
+  - cost_curve
+  - capacity_cycle
+match_track_labels:
+  - 生猪养殖
+  - 养猪
+  - 养殖
+match_sub_industries:
+  - 养殖业
+  - 农林牧渔
+match_business_models: []
+primary_drivers:
+  - 猪价
+  - 能繁母猪存栏
+  - 完全成本
+secondary_drivers:
+  - 出栏节奏
+  - 饲料成本
+key_conflicts:
+  - 猪价上行是周期反转还是反弹？
+  - 盈利修复来自价格还是成本？
+recommended_verification_order:
+  - 能繁母猪存栏趋势
+  - 猪价/仔猪价
+  - 公司完全成本与出栏
+report_questions:
+  - 当前盈利修复来自猪价还是成本下降？
+  - 行业处于反转前段还是反弹后段？
+  - 公司的成本优势是周期内变量还是长期结构优势？
+valid_from: ""
+valid_to: ""
+deprecated_by: ""
+assumptions: []

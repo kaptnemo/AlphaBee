@@ -1,0 +1,30 @@
+id: working_capital_stress
+version: 1
+description: >
+  应收/存货/账期等营运资本的变化揭示增长质量：以账期换增长、库存积压往往是
+  盈利质量恶化的先行信号。
+when_to_activate:
+  - 通用（几乎所有公司都可考察营运资本）
+  - 项目制/To B 信用销售/库存较重行业尤其敏感
+key_variables:
+  - 应收账款增速 vs 收入增速
+  - 存货增速 vs 收入增速
+  - 应收周转天数/存货周转天数
+  - 经营现金流/净利润
+causal_paths:
+  - 应收扩张快于收入 -> 以账期换增长 -> 现金不兑现
+  - 库存积压 -> 跌价与减值风险
+priority_questions:
+  - 增长是否以牺牲回款质量为代价？
+  - 库存是主动备货还是被动积压？
+disconfirming_signals:
+  - 应收/存货增速持续高于收入增速
+  - 经营现金流长期低于净利润
+preferred_sources:
+  - 资产负债表应收/存货
+  - 现金流量表经营现金流
+  - 周转天数序列
+report_angles:
+  - 增长质量与现金兑现
+obsolescence_triggers: []
+assumptions: []

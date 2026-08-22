@@ -1,0 +1,30 @@
+id: cost_curve
+version: 1
+description: >
+  公司的竞争地位由其在行业成本曲线上的位置决定：成本优势决定其在价格下行期的
+  生存能力与长期份额扩张能力。
+when_to_activate:
+  - 同质化/周期行业（成本是主要竞争维度）
+  - 公司有可比较的单位成本口径
+key_variables:
+  - 单位完全成本/现金成本
+  - 与同行的成本差
+  - 成本结构（原料/人工/折旧/能耗占比）
+  - 成本趋势（下降/上升）
+causal_paths:
+  - 成本下行 -> 单位毛利扩张 -> 份额与盈利双升
+  - 成本优势 -> 价格战中的存活与份额提升
+priority_questions:
+  - 公司的成本优势是结构性的还是周期性的（原料价格带来的）？
+  - 成本下降的驱动是什么，能否持续？
+disconfirming_signals:
+  - 成本优势收窄或反转
+  - 成本下降依赖的原料价格回升
+preferred_sources:
+  - 公司单季吨成本/单位成本披露
+  - 同行成本对比
+  - 原材料价格与公司毛利率联动
+report_angles:
+  - 成本曲线位置与长期份额逻辑
+obsolescence_triggers: []
+assumptions: []

@@ -1,10 +1,118 @@
 # AlphaBee Domain Context Roadmap
 
+> **定位（三角分工，与两份兄弟文档对齐）**
+>
+> 本仓库的"公司语境注入"分三层，本路线图只负责**定性叙事层**：
+>
+> ```text
+> 语境注入栈
+> ├─ industry-context-injection-plan：申万行业基线（可计算数值层）
+> │   └─ 行业中位数基准（industry_*）+ 阈值机制 + 注入通道
+> ├─ COMPANY_TRACK_ROADMAP：公司级覆盖（可计算数值层）
+> │   └─ 业务线解构 + 商业模式 archetype + 对标组基准（peer_*）
+> └─ DOMAIN_CONTEXT_ROADMAP（本文档）：定性叙事层
+>     └─ primitives / playbooks / ContextRouter / EventOverlay / FrameworkCompetition
+> ```
+>
+> 依赖方向：本文档**只消费**上面两层的产物（`INDUSTRY_CONTEXT` / `COMPANY_TRACK` artifact、
+> `industry_*` / `peer_*` fact_values、`business_model` archetype、`detect_track_drift` 漂移笔记），
+> 不重复建设它们已经覆盖的"数值/结构化标签"部分。
+
 > **实现状态（2026-08 与代码对齐）**
-> - Phase 0（`detect_transition_state` 节点）：曾以 `orchestrator/nodes/transition.py` 实验实现，但**从未提交且已从工作区删除**，当前主图（`orchestrator/agent.py`）不包含该节点，代码中已无 `transition_state` / `domain_context` 产物。若重新推进需从零落地。
-> - Phase A（增强 company context）：部分落地 —— `services/company_context.py` 已提供 industry / sub_industry / market_cap_category / lifecycle_stage / business_model_summary；`cycle_type` / `driver_variables` / `event_sensitive_exposures` 未实现。
-> - Phase B–E（ContextRouter / Playbooks / EventOverlay / FrameworkCompetition / 报告主线切换）：未开始。
-> - 相关基础：`ThesisEngine` / `ThesisReviewer` 已有少量行业感知（`engine.py` 的 `_FINANCIAL_INDUSTRIES`、`reviewer.py` 的 `_HIGH_LEVERAGE_INDUSTRIES` 等常量），属于本设计的雏形。
+> - P0 第 1-2 步 ✅：`PrimitiveSchema` / `PlaybookSchema` + `loader`（加载 + 目录闭合校验）+ 6 primitive + 2 playbook + 1 兜底清单（见「P0 落地记录」）。
+> - P0 第 3 步 ✅：`ContextRouter`（`context_router.py`）——规则版公司 → playbook 匹配 + fallback + 降级。
+> - 其余未落地：`EventOverlay` / `FrameworkCompetition` / `detect_transition_state` 均未开始；代码中无 `transition_state` / `DRIVER_PROFILE` 产物。
+> - 但"身份漂移"的**可计算种子已存在**：`alphabee/company_track/label.py::detect_track_drift` 已实现跨年报期业务主线漂移检测，写入 `CompanyTrackArtifact.review_notes`。本文档的 `detect_transition_state` / `narrative_transition` 是**其上的定性层**，应消费它而非从零推导。
+> - 报告主线切换的**落点已存在**：`InsightArtifact`（`orchestrator/contracts.py`）已带 `central_tension` / `main_driver` / `business_model_context`，Phase E 应写进这里而非新增 report 字段。
+> - 新鲜度/版本机制已存在：`CompanyTrackArtifact.stale_after` / `degraded` / `review_notes`，本文档复用而非另造。
+> - 行业感知雏形已收敛：`_FINANCIAL_INDUSTRIES` / `_HIGH_LEVERAGE_INDUSTRIES` 等硬编码常量已迁移为 `alphabee/industry/names.py` + `industry_names.yaml` groups + `industry_in_group()`。
+> - **设计评审（2026-08）**：已评审，结论「方向正确、骨架健康」，P0 已收紧为 5 步，记录 6 项必须解决 + 3 项次要 + 4 项待决（见下方「Review 记录」）。
+
+## Review 记录（2026-08，设计评审结论）
+
+> 评审结论：**方向正确、骨架健康，可在其上实现，但开工前需收紧 3 处定义、修正 1 处数据可行性判断、
+> 确认 4 个决策**。评审意见已并入下文各 Phase。
+
+### 保留项（勿动）
+
+1. 三层架构（primitives / playbooks / runtime）切分正确，是解决"静态知识库僵化"的关键。
+2. 扩展机制 §6「静态 YAML 只存条件、运行时状态存值」是全文最重要工程洞察。
+3. 复用纪律（`detect_track_drift` / `InsightArtifact` 字段 / `CompanyTrackArtifact` 新鲜度 / conflicts 模型）正确。
+4. 命名修正（`playbook` vs `business_model` archetype）正确。
+5. 目录闭合约束 +「playbook 展开为 primitive」两个护栏正确。
+
+### 必须解决（开工前）
+
+| # | 问题 | 结论 |
+|---|---|---|
+| 1 | router 映射表无 schema / owner / 版本 | ✅ 已落地：映射改为 playbook `match_*` 字段（schema + version 由 `PlaybookSchema` 承载），见「P0 落地记录」 |
+| 2 | primitive 无 canonical schema（两个示例字段集不一致） | 定义 `PrimitiveSchema` / `PlaybookSchema`（required/optional + 校验器），对齐 derived_facts 的 YAML 规则规范 |
+| 3 | "5–8 个 primitive"与 14 个列表冲突、无闭包规则 | P0 定死清单（见下方收紧版 P0），不按 14 个全量开工 |
+| 4 | `detect_transition_state` 的"MD&A 文本已有"判断有误 | 已核实：MD&A/管理层讨论文本当前未采集（`financial_report` OCR 是独立 pipeline，未进 orchestrator fact collection）。Phase 1 item 2 需先补 MD&A 采集或降级 |
+| 5 | FrameworkCompetition 复用 conflicts 模型的字段级映射未定义 | 落到字段级：theme / severity / hypothesis.predictions 如何承载框架假设 A/B/C |
+| 6 | EventOverlay × web_search_guard 是"可能做不了"级风险 | 若 guard 放行策略定不下，EventOverlay 直接砍，不阻塞 P0/P1 |
+
+### 次要问题
+
+- `DriverProfile` vs `InsightArtifact` vs `CompanyContext` 三处"context"表示可能冗余，需一句 source-of-truth 声明。
+- 缺 router 确定性单测 / schema 校验单测 / DRIVER_PROFILE 契约测试（仓库文化要求 YAML 规则可单测）。
+- router 命中不了 playbook 时的 fallback 行为未定义（这是大多数公司的常态路径，必须定义）。
+
+### 待拍板决策
+
+1. ✅ P0 清单已定（6 primitive + 2 playbook + 1 兜底，见「P0 落地记录」）。
+2. ✅ 兜底行为已定：`generic_fundamental` playbook 兜底；「是否产 issue」随 P0 第 3 步 router 落地再定。
+3. MD&A 文本是否现在补采集（决定 Phase 1 item 2 能否做）。
+4. EventOverlay 是"争取做"还是"先砍，P0/P1 优先"。
+
+### 收紧后的 P0（5 步，逐步验收）
+
+| 步 | 交付物 | 测试 |
+|---|---|---|
+| 1 | `PrimitiveSchema` + `PlaybookSchema`（canonical 字段 + 校验器 + 目录闭合校验） | `test_schema.py` |
+| 2 | 定死 P0 清单：6 primitive + 2 playbook + 1 通用兜底（非 14 个） | schema 校验覆盖 |
+| 3 | `router_mapping`（playbook `match_*` 字段）+ `context_router.py`（含 fallback / 缺失降级 / version） | `test_context_router.py`（确定性） |
+| 4 | `ArtifactType.DRIVER_PROFILE` + `DriverProfile` + `coerce_driver_profile` | 契约测试 |
+| 5 | 只注入 1 个节点（`synthesize_insights`，写 central_tension/main_driver）跑通牧原/金诚信 golden | `test_golden.py` |
+
+> 第 5 步刻意只注入一个节点：先在一个落点证明"激活的 context 真的改变观点主线"，再扩到
+> explore/verify/thesis/report，否则一次性注入 4 个 prompt 点无法判断哪一步有效。
+
+### P0 落地记录（第 1–3 步 ✅）
+
+已落地（`alphabee/domain_context/`）：
+
+- `schemas.py`：`PrimitiveSchema` / `PlaybookSchema`（strict `extra="forbid"`，字段漂移即报错）。
+- `loader.py`：`load_primitives` / `load_playbooks` / `load_catalog` + `validate_closure`（目录闭合校验）。
+- `context_router.py`：`route` / `RouterInput` / `RouterResult` / `ActivatedContext`——规则版公司 → playbook 匹配（含 fallback / 降级 / version）。
+- `domain_primitives/`：6 个原语。
+- `domain_playbooks/`：2 个框架 + 1 兜底。
+- 测试：`tests/domain_context/`（21 用例全绿）。
+
+**清单决策（已定）**：
+
+| 项 | 值 |
+|---|---|
+| 6 primitive | commodity_cycle / capacity_cycle / cost_curve / working_capital_stress / biological_inventory / project_delivery |
+| 2 playbook | hog_cycle = commodity_cycle + biological_inventory + cost_curve + capacity_cycle；mining_services = commodity_cycle + project_delivery + cost_curve + capacity_cycle |
+| 1 兜底 | generic_fundamental = cost_curve + capacity_cycle + working_capital_stress |
+
+**路由决策（已定，落地 Review 问题 #1）**：映射表**不单独建 `router_mapping.yaml`**，而是落在
+playbook 的 `match_*` 字段（`match_track_labels` / `match_sub_industries` / `match_business_models`）——
+它们已随 `PlaybookSchema` 拥有 schema + 版本，数据驱动、非硬编码，比独立映射文件更少重复、更好审计。
+匹配权重：track_label=3 > sub_industry/industry=2 > business_model=1，同分按 playbook id 决平；
+`business_model` 只作低权输入信号，不产 playbook（见「与 business_model archetype 的边界」）。
+
+**与正文示例的偏差（已记录）**：P0 最小集优先「高频 + 覆盖两个 golden + 含通用项供兜底」，
+正文 Layer 1/2 示例中的 `feed_cost` / `epidemic_risk` / `overseas_execution` / `commodity_capex_cycle`
+未纳入 P0，按扩展机制 #1「先加 primitive 再加 playbook」后续补入；`mining_services` 比正文示例
+多引用了 `cost_curve`（成本曲线对矿业服务同样关键）。
+
+**golden 路由验证（已过）**：牧原（track_label=生猪养殖 + sub_industry=养殖业）→ hog_cycle；
+金诚信（track_label=矿业服务 + sub_industry=采掘服务）→ mining_services；贵州茅台（白酒）→
+generic_fundamental（fallback，非降级）；空输入 → generic_fundamental（fallback + degraded）。
+
+---
 
 ## 目标
 
@@ -60,6 +168,11 @@ alphabee/domain_context/
    这类公司的共同特征是：旧的驱动变量解释力在下降、新的驱动变量尚未完全确立，
    而且**管理层叙事、市场定价、财务现实三者之间存在差距**——静态 YAML 无法刻画这种过渡态。
 
+   > 注：第 5 点的"收入结构漂移"部分，代码层已有 `detect_track_drift` 提供可观测信号
+   > （`CompanyTrackArtifact.segments` 跨年报期对比 + `review_notes` 漂移笔记）。
+   > 本文档的 `narrative_transition` 是在该信号之上叠加"管理层叙事 vs 数据现实"的定性判断，
+   > 不是重复实现漂移检测。
+
 因此更合理的实现方式是分层。
 
 ---
@@ -74,15 +187,27 @@ alphabee/domain_context/
 domain_primitives/
   commodity_cycle.yaml
   capacity_cycle.yaml
+  cost_curve.yaml
   project_delivery.yaml
   overseas_execution.yaml
   weather_shock.yaml
   policy_shock.yaml
   cost_pass_through.yaml
   working_capital_stress.yaml
-  narrative_transition.yaml    # 元原语：描述框架切换过程本身
-  competing_frameworks.yaml    # 元原语：竞争性假设的组织与验证
+  biological_inventory.yaml     # 生物性资产（猪/鸡存栏、疫病）专用
+  feed_cost.yaml                # 饲料/原材料成本传导
+  epidemic_risk.yaml            # 区域性疫病冲击
+  reserve_grade.yaml            # 资源品位/储量质量
+  geopolitical_risk.yaml        # 资源国政治/地缘风险
+  narrative_transition.yaml     # 元原语：描述框架切换过程本身
 ```
+
+> **目录闭合约束**：playbook 只能引用本目录已声明的 primitive（可加 schema 校验强制）。
+> 上表已补全正文 playbook 示例引用到的所有原语（`biological_inventory` / `feed_cost` /
+> `epidemic_risk` / `reserve_grade` / `geopolitical_risk` / `cost_curve`），避免"组合引用了
+> 不存在的积木"。原 `competing_frameworks` 元原语并入 `narrative_transition`——
+> 竞争性假设是 `narrative_transition` 触发后由 Runtime 层（复用现有 conflicts 机制）执行的动作，
+> 不是一个独立原语（见下文 FrameworkCompetition）。
 
 每个 primitive 只回答一类稳定问题：
 
@@ -126,6 +251,7 @@ when_to_activate:
   - emerging_revenue_stream_exceeding_20pct
   - market_consensus_drivers_in_conflict
   - external_environment_making_historical_pattern_invalid
+  - company_state == in_transition      # 由 detect_transition_state 输出，见接入流水线
 key_variables:
   - old_driver_strength
   - new_driver_strength
@@ -148,11 +274,11 @@ disconfirming_signals:
   - 管理层叙事在多次季报中未兑现为结构性数据变化
   - 资本开支仍主要投向旧业务而非新方向
 preferred_sources:
-  - segment_revenue_breakdown
+  - segment_revenue_breakdown            # 消费 COMPANY_TRACK 的 segments（跨年报期）
   - capex_allocation_by_segment
   - management_discussion_analysis
   - industry_chain_verification
-  - sell_side_consensus_driver_analysis
+  - sell_side_consensus_driver_analysis  # 可选增强，非硬依赖
 report_angles:
   - 市场是否高估了去周期化的速度？
   - 新业务的真实驱动因素是什么——自身α还是仍然依附于旧周期景气？
@@ -195,12 +321,16 @@ copper_gold_mining
 
 Playbook 负责定义：
 
-- 适用标的特征
+- 适用标的特征（映射到 `company_track` 的 `track_label` / `business_model` archetype / `sw_industry`）
 - 主驱动变量
 - 次驱动变量
 - 最重要的冲突模板
 - 推荐验证顺序
 - 报告应该围绕哪些问题写
+
+> **语义约定**：playbook 是"命名的 primitive 集合"，不是独立的一级概念。
+> ContextRouter 匹配到 playbook 后，**展开为其 primitive 集合**再进入下游；下游消费者只看到
+> primitive 列表，避免 `activated_contexts` 同时混入 primitive 和 playbook 两种单位。
 
 ### Layer 3：运行时上下文（Runtime Context）
 
@@ -208,17 +338,22 @@ Playbook 负责定义：
 
 ```text
 runtime_context/
-  context_router.py
-  context_ranker.py
-  event_overlay.py
-  company_driver_profile.py
+  context_router.py        # 公司 → 可激活 context（含展开 playbook + 打分）
+  event_overlay.py         # 动态事件叠加到静态框架
+  company_driver_profile.py # 公司驱动画像（DriverProfile，落 DRIVER_PROFILE artifact）
 ```
+
+> 原草案里的 `context_ranker.py` 并入 `context_router.py`：打分（rank）是 router 的一个纯函数，
+> 无需独立文件。
 
 它要做的不是“存知识”，而是根据当前标的、问题和外部环境生成：
 
 ```json
 {
-  "activated_contexts": ["weather_shock", "project_delivery"],
+  "activated_contexts": [
+    {"context": "weather_shock", "score": 0.72, "trend": "stable"},
+    {"context": "project_delivery", "score": 0.68, "trend": "stable"}
+  ],
   "primary_driver": "overseas_execution",
   "secondary_drivers": ["commodity_capex_cycle", "weather_shock"],
   "company_specific_path": [
@@ -236,14 +371,18 @@ runtime_context/
 
 ### 1. DriverProfile / CompanySpecificContext
 
-比当前 `company_context` 更细，输出公司真正受什么变量驱动。
+比当前 `CompanyContext`（`agents/thesis/models.py`，只有 industry / lifecycle / business_model
+archetype 等）更细，输出公司真正受什么变量驱动。**这是一个新的 artifact 契约，不是 `CompanyContext`
+的扩展，也不进 `OrchestratorState` 顶层。**
 
-建议结构：
+建议结构（`ArtifactType.DRIVER_PROFILE = "driver_profile"`，role group 建议 DATA）：
 
 ```json
 {
-  "business_model": "hog_farming | mining_services | copper_gold_mining | project_engineering",
-  "cycle_type": ["hog_cycle", "commodity_capex_cycle"],
+  "symbol": "002714.SZ",
+  "playbook": "hog_farming",
+  "playbook_evidence": "company_track.track_label=生猪养殖 + sw_industry=养殖业",
+  "cycle_type": ["hog_cycle", "capacity_cycle"],
   "key_driver_variables": [
     "hog_price",
     "feed_cost",
@@ -265,23 +404,32 @@ runtime_context/
 }
 ```
 
+> **命名修正**：原草案用 `business_model` 承载 playbook 名（`hog_farming | mining_services | ...`），
+> 但 `CompanyContext.business_model` 已被 archetype 占用（`brand/odm/component/integrator/other`，
+> `company_track/business_model.py`）。两者不同概念同名会打架，故 DriverProfile 改用 `playbook`，
+> `business_model` 保留给 archetype。
+
 ### 2. ContextRouter
 
 负责把公司映射到可激活的 contexts。
 
-输入来源：
+输入来源（**全部来自已落地产物**，不重复取数）：
 
-- 行业 / 子行业
-- 公司业务描述
-- 地域暴露
+- `INDUSTRY_CONTEXT` artifact：`industry` / `sub_industry` / `sw_code`
+- `COMPANY_TRACK` artifact：`track_label` / `business_model`（archetype）/ `segments` / `review_notes`（漂移笔记）
+- 公司业务描述（`build_company_context` 的 `business_model_summary`）
 - 用户问题
-- 当前事件环境
+- 当前事件环境（EventOverlay，Phase 2 起）
 
-输出：
+输出（统一为 object 数组，playbook 已展开为 primitive）：
 
 ```json
 {
-  "activated_contexts": ["hog_cycle", "cost_curve_competition"],
+  "activated_contexts": [
+    {"context": "commodity_cycle", "score": 0.75, "trend": "declining"},
+    {"context": "biological_inventory", "score": 0.70, "trend": "stable"},
+    {"context": "cost_curve", "score": 0.60, "trend": "stable"}
+  ],
   "primary_driver": "hog_cycle",
   "secondary_drivers": ["feed_cost", "capacity_cycle"],
   "why_selected": [
@@ -291,6 +439,10 @@ runtime_context/
   ]
 }
 ```
+
+> 注：`hog_cycle` 是 playbook（命名 bundle），已展开为 `commodity_cycle` / `biological_inventory`
+> / `feed_cost` / `epidemic_risk` / `capacity_cycle` 等 primitive 进入 `activated_contexts`。
+> 是否保留 playbook 名作展示层别名，由报告层决定，不进路由结果。
 
 ### 3. EventOverlay
 
@@ -313,6 +465,12 @@ runtime_context/
 本次分析上下文
 ```
 
+> **事件数据源（必须明确，否则会与 web_search_guard 冲突）**：
+> - 结构化事件优先走 tushare/akshare 的宏观/商品/政策接口（不触发 guard 的价格拦截）；
+> - 若走新闻流，`web_search_guard` 会拦价格/估值/财务类搜索，需提前定义事件查询的放行白名单
+>   （例如"厄尔尼诺 影响 矿业"这类天气/政策事件，而非"铜价 走势"这类价格查询）。
+> - 事件源与 guard 的交互必须在 Phase 2 落地 EventOverlay 前定稿，否则实现会被 guard 卡死。
+
 ### 4. FrameworkCompetition / 竞争性框架验证
 
 当 `narrative_transition` 被激活时，系统不应只搜索事实冲突，而应围绕公司身份的不确定性
@@ -325,10 +483,10 @@ runtime_context/
                       AI硬件只是面板周期上行期的附加概念，不具备独立定价意义。
 
 假设B（叙事派）：京东方A正在经历结构性质变，面板周期波动对利润的影响在
-                     减弱，AI/物联网将逐步成为主要利润引擎，估值框架应切换。
+                      减弱，AI/物联网将逐步成为主要利润引擎，估值框架应切换。
 
 假设C（折中派）：面板周期仍主导中短期利润（1-2年），但AI硬件提供了长期
-                     re-rating的期权价值，不应完全按周期股估值。
+                      re-rating的期权价值，不应完全按周期股估值。
 ```
 
 针对每组假设，系统生成结构化验证清单：
@@ -351,6 +509,12 @@ runtime_context/
 + 收集区分性证据
 → 输出框架适用度评估（而非选择单一答案）
 ```
+
+> **实现约定（避免重复建设）**：FrameworkCompetition **复用现有** `explore_conflicts` /
+> `verify_hypotheses` 的数据模型（`ConflictAnalysisResult` / `VerificationResultItem`）与结算逻辑，
+> 只是在"抽象级别"上从"事实冲突"提升到"框架冲突"——假设 A/B/C 就是 hypotheses，
+> 验证清单就是 verification plan，区分性证据就是 evidence。**不新建数据模型**，只改 prompt
+> 与 `related_dimensions` 的语义（维度 → 框架）。
 
 每个 activated context 在输出时还应附带趋势信息：
 
@@ -381,6 +545,22 @@ runtime_context/
 }
 ```
 
+### 5. 与 business_model archetype 的边界（source-of-truth）
+
+`company_track/business_model.py` 的 archetype（brand/odm/component/integrator/other）与本层的
+primitives/playbooks 是**两个正交的分类轴**，不重复、不竞争：
+
+| 概念 | 回答的问题 | 输入依据 | 下游作用 | 归属 |
+|---|---|---|---|---|
+| `business_model` archetype | 公司怎么赚钱（价值捕获方式） | 财务结构（毛利率/研发费率/客户集中度） | 校准「怎么解读」财务信号（口径切换，如 ODM 低毛利≠恶化） | company_track |
+| playbook / primitives | 什么变量驱动盈利（驱动框架） | 行业身份（track_label / sw_industry / 业务构成） | 决定「看什么」（选题切换，如猪价 vs 矿价） | domain_context |
+
+一句话：**`business_model` 管「怎么读」，playbook 管「看什么」。**
+
+关系：`business_model` archetype 是 ContextRouter 的**输入信号之一**（与 track_label、sw_industry
+并列），不是输出，也不被 playbook 覆盖；`BUSINESS_MODEL_FOCUS` 只写「口径级」内容，不写「行业驱动
+变量」（后者归 `primitive.key_variables`）。
+
 ---
 
 ## 扩展机制：如何让它可持续演进
@@ -395,9 +575,10 @@ runtime_context/
 
 而不是每遇到一个新行业就直接复制出一个大 YAML。
 
-### 2. 给每个 context 加版本和适用期
+### 2. 给每个 context 加版本和适用期（复用 company_track 的新鲜度机制）
 
-建议每个 primitive / playbook 都带：
+建议每个 primitive / playbook 都带（与 `CompanyTrackArtifact` 的 `stale_after` / `degraded` /
+`review_notes` 同族，不另造一套）：
 
 - `version`
 - `valid_from`
@@ -454,80 +635,101 @@ runtime_context/
 
 这样扩展的是“实现插槽”，不是“概念列表”。
 
-### 6. 给 primitives/playbooks 增加适用边界和过时标记
+### 6. 适用边界与过时标记：静态 YAML 只存“条件”，运行时状态存“值”
 
-每个原语或 playbook 在应用于特定标的时，应记录其适用度的变化趋势：
+原草案把 per-company 的适用度评分（`current_score` / `score_trend` / `expected_obsolescence` /
+`last_score_review`）直接写进 `commodity_cycle.yaml`，这违反了本文档开头的核心原则——
+把运行时状态烤进静态知识，正是"静态行业知识库僵化"的翻版。
+
+正确分工：
 
 ```yaml
-# commodity_cycle.yaml 对京东方A的适用边界
-applicability_to_company:
-  boe_a:
-    current_score: 0.75
-    score_trend: "declining_by_5pct_per_quarter"
-    superseded_by: ["technology_adoption"]
-    expected_obsolescence: "2027Q2"
-    last_score_review: "2025Q4"
-    obsolescence_triggers:
-      - new_business_revenue_exceeds_30pct
-      - panel_price_profit_correlation_r2_below_0.4
+# commodity_cycle.yaml —— 只存“不变的触发条件”，不存“会变的当前值”
+id: commodity_cycle
+obsolescence_triggers:          # 框架失效的判定条件（静态）
+  - new_business_revenue_exceeds_30pct
+  - panel_price_profit_correlation_r2_below_0.4
 ```
 
-这样框架就有了"在特定标的上正在过时"的自我认知能力，
-而不是只能被静态命中。趋势信息同时反哺 ContextRouter 的评分，
-使 `score` 不再是孤立快照，而是带有方向性和临界条件。
+```json
+// runtime_context/store —— per-(symbol, context) 的运行时状态，由 context_ranker 读写
+{
+  "key": "000725.SZ::commodity_cycle",
+  "current_score": 0.75,
+  "score_trend": "declining_by_5pct_per_quarter",
+  "superseded_by": ["technology_adoption"],
+  "expected_obsolescence": "2027Q2",
+  "last_score_review": "2025Q4"
+}
+```
 
+趋势信息同时反哺 ContextRouter 的评分，使 `score` 不再是孤立快照，而是带有方向性和临界条件。
+
+> **维护归属（避免又一批不更新的 YAML）**：`last_score_review` / `expected_obsolescence`
+> 这类字段必须有刷新触发流程（报告期披露、季度回放、人工复核），并在 owner 处落一个
+> `reviews/` 审计记录。否则它会重蹈 `_HIGH_LEVERAGE_INDUSTRIES` 那类硬编码的覆辙。
 
 ---
 
 ## 如何接入现有流水线
 
-### Phase 0：插入过渡态检测节点
-
-在 `collect_raw_facts` 之后、`context_router` 之前，新增一个轻量检测节点：
+当前主图（`orchestrator/agent.py`）已经包含两个语境节点，本文档的新节点插在其后：
 
 ```text
-collect_raw_facts
-→ detect_transition_state    ← 新增
-→ context_router             ← 增强（接收 transition_state）
-→ build_company_driver_profile
+START
+→ collect_raw_facts
+→ resolve_industry_context      ← 已有（INDUSTRY_CONTEXT artifact + industry_* fact_values）
+→ resolve_company_track         ← 已有（COMPANY_TRACK artifact + peer_* fact_values）
+→ build_company_driver_profile  ← 新增（本文档：DriverProfile + ContextRouter）
+→ detect_transition_state       ← 新增（消费 COMPANY_TRACK segments + MD&A）
 → run_analysis_engines
-→ explore_conflicts
+→ explore_conflicts             ← 增强（注入 activated contexts + 过渡态升级）
+→ verify_hypotheses             ← 增强（按 context / 竞争假设切换验证优先级）
+→ synthesize_insights           ← 增强（central_tension / main_driver 落点）
+→ run_thesis → review_thesis → generate_report → review_report → finalize_message → END
 ```
+
+> 注意：原文档的"接入流水线"画的是旧图（`collect_raw_facts → run_analysis_engines` 直连），
+> 已过时。上述为对齐代码的版本。
+
+### Phase 0：DriverProfile + 规则版 ContextRouter（最小闭环）
+
+在 `resolve_company_track` 之后新增一个节点，**规则优先、LLM 复核可选**：
+
+1. 读 `INDUSTRY_CONTEXT` + `COMPANY_TRACK` artifact（`find_artifact_model`）；
+2. 用规则把 `track_label` / `business_model`（archetype）/ `sw_industry` 映射到 5–8 个 primitive，
+   展开命中的 playbook；
+3. 输出 `DRIVER_PROFILE` artifact（`ArtifactType.DRIVER_PROFILE`）；
+4. 注入 explore/verify/thesis/report 的 prompt（activated contexts + 驱动变量 + 专属问题）。
+
+> **artifact 契约（仓库约定，必须遵守）**：`DriverProfile` / `RuntimeContext` 走
+> `ArtifactType` + `find_artifact_model(...)`，**不给 `OrchestratorState` 增加顶层字段**
+> （现有 `state.py` 无 `transition_state` / `domain_context`，也无需加）。
+
+### Phase 1：detect_transition_state 节点
+
+在 `build_company_driver_profile` 之后、`run_analysis_engines` 之前，新增轻量检测节点：
 
 `detect_transition_state` 负责：
 
-1. 对比当前收入结构与3年前的变化趋势
-2. 对比管理层叙事（年报MD&A关键词）与实际财务数据
-3. 检测新旧框架驱动变量的解释力是否在相对变化
+1. 对比当前收入结构与 3 年前的变化趋势——**直接消费 `CompanyTrackArtifact.segments` 跨年报期数据**
+   （已有，勿重复取数），趋势骨架可复用 `detect_track_drift` 的输出；
+2. 对比管理层叙事（年报MD&A关键词）与实际财务数据；
+3. 检测新旧框架驱动变量的解释力是否在相对变化；
 4. 输出 `company_state`（`stable` | `in_transition` | `redefined`）
-   和 `narrative_evidence_gap`（`low` | `medium` | `high`）
+   和 `narrative_evidence_gap`（`low` | `medium` | `high`）。
 
 ContextRouter 接收 `transition_state` 后，对处于 `in_transition` 的标的
 自动激活 `narrative_transition` 元原语，并将活跃 contexts 的输出格式扩展为
 带 `trend` / `expected_obsolescence` 的结构。
 
-### Phase A：增强 company context
+> **数据可行性（降级契约，2026-08 评审修正）**：①依赖已有数据（segments，可靠）；②"MD&A 文本"
+> **当前未采集**（`financial_report` OCR 是独立 pipeline，未进 orchestrator fact collection），
+> 需先补 MD&A 采集或将 item 2 降级为可选；③的"驱动变量解释力 R²"需历史时序回归，样本不足时
+> 降级为定性判断并留痕；"卖方共识 driver"（研报抽取）难拿，**作为可选增强**，不作为
+> `company_state` 判定的硬依赖。
 
-在当前 `company_context` 基础上新增：
-
-- `business_model`
-- `cycle_type`
-- `driver_variables`
-- `event_sensitive_exposures`
-
-### Phase B：引入 ContextRouter
-
-在 facts 收集后、explore/conflicts 之前执行：
-
-```text
-collect_raw_facts
-→ build_company_driver_profile
-→ context_router
-→ run_analysis_engines
-→ explore_conflicts
-```
-
-### Phase C：改 explore_conflicts prompt（含过渡态升级）
+### Phase 2：改 explore_conflicts / verify_hypotheses prompt（含过渡态升级）
 
 让探索不再是纯通用冲突模板，而是：
 
@@ -538,22 +740,18 @@ generic conflict patterns
 + event overlay
 ```
 
-当 `company_state == "in_transition"` 时，`explore_conflicts` 应升级为
-`generate_competing_hypotheses`：不只在事实层面搜索冲突，而是在框架层面
-生成互斥的竞争性假设，识别每个假设的验证条件，并收集区分性证据。
-
-### Phase D：改 verify_hypotheses plan
-
+当 `company_state == "in_transition"` 时，`explore_conflicts` 升级为
+`generate_competing_hypotheses`：在**框架层面**生成互斥的竞争性假设（复用现有
+conflict/hypothesis 数据结构），识别每个假设的验证条件，收集区分性证据。
 验证计划按 context 动态切换优先级：
 
 - 牧原：猪价 / 仔猪价 / 能繁母猪 / 完全成本 / 出栏节奏
 - 金诚信：项目区域暴露 / 极端天气影响 / 海外执行 / 矿业 CAPEX 周期
 
-当 `company_state == "in_transition"` 时，验证计划不按单一主线切换，
-而是为每一条竞争性假设分别生成验证子计划，以假设为维度收集证据，
-确保"支持H1的证据"和"支持H2的证据"都被采集，而非预设某一方为正确。
+当 `company_state == "in_transition"` 时，为每条竞争性假设分别生成验证子计划，
+以假设为维度收集证据，确保"支持H1的证据"和"支持H2的证据"都被采集。
 
-### Phase E：改 insight / report 主线
+### Phase 3：改 insight / report 主线
 
 强制最终报告围绕：
 
@@ -563,6 +761,10 @@ generic conflict patterns
 
 而不是所有公司都先写 ROE / PEG / 信号列表。
 
+> **落点**：`primary_driver` / `central_tension` 写入 `InsightArtifact`（`contracts.py`）已有的
+> `central_tension` / `main_driver` 字段，由 `synthesize_insights` 消费 `DRIVER_PROFILE` artifact
+> 填充，报告层读 `InsightArtifact`，不新增 report 字段。
+
 ---
 
 ## 场景示例
@@ -571,7 +773,7 @@ generic conflict patterns
 
 应激活：
 
-- `hog_cycle`
+- `hog_cycle`（= commodity_cycle + biological_inventory + feed_cost + epidemic_risk + capacity_cycle）
 - `feed_cost`
 - `capacity_cycle`
 
@@ -585,7 +787,7 @@ generic conflict patterns
 
 应激活：
 
-- `mining_services`
+- `mining_services`（= project_delivery + overseas_execution + commodity_capex_cycle）
 - `project_delivery`
 - `overseas_execution`
 - `weather_shock`
@@ -645,35 +847,53 @@ H3（折中派）：中短期（1-2年）面板周期主导利润，但AI硬件�
 
 ---
 
-## 推荐落地顺序
+## 推荐落地顺序（重排：先最小闭环，再过渡态，最后事件覆盖）
 
-### P0
+### P0（最小闭环，最快见效，风险最低）——已收紧为 5 步（详见「Review 记录」）
 
-1. 新增 `DriverProfile / CompanySpecificContext`
-2. 建立 `domain_primitives/`，优先沉淀 5-8 个高频 primitives
-3. 新增 `narrative_transition` 元原语和 `detect_transition_state` 节点
+1. ✅ `PrimitiveSchema` + `PlaybookSchema`（canonical 字段 + 校验器 + 目录闭合校验）；
+2. ✅ 定死 P0 清单：6 primitive + 2 playbook + 1 通用兜底（见「P0 落地记录」）；
+3. ✅ `router_mapping`（落在 playbook `match_*` 字段）+ 规则版 `context_router.py`（含 fallback / 缺失降级 / version）；
+4. `ArtifactType.DRIVER_PROFILE` + `DriverProfile` + `coerce_driver_profile`；
+5. 只注入 1 个节点（`synthesize_insights`，写 central_tension/main_driver）跑通牧原/金诚信 golden，
+   再扩到 explore/verify/thesis/report。
 
-### P1
+### P1（过渡态，依赖 P0 且须配 eval）
 
-1. 建立 `domain_playbooks/`
-2. 上线 `ContextRouter`（含 `company_state` 和 context trend 输出）
-3. 给 explore/verify prompt 注入 activated contexts
-4. 上线 `FrameworkCompetition` 竞争性假设生成与验证机制
+1. `detect_transition_state` 节点（消费 COMPANY_TRACK segments + MD&A）；
+2. `narrative_transition` 元原语 + `company_state` / `narrative_evidence_gap` 输出；
+3. `FrameworkCompetition`（复用 conflicts 数据结构，框架层假设 A/B/C）。
 
-### P2
+### P2（事件与主线，依赖 P1）
 
-1. 上线 `EventOverlay`
-2. context score / ranking（含趋势维度）
-3. 报告主线切换为 driver-first
-4. `narrative_evidence_gap` 量化与追踪
-5. primitives/playbooks 适用边界与过时标记
+1. `EventOverlay`（先定事件源 + guard 放行策略）；
+2. context score / ranking（含 trend 维度）；
+3. 报告主线切换为 driver-first（写 `InsightArtifact.central_tension/main_driver`）；
+4. primitives/playbooks 适用边界与过时标记（运行时 store 化，见扩展机制 6）。
 
-### P3
+### P3（评估与演进）
 
-1. 引入更多外部事件源
-2. 做 context effectiveness 回放（含过渡态判断准确率）
-3. 让 task records 反哺 context 迭代
-4. 过渡期公司分析效果专项评估
+1. 引入更多外部事件源；
+2. context effectiveness 回放（见验收标准）；
+3. 让 task records 反哺 context 迭代；
+4. 过渡期公司分析效果专项评估。
+
+---
+
+## 验收标准（可量化，配合仓库测试文化）
+
+成功标准不能只靠定性描述，需配可回放、可打分的指标：
+
+1. **报告主线命中率**：建 golden 样本集（牧原→猪周期主线、金诚信→矿业项目+天气扰动、
+   京东方A→过渡期框架博弈），判据 = 报告摘要含 `primary_driver` 关键词 + `central_tension`
+   被显式论述。目标：golden 样本命中率 100%，回归不下降。
+2. **context effectiveness 回放**：每次 run 记录 `activated_contexts` + 报告主线，回放后用
+   LLM-as-judge（或人工抽检）评"该 context 是否真的改变了报告结构"，追踪
+   "激活但未消费"的浪费率。
+3. **过渡态判断准确率**：`company_state` 判定的 ground truth 需先标注一批已知过渡期公司
+   （京东方A / 潍柴动力 / 中国中免），P3 专项评估准确率与误判方向。
+4. **降级契约**：`INDUSTRY_CONTEXT` / `COMPANY_TRACK` 缺失或降级时，ContextRouter 必须显式
+   issue 留痕（复用 `industry_context_missing` / `company_track_missing` 模式），不静默回退。
 
 ---
 
@@ -687,3 +907,4 @@ H3（折中派）：中短期（1-2年）面板周期主导利润，但AI硬件�
 - context 不是越积越僵，而是能通过 primitives + playbooks + runtime overlay 持续扩展
 - 处于过渡期的公司能自动识别身份漂移，报告围绕"新旧框架博弈"展开，
   而不是违和地套用纯周期或纯成长的单一框架
+- 上述表现可被"主线命中率 / effectiveness 回放 / 过渡态准确率"三组指标持续量化追踪
