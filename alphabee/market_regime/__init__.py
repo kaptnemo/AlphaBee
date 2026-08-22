@@ -12,6 +12,11 @@ Pipeline phases:
   safe-AST formulas (reusing ``agents/derived_facts`` Engine semantics) producing
   ``MarketScore`` / ``RegimeSnapshot`` / ``PositionAdvice``.
 - Phase 2+: regime state machine, similarity search, LLM explainer, graph/CLI.
+
+``MarketScoreEngine`` / ``load_rules`` 采用**惰性加载**：``score_engine`` 会级联导入
+``derived_facts → facts → collectors.tushare``（``ts.set_token`` 写 ``~/tk.csv``），
+仅在真正用到评分引擎时才触发，避免「只 import 契约（``models`` / ``position``）」的
+调用方被迫付 tushare 初始化代价。
 """
 
 from alphabee.market_regime.models import (
@@ -26,7 +31,6 @@ from alphabee.market_regime.models import (
     SimilarityResult,
 )
 from alphabee.market_regime.position import advise_position, load_position_rules
-from alphabee.market_regime.score_engine import MarketScoreEngine, load_rules
 
 __all__ = [
     "CollectorOutput",
@@ -43,3 +47,11 @@ __all__ = [
     "advise_position",
     "load_position_rules",
 ]
+
+
+def __getattr__(name: str):
+    if name in ("MarketScoreEngine", "load_rules"):
+        from alphabee.market_regime.score_engine import MarketScoreEngine, load_rules
+
+        return {"MarketScoreEngine": MarketScoreEngine, "load_rules": load_rules}[name]
+    raise AttributeError(f"module 'alphabee.market_regime' has no attribute {name!r}")
