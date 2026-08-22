@@ -21,7 +21,8 @@
 > **实现状态（2026-08 与代码对齐）**
 > - P0 第 1-2 步 ✅：`PrimitiveSchema` / `PlaybookSchema` + `loader`（加载 + 目录闭合校验）+ 6 primitive + 2 playbook + 1 兜底清单（见「P0 落地记录」）。
 > - P0 第 3 步 ✅：`ContextRouter`（`context_router.py`）——规则版公司 → playbook 匹配 + fallback + 降级。
-> - 其余未落地：`EventOverlay` / `FrameworkCompetition` / `detect_transition_state` 均未开始；代码中无 `transition_state` / `DRIVER_PROFILE` 产物。
+> - P0 第 4 步 ✅：`DriverProfile` 契约 + `build_driver_profile` + `ArtifactType.DRIVER_PROFILE` 注册 + `coerce_driver_profile`。
+> - 其余未落地：`EventOverlay` / `FrameworkCompetition` / `detect_transition_state` 均未开始；`DRIVER_PROFILE` artifact 尚未被任何节点产出（第 5 步）。
 > - 但"身份漂移"的**可计算种子已存在**：`alphabee/company_track/label.py::detect_track_drift` 已实现跨年报期业务主线漂移检测，写入 `CompanyTrackArtifact.review_notes`。本文档的 `detect_transition_state` / `narrative_transition` 是**其上的定性层**，应消费它而非从零推导。
 > - 报告主线切换的**落点已存在**：`InsightArtifact`（`orchestrator/contracts.py`）已带 `central_tension` / `main_driver` / `business_model_context`，Phase E 应写进这里而非新增 report 字段。
 > - 新鲜度/版本机制已存在：`CompanyTrackArtifact.stale_after` / `degraded` / `review_notes`，本文档复用而非另造。
@@ -78,16 +79,20 @@
 > 第 5 步刻意只注入一个节点：先在一个落点证明"激活的 context 真的改变观点主线"，再扩到
 > explore/verify/thesis/report，否则一次性注入 4 个 prompt 点无法判断哪一步有效。
 
-### P0 落地记录（第 1–3 步 ✅）
+### P0 落地记录（第 1–4 步 ✅）
 
-已落地（`alphabee/domain_context/`）：
+已落地（`alphabee/domain_context/` + 两处注册）：
 
 - `schemas.py`：`PrimitiveSchema` / `PlaybookSchema`（strict `extra="forbid"`，字段漂移即报错）。
 - `loader.py`：`load_primitives` / `load_playbooks` / `load_catalog` + `validate_closure`（目录闭合校验）。
 - `context_router.py`：`route` / `RouterInput` / `RouterResult` / `ActivatedContext`——规则版公司 → playbook 匹配（含 fallback / 降级 / version）。
+- `contracts.py`：`DriverProfile` / `ActivatedPrimitive`（`ArtifactType.DRIVER_PROFILE` 契约）。
+- `driver_profile.py`：`build_driver_profile`（路由 + 展开激活原语完整内容）。
+- `alphabee/core/schemas.py`：注册 `ArtifactType.DRIVER_PROFILE = "driver_profile"`（role group DATA）。
+- `alphabee/orchestrator/contracts.py`：re-export `DriverProfile` + `coerce_driver_profile`。
 - `domain_primitives/`：6 个原语。
 - `domain_playbooks/`：2 个框架 + 1 兜底。
-- 测试：`tests/domain_context/`（21 用例全绿）。
+- 测试：`tests/domain_context/`（26 用例全绿）。
 
 **清单决策（已定）**：
 
@@ -854,7 +859,7 @@ H3（折中派）：中短期（1-2年）面板周期主导利润，但AI硬件�
 1. ✅ `PrimitiveSchema` + `PlaybookSchema`（canonical 字段 + 校验器 + 目录闭合校验）；
 2. ✅ 定死 P0 清单：6 primitive + 2 playbook + 1 通用兜底（见「P0 落地记录」）；
 3. ✅ `router_mapping`（落在 playbook `match_*` 字段）+ 规则版 `context_router.py`（含 fallback / 缺失降级 / version）；
-4. `ArtifactType.DRIVER_PROFILE` + `DriverProfile` + `coerce_driver_profile`；
+4. ✅ `ArtifactType.DRIVER_PROFILE` + `DriverProfile` + `coerce_driver_profile`；
 5. 只注入 1 个节点（`synthesize_insights`，写 central_tension/main_driver）跑通牧原/金诚信 golden，
    再扩到 explore/verify/thesis/report。
 
