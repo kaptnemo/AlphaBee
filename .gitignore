@@ -33,3 +33,7 @@ __pycache__/
 *.so
 .pytest_cache/
 .ruff_cache/
+
+# docs
+docs/_sidebar.md
+docs/README.md
