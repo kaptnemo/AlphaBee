@@ -80,6 +80,7 @@ class ArtifactType(enum.StrEnum):
     MARKET_REGIME_HISTORY = "market_regime_history"
     INDUSTRY_CONTEXT = "industry_context"  # 行业上下文（识别 + 数值基准 + 降级元数据）
     COMPANY_TRACK = "company_track"  # 公司赛道（业务线解构 + 对标组基准 peer_*）
+    DRIVER_PROFILE = "driver_profile"  # 公司驱动画像（domain_context：playbook + 激活原语）
 
 
 # Canonical mapping from the ``ArtifactType`` to a role group.
@@ -102,6 +103,7 @@ _ARTIFACT_TYPE_TO_ROLE_GROUP: dict[ArtifactType | str, ArtifactRoleGroup] = {
     ArtifactType.MARKET_REGIME_HISTORY: ArtifactRoleGroup.DATA,
     ArtifactType.INDUSTRY_CONTEXT: ArtifactRoleGroup.DATA,
     ArtifactType.COMPANY_TRACK: ArtifactRoleGroup.DATA,
+    ArtifactType.DRIVER_PROFILE: ArtifactRoleGroup.DATA,
     # Legacy / external types kept for backward compatibility:
     "fundamental_analysis": ArtifactRoleGroup.DATA,
     "market_analysis": ArtifactRoleGroup.DATA,

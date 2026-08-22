@@ -13,6 +13,7 @@ from alphabee.agents.schemas import (
     VerificationResultItem,
 )
 from alphabee.core import Artifact
+from alphabee.domain_context.contracts import DriverProfile  # noqa: F401  (re-export)
 
 # Phase 1 起，行业知识资产契约迁至行业包（工作流 + 存储 + 契约同源）：
 # alphabee/industry/contracts.py 是唯一 schema 所有者（v2：三组基准字典 + 元数据），
@@ -24,6 +25,7 @@ from alphabee.market_regime.models import MarketScore, RegimeSnapshot
 # artifact contract convention (`find_artifact_model` / coerce helpers) exposes
 # them alongside the per-symbol contracts.
 __all__ = [
+    "DriverProfile",
     "MarketScore",
     "RegimeSnapshot",
 ]
@@ -370,4 +372,13 @@ def coerce_market_regime_history(value: Any) -> list[RegimeSnapshot] | None:
         return [RegimeSnapshot.model_validate(item) for item in value]
     if isinstance(value, dict) and isinstance(value.get("history"), list):
         return [RegimeSnapshot.model_validate(item) for item in value["history"]]
+    return None
+
+
+def coerce_driver_profile(value: Any) -> DriverProfile | None:
+    """Coerce a ``driver_profile`` artifact value into the typed ``DriverProfile``."""
+    if value is None or isinstance(value, DriverProfile):
+        return value
+    if isinstance(value, dict):
+        return DriverProfile.model_validate(value)
     return None
