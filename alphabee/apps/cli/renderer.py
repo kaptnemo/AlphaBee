@@ -283,15 +283,31 @@ def print_node_update_summary(node_name: str, node_update: dict, elapsed: float)
             return
         playbook = dp.get("playbook", "") if isinstance(dp, dict) else getattr(dp, "playbook", "")
         drivers = dp.get("primary_drivers", []) if isinstance(dp, dict) else getattr(dp, "primary_drivers", [])
+        secondary = dp.get("secondary_drivers", []) if isinstance(dp, dict) else getattr(dp, "secondary_drivers", [])
+        primitives = (
+            dp.get("activated_primitives", []) if isinstance(dp, dict) else getattr(dp, "activated_primitives", [])
+        )
         fallback = dp.get("fallback", False) if isinstance(dp, dict) else getattr(dp, "fallback", False)
         degraded = dp.get("degraded", False) if isinstance(dp, dict) else getattr(dp, "degraded", False)
         fb_tag = color("（兜底）", Color.DIM) if fallback else ""
         deg_tag = color("  ⚠ 降级", Color.YELLOW) if degraded else ""
-        driver_str = "、".join(drivers[:4]) if drivers else color("—", Color.DIM)
+        driver_str = "、".join(drivers[:5]) if drivers else color("—", Color.DIM)
         print(
             f"  🧭 框架: {color(playbook, Color.BOLD, Color.WHITE) if playbook else color('—', Color.DIM)}"
             f"{fb_tag}  │ 驱动: {driver_str}{deg_tag}{issue_tag}"
         )
+        # 激活原语：框架展开出的分析积木，让用户看到「为什么用这套框架」
+        prim_ids = [p.get("id", "") if isinstance(p, dict) else getattr(p, "id", "") for p in primitives]
+        if prim_ids:
+            print(f"       原语: {color(' · '.join(prim_ids), Color.CYAN)}")
+        # 每个原语的首个核心问题（报告要围绕什么展开）
+        for p in primitives[:3]:
+            pid = p.get("id", "") if isinstance(p, dict) else getattr(p, "id", "")
+            questions = p.get("priority_questions", []) if isinstance(p, dict) else getattr(p, "priority_questions", [])
+            if questions:
+                print(f"         {color('▪', Color.DIM)} {color(pid, Color.CYAN)}: {questions[0]}")
+        if secondary:
+            print(f"       次驱动: {color('、'.join(secondary[:4]), Color.DIM)}")
         print()
 
     # ─────────────────────────────────────────────────────────────────
