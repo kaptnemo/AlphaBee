@@ -49,6 +49,9 @@ async def resolve_driver_profile(
     new_issues: list[Issue] = []
 
     # ── 1. 读上游身份信号（缺失即 None，交由 router 兜底）────────────────
+    # 业务含义：路由只消费「已落地产物」（INDUSTRY_CONTEXT 的申万行业、COMPANY_TRACK 的
+    # 真实赛道 + archetype），绝不重新取数——行业识别和业务线解构是前面两个节点的职责，
+    # 本节点只做"把已有身份信号翻译成分析框架"，保持单一职责与可回放。
     ind = find_artifact_model(artifacts, ArtifactType.INDUSTRY_CONTEXT, IndustryContextArtifact)
     track = find_artifact_model(artifacts, ArtifactType.COMPANY_TRACK, CompanyTrackArtifact)
 
@@ -61,6 +64,9 @@ async def resolve_driver_profile(
     )
 
     # ── 2. 路由 + 组装（恒产出，哪怕 fallback）─────────────────────────
+    # 业务含义：DRIVER_PROFILE 一定产出，即使公司命中不了专用框架（回退 generic_fundamental）。
+    # 这样下游 synthesize_insights 的 context 里"永远有 driver_profile 这一块"，报告主线
+    # 不会因为某家公司没有专用框架而整段缺失——最坏也退回通用财务维度并显式说明。
     profile = build_driver_profile(
         symbol,
         router_input,

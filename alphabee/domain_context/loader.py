@@ -5,6 +5,12 @@
 - 检测重复 id；
 - 目录闭合校验（playbook 只能引用已声明的 primitive）。
 
+业务逻辑（为什么要「目录闭合校验」）：
+playbook 是「命名的 primitive 集合」，如果它引用了不存在的 primitive（如拼写错误
+``feed_costt``、或删了某原语却没同步 playbook），下游展开时就会拿到「悬空引用」——
+报告层展开 playbook 会发现少了一个框架积木却无从解释。闭合校验在**加载期**就把这类
+"组合引用了不存在的积木"炸出来，保证 ``load_catalog()`` 返回的一定是自洽目录。
+
 本模块不依赖任何数据源（无 import 副作用），可被 orchestrator / midterm 安全引用。
 """
 
