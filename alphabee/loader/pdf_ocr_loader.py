@@ -251,7 +251,7 @@ class PDFOCRLoader:
         max_workers: int = 2,
         batch_size: int = 64,
         max_retries: int = 3,
-        retry_delay: float = 2.0,
+        retry_delay: float = 5.0,
         workspace: str | Path | None = None,
         keep_pages: bool = True,
     ) -> None:
@@ -653,9 +653,7 @@ class PDFOCRLoader:
         return [ngram for ngram, count in ngram_counts.items() if count > threshold]
 
     @classmethod
-    def _parse_markdown(
-        cls, md_text: str, page_count: int, file_name: str | None, file_type: str | None
-    ) -> list[dict]:
+    def _parse_markdown(cls, md_text: str, page_count: int, file_name: str | None, file_type: str | None) -> list[dict]:
         """按章节切分 + ngram 页眉页脚去重，返回清洗后的 sections。"""
         sections = cls._split_markdown_by_sections(md_text, file_name=file_name, file_type=file_type)
         if not sections or page_count <= 0:
@@ -667,9 +665,7 @@ class PDFOCRLoader:
             title_counts[title] = title_counts.get(title, 0) + 1
 
         header_footer_titles = [
-            title
-            for title, count in title_counts.items()
-            if count >= 2 and count / page_count >= 0.6
+            title for title, count in title_counts.items() if count >= 2 and count / page_count >= 0.6
         ]
 
         content_lines: dict[str, list[str]] = {}
@@ -677,10 +673,7 @@ class PDFOCRLoader:
             if section.get("title") in header_footer_titles:
                 content_lines.setdefault(section["title"], []).extend(section.get("content", []))
 
-        ngram_dict = {
-            title: cls._ngram_split_lines(lines, n=5, threshold=5)
-            for title, lines in content_lines.items()
-        }
+        ngram_dict = {title: cls._ngram_split_lines(lines, n=5, threshold=5) for title, lines in content_lines.items()}
 
         ngram_threshold = 3
         cleaned_sections: list[dict] = []
