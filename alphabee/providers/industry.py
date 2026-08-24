@@ -1,12 +1,13 @@
 """Industry data provider — unified interface with source fallback chain.
 
 Priority order for each data domain:
-  industry daily (行情+估值): sw_daily → index_daily + akshare snapshot
+  industry daily (行情+估值): sw_daily → akshare 申万指数 → index_daily + akshare 东财
 """
 
 from __future__ import annotations
 
 import datetime
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,7 +16,7 @@ from typing import Any
 class IndustryDailyResult:
     daily: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
-    source: str = ""  # "sw_daily" | "index_daily+akshare" | "none"
+    source: str = ""  # "sw_daily" | "akshare_sw_daily" | "index_daily+akshare" | "none"
 
 
 def get_industry_daily(
@@ -26,12 +27,14 @@ def get_industry_daily(
     """获取申万行业指数的日行情数据，含 PE/PB。
 
     按优先级尝试：
-    1. Tushare ``sw_daily`` — 完整数据（close / pct_change / PE / PB）
-    2. Tushare ``index_daily`` + AkShare 快照 — 趋势 + 估值分别获取
+    1. Tushare ``sw_daily`` — 完整数据（close / pct_change / PE / PB），需 5000 积分
+    2. AkShare 申万指数 — ``index_hist_sw``（行情）+ ``sw_index_*_info``（PE/PB 快照），
+       免费、无积分门槛，任意层级指数代码都支持
+    3. Tushare ``index_daily`` + AkShare 快照 — 趋势 + 估值分别获取（东财板块口径）
 
     Args:
         sw_code: 申万行业指数代码，如 ``801010.SI``。
-        industry: 行业名称（如 ``白酒``），用于 AkShare 名称匹配。
+        industry: 行业名称（如 ``白酒``），用于东财兜底的名称匹配。
         lookback_days: 回溯天数。
     """
     today = datetime.date.today().strftime("%Y%m%d")
@@ -42,7 +45,12 @@ def get_industry_daily(
     if result is not None:
         return result
 
-    # 2. Tushare index_daily + AkShare PE/PB snapshot
+    # 2. AkShare 申万指数（免费，替代 sw_daily 的 5000 积分门槛）
+    result = _try_akshare_sw_daily(sw_code, start, today)
+    if result is not None:
+        return result
+
+    # 3. Tushare index_daily + AkShare 东财板块 PE/PB
     result = _try_index_daily_plus_akshare(sw_code, industry, start, today)
     if result is not None:
         return result
@@ -73,6 +81,101 @@ def _try_sw_daily(sw_code: str, start: str, end: str) -> IndustryDailyResult | N
 
     except Exception:
         return None
+
+
+# ── fallback 2: akshare 申万指数（免费，替代 sw_daily 的 5000 积分门槛）────────
+
+
+def _iso_date(ymd: str) -> str:
+    """``YYYYMMDD`` → ``YYYY-MM-DD``（index_hist_sw 的日期列格式）。"""
+    s = str(ymd)
+    return f"{s[:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 else s
+
+
+def _try_akshare_sw_daily(sw_code: str, start: str, end: str) -> IndustryDailyResult | None:
+    """AkShare 申万指数日线 + 申万行业估值快照。
+
+    - 行情：``index_hist_sw``（申万宏源研究官网），L1/L2/L3 指数代码都支持；
+      无涨跌幅列，由收盘价逐日推导。
+    - 估值：``sw_index_first/second/third_info``（乐咕乐股）按 sw_code 匹配
+      TTM 市盈率 / 市净率快照（快照级而非逐日，与东财兜底口径一致）。
+    """
+    swcode6 = str(sw_code).split(".")[0]
+    if not swcode6:
+        return None
+
+    try:
+        from alphabee.collectors.akshare.helper import AkShareHelper
+
+        with AkShareHelper() as helper:  # type: ignore[no-untyped-call]
+            hist = helper.index_hist_sw(symbol=swcode6, period="day").to_dataframe()
+            pe_val, pb_val = _get_sw_index_pe_pb(sw_code)
+    except Exception:
+        return None
+
+    if hist.empty:
+        return None
+
+    start_iso, end_iso = _iso_date(start), _iso_date(end)
+    rows: list[dict[str, Any]] = []
+    prev_close: float | None = None
+    for _, row in hist.iterrows():
+        trade_date = str(row.get("日期"))
+        close = _safe_float(row.get("收盘"))
+        change_pct = 0.0
+        if prev_close is not None and prev_close:
+            change_pct = round((close - prev_close) / prev_close * 100, 2)
+        prev_close = close
+        if trade_date < start_iso or trade_date > end_iso:
+            continue
+        item: dict[str, Any] = {
+            "trade_date": trade_date,
+            "industry_close": close,
+            "industry_change_pct": change_pct,
+        }
+        if pe_val is not None:
+            item["industry_pe_ttm"] = pe_val
+        if pb_val is not None:
+            item["industry_pb"] = pb_val
+        rows.append(item)
+
+    if not rows:
+        return None
+    return IndustryDailyResult(daily=rows, source="akshare_sw_daily")
+
+
+def _get_sw_index_pe_pb(sw_code: str) -> tuple[float | None, float | None]:
+    """按申万代码从 ``sw_index_first/second/third_info`` 匹配 TTM 市盈率 / 市净率快照。
+
+    乐咕乐股为免费网页源，偶发加载失败（``NoneType.find_all``），故逐表轻量重试。
+    返回 ``(pe_ttm, pb)``；任一缺失为 None（不置 0）。
+    """
+    try:
+        from alphabee.collectors.akshare.helper import AkShareHelper
+
+        with AkShareHelper() as helper:  # type: ignore[no-untyped-call]
+            for name in (
+                "sw_index_first_info",
+                "sw_index_second_info",
+                "sw_index_third_info",
+            ):
+                df = None
+                for _ in range(3):
+                    try:
+                        df = getattr(helper, name)().to_dataframe()
+                        break
+                    except Exception:
+                        time.sleep(1.0)
+                if df is None or df.empty or "行业代码" not in df.columns:
+                    continue
+                matched = df[df["行业代码"].astype(str) == str(sw_code)]
+                if matched.empty:
+                    continue
+                row = matched.iloc[0]
+                return _opt_float(row.get("TTM(滚动)市盈率")), _opt_float(row.get("市净率"))
+    except Exception:
+        pass
+    return None, None
 
 
 # ── fallback: index_daily + akshare ────────────────────────────────────
@@ -198,3 +301,14 @@ def _safe_str(row_or_val, col: str | None = None) -> str:
         return str(val)
     except (ValueError, TypeError):
         return ""
+
+
+def _opt_float(val: Any) -> float | None:
+    """转 float；NaN / 无法解析返回 None（区别于 ``_safe_float`` 的 0 值）。"""
+    import math
+
+    try:
+        f = float(val)
+        return f if not math.isnan(f) else None
+    except (TypeError, ValueError):
+        return None

@@ -160,8 +160,11 @@ if __name__ == "__main__":
     # logger.info("Fetched index weight result", result=str(result))
     # logger.info("Fetched index weight dataframe", rows=len(result.data))
 
-    all_stocks = ts_client.stock_basic(exchange="", list_status="L")
-    all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")
+    # 重建 all_stocks.csv（含申万 L1/L2/L3 列）：
+    #   poetry run python scripts/build_all_stocks.py
+    # 不要用下面的裸 stock_basic 覆盖——会丢掉申万分类列。
+    # all_stocks = ts_client.stock_basic(exchange="", list_status="L")
+    # all_stocks.save_to_csv("/data/freedom/AlphaBee/alphabee/static/all_stocks.csv")
 
     # df = ts_client.balancesheet(
     #     ts_code='600000.SH',

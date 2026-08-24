@@ -48,7 +48,7 @@ def _ind_fact(industry="白酒", sw_code="801120.SI", pe=None, pb=None):
     sw_daily = []
     if pe is not None or pb is not None:
         sw_daily = [{"industry_pe_ttm": pe, "industry_pb": pb}]
-    return {"industry": industry, "sector": "消费", "sw_code": sw_code, "sw_daily": sw_daily}
+    return {"industry": industry, "sw_code": sw_code, "sw_daily": sw_daily}
 
 
 # 成分股行：**源单位（百分比）**输入键（adapter 重命名后的列名：revenue_yoy / roe /

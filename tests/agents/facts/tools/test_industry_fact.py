@@ -7,6 +7,7 @@
 import pandas as pd
 
 from alphabee.agents.facts.tools.industry_fact import _SW_LEVELS, match_sw_industry
+from alphabee.industry.classification import extract_sw_member
 
 
 def _frame(rows: list[tuple[str, str]]) -> pd.DataFrame:
@@ -95,3 +96,81 @@ def test_empty_frames_returns_none():
 
 def test_levels_ordering():
     assert _SW_LEVELS == ("L3", "L2", "L1")
+
+
+# ── 成分表精确归属（extract_sw_member，index_member_all 输出列契约）───────────
+
+
+def _member(rows: list[tuple]) -> pd.DataFrame:
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "l1_code",
+            "l1_name",
+            "l2_code",
+            "l2_name",
+            "l3_code",
+            "l3_name",
+            "ts_code",
+            "name",
+            "in_date",
+            "out_date",
+            "is_new",
+        ],
+    )
+
+
+def _member_row(l3=True, in_date="20210101", out_date=None, is_new="Y") -> tuple:
+    return (
+        "801730.SI",
+        "电力设备",
+        "801738.SI",
+        "电网设备",
+        "857344.SI" if l3 else None,
+        "线缆部件及其他" if l3 else None,
+        "600577.SH",
+        "精达股份",
+        in_date,
+        out_date,
+        is_new,
+    )
+
+
+def test_member_l3_preferred():
+    # 精达股份场景：index_member_all 直接给出 L1/L2/L3 归属，应取最细 L3
+    members = _member([_member_row()])
+    assert extract_sw_member(members) == {
+        "l1_code": "801730.SI",
+        "l1_name": "电力设备",
+        "l2_code": "801738.SI",
+        "l2_name": "电网设备",
+        "l3_code": "857344.SI",
+        "l3_name": "线缆部件及其他",
+        "sw_code": "857344.SI",
+        "sw_level": "L3",
+        "industry_name": "线缆部件及其他",
+    }
+
+
+def test_member_l2_when_no_l3():
+    members = _member([_member_row(l3=False)])
+    result = extract_sw_member(members)
+    assert result["sw_code"] == "801738.SI"
+    assert result["sw_level"] == "L2"
+    assert result["industry_name"] == "电网设备"
+    assert result["l3_code"] == ""  # 无 L3 归属时该层留空
+
+
+def test_member_skips_inactive_rows():
+    # 第一条已退出（out_date 非空）应被跳过，取当前有效行
+    members = _member([_member_row(in_date="20200101", out_date="20201231", is_new="N"), _member_row()])
+    result = extract_sw_member(members)
+    assert result["sw_code"] == "857344.SI"
+    assert result["sw_level"] == "L3"
+
+
+def test_member_empty_or_bad_df_returns_none():
+    assert extract_sw_member(None) is None
+    assert extract_sw_member(pd.DataFrame()) is None
+    bad = pd.DataFrame({"foo": [1]})
+    assert extract_sw_member(bad) is None

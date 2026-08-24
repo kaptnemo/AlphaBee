@@ -9,7 +9,6 @@ stock_basic:
   market:      market
   list_date:   list_date
   exchange:    exchange
-  sector:      sector
   list_status: list_status
   curr_type:   currency_type
 

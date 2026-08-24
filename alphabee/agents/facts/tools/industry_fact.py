@@ -4,11 +4,25 @@ from typing import Any
 
 from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
 from alphabee.collectors.tushare.helper import TuShareHelper
-from alphabee.industry.classification import _SW_LEVELS, match_sw_industry
+from alphabee.industry.classification import _SW_LEVELS, extract_sw_member, match_sw_industry
 from alphabee.providers.industry import get_industry_daily
 from alphabee.tools.cache import SyncTTLCache
 
 _CACHE = SyncTTLCache(ttl_seconds=600.0)
+
+
+def _get_sw_member(ts_code: str) -> Any:
+    """按个股查申万归属（index_member_all，is_new=Y）；失败返回 None 由调用方降级。
+
+    接口契约（Tushare 官方核实）：``index_member_all(ts_code=...)`` 直接返回该股
+    L1/L2/L3 代码与名称（列 ``l1_code/l1_name/.../l3_code/l3_name``），
+    无 ``src`` 参数，权限需 2000 积分。
+    """
+    try:
+        with TuShareHelper() as helper:  # type: ignore[no-untyped-call]
+            return helper.index_member_all(ts_code=ts_code, is_new="Y").data
+    except Exception:
+        return None
 
 
 def get_industry_fact(symbol: str) -> dict[str, Any]:
@@ -32,7 +46,7 @@ def get_industry_fact(symbol: str) -> dict[str, Any]:
         with TuShareHelper() as helper:
             basic_df = helper.stock_basic(
                 ts_code=ts_code,
-                fields="ts_code,name,industry,sector",
+                fields="ts_code,name,industry",
             ).data
             frames: dict[str, Any] = {}
             for level in _SW_LEVELS:
@@ -42,19 +56,31 @@ def get_industry_fact(symbol: str) -> dict[str, Any]:
                         frames[level] = df
                 except Exception:
                     continue  # 单层分类失败不影响其他层
-
         industry = ""
-        sector = ""
         if not basic_df.empty:
             r = basic_df.iloc[0]
             industry = safe_str(r.get("industry"))
-            sector = safe_str(r.get("sector"))
 
-        # Find matching SW index（L2/L3 优先——子行业成分股更同质；L1 兜底）
-        sw_code, sw_level = match_sw_industry(industry, frames)
-        l1_frame = frames.get("L1")
-        sw_classes = l1_frame.head(20).to_dict(orient="records") if l1_frame is not None else []
-
+        # 申万归属：优先 index_member_all 成分表精确查（权威，返回完整 L1/L2/L3 层级路径），
+        # 失败再按行业名 L1/L2/L3 精确+前缀匹配兜底。
+        # industry 与 sw_code 同源——成分表解析成功时用申万行业名覆盖 stock_basic 名。
+        sw_path: dict[str, str] = {}
+        sw_code, sw_level = None, None
+        member = None
+        try:
+            member = extract_sw_member(_get_sw_member(ts_code))
+        except Exception:
+            pass
+        if member:
+            sw_path = {
+                key: member.get(key, "") for key in ("l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name")
+            }
+            sw_code = member.get("sw_code") or None
+            sw_level = member.get("sw_level") or None
+            if member.get("industry_name"):
+                industry = member["industry_name"]
+        if not sw_code:
+            sw_code, sw_level = match_sw_industry(industry, frames)
         # Delegate to provider for industry daily data with fallback
         if sw_code:
             result = get_industry_daily(sw_code=sw_code, industry=industry)
@@ -67,8 +93,7 @@ def get_industry_fact(symbol: str) -> dict[str, Any]:
         return {
             "stock_code": ts_code,
             "industry": industry,
-            "sector": sector,
-            "sw_classes": sw_classes,
+            "sw_path": sw_path,
             "sw_code": sw_code,
             "sw_level": sw_level,  # L1 / L2 / L3（消费方据此定 classification_standard）
             "sw_daily": sw_daily,
@@ -82,32 +107,28 @@ def render(data: dict[str, Any]) -> str:
     """将行业事实数据渲染为Markdown格式的文本。"""
     stock_code = data.get("stock_code", "")
     industry = data.get("industry", "")
-    sector = data.get("sector", "")
-    sw_classes = data.get("sw_classes", [])
+    sw_path = data.get("sw_path", {}) or {}
     sw_code = data.get("sw_code")
     sw_daily = data.get("sw_daily", [])
     sw_daily_error = data.get("sw_daily_error")
 
     lines = [f"## {stock_code} 行业事实数据\n"]
 
-    if industry or sector:
+    if industry:
+        source = "申万" if data.get("sw_level") else "stock_basic"
         lines += [
             "### 行业归属",
-            f"- **所属行业（stock_basic）**: {industry}",
-            f"- **板块**: {sector}",
+            f"- **所属行业（{source}）**: {industry}",
             "",
         ]
 
-    if sw_classes:
-        lines += [
-            "### 申万一级行业列表（前20个）",
-            "| 行业代码 | 行业名称 |",
-            "|---------|---------|",
-        ]
-        for row in sw_classes:
-            idx_code = safe_str(row.get("sw_code"))
-            idx_name = safe_str(row.get("industry_name", ""))
-            lines.append(f"| {idx_code} | {idx_name} |")
+    if sw_path:
+        lines.append("### 申万行业层级路径")
+        for lvl in ("L1", "L2", "L3"):
+            code = sw_path.get(f"{lvl.lower()}_code", "")
+            name = sw_path.get(f"{lvl.lower()}_name", "")
+            if code or name:
+                lines.append(f"- **{lvl}**: {code} {name}".rstrip())
         lines.append("")
 
     if sw_daily_error:
@@ -129,3 +150,11 @@ def render(data: dict[str, Any]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    # Example usage
+    symbol = "600577.SH"  # 精达股份
+    fact_data = get_industry_fact(symbol)
+    markdown_output = render(fact_data)
+    print(markdown_output)

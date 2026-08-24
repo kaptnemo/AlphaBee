@@ -288,8 +288,6 @@ sector:
   aliases:
     zh: [板块, 分类, 证券分类]
     en: [sector, security category]
-  source_mappings:
-    tushare: [sector]
 
 list_status:
   category: company

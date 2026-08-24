@@ -12,7 +12,7 @@ def _ind_fact(industry="白酒", sw_code="801120.SI", pe=25.0, pb=6.0):
     sw_daily = []
     if pe is not None or pb is not None:
         sw_daily = [{"industry_pe_ttm": pe, "industry_pb": pb, "trade_date": "2026-08-15"}]
-    return {"industry": industry, "sector": "消费", "sw_code": sw_code, "sw_daily": sw_daily}
+    return {"industry": industry, "sw_code": sw_code, "sw_daily": sw_daily}
 
 
 def _peer_rows(count=6, end_date="20251231"):

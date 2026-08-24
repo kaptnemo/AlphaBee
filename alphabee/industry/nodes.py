@@ -84,7 +84,6 @@ def collect_industry_facts(
                     ),
                     "industry_code": sw_code or "",
                     "sw_code": sw_code,
-                    "sector": str(ind_fact.get("sector") or ""),
                 }
                 valuation = {
                     "industry_pe_ttm": pe,
@@ -102,7 +101,6 @@ def collect_industry_facts(
             "classification_standard": target.classification_standard,
             "industry_code": target.industry_code,
             "sw_code": sw_code,
-            "sector": "",
         }
         if sw_code:
             try:
