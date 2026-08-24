@@ -71,7 +71,6 @@ async def resolve_industry_context(
         )
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
         return {"steps": [completed_step], "issues": new_issues}
-
     industry = str((ind_fact or {}).get("industry") or "").strip()
     if not industry:
         new_issues.append(

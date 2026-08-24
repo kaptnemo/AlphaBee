@@ -63,13 +63,13 @@ async def resolve_company_track(
     from alphabee.orchestrator.contracts import IndustryContextArtifact, find_artifact_model
 
     ind = find_artifact_model(artifacts, ArtifactType.INDUSTRY_CONTEXT, IndustryContextArtifact)
-    sw_industry = ind.industry if ind is not None else ""
-    sw_code = ind.sw_code if ind is not None else ""
+    sw_industry = ind.industry or "" if ind is not None else ""
+    sw_code = ind.sw_code or "" if ind is not None else ""
 
     # ── 1. 完整赛道（segments + track_label + business_model，best-effort）──
     from alphabee.company_track import build_company_track
 
-    track = build_company_track(symbol, sw_industry=sw_industry, sw_code=sw_code)
+    track = build_company_track(symbol, use_llm=True, sw_industry=sw_industry, sw_code=sw_code)
     if track.degraded or not track.segments:
         new_issues.append(
             Issue(
