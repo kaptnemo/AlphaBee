@@ -28,9 +28,9 @@ create_link() {
 }
 
 create_link "../.ai/skills"  "$ROOT/.claude/skills"
-create_link "../.ai/skills"  "$ROOT/.claude/skills"
 create_link "../.ai/skills"  "$ROOT/.github/skills"
 create_link "../.ai/skills"  "$ROOT/.opencode/skills"
+create_link "../.ai/skills"  "$ROOT/.agents/skills"
 
 echo ""
 echo "Symlink 检查完成。"
