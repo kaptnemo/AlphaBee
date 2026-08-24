@@ -183,7 +183,7 @@ class DerivedFactRule:
             "value": derived_value,
         }
 
-        # 阈值支持"回退链"（industry-context Phase 0，见 docs/industry-context-injection-plan.md 3.0）：
+        # 阈值支持"回退链"（industry-context Phase 0，见 docs/industry/industry-context-injection-plan.md 3.0）：
         # 每个 level 的表达式可以是字符串或字符串列表。列表按顺序求值，
         # 第一个求值成功且为 True 即命中；表达式抛异常（如引用的行业字段缺失）
         # 则顺延到下一项——实现"行业基准缺失 → 回退绝对阈值"的天然降级链。

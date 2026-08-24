@@ -133,7 +133,7 @@ class InsightArtifact(BaseModel):
     bear_case: str = ""
     what_would_change_my_mind: list[str] = Field(default_factory=list)
     confidence: str = "medium"
-    # ── 降级标记（ROADMAP 0.4，见 docs/INSIGHT_DEGRADATION_DESIGN.md）──
+    # ── 降级标记（ROADMAP 0.4，见 docs/design/INSIGHT_DEGRADATION_DESIGN.md）──
     # fallback_tier: 0=完整 1=宽松救援 2=确定性兜底 3=最小骨架
     degraded: bool = False
     fallback_tier: int = 0

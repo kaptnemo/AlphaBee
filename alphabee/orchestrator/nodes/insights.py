@@ -1,6 +1,6 @@
 """Insight synthesis node — runs InsightAgent between verification and thesis.
 
-四级降级阶梯（ROADMAP 0.4，见 docs/INSIGHT_DEGRADATION_DESIGN.md）：
+四级降级阶梯（ROADMAP 0.4，见 docs/design/INSIGHT_DEGRADATION_DESIGN.md）：
 
 - Tier 0: 严格解析成功
 - Tier 1: ``lenient_parse`` 宽松救援（修结构不补内容）

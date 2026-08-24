@@ -1,7 +1,7 @@
 # Insight 降级设计（ROADMAP 0.4 收尾）
 
 > 目标条目：ROADMAP 0.4「修复 Insight schema 脆弱性」的剩余缺口——**parse fail 时保留降级 insight，而不是整层丢弃**。
-> 关联文档：`docs/ROADMAP.md`（0.4 小节、推荐优先级、下一步建议）。
+> 关联文档：`docs/roadmap/ROADMAP.md`（0.4 小节、推荐优先级、下一步建议）。
 > 状态：✅ **已实施（2026-08）**。实现落点：`alphabee/agents/insights/rescue.py`（Tier 1-3）、`alphabee/orchestrator/nodes/insights.py`（四级决策树）、`alphabee/orchestrator/contracts.py`（降级字段）、`alphabee/orchestrator/prompts.py`（降级分支）；测试 `tests/orchestrator/test_insight_degradation.py`（14 用例）。本文档保留为设计与验收依据。
 
 ---
@@ -357,7 +357,7 @@ if output is None:
 | 4 | `nodes/insights.py`：四级决策树改造 | 0.3 天 |
 | 5 | `payload_builders.py` 透传 `degraded`；`prompts.py` 5 处降级分支 | 0.3 天 |
 | 6 | 测试（9 用例）+ 回归 | 0.5 天 |
-| 7 | ROADMAP.md 0.4 / 推荐优先级 / 下一步建议 状态更新 | 0.1 天 |
+| 7 | `roadmap/ROADMAP.md` 0.4 / 推荐优先级 / 下一步建议 状态更新 | 0.1 天 |
 
 合计约 **2 个工作日**。优先级：步骤 1+2+4（Tier 1/2 主链路）先行，3+5 必须同批落地（否则降级标记无法消费），6 不通过不合并。
 

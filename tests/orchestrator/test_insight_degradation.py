@@ -1,4 +1,4 @@
-"""Insight degradation tests (ROADMAP 0.4, see docs/INSIGHT_DEGRADATION_DESIGN.md).
+"""Insight degradation tests (ROADMAP 0.4, see docs/design/INSIGHT_DEGRADATION_DESIGN.md).
 
 四级降级阶梯契约：
 - Tier 0: 严格解析成功 → degraded=false，无 issue

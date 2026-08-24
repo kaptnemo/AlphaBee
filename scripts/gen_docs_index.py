@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """自动生成 docsify 的 ``_sidebar.md`` 与 ``README.md``。
 
-扫描 ``docs/`` 下的 ``*.md`` 文档，读取每个文件的第一个一级标题（``# ...``）
-作为显示名称，按分组规则归类后生成侧边栏与首页索引，无需手工维护。
+递归扫描 ``docs/`` 下的 ``*.md`` 文档，读取每个文件的第一个一级标题（``# ...``）
+作为显示名称，按物理子目录（或关键字兜底）分组后生成侧边栏与首页索引，无需手工维护。
 
 用法::
 
@@ -24,11 +24,23 @@ DOCS = ROOT / "docs"
 # 生成时忽略的文件（README.md 本身就是生成产物；下划线开头的是 docsify 约定文件）
 IGNORE = {"README.md", "_sidebar.md", "_navbar.md", "_coverpage.md"}
 
-# 分组规则：按顺序判定，命中第一个组。
+# 物理子目录 → 侧边栏分组（顺序即展示顺序）。文档按内容分目录保存后，
+# 目录名即分组；KEYWORD 规则仅作为根目录散落文档的兜底归类。
+DIR_GROUPS: list[tuple[str, str]] = [
+    ("guide", "用户文档"),
+    ("roadmap", "路线图"),
+    ("industry", "行业语境设计"),
+    ("midterm", "中期项目"),
+    ("design", "专项设计"),
+]
+DIR_GROUP: dict[str, str] = dict(DIR_GROUPS)
+
+# 关键字分组规则（仅对根目录散落文档生效）：按顺序判定，命中第一个组。
 #   name_keywords  —— 只对「文件名」做大小写不敏感匹配
 #   title_keywords —— 对「标题」做大小写不敏感匹配
 # 未命中任何组的文档归入 FALLBACK_GROUP，确保新增文档不会被遗漏。
 GROUP_RULES: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
+    ("用户文档", ("architecture", "usage", "configuration", "development", "concepts"), ()),
     ("路线图", ("roadmap",), ()),
     ("行业语境设计", ("industry",), ("行业", "语境", "产业")),
 ]
@@ -49,7 +61,9 @@ def extract_title(md_path: Path) -> str:
     return md_path.stem
 
 
-def classify(name: str, title: str) -> str:
+def classify(dirname: str, name: str, title: str) -> str:
+    if dirname in DIR_GROUP:
+        return DIR_GROUP[dirname]
     name_l = name.lower()
     title_l = title.lower()
     for group, name_kw, title_kw in GROUP_RULES:
@@ -59,16 +73,20 @@ def classify(name: str, title: str) -> str:
 
 
 def collect_docs() -> dict[str, list[tuple[str, str]]]:
-    """返回 {组名: [(显示名, 相对路径), ...]}，组内按文件名排序，组顺序按 GROUP_RULES。"""
+    """返回 {组名: [(显示名, docs 内相对路径), ...]}，组内按路径排序，组顺序按 DIR_GROUPS。"""
     collected: dict[str, list[tuple[str, str]]] = {}
-    for md in sorted(DOCS.glob("*.md"), key=lambda p: p.name.lower()):
+    for md in sorted(DOCS.rglob("*.md"), key=lambda p: p.relative_to(DOCS).as_posix().lower()):
         if md.name in IGNORE or md.name.startswith("_"):
             continue
         title = extract_title(md)
-        group = classify(md.name, title)
-        collected.setdefault(group, []).append((title, md.name))
+        rel = md.relative_to(DOCS).as_posix()
+        group = classify(rel.split("/", 1)[0], md.name, title)
+        collected.setdefault(group, []).append((title, rel))
 
-    order = [g for g, _, _ in GROUP_RULES] + [FALLBACK_GROUP]
+    order = [g for _, g in DIR_GROUPS] + [FALLBACK_GROUP]
+    for g, _, _ in GROUP_RULES:
+        if g not in order:
+            order.append(g)
     return {g: collected[g] for g in order if g in collected}
 
 
@@ -105,10 +123,10 @@ def regenerate() -> str:
 def snapshot() -> dict[str, int]:
     """对源文档（不含生成产物）取 mtime_ns 快照，用于监听。"""
     snap: dict[str, int] = {}
-    for md in sorted(DOCS.glob("*.md")):
+    for md in sorted(DOCS.rglob("*.md")):
         if md.name in IGNORE or md.name.startswith("_"):
             continue
-        snap[md.name] = md.stat().st_mtime_ns
+        snap[md.relative_to(DOCS).as_posix()] = md.stat().st_mtime_ns
     return snap
 
 

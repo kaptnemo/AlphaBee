@@ -53,7 +53,7 @@ def _ind_fact(industry="白酒", sw_code="801120.SI", pe=None, pb=None):
 
 # 成分股行：**源单位（百分比）**输入键（adapter 重命名后的列名：revenue_yoy / roe /
 # debt_to_assets / gross_margin）——节点内部经 normalize 统一为 canonical（RATIO 口径），
-# 见 docs/industry-context-phase1-design.md §2.1 的单位契约。
+# 见 docs/industry/industry-context-phase1-design.md §2.1 的单位契约。
 def _source_unit_peers():
     return [
         {"revenue_yoy": 10.0, "roe": 12.0, "debt_to_assets": 40.0, "gross_margin": 30.0},

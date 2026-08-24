@@ -4,7 +4,7 @@
 import 副作用，供 ``industry_fact`` 工具与多来源交叉校验（``crosscheck``）共用。
 
 匹配策略（修复 L1-only 前缀 contains 匹配对子行业名恒失败的问题，见
-docs/industry-context-phase1-design.md §2.1 姊妹问题）：
+docs/industry/industry-context-phase1-design.md §2.1 姊妹问题）：
 1. **精确匹配优先**，层级由细到粗（L3 → L2 → L1）；
 2. 无精确命中时**前缀匹配**，同样层级由细到粗（如 "白酒" → "白酒Ⅱ"）；
 3. 都不中 → ``(None, None)``，调用方降级。

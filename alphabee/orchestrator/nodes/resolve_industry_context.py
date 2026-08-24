@@ -1,6 +1,6 @@
 """resolve_industry_context node — industry-context-injection Phase 0 垂直切片。
 
-职责（只解析 + 注入，不做完整行业研究，见 docs/industry-context-injection-plan.md）：
+职责（只解析 + 注入，不做完整行业研究，见 docs/industry/industry-context-injection-plan.md）：
 
 1. 行业识别：复用 ``get_industry_fact()``（申万分类 + 行业指数估值 PE/PB）。
 2. 财务/成长基准：从行业成分股财务指标推导中位数（``alphabee/industry/``）。
@@ -105,7 +105,7 @@ async def resolve_industry_context(
         from alphabee.industry.normalize import normalize_industry_records
 
         # fetch 返回源单位行（百分比），先经 normalize 统一为 canonical（RATIO 口径），
-        # 修复 Phase 0 单位错配（见 docs/industry-context-phase1-design.md §2.1）
+        # 修复 Phase 0 单位错配（见 docs/industry/industry-context-phase1-design.md §2.1）
         raw_records, fetch_error = fetch_peer_financials(symbol or "", industry, sw_code)
         peer_records = normalize_industry_records(raw_records, source="tushare")
     except Exception as exc:

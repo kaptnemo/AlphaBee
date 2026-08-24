@@ -1,6 +1,6 @@
 # Phase 1 细化设计：行业知识工作流基础设施
 
-> 所属方案：`docs/industry-context-injection-plan.md` Phase 1（行业知识工作流基础设施，后置）。
+> 所属方案：`docs/industry/industry-context-injection-plan.md` Phase 1（行业知识工作流基础设施，后置）。
 > 本文档把主计划里 Phase 1 的 5 条粗粒度任务展开为可落地的设计，并在动手前与当前代码逐项核对。
 > 设计原则沿用主计划：数值基准层、canonical 字段单一命名空间、外部字段只在 adapter/采集层、降级显式留痕。
 
@@ -263,7 +263,7 @@ evidence 支持度评价，追加进 `review_notes`；LLM 失败只降级为确�
 
 ### D8 定性合成边界：默认关闭，LLM 通道可选
 
-与 `DOMAIN_CONTEXT_ROADMAP.md` 的划界（主计划 A2）：`business_model_summary` /
+与 `docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md` 的划界（主计划 A2）：`business_model_summary` /
 `industry_chain` / `key_drivers` / `risk_factors` 在 v1 **默认保持空**；仅当
 `qualitative_mode="llm"` 时调用 `create_chat_model("agent.industry_research")` 生成轻量摘要
 （prompt 强制要求引用来源、不超过若干条），失败即回退空块。`lifecycle_stage` 属确定性启发

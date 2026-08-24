@@ -2,13 +2,13 @@
 
 > **实现状态（2026-08 与代码对齐）**：本文档的“问题诊断”与当前代码一致——上游（derived_facts / signal / explore_conflicts / verify_hypotheses）仍**不消费任何行业数值**；`market_share_change` 规则因 `industry_revenue_yoy` 永远不在 `fact_values` 中而持续阻塞。已具备的基础比初版认知更多：**`industry_fact` 工具已存在**（`alphabee/agents/facts/tools/industry_fact.py`，返回申万一级行业 / SW 指数代码 / 行业 PE/PB），`build_company_context()` 已把 industry / sub_industry / lifecycle / market_cap 与行业 PE/PB 摘要注入 `synthesize_insights` / `run_thesis` / `review_thesis`（`contracts.py` 的 `ThesisIndustryContext`）；`ThesisEngine` / `ThesisReviewer` 有少量行业常量。真正缺的只有三样：① 行业 **financial/growth 基准**（ROE/负债率/营收增速中位数）——目前无人计算；② 把基准注入 `fact_values` 供规则引用；③ 行业阈值/基准相对阈值机制。**改造（IndustryContextArtifact、resolve_industry_context 节点、industry_thresholds、报告层行业字段）均未开始**（`alphabee/industry/` 目前为空包；`ArtifactType` 无 `INDUSTRY_CONTEXT`；`ReportGenerationPayload` 无 `industry` 字段）。
 
-> **评审修订记录（2026-08）**：本次评审按代码核实修订了现状认知，并落地以下优化——① 实施路径重排为「垂直切片先行、研究工作流后置」；② 新增「基准相对阈值」免费机制（两引擎阈值表达式本就能引用 `fact_values` 任意字段，见 `registry.py` 的 `threshold_context`）；③ 行业匹配键改为 `classification_standard + 行业代码`，消除中文名硬编码漂移；④ 补降级契约（复用 0.4 的 degraded 模式）；⑤ 与 `DOMAIN_CONTEXT_ROADMAP.md` 划界（本文档收敛为**数值基准层**）；⑥ 补测试计划。
+> **评审修订记录（2026-08）**：本次评审按代码核实修订了现状认知，并落地以下优化——① 实施路径重排为「垂直切片先行、研究工作流后置」；② 新增「基准相对阈值」免费机制（两引擎阈值表达式本就能引用 `fact_values` 任意字段，见 `registry.py` 的 `threshold_context`）；③ 行业匹配键改为 `classification_standard + 行业代码`，消除中文名硬编码漂移；④ 补降级契约（复用 0.4 的 degraded 模式）；⑤ 与 `docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md` 划界（本文档收敛为**数值基准层**）；⑥ 补测试计划。
 
 > **Phase 0 实施状态（2026-08）：✅ 已落地**。垂直切片完成：`alphabee/industry/benchmarks.py`（中位数推导）、`alphabee/industry/data.py`（Tushare 成分股取数，best-effort）、`alphabee/orchestrator/nodes/resolve_industry_context.py`（识别 + 注入 + 降级契约，已插入 `collect_raw_facts → run_analysis_engines` 之间）、`ArtifactType.INDUSTRY_CONTEXT` + `IndustryContextArtifact`、引擎阈值回退链（`registry.py`，level 表达式支持列表）、`debt_ratio / roe_level` 相对基准 + `market_share_change` 复活（peg_ratio 保持绝对，行业判断留给 signal 层）。测试：`tests/industry/test_benchmarks.py`、`tests/orchestrator/test_resolve_industry_context.py`、`tests/agents/derived_facts/test_industry_thresholds.py`。Phase 1-6 未开始。
 >
-> **Phase 1 实施状态（2026-08）：✅ 已落地**。行业知识工作流基础设施完成，细化设计见 `docs/industry-context-phase1-design.md`。交付：`IndustryContextArtifact` 升级 v2（三组基准字典 + canonical 键，含 stale/confidence/source_refs/review_status/degraded 元数据）、离线工作流 `alphabee/industry/`（contracts / normalize / nodes / workflow / persistence / cli，采集→归一化→基准→定性→审核→持久化六节点）、JSON 快照存储（原子写、latest-wins、`data/industry_profiles/{standard}/{code}.json`）、按类别默认 `stale_after`（估值 30d/财务 90d/成长 90d/定性 30d）。同时修复 Phase 0 潜在单位口径错配（`data.py` 原值百分比注入 vs 规则 RATIO 口径——roe/debt_ratio/gross_margin 现经 normalize 转换）与列名错配（adapter 已把 `or_yoy`/`grossprofit_margin` 重命名，读旧列名导致 `industry_revenue_yoy` 恒空）。后续修复：行业解析升级为申万 L1/L2/L3 精确+前缀匹配（`match_sw_industry`，修复子行业名如"半导体"解析失败）、估值基准改为成分股中位数优先（`daily_basic` pe_ttm/pb 正值中位数，指数快照兜底，`valuation:peer_median` 留痕）。测试：`tests/industry/test_contracts.py`、`test_normalize.py`、`test_persistence.py`、`test_workflow.py`、`tests/agents/facts/tools/test_industry_fact.py`。Phase 2-6 未开始。
+> **Phase 1 实施状态（2026-08）：✅ 已落地**。行业知识工作流基础设施完成，细化设计见 `docs/industry/industry-context-phase1-design.md`。交付：`IndustryContextArtifact` 升级 v2（三组基准字典 + canonical 键，含 stale/confidence/source_refs/review_status/degraded 元数据）、离线工作流 `alphabee/industry/`（contracts / normalize / nodes / workflow / persistence / cli，采集→归一化→基准→定性→审核→持久化六节点）、JSON 快照存储（原子写、latest-wins、`data/industry_profiles/{standard}/{code}.json`）、按类别默认 `stale_after`（估值 30d/财务 90d/成长 90d/定性 30d）。同时修复 Phase 0 潜在单位口径错配（`data.py` 原值百分比注入 vs 规则 RATIO 口径——roe/debt_ratio/gross_margin 现经 normalize 转换）与列名错配（adapter 已把 `or_yoy`/`grossprofit_margin` 重命名，读旧列名导致 `industry_revenue_yoy` 恒空）。后续修复：行业解析升级为申万 L1/L2/L3 精确+前缀匹配（`match_sw_industry`，修复子行业名如"半导体"解析失败）、估值基准改为成分股中位数优先（`daily_basic` pe_ttm/pb 正值中位数，指数快照兜底，`valuation:peer_median` 留痕）。测试：`tests/industry/test_contracts.py`、`test_normalize.py`、`test_persistence.py`、`test_workflow.py`、`tests/agents/facts/tools/test_industry_fact.py`。Phase 2-6 未开始。
 >
-> **Phase 2 实施状态（2026-08）：✅ 已落地**（字段治理与数据源适配，详见下方 Phase 2 小节）。行业名规范字典（`alphabee/industry/industry_names.yaml` + `names.py`，31 个 L1 + 精选 L2 + 别名 + 行业组）落地，thesis engine/reviewer 三处硬编码中文名集合与 company_context 关键词抽取表已迁移引用（B1 收敛）；申万分类匹配迁入 `alphabee/industry/classification.py`（`match_sw_industry`，行业包自包含，不触发 tushare import 副作用）；多来源交叉校验 `alphabee/industry/crosscheck.py`（申万/同花顺/东方财富 → 标准化 industry facts + 口径漂移告警，CLI `--crosscheck`）；provider 层外部列名回退清理（canonical-only）。测试：`tests/industry/test_names.py`、`test_crosscheck.py`。Phase 3-6 未开始，排期已与 `docs/COMPANY_TRACK_ROADMAP.md` 对齐：Phase 3 与 COMPANY_TRACK Phase D 并行、Phase 4 降级待定、Phase 5/6 与 COMPANY_TRACK Phase F 合并实施（标注见各 Phase 小节）。
+> **Phase 2 实施状态（2026-08）：✅ 已落地**（字段治理与数据源适配，详见下方 Phase 2 小节）。行业名规范字典（`alphabee/industry/industry_names.yaml` + `names.py`，31 个 L1 + 精选 L2 + 别名 + 行业组）落地，thesis engine/reviewer 三处硬编码中文名集合与 company_context 关键词抽取表已迁移引用（B1 收敛）；申万分类匹配迁入 `alphabee/industry/classification.py`（`match_sw_industry`，行业包自包含，不触发 tushare import 副作用）；多来源交叉校验 `alphabee/industry/crosscheck.py`（申万/同花顺/东方财富 → 标准化 industry facts + 口径漂移告警，CLI `--crosscheck`）；provider 层外部列名回退清理（canonical-only）。测试：`tests/industry/test_names.py`、`test_crosscheck.py`。Phase 3-6 未开始，排期已与 `docs/roadmap/COMPANY_TRACK_ROADMAP.md` 对齐：Phase 3 与 COMPANY_TRACK Phase D 并行、Phase 4 降级待定、Phase 5/6 与 COMPANY_TRACK Phase F 合并实施（标注见各 Phase 小节）。
 
 ## 问题诊断
 
@@ -64,7 +64,7 @@ collect_raw_facts → run_analysis_engines → explore_conflicts → verify_hypo
 4. **数值型基准按 canonical facts 进入 `fact_values`**：只有 derived facts / signals 需要计算的少量行业均值字段进入 flat values。
 5. **外部数据源字段不得泄漏到下游**：Tushare、AkShare、东方财富等字段必须先经过 adapter / mapping，统一成 AlphaBee canonical fields。
 6. **基准相对阈值优先，逐行业绝对覆盖其次**：两个引擎的阈值/触发表达式本就能引用 `fact_values` 任意字段（`registry.py` 的 `threshold_context = {**fact_values, "value": ...}`，SignalEngine 同理），因此「相对行业均值」的规则（如 `value > industry_avg_debt_ratio * 1.05`）**零引擎改动**即可生效，且覆盖所有行业；`industry_thresholds`（逐行业绝对带）只留给结构性差异行业（银行/房地产/公用事业），减少 YAML 维护量。
-7. **范围划界**：本文档只负责**数值基准层**（估值/财务/成长中位数、阈值机制、注入通道）；定性解释层（商业模式、产业链叙事、关键驱动与风险的 playbook 化）归 `DOMAIN_CONTEXT_ROADMAP.md`，两者按「数值 vs 定性」分工，避免静态行业知识库与动态 primitives/playbooks 两套体系互斥。**公司级赛道/对标组**（穿透申万标签：业务线解构 + 真对手基准，`peer_*` 字段）见 `docs/COMPANY_TRACK_ROADMAP.md`——申万行业均值是基线，公司赛道是对基线的修正/覆盖，构成 `peer → industry → 绝对` 三级回退链。
+7. **范围划界**：本文档只负责**数值基准层**（估值/财务/成长中位数、阈值机制、注入通道）；定性解释层（商业模式、产业链叙事、关键驱动与风险的 playbook 化）归 `docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md`，两者按「数值 vs 定性」分工，避免静态行业知识库与动态 primitives/playbooks 两套体系互斥。**公司级赛道/对标组**（穿透申万标签：业务线解构 + 真对手基准，`peer_*` 字段）见 `docs/roadmap/COMPANY_TRACK_ROADMAP.md`——申万行业均值是基线，公司赛道是对基线的修正/覆盖，构成 `peer → industry → 绝对` 三级回退链。
 
 ### 一、独立行业/产业知识工作流
 
@@ -348,7 +348,7 @@ industry_trigger_rules:
 
 ### Phase 1：行业知识工作流基础设施（后置）
 
-> **2026-08 已实施**：完整细化设计见 `docs/industry-context-phase1-design.md`（含 artifact v2 契约、
+> **2026-08 已实施**：完整细化设计见 `docs/industry/industry-context-phase1-design.md`（含 artifact v2 契约、
 > 六节点契约、单位/口径规则、持久化与过期语义、测试计划）。以下为本阶段的任务清单，均已落地。
 
 1. ✅ 新增 `IndustryContextArtifact` 合约 → `alphabee/industry/contracts.py`（v2，三组基准字典 +
@@ -364,9 +364,9 @@ industry_trigger_rules:
 
 ### Phase 2：字段治理与数据源适配（✅ 已落地，2026-08）
 
-> **2026-08 排期标注**：与 `docs/COMPANY_TRACK_ROADMAP.md` Phase A 是**公共前置**——`peer_*` 与
+> **2026-08 排期标注**：与 `docs/roadmap/COMPANY_TRACK_ROADMAP.md` Phase A 是**公共前置**——`peer_*` 与
 > `biz_segment_*` 字段走同一套 schema 治理与 adapter mapping，建议并行实施。
-> **实施说明**：本阶段已完成（详见 `docs/industry-context-phase1-design.md` 的姊妹文档与下方标注）。
+> **实施说明**：本阶段已完成（详见 `docs/industry/industry-context-phase1-design.md` 的姊妹文档与下方标注）。
 
 6. ✅ 行业名规范字典落地（`industry_code ↔ 显示名`）→ `alphabee/industry/industry_names.yaml` +
    `names.py`（31 个申万 L1 + 精选 L2 + 别名 + 行业组，key 用 `classification_standard:code`）；
@@ -386,7 +386,7 @@ industry_trigger_rules:
 
 ### Phase 3：在线注入层完善
 
-> **2026-08 排期标注**：与 `docs/COMPANY_TRACK_ROADMAP.md` Phase D **各自独立**——行业快照存
+> **2026-08 排期标注**：与 `docs/roadmap/COMPANY_TRACK_ROADMAP.md` Phase D **各自独立**——行业快照存
 > `data/industry_profiles/`、对标组存 `data/peer_groups/`，在线节点各读各的，可并行实施。
 
 10. `resolve_industry_context` 接读行业知识存储（替代 Phase 0 的直接计算），支持 stale 版本读取
@@ -407,7 +407,7 @@ industry_trigger_rules:
 
 ### Phase 5：冲突、验证与观点合成行业感知
 
-> **2026-08 排期标注**：与 `docs/COMPANY_TRACK_ROADMAP.md` Phase F **合并实施**——同一批
+> **2026-08 排期标注**：与 `docs/roadmap/COMPANY_TRACK_ROADMAP.md` Phase F **合并实施**——同一批
 > prompt 改造点同时注入行业基准摘要与对标组基准（`peer_*`），避免改两遍。
 
 18. `explore_conflicts` payload / prompt 增强（注入行业基准摘要）
@@ -416,7 +416,7 @@ industry_trigger_rules:
 
 ### Phase 6：报告层与持久化边界
 
-> **2026-08 排期标注**：与 `docs/COMPANY_TRACK_ROADMAP.md` Phase F **合并实施**——报告 payload
+> **2026-08 排期标注**：与 `docs/roadmap/COMPANY_TRACK_ROADMAP.md` Phase F **合并实施**——报告 payload
 > 同时支持 `industry` 与 `company_track` 字段，review gate 检查同批落地，避免重复改 prompt。
 
 21. `ReportGenerationPayload` 新增 `industry` 字段（结构见第五节）
@@ -480,9 +480,9 @@ industry_trigger_rules:
 
 `build_company_context` 关键词抽取、`reviewer.py` 的 `_HIGH_LEVERAGE_INDUSTRIES`、`engine.py` 的 `_FINANCIAL_INDUSTRIES` 已是三处中文名硬编码。新机制若再用「银行」「房地产」做 key，会出现第四处且与 artifact 的 `classification_standard` 字段不一致。统一用 `classification_standard + 行业代码` 作 key，显示名经规范字典解析，三处硬编码逐步收敛。
 
-### 与 `DOMAIN_CONTEXT_ROADMAP.md` 的边界？（评审新增 A2）
+### 与 `docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md` 的边界？（评审新增 A2）
 
-该文档主张「不要把 domain context 做成静态行业知识库」（primitives/playbooks 动态激活），本方案的 `IndustryContextArtifact` 恰好是静态知识资产，两者方向存在张力。划界方案：**本方案只做数值基准层**（可版本化的估值/财务/成长中位数 + 阈值机制 + 注入通道），定性解释层（商业模式、产业链叙事、关键驱动与风险的分析框架）归 `DOMAIN_CONTEXT_ROADMAP.md` 的 primitives/playbooks。`IndustryContextArtifact` 的定性字段（`business_model_summary / industry_chain / key_drivers / risk_factors`）在 v1 保持空或轻量，避免越界与重复建设。
+该文档主张「不要把 domain context 做成静态行业知识库」（primitives/playbooks 动态激活），本方案的 `IndustryContextArtifact` 恰好是静态知识资产，两者方向存在张力。划界方案：**本方案只做数值基准层**（可版本化的估值/财务/成长中位数 + 阈值机制 + 注入通道），定性解释层（商业模式、产业链叙事、关键驱动与风险的分析框架）归 `docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md` 的 primitives/playbooks。`IndustryContextArtifact` 的定性字段（`business_model_summary / industry_chain / key_drivers / risk_factors`）在 v1 保持空或轻量，避免越界与重复建设。
 
 ---
 

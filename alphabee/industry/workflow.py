@@ -3,7 +3,7 @@
 离线/准离线批处理流水线：确定性顺序执行六节点（nodes.py），产出可版本化、可复用、
 可审计的 ``IndustryContextArtifact`` JSON 快照。
 
-形态决策（docs/industry-context-phase1-design.md D3）：不引入 LangGraph——离线批处理
+形态决策（docs/industry/industry-context-phase1-design.md D3）：不引入 LangGraph——离线批处理
 不需要流式/检查点/条件路由；节点统一 ``(state, options) -> state`` 签名，逐个可单测。
 
 用法：:

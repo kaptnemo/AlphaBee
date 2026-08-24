@@ -19,7 +19,7 @@
 仍为源单位：``revenue_yoy`` / ``roe`` / ``debt_to_assets`` / ``gross_margin`` / ``period`` /
 ``stock_code``）。**不要传入已归一化的 ratio 记录**（会重复 ÷100）。
 
-背景（docs/industry-context-phase1-design.md §2.1）：Phase 0 的 ``data.py`` 有两个潜在缺陷，
+背景（docs/industry/industry-context-phase1-design.md §2.1）：Phase 0 的 ``data.py`` 有两个潜在缺陷，
 本模块即修复点——① 读取 adapter 重命名前的列名（``tr_yoy`` / ``grossprofit_margin``），
 导致 ``industry_revenue_yoy`` / ``industry_avg_gross_margin`` 恒为 None；
 ② 百分比原值直接当 RATIO 注入，导致 roe_level / debt_ratio 相对阈值恒不命中。

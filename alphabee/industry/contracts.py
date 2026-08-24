@@ -3,7 +3,7 @@
 本模块是行业知识资产（``IndustryContextArtifact``）与离线工作流（``IndustryContextWorkflow``）
 的 typed 契约所在地，取代 Phase 0 时放在 ``orchestrator/contracts.py`` 的扁平 v1 版本。
 
-设计要点（见 docs/industry-context-phase1-design.md）：
+设计要点（见 docs/industry/industry-context-phase1-design.md）：
 - 数值基准按类别分三组字典（valuation / financial / growth），键一律用 canonical 字段名，
   与 ``fact_values`` 注入同构（单一命名空间，无 ``_median`` 之类第二套命名）。
 - 匹配键为 ``classification_standard + industry_code``；``sw_code`` 是申万源代码

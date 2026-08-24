@@ -30,7 +30,7 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | 0.6 用户输出与调试输出分层 | ⬜ | `main.py` `_render_final_report()` 仍把全部 issues（含 parse_error / rewrite 信息）打印到“🐞 系统问题”段 |
 | Phase 1 InsightAgent 稳定观点骨架 | 🟡 | 已接入主图（`nodes/insights.py` + `agents/insights/`），报告 prompt 以 `insight.core_view` 为主线（`prompts.py`）；`what_would_change_my_mind → falsification_conditions` 已贯通；parse fail 已有四级降级（0.4）；`materiality_rank` 未显式驱动报告排序 |
 | Phase 1.5 探索/验证/结算分层 | 🟡 | 结算层已随 0.5 落地（provisional 不升格、verified/partial 升格为 issue、rejected 沉淀 decision、状态回写 `conflicts_result`）；剩余：验证预算 / 最短排除路径 / 未探索区域记录、evidence refs 硬约束 |
-| Phase 2 BusinessModelContext | 🟡 | `services/company_context.py` 已有 industry / sub_industry / market_cap_category / lifecycle_stage / business_model_summary；无 BusinessModelClassifier、无 playbooks/primitives（见 `DOMAIN_CONTEXT_ROADMAP.md`） |
+| Phase 2 BusinessModelContext | 🟡 | `services/company_context.py` 已有 industry / sub_industry / market_cap_category / lifecycle_stage / business_model_summary；无 BusinessModelClassifier、无 playbooks/primitives（见 `docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md`） |
 | Phase 3 Claim-Evidence Graph | ⬜ | 未实现；`gates.py` 已有 `evidence_coverage / grounding_score` 检查，但上游 Decision 普遍未填 `based_on / evidence_refs` |
 | Phase 4 ExpectationFitAgent | ⬜ | 未实现 |
 | Phase 5 报告备忘录化 | 🟡 | 报告已重构为“观点驱动”（`REPORT_GENERATOR_PROMPT`：insight 主线 + 12 章节 + 三情景 + 可证伪条件），LLM 空输出有确定性降级报告（`reporter.py` `build_deterministic_report`）；“系统问题”段仍在 CLI 暴露 |
@@ -187,7 +187,7 @@ ThesisEngine.run(
 
 ### 0.4 修复 Insight schema 脆弱性
 
-状态：✅ 已实现（2026-08），落地方式见 `docs/INSIGHT_DEGRADATION_DESIGN.md`。
+状态：✅ 已实现（2026-08），落地方式见 `docs/design/INSIGHT_DEGRADATION_DESIGN.md`。
 
 目标：不要让观点骨架因为轻微枚举值漂移而整层失效。
 
@@ -440,7 +440,7 @@ verify_hypotheses
 关于这一层如何进一步扩展为 **公司特定驱动画像 + ContextRouter + Domain Playbooks + EventOverlay**，已单独整理为：
 
 ```text
-docs/DOMAIN_CONTEXT_ROADMAP.md
+docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md
 ```
 
 该子 roadmap 的核心主张是：
@@ -662,7 +662,7 @@ ExpectationFitAgent
 | P2 | BusinessModelContext | 提升行业/公司语境判断 | 🟡 基础字段已有，Classifier/Playbook 未做 |
 | P2 | Claim-Evidence Graph | 让观点可追踪、可审查 | ⬜ 未实现 |
 | P3 | ExpectationFitAgent | 打通财务质量与投资价值 | ⬜ 未实现 |
-| P3 | 同行基准 / 行业分位 | 降低固定阈值误判 | 🟡 Phase 0 已落地（`resolve_industry_context` + 相对基准阈值 + `market_share_change` 复活，见 industry-context-injection-plan.md）；完整研究工作流/报告层未做 |
+| P3 | 同行基准 / 行业分位 | 降低固定阈值误判 | 🟡 Phase 0 已落地（`resolve_industry_context` + 相对基准阈值 + `market_share_change` 复活，见 `docs/industry/industry-context-injection-plan.md`）；完整研究工作流/报告层未做 |
 
 ---
 

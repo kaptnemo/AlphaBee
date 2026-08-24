@@ -1,6 +1,6 @@
 """Insight degradation rescue layer (ROADMAP 0.4).
 
-四级降级阶梯（详见 docs/INSIGHT_DEGRADATION_DESIGN.md）：
+四级降级阶梯（详见 docs/design/INSIGHT_DEGRADATION_DESIGN.md）：
 
 - Tier 0: 严格解析成功（在调用方 ``nodes/insights.py`` 中先行尝试）
 - Tier 1: ``lenient_parse`` — 宽松救援，只修结构不补内容，无 LLM

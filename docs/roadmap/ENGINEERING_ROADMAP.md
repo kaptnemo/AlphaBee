@@ -7,7 +7,7 @@
 业务能力路线图单独保存在：
 
 ```text
-ROADMAP.md
+docs/roadmap/ROADMAP.md
 ```
 
 本文档聚焦：

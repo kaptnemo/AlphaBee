@@ -4,7 +4,7 @@
 与数据源解耦——上游（resolve_industry_context 节点）负责取数，
 本模块只负责"记录列表 → 基准"这一确定性变换，便于离线单测。
 
-推导规则（与 docs/industry-context-injection-plan.md 对齐）：
+推导规则（与 docs/industry/industry-context-injection-plan.md 对齐）：
 - 各基准取成分股记录的非空值**中位数**（对异常值稳健，优于均值）
 - 某个字段全部缺失 → 该基准为 None，不注入 fact_values（下游回退默认阈值）
 - 估值基准（pe_ttm / pb）直接透传行业指数快照值，不做中位数

@@ -2,7 +2,7 @@
 # API: stock_zygc_em()（东方财富-个股-主营构成）
 # 列名与 akshare 1.18.x stock_zygc_em 返回值对齐（2026-08 核实）。
 # 注意：该接口无"同比增长率"列——分项增速由 normalize 跨期同口径推导
-# （见 docs/COMPANY_TRACK_ROADMAP.md Phase A 实施说明）。
+# （见 docs/roadmap/COMPANY_TRACK_ROADMAP.md Phase A 实施说明）。
 
 stock_zygc_em:
   报告日期:  report_date

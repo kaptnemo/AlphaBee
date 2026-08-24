@@ -15,7 +15,7 @@ P0 第 5 步（待）：注入 synthesize_insights。
 - ``DriverProfile`` / ``ActivatedPrimitive`` —— 公司驱动画像契约
 - ``build_driver_profile`` —— 组装 DriverProfile
 
-详见 docs/DOMAIN_CONTEXT_ROADMAP.md。
+详见 docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md。
 """
 
 from alphabee.domain_context.context_router import (
