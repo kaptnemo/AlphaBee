@@ -6,7 +6,7 @@ Phase B（✅）：真实赛道标签——规则推导（占比×增速加权�
 override 机制（与申万基线并存）+ 跨年报期业务主线漂移检测。
 
 后续阶段（C-F）：对标组构建与基准、商业模式定位、消费端打通——
-见 docs/COMPANY_TRACK_ROADMAP.md。
+见 docs/roadmap/COMPANY_TRACK_ROADMAP.md。
 
 公共 API：
 - ``fetch_business_segments`` —— 业务线分项取数（EM 优先，fina_mainbz 兜底）
@@ -32,6 +32,7 @@ from alphabee.company_track.label import (
     TrackLabelResult,
     derive_track_label,
     detect_track_drift,
+    select_label_base,
     synthesize_track_label,
 )
 from alphabee.company_track.normalize import (
@@ -79,5 +80,6 @@ __all__ = [
     "split_domestic_international",
     "validate_a_share_codes",
     "segments_for_period",
+    "select_label_base",
     "synthesize_track_label",
 ]

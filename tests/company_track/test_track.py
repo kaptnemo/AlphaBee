@@ -99,6 +99,35 @@ def test_build_company_track_drift_marks_needs_review(monkeypatch):
     assert any("业务主线漂移" in note for note in artifact.review_notes)
 
 
+def test_build_company_track_uses_annual_base_when_latest_is_h1(monkeypatch):
+    # 恒瑞场景：最新期 2026H1 是「销售商品」收入性质拆分，年报 2025 是「肿瘤」→ 标签取年报
+    segments = [
+        SegmentSnapshot(
+            report_date="20260630", segment_name="销售商品", category="按产品分类", revenue_share=90.0, source="em"
+        ),
+        SegmentSnapshot(
+            report_date="20260630", segment_name="许可收入", category="按产品分类", revenue_share=9.0, source="em"
+        ),
+        SegmentSnapshot(
+            report_date="20251231", segment_name="肿瘤", category="按产品分类", revenue_share=52.7, source="em"
+        ),
+        SegmentSnapshot(
+            report_date="20251231", segment_name="神经科学", category="按产品分类", revenue_share=13.5, source="em"
+        ),
+    ]
+    monkeypatch.setattr(
+        data_module, "fetch_business_segments", lambda *a, **k: _collection(segments, latest="20260630")
+    )
+
+    artifact = build_company_track("600276.SH")
+    assert artifact.track_label == "肿瘤"
+    assert artifact.dominant_segment == "肿瘤"
+    # 数据新鲜度仍以最新期计（stale 判定依据），但标签基于年报期
+    assert artifact.as_of_date == "20260630"
+    assert any("20251231 报告期" in note for note in artifact.review_notes)
+    assert any("回退最近年报期" in note for note in artifact.review_notes)
+
+
 def test_build_company_track_filters_passthrough(monkeypatch):
     captured = {}
 

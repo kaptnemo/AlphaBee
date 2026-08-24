@@ -13,7 +13,7 @@
 > **与 domain_context 的边界**：本 archetype 是「财务解读口径」（管"怎么读"，校准阈值/及格线，
 > 如 ODM 低毛利不等于恶化），是 `domain_context.ContextRouter` 的输入信号之一；它不产 playbook、
 > 不与 primitives/playbooks 竞争（后者管"看什么"，即驱动变量框架）。详见
-> docs/DOMAIN_CONTEXT_ROADMAP.md「与 business_model archetype 的边界」。
+> docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md「与 business_model archetype 的边界」。
 
 E2 分类器：规则启发（毛利率带 + 研发费率带 + 大客户集中度佐证）为主，
 LLM 复核为辅（``agent.business_model``，失败回退规则）。

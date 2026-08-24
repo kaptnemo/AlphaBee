@@ -17,8 +17,10 @@ from alphabee.company_track.label import (
     TrackLabelResult,
     derive_track_label,
     detect_track_drift,
+    select_label_base,
     synthesize_track_label,
 )
+from alphabee.company_track.naming import is_other_placeholder, is_revenue_type_segment
 
 _STALE_AFTER_DAYS = 90  # 报告期口径：年报披露后 ~3 个月视为需刷新
 
@@ -77,11 +79,29 @@ def build_company_track(
             degraded_reason=collection.error or "无业务线数据",
         )
 
-    rule: TrackLabelResult = derive_track_label(collection.latest_segments())
+    base_segments, base_period = select_label_base(collection.segments)
+    rule: TrackLabelResult = derive_track_label(base_segments)
     track_label, basis, method = synthesize_track_label(collection, rule, use_llm=use_llm)
     drift_notes = detect_track_drift(collection.segments)
 
-    notes = [f"公司赛道标签基于 {collection.latest_period} 报告期数据（来源 {collection.source}）"]
+    notes = [f"公司赛道标签基于 {base_period} 报告期数据（来源 {collection.source}）"]
+    if base_period and collection.latest_period and base_period != collection.latest_period:
+        latest_product = [
+            s
+            for s in collection.segments
+            if s.report_date == collection.latest_period
+            and s.category == "按产品分类"
+            and not is_other_placeholder(s.segment_name)
+        ]
+        if latest_product and all(is_revenue_type_segment(s.segment_name) for s in latest_product):
+            notes.append(
+                f"最新期 {collection.latest_period} 为收入性质拆分（半年报口径退化），"
+                f"赛道标签回退最近年报期 {base_period}"
+            )
+        else:
+            notes.append(
+                f"标签基准取最近年报期 {base_period}（口径稳定优先），最新期 {collection.latest_period} 未用于标签"
+            )
     notes.extend(rule.warnings)
     notes.extend(drift_notes)
     if method == "llm":

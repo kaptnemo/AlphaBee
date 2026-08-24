@@ -158,6 +158,28 @@ def test_drop_other_filter():
     assert not any("其他" in s.segment_name for s in segments)
 
 
+def test_drop_other_keeps_compound_name():
+    # 「其他」精确判定：不得误杀「汽车、汽车相关产品及其他产品」这类复合名（比亚迪）
+    rows = [
+        {
+            "report_date": "20251231",
+            "biz_segment_name": "汽车、汽车相关产品及其他产品",
+            "biz_segment_revenue": 5e10,
+            "biz_segment_revenue_share": 0.8,
+        },
+        {
+            "report_date": "20251231",
+            "biz_segment_name": "其他(补充)",
+            "biz_segment_revenue": 1e8,
+            "biz_segment_revenue_share": 0.001,
+        },
+    ]
+    segments = normalize_segments(rows, "em", drop_other=True)
+    names = [s.segment_name for s in segments]
+    assert "汽车、汽车相关产品及其他产品" in names
+    assert "其他(补充)" not in names
+
+
 # ── 跨期推导纯函数 ─────────────────────────────────────────────────────────
 
 

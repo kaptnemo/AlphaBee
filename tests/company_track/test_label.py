@@ -4,6 +4,7 @@ from alphabee.company_track.contracts import SegmentCollection, SegmentSnapshot
 from alphabee.company_track.label import (
     derive_track_label,
     detect_track_drift,
+    select_label_base,
     synthesize_track_label,
 )
 
@@ -231,3 +232,75 @@ def test_drift_uses_consistent_category_across_periods():
     notes = detect_track_drift([region_only_2015, product_2016, product_2017])
     # 2015（地区口径）不与 2016（产品口径）比较；2016 → 2017 主线未变
     assert notes == []
+
+
+# ── 口径稳定化（最新年报 + 收入性质/匿名告警 + 改名吸收）─────────────────────
+
+
+def test_revenue_type_warning():
+    # 恒瑞半年报口径：按产品分类 = 销售商品/许可收入 → 收入性质拆分告警
+    segments = [_seg("销售商品", 90.25, 1.87), _seg("许可收入", 9.20, -28.57)]
+    result = derive_track_label(segments)
+    assert result.track_label == "销售商品"
+    assert any("收入性质" in w for w in result.warnings)
+
+
+def test_anonymized_warning():
+    # 海康威视：主导分项为 EM 匿名占位「主业1产品及服务」
+    result = derive_track_label([_seg("主业1产品及服务", 80.0, 5.0)])
+    assert result.track_label == "主业1产品及服务"
+    assert any("匿名" in w for w in result.warnings)
+
+
+def test_drift_rename_absorbed():
+    # 中芯国际：晶圆代工 → 晶圆制造代工 纯改名，不得报漂移
+    segments = [
+        _annual_seg("集成电路晶圆代工", 99.0, "20241231"),
+        _annual_seg("集成电路晶圆制造代工", 99.0, "20251231"),
+    ]
+    assert detect_track_drift(segments) == []
+
+
+def test_drift_taxonomy_reclassification():
+    # 剂型 → 治疗领域 实质重分类：分项集合完全不相交且非改名 → 口径切换
+    segments = [
+        _annual_seg("原料药", 50.0, "20241231"),
+        _annual_seg("针剂", 50.0, "20241231"),
+        _annual_seg("肿瘤", 60.0, "20251231"),
+        _annual_seg("造影剂", 40.0, "20251231"),
+    ]
+    notes = detect_track_drift(segments)
+    assert len(notes) == 1
+    assert "分类口径切换" in notes[0]
+
+
+def test_select_label_base_prefers_annual_product_mix():
+    # 最新期是半年报（收入性质拆分），年报是治疗领域 → 基准选年报
+    segments = [
+        SegmentSnapshot(
+            report_date="20260630", segment_name="销售商品", category="按产品分类", revenue_share=90.0, source="em"
+        ),
+        SegmentSnapshot(
+            report_date="20260630", segment_name="许可收入", category="按产品分类", revenue_share=9.0, source="em"
+        ),
+        SegmentSnapshot(
+            report_date="20251231", segment_name="肿瘤", category="按产品分类", revenue_share=52.7, source="em"
+        ),
+        SegmentSnapshot(
+            report_date="20251231", segment_name="神经科学", category="按产品分类", revenue_share=13.5, source="em"
+        ),
+    ]
+    base, period = select_label_base(segments)
+    assert period == "20251231"
+    assert {s.segment_name for s in base} == {"肿瘤", "神经科学"}
+
+
+def test_select_label_base_falls_back_to_latest_when_no_annual():
+    segments = [
+        SegmentSnapshot(
+            report_date="20260630", segment_name="销售商品", category="按产品分类", revenue_share=90.0, source="em"
+        ),
+    ]
+    base, period = select_label_base(segments)
+    assert period == "20260630"
+    assert len(base) == 1

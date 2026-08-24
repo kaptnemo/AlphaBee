@@ -17,8 +17,7 @@ from collections import Counter
 from typing import Any
 
 from alphabee.company_track.contracts import SegmentSnapshot
-
-_OTHER_NAME_MARKERS = ("其他", "其它")
+from alphabee.company_track.naming import is_other_placeholder
 
 
 def _safe_float(value: Any) -> float | None:
@@ -155,7 +154,9 @@ def derive_segment_yoy(segments: list[SegmentSnapshot]) -> None:
 
 
 def _is_other(name: str) -> bool:
-    return any(marker in name for marker in _OTHER_NAME_MARKERS)
+    # 精确判定：只匹配「其他/其他(补充)/其他业务…」占位项，
+    # 不误杀「汽车、汽车相关产品及其他产品」这类复合名（见 naming.py）。
+    return is_other_placeholder(name)
 
 
 def latest_report_period(segments: list[SegmentSnapshot]) -> str | None:
