@@ -17,8 +17,14 @@ Phase 1 变更：
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import TYPE_CHECKING, Any
 
 from alphabee.industry.normalize import _TUSHARE_RAW_KEYS, _TUSHARE_VALUATION_KEYS
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from alphabee.collectors.tushare.helper import TuShareHelper
 
 _PEER_LIMIT = 20  # 成分股抽样上限，控制单次分析 API 调用量
 _VALUATION_LOOKBACK_DAYS = 7  # daily_basic 回看窗口（取最新交易日）
@@ -53,12 +59,12 @@ def _normalize_ts_code(symbol: str) -> str:
 _NUMERIC_INPUT_KEYS = tuple(_TUSHARE_RAW_KEYS.values())
 
 
-def _has_numeric_field(row: dict) -> bool:
+def _has_numeric_field(row: dict[str, object]) -> bool:
     """轻量存在性检查：至少一个数值输入键非 None（完整转换交给 normalize）。"""
     return any(row.get(key) is not None for key in _NUMERIC_INPUT_KEYS)
 
 
-def _latest_daily_basic(helper, ts_code: str) -> dict[str, object]:
+def _latest_daily_basic(helper: TuShareHelper, ts_code: str) -> dict[str, object]:
     """取个股最新交易日的估值行（pe_ttm / pb_ratio，adapter 重命名后）。"""
     end = date.today().strftime("%Y%m%d")
     start = (date.today() - timedelta(days=_VALUATION_LOOKBACK_DAYS)).strftime("%Y%m%d")
@@ -74,7 +80,7 @@ def _latest_daily_basic(helper, ts_code: str) -> dict[str, object]:
     return {key: latest.get(key) for key in _TUSHARE_VALUATION_KEYS.values() if key in latest}
 
 
-def _con_codes(member_df) -> list[str]:
+def _con_codes(member_df: pd.DataFrame) -> list[str]:
     """从 index_member 结果中提取成分股代码列表（按入指顺序）。"""
     con_col = next((c for c in ("con_code", "ts_code") if c in member_df.columns), None)
     if con_col is None:
@@ -85,12 +91,12 @@ def _con_codes(member_df) -> list[str]:
     return codes
 
 
-def _fetch_rows_for_codes(helper, codes: list[str]) -> tuple[list[dict], list[str]]:
+def _fetch_rows_for_codes(helper: TuShareHelper, codes: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
     """对显式代码列表取最新一期财务（源单位行）+ 估值补全（daily_basic）。
 
     单只成分取数失败静默跳过（best-effort）；返回 (rows, peer_codes) 一一对应。
     """
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     peer_codes: list[str] = []
     for con_code in codes:
         try:
@@ -117,7 +123,7 @@ def _fetch_rows_for_codes(helper, codes: list[str]) -> tuple[list[dict], list[st
 def fetch_industry_peers(
     sw_code: str,
     limit: int = _PEER_LIMIT,
-) -> tuple[list[dict], list[str], str | None]:
+) -> tuple[list[dict[str, Any]], list[str], str | None]:
     """获取行业成分股最新一期财务指标（源单位行）+ 参与推导的成分股代码。
 
     Args:
@@ -154,7 +160,7 @@ def fetch_industry_peers(
 def fetch_peer_financials_for_codes(
     peer_codes: list[str],
     limit: int = _PEER_LIMIT,
-) -> tuple[list[dict], list[str], str | None]:
+) -> tuple[list[dict[str, Any]], list[str], str | None]:
     """对显式对标组代码列表取最新一期财务（源单位行）+ 估值补全（COMPANY_TRACK Phase D1）。
 
     与 ``fetch_industry_peers`` 的取数/归一化链路完全一致，只是代码列表由调用方给定
@@ -192,7 +198,7 @@ def fetch_peer_financials(
     industry: str,
     sw_code: str | None,
     limit: int = _PEER_LIMIT,
-) -> tuple[list[dict], str | None]:
+) -> tuple[list[dict[str, Any]], str | None]:
     """获取行业成分股最新一期财务指标（源单位行，Phase 0 兼容签名）。
 
     内部委托 ``fetch_industry_peers``；调用方（resolve_industry_context 节点）需经

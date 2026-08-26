@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import datetime
+from typing import Any
 
 from alphabee.company_track.contracts import SegmentCollection
 from alphabee.company_track.normalize import (
@@ -32,7 +33,7 @@ def _akshare_symbol(ts_code: str) -> str:
     return f"SZ{upper}"
 
 
-def _fetch_em_rows(symbol: str) -> tuple[list[dict], str | None]:
+def _fetch_em_rows(symbol: str) -> tuple[list[dict[str, Any]], str | None]:
     """东方财富主营构成（post-adapter canonical 行）。"""
     try:
         from alphabee.collectors.akshare.helper import AkShareHelper
@@ -53,9 +54,9 @@ def _fetch_em_rows(symbol: str) -> tuple[list[dict], str | None]:
         return [], f"东方财富主营构成获取失败: {exc}"
 
 
-def _dedupe_tushare_rows(rows: list[dict]) -> list[dict]:
+def _dedupe_tushare_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """fina_mainbz 去重：同 (报告期, 分项) 保留 update_flag 最新修订（2 > 1）。"""
-    best: dict[tuple[str, str], dict] = {}
+    best: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         key = (str(row.get("period") or ""), str(row.get("biz_segment_name") or ""))
         if not all(key):
@@ -67,7 +68,7 @@ def _dedupe_tushare_rows(rows: list[dict]) -> list[dict]:
     return list(best.values())
 
 
-def _fetch_tushare_rows(symbol: str) -> tuple[list[dict], str | None]:
+def _fetch_tushare_rows(symbol: str) -> tuple[list[dict[str, Any]], str | None]:
     """Tushare fina_mainbz（post-adapter canonical 行；无占比/增速，含修订行去重）。"""
     try:
         from alphabee.collectors.tushare.helper import TuShareHelper

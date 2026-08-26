@@ -111,7 +111,7 @@ def _llm_classify(
         )
         model = create_chat_model("agent.business_model")
         raw = model.invoke(prompt).content
-        parsed = parse_json(raw)
+        parsed = parse_json(str(raw))
         if not isinstance(parsed, dict):
             return None
         model_name = str(parsed.get("business_model") or "").strip()

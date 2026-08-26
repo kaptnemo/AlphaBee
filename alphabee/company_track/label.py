@@ -40,7 +40,7 @@ class TrackLabelResult:
     fastest_segment: str | None  # 增速最快业务线（占比 ≥ min_share）
     track_label: str  # 规则标签（= 加权胜出分项名）
     override_basis: str  # 依据文本（引用占比/增速数值）
-    candidates: list[dict] = field(default_factory=list)  # [{name, share, yoy, score}] 前 5
+    candidates: list[dict[str, object]] = field(default_factory=list)  # [{name, share, yoy, score}] 前 5
     warnings: list[str] = field(default_factory=list)
     category: str = ""  # 实际使用的分类类型
 
@@ -139,7 +139,11 @@ def derive_track_label(
     fast_pool = [
         seg for seg in candidates if _effective_share(seg, candidates) >= min_share and seg.revenue_yoy is not None
     ]
-    fastest = max(fast_pool, key=lambda seg: seg.revenue_yoy, default=None)
+    fastest = max(
+        fast_pool,
+        key=lambda seg: seg.revenue_yoy if seg.revenue_yoy is not None else float("-inf"),
+        default=None,
+    )
 
     scored = sorted(
         candidates,
@@ -269,7 +273,7 @@ def synthesize_track_label(
         )
         model = create_chat_model("agent.track")
         raw = model.invoke(prompt).content
-        parsed = parse_json(raw)
+        parsed = parse_json(str(raw))
         if not isinstance(parsed, dict):
             return rule.track_label, rule.override_basis, "rule"
         basis = str(parsed.get("override_basis") or "").strip()

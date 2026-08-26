@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 # 注入 fact_values 的 canonical 字段（与 alphabee/schemas/industry.yaml 对齐）
 INDUSTRY_BENCHMARK_FIELDS = (
@@ -135,7 +136,7 @@ def _median(values: list[float]) -> float | None:
     return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
-def _safe_float(value: object) -> float | None:
+def _safe_float(value: Any) -> float | None:
     try:
         if value is None:
             return None
@@ -146,7 +147,7 @@ def _safe_float(value: object) -> float | None:
 
 
 def derive_benchmarks(
-    peer_records: list[dict],
+    peer_records: list[dict[str, Any]],
     *,
     industry: str,
     sw_code: str | None = None,

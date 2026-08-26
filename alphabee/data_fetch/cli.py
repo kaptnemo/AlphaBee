@@ -184,7 +184,7 @@ def main() -> None:
             print(f"Created {len(tasks)} fix task(s):")
             for t in tasks:
                 print(f"  Task #{t.task_id} → issue #{t.issue_id}: {t.patch_target}")
-                print(f"  {t.prompt_context[:200]}...")
+                print(f"  {t.prompt_context[:200] if t.prompt_context else ''}...")
                 print()
         else:
             print("No new fix tasks created (all open issues already have pending tasks).")

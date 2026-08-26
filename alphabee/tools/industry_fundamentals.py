@@ -10,6 +10,7 @@
 import datetime
 import json
 import math
+from typing import Any
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -89,7 +90,7 @@ class IndustryFundamentals(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value, default: float = 0.0) -> float:
+def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         v = float(value)
         return default if math.isnan(v) else v
@@ -97,14 +98,14 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _safe_int(value, default: int = 0) -> int:
+def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(value))
     except (TypeError, ValueError):
         return default
 
 
-def _col(df: pd.DataFrame, *candidates: str, default=None):
+def _col(df: pd.DataFrame, *candidates: str, default: str | None = None) -> str | None:
     """Return the first matching column value from a row or series."""
     for c in candidates:
         if c in df.columns:
@@ -134,7 +135,7 @@ def _find_board(boards_df: pd.DataFrame, industry: str) -> pd.Series | None:
     return None
 
 
-def _compute_perf_from_hist(hist_df: pd.DataFrame, today_change_pct: float) -> dict:
+def _compute_perf_from_hist(hist_df: pd.DataFrame, today_change_pct: float) -> dict[str, float]:
     """Compute rolling returns from daily history DataFrame.
 
     Expects canonical columns: trade_date (str), industry_close (float).
@@ -277,10 +278,10 @@ def _fetch_sw_valuation_history(ts_helper: TuShareHelper, sw_code: str, start_da
         return []
 
 
-def _parse_board_summary_row(row: pd.Series) -> dict:
+def _parse_board_summary_row(row: pd.Series) -> dict[str, Any]:
     """Extract standardised fields from a board summary row (同花顺)."""
 
-    def _get(*keys):
+    def _get(*keys: str) -> object:
         for k in keys:
             if k in row.index and row[k] is not None:
                 return row[k]

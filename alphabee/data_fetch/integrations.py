@@ -37,7 +37,7 @@ def capture_failure(
     error_message: str | None = None,
     severity: str = "medium",
     missing_fields: list[str] | None = None,
-    request_payload: dict | None = None,
+    request_payload: dict[str, Any] | None = None,
     response_snippet: str | None = None,
     trace_id: str | None = None,
     session_id: str | None = None,
@@ -94,7 +94,7 @@ def tracked(
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             resolved_api = api_name or func.__name__
             try:
                 return func(*args, **kwargs)
@@ -110,7 +110,7 @@ def tracked(
                 raise
 
         @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             resolved_api = api_name or func.__name__
             try:
                 return await func(*args, **kwargs)

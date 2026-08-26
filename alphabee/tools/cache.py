@@ -3,13 +3,11 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from collections.abc import Awaitable, Callable
-from typing import TypeVar
-
-T = TypeVar("T")
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 
-class SyncTTLCache:
+class SyncTTLCache[T]:
     def __init__(self, ttl_seconds: float = 300.0) -> None:
         self.ttl_seconds = ttl_seconds
         self._cache: dict[object, tuple[float, T]] = {}
@@ -53,14 +51,14 @@ class SyncTTLCache:
         return value
 
 
-class AsyncTTLCache:
+class AsyncTTLCache[T]:
     def __init__(self, ttl_seconds: float = 300.0) -> None:
         self.ttl_seconds = ttl_seconds
         self._cache: dict[object, tuple[float, T]] = {}
         self._inflight: dict[object, asyncio.Task[T]] = {}
         self._lock = asyncio.Lock()
 
-    async def get_or_compute(self, key: object, compute: Callable[[], Awaitable[T]]) -> T:
+    async def get_or_compute(self, key: object, compute: Callable[[], Coroutine[Any, Any, T]]) -> T:
         async with self._lock:
             cached = self._cache.get(key)
             now = time.monotonic()

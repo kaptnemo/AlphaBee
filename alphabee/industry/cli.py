@@ -22,7 +22,7 @@ import argparse
 import json
 import sys
 
-from alphabee.industry.contracts import IndustryTarget
+from alphabee.industry.contracts import IndustryTarget, IndustryWorkflowState
 from alphabee.industry.persistence import IndustryProfileStore
 
 
@@ -70,8 +70,7 @@ def _target(args: argparse.Namespace) -> IndustryTarget:
     raise SystemExit("需要 --symbol，或 --standard + --code（可加 --name）")
 
 
-def _print_run_result(state) -> None:
-    from alphabee.industry.contracts import IndustryContextArtifact
+def _print_run_result(state: IndustryWorkflowState) -> None:
 
     print("=" * 64)
     print("行业知识快照生成")
@@ -81,7 +80,8 @@ def _print_run_result(state) -> None:
         for note in state.review.notes:
             print(f"    - {note}")
         return
-    artifact: IndustryContextArtifact = state.artifact
+    artifact = state.artifact
+    assert artifact is not None
     print(
         f"  行业            : {artifact.industry or '-'}（{artifact.classification_standard}:{artifact.industry_code}）"
     )
@@ -134,7 +134,7 @@ def _print_show(args: argparse.Namespace, store: IndustryProfileStore) -> None:
 def _resolve_industry_name(args: argparse.Namespace) -> str:
     """解析交叉校验用的行业名：--name 直接给定；--symbol 经 get_industry_fact。"""
     if args.name:
-        return args.name
+        return str(args.name)
     if args.symbol:
         from alphabee.agents.facts.tools.industry_fact import get_industry_fact
 

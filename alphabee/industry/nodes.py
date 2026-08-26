@@ -12,8 +12,9 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 
-from alphabee.industry.benchmarks import derive_benchmarks
+from alphabee.industry.benchmarks import IndustryBenchmarks, derive_benchmarks
 from alphabee.industry.contracts import (
     IndustryContextArtifact,
     IndustryQualitative,
@@ -25,7 +26,7 @@ from alphabee.industry.normalize import assess_period_alignment, normalize_indus
 from alphabee.industry.persistence import IndustryProfileStore, suggest_stale_after
 
 
-def _safe_float(value: object) -> float | None:
+def _safe_float(value: Any) -> float | None:
     try:
         if value is None:
             return None
@@ -49,8 +50,8 @@ def collect_industry_facts(
     """采集行业身份、估值快照与成分股财务行（best-effort，任一部分失败不中断）。"""
     target = state.target
     errors: list[str] = []
-    identity: dict | None = None
-    valuation: dict = {
+    identity: dict[str, Any] | None = None
+    valuation: dict[str, Any] = {
         "industry_pe_ttm": None,
         "industry_pb": None,
         "trade_date": "",
@@ -121,7 +122,7 @@ def collect_industry_facts(
         errors.append("目标未指定：需要 symbol 或 classification_standard + industry_code")
 
     # ── 成分股财务行（源单位行，normalize 节点负责转换）────────────
-    peers_block: dict = {"rows": [], "peer_codes": [], "source": "", "fetch_error": None}
+    peers_block: dict[str, Any] = {"rows": [], "peer_codes": [], "source": "", "fetch_error": None}
     sw_code = (identity or {}).get("sw_code")
     if identity and sw_code:
         try:
@@ -207,7 +208,7 @@ def derive_industry_benchmarks(
 # ── 4. synthesize_industry_context ────────────────────────────────────────
 
 
-def _infer_lifecycle_stage(benchmarks) -> str | None:
+def _infer_lifecycle_stage(benchmarks: IndustryBenchmarks | None) -> str | None:
     """确定性生命周期启发（轻量；无数据返回 None）。"""
     if benchmarks is None:
         return None
@@ -252,7 +253,7 @@ def _synthesize_with_llm(
         )
         model = create_chat_model("agent.industry_research")
         raw = model.invoke(prompt).content
-        parsed = parse_json(raw)
+        parsed = parse_json(str(raw))
         if not isinstance(parsed, dict):
             return None
         return IndustryQualitative(

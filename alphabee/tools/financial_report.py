@@ -37,8 +37,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
@@ -73,7 +75,7 @@ REASON_AGENT_NO_ANSWER = "AGENT_NO_ANSWER"
 
 # 根目录定位结果缓存：同一 (公司, 年份, 报告类型) 的定位结果复用，
 # 未命中的结果也会缓存（负缓存），避免 agent 对不存在的报告反复重试。
-_REPORT_LOCATE_CACHE = SyncTTLCache(ttl_seconds=600.0)
+_REPORT_LOCATE_CACHE: SyncTTLCache[str | None] = SyncTTLCache(ttl_seconds=600.0)
 
 
 class FinancialReportRequest(BaseModel):
@@ -86,12 +88,12 @@ class FinancialReportRequest(BaseModel):
     """
 
     company_name: str | None = Field(
-        None,
+        default=None,
         description="公司名称（中文全称，如 '宁德时代'）。用于在 reports/ 下定位报告目录；"
         "与 company_code 至少提供一个。",
     )
     company_code: str | None = Field(
-        None,
+        default=None,
         description="公司/股票代码，支持 '300750' 或 '300750.SZ' 格式。"
         "内部会自动反查对应公司名称后定位报告目录；"
         "与 company_name 至少提供一个。",
@@ -106,7 +108,7 @@ class FinancialReportRequest(BaseModel):
         description="报告所属年份（如 2026）。可选；不填则按公司名定位，若该公司只有一份报告则命中该份。",
     )
     report_type: str | list[str] | None = Field(
-        None,
+        default=None,
         description="报告类型（可给单个或多个）。可选值：annual（年报）、semiannual（半年报）、"
         "quarterly（季报）、first_quarter/second_quarter/third_quarter/fourth_quarter"
         '（一/二/三/四季报）。例如 \'semiannual\' 或 ["annual", "semiannual"]。'
@@ -122,10 +124,10 @@ class FinancialReportResponse(BaseModel):
     提示文本，不再返回 ``None``），并未返回本模型；该模型仅为兼容旧接口保留。
     """
 
-    report_data: dict = Field(..., description="The financial report data")
+    report_data: dict[str, Any] = Field(..., description="The financial report data")
 
 
-def walk_with_depth_limit(root_dir: Path, max_depth: int):
+def walk_with_depth_limit(root_dir: Path, max_depth: int) -> Iterator[tuple[Path, list[Path], list[Path]]]:
     """Depth-first walk through a directory tree with a maximum depth limit."""
     root_dir = Path(root_dir)
     # (当前路径, 当前深度)
@@ -282,7 +284,7 @@ def _extract_code(company_dir_name: str) -> str:
     return match.group(1) if match else ""
 
 
-def _iter_report_candidates(root: Path):
+def _iter_report_candidates(root: Path) -> Iterator[tuple[str, str, str, Path]]:
     """产出 ``(company_str, dir_code, leaf_str, dir_path)`` 元组。
 
     覆盖两种结构：
@@ -383,7 +385,9 @@ def decide_root_path(request: FinancialReportRequest) -> str | None:
     return matches[0]
 
 
-def _normalise_locator_key(request: FinancialReportRequest) -> tuple:
+def _normalise_locator_key(
+    request: FinancialReportRequest,
+) -> tuple[str | None, int | None, tuple[str, ...]]:
     """生成报告定位的规范化缓存键。
 
     键为 ``(company_name, year, tuple(report_types))``，其中公司名优先用

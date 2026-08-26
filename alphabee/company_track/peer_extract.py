@@ -66,7 +66,7 @@ def extract_peer_candidates(
         model = create_chat_model("agent.peer_group")
         raw = model.invoke(prompt).content
         meta["raw"] = raw
-        parsed = parse_json(raw)
+        parsed = parse_json(str(raw))
         if not isinstance(parsed, list):
             meta["note"] = "LLM 输出非 JSON 数组"
             return [], meta

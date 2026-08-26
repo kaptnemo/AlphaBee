@@ -15,6 +15,7 @@ Look-ahead safety:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pandas as pd
@@ -133,7 +134,7 @@ def _euclidean(current: dict[str, float | None], historical: dict[str, float | N
         pairs.append(((c / scale) - (h / scale)) ** 2)
     if not pairs:
         return None
-    return sum(pairs) ** 0.5
+    return math.sqrt(sum(pairs))
 
 
 def _summary(hits: list[SimilarityHit]) -> dict[str, float | None]:

@@ -56,7 +56,7 @@ class IndustryCrossCheck:
         }
 
 
-def _pick_row(rows: list[dict], industry: str) -> dict | None:
+def _pick_row(rows: list[dict[str, Any]], industry: str) -> dict[str, Any] | None:
     """canonical 行列表中按行业名匹配（精确优先，前缀兜底）。"""
     if not industry:
         return None
@@ -83,8 +83,8 @@ def _match_sw(industry: str, frames: dict[str, Any]) -> SourceMatch | None:
 def crosscheck_industry(
     query: str,
     sw_frames: dict[str, Any],
-    ths_rows: list[dict],
-    em_rows: list[dict],
+    ths_rows: list[dict[str, Any]],
+    em_rows: list[dict[str, Any]],
     sw_valuation: dict[str, float | None] | None = None,
 ) -> IndustryCrossCheck:
     """多来源交叉校验（纯函数，不触网）。
@@ -160,7 +160,7 @@ def crosscheck_industry(
     return result
 
 
-def _safe_float(value: object) -> float | None:
+def _safe_float(value: Any) -> float | None:
     try:
         if value is None:
             return None
@@ -176,8 +176,8 @@ def fetch_industry_crosscheck(industry: str) -> IndustryCrossCheck:
     任何来源失败只记 warning，不中断；未知行业返回全 missed。
     """
     sw_frames: dict[str, Any] = {}
-    ths_rows: list[dict] = []
-    em_rows: list[dict] = []
+    ths_rows: list[dict[str, Any]] = []
+    em_rows: list[dict[str, Any]] = []
     warnings: list[str] = []
 
     try:

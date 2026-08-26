@@ -19,6 +19,8 @@ Pipeline phases:
 调用方被迫付 tushare 初始化代价。
 """
 
+from typing import Any
+
 from alphabee.market_regime.models import (
     CollectorOutput,
     MarketIndicatorSnapshot,
@@ -49,7 +51,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in ("MarketScoreEngine", "load_rules"):
         from alphabee.market_regime.score_engine import MarketScoreEngine, load_rules
 

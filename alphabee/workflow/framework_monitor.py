@@ -5,7 +5,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -100,10 +100,11 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
-def _load_previous_snapshot(path: Path) -> dict | None:
+def _load_previous_snapshot(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else None
 
 
 def _render_alert_line(alert: MonitorAlert) -> str:
@@ -147,8 +148,8 @@ def render_monitor_report(result: MonitorExecutionResult) -> str:
 
     lines.extend(["", "## 暂缺校验项"])
     if report.unavailable_checks:
-        for item in report.unavailable_checks:
-            lines.append(f"- **{item.check}**：{item.reason}")
+        for unavailable in report.unavailable_checks:
+            lines.append(f"- **{unavailable.check}**：{unavailable.reason}")
     else:
         lines.append("- 无。")
 
@@ -171,11 +172,11 @@ async def _call_monitor_llm(
     framework_markdown: str,
     company_name: str,
     symbol: str,
-    fundamentals_payload: dict,
-    market_payload: dict,
+    fundamentals_payload: dict[str, Any],
+    market_payload: dict[str, Any],
     news_text: str,
     search_text: str,
-    previous_snapshot: dict | None,
+    previous_snapshot: dict[str, Any] | None,
 ) -> FrameworkMonitorReport:
     now = datetime.now().isoformat(timespec="seconds")
     prompt = f"""
@@ -289,7 +290,7 @@ async def run_framework_monitor(
     )
 
     slug = _slugify(framework_file.stem)
-    symbol_dir = get_data_root() / normalize_symbol(fundamentals.symbol)
+    symbol_dir = get_data_root() / normalize_symbol(fundamentals.stock_code)
     snapshot_path = symbol_dir / "monitor_snapshots" / f"{slug}.json"
     report_path = symbol_dir / "monitor_reports" / f"{slug}.md"
     previous_snapshot = _load_previous_snapshot(snapshot_path)
@@ -298,7 +299,7 @@ async def run_framework_monitor(
         framework_name=framework_file.stem,
         framework_markdown=framework_markdown,
         company_name=fundamentals.name,
-        symbol=fundamentals.symbol,
+        symbol=fundamentals.stock_code,
         fundamentals_payload=fundamentals.model_dump(),
         market_payload=market_data.model_dump(),
         news_text=_trim_news(news_text),
@@ -309,7 +310,7 @@ async def run_framework_monitor(
     final_report = report.model_copy(
         update={
             "framework_name": framework_file.stem,
-            "symbol": fundamentals.symbol,
+            "symbol": fundamentals.stock_code,
             "company_name": fundamentals.name,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
         }

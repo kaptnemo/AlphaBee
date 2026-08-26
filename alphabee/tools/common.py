@@ -3,7 +3,7 @@
 import asyncio
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from opencc import OpenCC
@@ -72,7 +72,7 @@ async def _search_tavily(
 
     from tavily import AsyncTavilyClient
 
-    client_kwargs: dict = {"api_key": cfg.api_key}
+    client_kwargs: dict[str, Any] = {"api_key": cfg.api_key}
     if cfg.proxy_url:
         client_kwargs["proxies"] = {
             "http://": cfg.proxy_url,
@@ -80,7 +80,7 @@ async def _search_tavily(
         }
     client = AsyncTavilyClient(**client_kwargs)
 
-    search_kwargs: dict = dict(
+    search_kwargs: dict[str, Any] = dict(
         query=query,
         search_depth="basic",
         topic=topic,
@@ -93,7 +93,7 @@ async def _search_tavily(
 
     cc = OpenCC("t2s")
 
-    raw: dict = await client.search(**search_kwargs)
+    raw: dict[str, Any] = await client.search(**search_kwargs)
 
     results = [
         SearchResult(
@@ -126,7 +126,7 @@ def _search_ddg_sync(
 
     cfg = settings.web_search.ddgs
 
-    def _run(tl: str | None) -> list[dict]:
+    def _run(tl: str | None) -> list[dict[str, Any]]:
         with DDGS(proxy=cfg.proxy_url, timeout=cfg.timeout) as ddgs:
             return (
                 ddgs.text(
@@ -139,7 +139,7 @@ def _search_ddg_sync(
                 or []
             )
 
-    raw: list[dict] = []
+    raw: list[dict[str, Any]] = []
     try:
         raw = _run(timelimit)
     except Exception:

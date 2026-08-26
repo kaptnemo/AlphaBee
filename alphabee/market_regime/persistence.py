@@ -45,8 +45,8 @@ def latest_date(path: str | Path | None = None) -> str | None:
     return str(df["date"].max())
 
 
-def _snapshot_row(snapshot: MarketIndicatorSnapshot) -> dict:
-    row = {"date": snapshot.date, "fetched_at": snapshot.fetched_at}
+def _snapshot_row(snapshot: MarketIndicatorSnapshot) -> dict[str, str | float]:
+    row: dict[str, str | float] = {"date": snapshot.date, "fetched_at": snapshot.fetched_at}
     for name, value in snapshot.values.items():
         row[name] = value
     return row

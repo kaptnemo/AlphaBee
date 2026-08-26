@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
+
 # 申万分类层级（由细到粗，匹配优先级）
 _SW_LEVELS = ("L3", "L2", "L1")
 
@@ -32,7 +34,7 @@ def _safe_str(value: Any, default: str = "") -> str:
     return default if s in ("nan", "None", "") else s
 
 
-def _classify_columns(df) -> tuple[str | None, str | None]:
+def _classify_columns(df: pd.DataFrame) -> tuple[str | None, str | None]:
     """从分类 DataFrame 中找行业名列与代码列。
 
     分类帧经 Tushare adapter 重命名后只有 canonical 列名（``industry_name`` /

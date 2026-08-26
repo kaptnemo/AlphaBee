@@ -55,7 +55,7 @@ def split_domestic_international(
     invalid: list[str] = []
     for cand in candidates:
         code, exchange = normalize_peer_code(cand.get("code", ""))
-        if not code:
+        if not code or exchange is None:
             invalid.append(cand.get("name") or cand.get("code") or "?")
             continue
         entry = {**cand, "code": code, "exchange": exchange}

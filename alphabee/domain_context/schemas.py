@@ -12,16 +12,21 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class PrimitiveSchema(BaseModel):
+class DomainSchemaBase(BaseModel):
+    """Base for domain-context YAML assets — both schemas carry a unique ``id``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+
+
+class PrimitiveSchema(DomainSchemaBase):
     """一个分析原语（``domain_primitives/*.yaml``）。
 
     字段约定对齐 DOMAIN_CONTEXT_ROADMAP「扩展机制 #5 统一接口规范」：
     必填仅 ``id``；其余为可选（缺省空），新增原语时按此 schema 扩展，不各自发明字段。
     """
 
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
     # 知识版本：分析框架会随产业演化（如面板"去周期化"、养殖"成本曲线右移"），
     # 版本号让框架是「当前可用的框架」而非「永远正确的知识」，过时可升级/废弃。
     version: int = 1
@@ -56,16 +61,13 @@ class PrimitiveSchema(BaseModel):
     deprecated_by: str = ""
 
 
-class PlaybookSchema(BaseModel):
+class PlaybookSchema(DomainSchemaBase):
     """一个组合框架（``domain_playbooks/*.yaml``）——命名的 primitive 集合。
 
     ``primitives`` 只允许引用已声明的 primitive id（目录闭合约束，由
     ``loader.validate_closure`` 校验）；匹配字段供 ContextRouter（P0 第 3 步）消费。
     """
 
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
     # 知识版本：同 PrimitiveSchema.version——框架会随产业演化升级。
     version: int = 1
     # 一句话商业故事：这个组合框架在讲什么（如"生猪养殖 = 猪价周期 + 生物资产 + 成本曲线"）。

@@ -1,7 +1,10 @@
 import datetime
 import json
 import math
+from typing import Any
 
+import pandas as pd
+from pandas import DataFrame
 from pydantic import BaseModel, Field
 
 from alphabee.collectors.tushare.helper import TuShareHelper
@@ -20,9 +23,7 @@ class IncomeStatement(BaseModel):
     revenue: float = Field(description="营业总收入（元）")
     operating_profit: float = Field(description="营业利润（元）")
     net_profit: float = Field(description="归母净利润（元）")
-    ebitda: float = Field(
-        description="息税折旧摊销前利润EBITDA（元），衡量核心盈利能力"
-    )
+    ebitda: float = Field(description="息税折旧摊销前利润EBITDA（元），衡量核心盈利能力")
     basic_eps: float = Field(description="基本每股收益（元/股）")
 
 
@@ -42,16 +43,10 @@ class CashFlow(BaseModel):
     """现金流量表核心数据（单期）"""
 
     period: str = Field(description="报告期（YYYYMMDD）")
-    operating_cf: float = Field(
-        description="经营活动现金流净额（元），反映主营业务造血能力"
-    )
-    investing_cf: float = Field(
-        description="投资活动现金流净额（元），负数通常代表扩张投入"
-    )
+    operating_cf: float = Field(description="经营活动现金流净额（元），反映主营业务造血能力")
+    investing_cf: float = Field(description="投资活动现金流净额（元），负数通常代表扩张投入")
     financing_cf: float = Field(description="筹资活动现金流净额（元）")
-    free_cf: float = Field(
-        description="自由现金流FCFF（元）= 经营现金流 − 资本性支出，衡量可分配现金"
-    )
+    free_cf: float = Field(description="自由现金流FCFF（元）= 经营现金流 − 资本性支出，衡量可分配现金")
 
 
 class FinancialRatios(BaseModel):
@@ -62,24 +57,16 @@ class FinancialRatios(BaseModel):
     roa: float = Field(description="总资产净利率ROA（%），衡量资产运营效率")
     gross_margin: float = Field(description="毛利率（%），反映产品定价能力与竞争优势")
     net_margin: float = Field(description="净利润率（%），反映最终盈利能力")
-    current_ratio: float = Field(
-        description="流动比率（倍），衡量短期偿债能力，通常>1为健康"
-    )
-    quick_ratio: float = Field(
-        description="速动比率（倍），排除存货后的短期偿债能力，通常>0.8为健康"
-    )
-    debt_to_assets: float = Field(
-        description="资产负债率（%），衡量财务杠杆，过高存在偿债风险"
-    )
+    current_ratio: float = Field(description="流动比率（倍），衡量短期偿债能力，通常>1为健康")
+    quick_ratio: float = Field(description="速动比率（倍），排除存货后的短期偿债能力，通常>0.8为健康")
+    debt_to_assets: float = Field(description="资产负债率（%），衡量财务杠杆，过高存在偿债风险")
 
 
 class GrowthMetrics(BaseModel):
     """成长性指标（单期，相对于同比同期）"""
 
     period: str = Field(description="报告期（YYYYMMDD）")
-    revenue_growth_yoy: float = Field(
-        description="营业收入同比增长率（%），正数为增长，负数为下滑"
-    )
+    revenue_growth_yoy: float = Field(description="营业收入同比增长率（%），正数为增长，负数为下滑")
     profit_growth_yoy: float = Field(description="净利润同比增长率（%）")
     eps_growth_yoy: float = Field(description="基本每股收益同比增长率（%）")
 
@@ -88,12 +75,8 @@ class Summary(BaseModel):
     """基本面分析摘要（由大模型生成，综合多期数据趋势）"""
 
     overview: str = Field(description="公司财务状况的总体评述，含趋势判断（2-3句话）")
-    strengths: list[str] = Field(
-        description="主要财务优势，如高ROE、强现金流、低负债、持续增长等"
-    )
-    risks: list[str] = Field(
-        description="主要财务风险，如利润下滑、高负债、现金流恶化等"
-    )
+    strengths: list[str] = Field(description="主要财务优势，如高ROE、强现金流、低负债、持续增长等")
+    risks: list[str] = Field(description="主要财务风险，如利润下滑、高负债、现金流恶化等")
     outlook: str = Field(description="基于多期财务趋势的展望与投资参考观点（1-2句话）")
 
 
@@ -102,24 +85,16 @@ class Fundamentals(BaseModel):
 
     stock_code: str = Field(description="股票代码（Tushare格式，如 '600519.SH'）")
     name: str = Field(description="股票名称，如'贵州茅台'")
-    periods: list[str] = Field(
-        description="包含的报告期列表，按时间倒序排列（最新在前）"
-    )
-    income_statements: list[IncomeStatement] = Field(
-        description="多期利润表，按时间倒序"
-    )
+    periods: list[str] = Field(description="包含的报告期列表，按时间倒序排列（最新在前）")
+    income_statements: list[IncomeStatement] = Field(description="多期利润表，按时间倒序")
     balance_sheets: list[BalanceSheet] = Field(description="多期资产负债表，按时间倒序")
     cash_flows: list[CashFlow] = Field(description="多期现金流量表，按时间倒序")
-    financial_ratios: list[FinancialRatios] = Field(
-        description="多期关键财务比率，按时间倒序"
-    )
-    growth_metrics: list[GrowthMetrics] = Field(
-        description="多期成长性指标（同比增速），按时间倒序"
-    )
+    financial_ratios: list[FinancialRatios] = Field(description="多期关键财务比率，按时间倒序")
+    growth_metrics: list[GrowthMetrics] = Field(description="多期成长性指标（同比增速），按时间倒序")
     summary: Summary = Field(description="大模型生成的多期趋势综合分析摘要")
 
 
-_FUNDAMENTALS_CACHE = AsyncTTLCache(ttl_seconds=300.0)
+_FUNDAMENTALS_CACHE: AsyncTTLCache["Fundamentals"] = AsyncTTLCache(ttl_seconds=300.0)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +122,7 @@ def _normalize_ts_code(symbol: str) -> str:
     raise ValueError(f"Cannot determine exchange for symbol: {symbol}")
 
 
-def _safe_float(value, default: float = 0.0) -> float:
+def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         v = float(value)
         return default if math.isnan(v) else v
@@ -155,13 +130,13 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _dedup_by_date(df, date_col: str = "end_date"):
+def _dedup_by_date(df: "DataFrame", date_col: str = "end_date") -> "DataFrame":
     """Drop duplicate rows for the same reporting period, keeping the first
     (which is typically the consolidated / official statement, report_type=1)."""
     return df.drop_duplicates(subset=[date_col]).reset_index(drop=True)
 
 
-def _lookup_row(df, date: str, date_col: str = "end_date"):
+def _lookup_row(df: "DataFrame", date: str, date_col: str = "end_date") -> "pd.Series | None":
     """Return the first row matching ``date``, or None if not found."""
     rows = df[df[date_col] == date]
     return rows.iloc[0] if not rows.empty else None
@@ -193,7 +168,7 @@ async def _generate_summary(
         r = ratio_map.get(p)
         g = growth_map.get(p)
         c = cf_map.get(p)
-        row: dict = {
+        row: dict[str, object] = {
             "报告期": p,
             "营收(亿元)": round(inc.revenue / 1e8, 2),
             "净利润(亿元)": round(inc.net_profit / 1e8, 2),
@@ -295,9 +270,7 @@ async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
 
     async def _compute() -> Fundamentals:
         # Query far enough back to cover requested periods (each ~91 days)
-        start_date = (
-            datetime.date.today() - datetime.timedelta(days=periods * 110 + 180)
-        ).strftime("%Y%m%d")
+        start_date = (datetime.date.today() - datetime.timedelta(days=periods * 110 + 180)).strftime("%Y%m%d")
 
         with TuShareHelper() as helper:
             income_df = helper.income(
@@ -324,9 +297,7 @@ async def get_fundamentals(symbol: str, periods: int = 4) -> Fundamentals:
                 "current_ratio,quick_ratio,debt_to_assets,"
                 "or_yoy,netprofit_yoy,basic_eps_yoy,fcff",
             ).data
-            stock_basic_df = helper.stock_basic(
-                ts_code=ts_code, fields="ts_code,name"
-            ).data
+            stock_basic_df = helper.stock_basic(ts_code=ts_code, fields="ts_code,name").data
 
         name = stock_basic_df.iloc[0]["name"] if not stock_basic_df.empty else ""
 

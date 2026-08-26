@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -92,7 +93,7 @@ class DataFetchEvent(Base):
     error_type: Mapped[ErrorType] = mapped_column(Enum(ErrorType), nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text)
     missing_fields: Mapped[list[str] | None] = mapped_column(JSON)
-    request_payload: Mapped[dict | None] = mapped_column(JSON)
+    request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     response_snippet: Mapped[str | None] = mapped_column(Text)
     severity: Mapped[ErrorSeverity] = mapped_column(Enum(ErrorSeverity), nullable=False, default=ErrorSeverity.MEDIUM)
     trace_id: Mapped[str | None] = mapped_column(String(64))

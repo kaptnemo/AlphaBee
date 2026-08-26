@@ -23,6 +23,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -307,7 +308,7 @@ def prepare_fix(task_id: int) -> FixResult:
 # ── task loading ───────────────────────────────────────────────────────
 
 
-def _load_task(task_id: int) -> dict | None:
+def _load_task(task_id: int) -> dict[str, Any] | None:
     """Load fix task + issue + sample event from database.
 
     Returns a dict with keys: task_status, result_summary, verification_result,
@@ -366,8 +367,8 @@ def _load_task(task_id: int) -> dict | None:
 
 
 def _build_prompt(
-    issue: dict,
-    sample_event: dict | None,
+    issue: dict[str, Any],
+    sample_event: dict[str, Any] | None,
     task_context: str | None,
     fix_branch: str,
     task_id: int,
@@ -736,7 +737,7 @@ def _datasource_guidance(provider: str, api_name: str) -> list[str] | None:
     """Return concrete guidance for switching data sources for common APIs."""
 
     # Map common Tushare APIs → their data domain → alternative sources
-    tushare_alternatives: dict[str, dict] = {
+    tushare_alternatives: dict[str, dict[str, str]] = {
         "income": {
             "domain": "利润表数据",
             "akshare": "ak.stock_financial_abstract_ths() 或 ak.stock_profit_sheet_by_report_em()",
@@ -783,7 +784,7 @@ def _datasource_guidance(provider: str, api_name: str) -> list[str] | None:
         },
     }
 
-    akshare_alternatives: dict[str, dict] = {
+    akshare_alternatives: dict[str, dict[str, str]] = {
         "stock_news_em": {
             "domain": "个股新闻",
             "tushare": "ts.major_news()",
@@ -900,7 +901,7 @@ def _create_or_get_pull_request(branch: str, title: str, body: str) -> str:
     owner_repo, owner = _get_git_remote_owner_repo()
     base_branch = _get_default_base_branch()
 
-    def _api_request(method: str, path: str, payload: dict | None = None) -> tuple[int, str]:
+    def _api_request(method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[int, str]:
         data = None
         headers = {
             "Accept": "application/vnd.github+json",
@@ -931,7 +932,7 @@ def _create_or_get_pull_request(branch: str, title: str, body: str) -> str:
     if status == 200:
         existing = json.loads(existing_body or "[]")
         if existing:
-            return existing[0]["html_url"]
+            return str(existing[0]["html_url"])
 
     status, create_body = _api_request(
         "POST",
@@ -948,7 +949,7 @@ def _create_or_get_pull_request(branch: str, title: str, body: str) -> str:
         created = json.loads(create_body or "{}")
         html_url = created.get("html_url")
         if html_url:
-            return html_url
+            return str(html_url)
         return _build_mr_url(branch)
 
     if status == 422:
@@ -959,7 +960,7 @@ def _create_or_get_pull_request(branch: str, title: str, body: str) -> str:
         if status == 200:
             existing = json.loads(existing_body or "[]")
             if existing:
-                return existing[0]["html_url"]
+                return str(existing[0]["html_url"])
 
     raise RuntimeError(f"Unable to create pull request: {create_body.strip() or 'unknown error'}")
 
@@ -1019,7 +1020,7 @@ def _update_task_verification_result(task_id: int, verification_result: str) -> 
 # ── message rendering ──────────────────────────────────────────────────
 
 
-def _render_message(msg) -> str:
+def _render_message(msg: Any) -> str:
     """Render a Claude Agent SDK message to stdout.
 
     Returns the text that was rendered (for CANNOT_FIX detection).

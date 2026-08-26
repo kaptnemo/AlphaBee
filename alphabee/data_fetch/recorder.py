@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from alphabee.data_fetch.database import get_session, init_db
 from alphabee.data_fetch.fingerprint import compute_fingerprint
@@ -52,7 +53,7 @@ def record_failure(
     symbol: str | None = None,
     severity: str = "medium",
     missing_fields: list[str] | None = None,
-    request_payload: dict | None = None,
+    request_payload: dict[str, Any] | None = None,
     response_snippet: str | None = None,
     trace_id: str | None = None,
     session_id: str | None = None,

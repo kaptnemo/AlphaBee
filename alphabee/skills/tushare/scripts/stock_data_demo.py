@@ -4,6 +4,7 @@
 """
 
 import os
+from typing import Any
 
 import tushare as ts
 
@@ -14,7 +15,7 @@ token = os.getenv("TUSHARE_TOKEN") or ts.get_token()
 pro = ts.pro_api(token)
 
 
-def get_stock_list():
+def get_stock_list() -> Any:
     """
     获取股票列表
     """
@@ -28,7 +29,7 @@ def get_stock_list():
         return None
 
 
-def get_daily_data(ts_code, start_date, end_date):
+def get_daily_data(ts_code: str, start_date: str, end_date: str) -> Any:
     """
     获取股票日线数据
     """
@@ -42,7 +43,7 @@ def get_daily_data(ts_code, start_date, end_date):
         return None
 
 
-def get_financial_data(ts_code, year, quarter):
+def get_financial_data(ts_code: str, year: int, quarter: int) -> Any:
     """
     获取财务指标数据
     """
@@ -56,11 +57,7 @@ def get_financial_data(ts_code, year, quarter):
         return None
 
 
-def main():
-    """
-    主函数
-    """
-    print("===== tushare 股票数据获取示例 =====")
+def main() -> None:
 
     # 获取股票列表
     stock_list = get_stock_list()

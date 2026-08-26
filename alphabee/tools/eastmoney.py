@@ -6,7 +6,11 @@ from typing import Any
 import requests
 from pydantic import BaseModel, Field
 
-from alphabee.collectors.eastmoney.helper import EastmoneyHelper
+from alphabee.collectors.eastmoney.helper import (
+    EastmoneyHelper,
+    EastmoneyReportDetail,
+    EastmoneyReportResult,
+)
 from alphabee.utils.storage import get_data_root
 
 DEFAULT_EASTMONEY_OUTPUT_DIR = get_data_root() / "eastmoney_reports"
@@ -58,11 +62,11 @@ def _normalize_save_dir(save_dir: str | Path | None) -> Path:
     return path
 
 
-def _to_detail_payload(detail) -> dict[str, Any]:
+def _to_detail_payload(detail: EastmoneyReportDetail | None) -> dict[str, Any]:
     return detail.to_dict() if detail is not None else {}
 
 
-def _to_report_list_payload(result) -> EastmoneyReportListOutput:
+def _to_report_list_payload(result: EastmoneyReportResult) -> EastmoneyReportListOutput:
     return EastmoneyReportListOutput(
         page_num=result.page_num,
         page_size=result.page_size,

@@ -21,9 +21,12 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
 
-from alphabee.domain_context.schemas import PlaybookSchema, PrimitiveSchema
+from alphabee.domain_context.schemas import (
+    DomainSchemaBase,
+    PlaybookSchema,
+    PrimitiveSchema,
+)
 
 _PRIMITIVES_DIR = Path(__file__).parent / "domain_primitives"
 _PLAYBOOKS_DIR = Path(__file__).parent / "domain_playbooks"
@@ -41,7 +44,7 @@ class DomainContextCatalog:
     playbooks: dict[str, PlaybookSchema]
 
 
-def _load_yaml_files[T: BaseModel](directory: Path, model_cls: type[T], kind: str) -> dict[str, T]:
+def _load_yaml_files[T: DomainSchemaBase](directory: Path, model_cls: type[T], kind: str) -> dict[str, T]:
     """扫描目录下所有 ``*.yaml``，严格校验为 ``model_cls``，按 id 去重。"""
     loaded: dict[str, T] = {}
     for path in sorted(directory.glob("*.yaml")):

@@ -15,6 +15,7 @@
 """
 
 import json
+from typing import Any
 
 import pandas as pd
 
@@ -22,13 +23,13 @@ from alphabee.adapters.tushare import TuShare_Adapter
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-_QUERY_CACHE = SyncTTLCache(ttl_seconds=300.0)
+_QUERY_CACHE: SyncTTLCache["pd.DataFrame | None"] = SyncTTLCache(ttl_seconds=300.0)
 
 # 渲染层控制项：不参与 Tushare 接口调用，抓取前剥离
 _RENDER_CONTROL_PARAMS = ("fields", "preview")
 
 
-def _fetch_params(params_dict: dict) -> dict:
+def _fetch_params(params_dict: dict[str, Any]) -> dict[str, Any]:
     """剥离渲染层控制项，返回真正传给 Tushare 接口的抓取参数。"""
     return {k: v for k, v in params_dict.items() if k not in _RENDER_CONTROL_PARAMS}
 
@@ -67,7 +68,7 @@ def _resolve_requested_fields(api_name: str, requested: list[str]) -> list[str]:
     return [mapping.get(f, f) for f in requested]
 
 
-def _format_value(value) -> str:
+def _format_value(value: object) -> str:
     """数值归一：None/NaN→'-'，长尾浮点与超大量级数值压缩为紧凑形式。"""
     if value is None:
         return "-"
@@ -88,7 +89,7 @@ def _format_value(value) -> str:
 
 def _render_markdown(df: pd.DataFrame) -> str:
     """逐格数值归一后渲染为 Markdown 表格。"""
-    return df.map(_format_value).to_markdown(index=False)
+    return str(df.map(_format_value).to_markdown(index=False))
 
 
 def _render_preview(api_name: str, normalized_params: str, df: pd.DataFrame) -> str:

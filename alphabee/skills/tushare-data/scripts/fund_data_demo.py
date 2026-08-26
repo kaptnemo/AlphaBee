@@ -4,6 +4,7 @@
 """
 
 import os
+from typing import Any
 
 import tushare as ts
 
@@ -14,7 +15,7 @@ token = os.getenv("TUSHARE_TOKEN") or ts.get_token()
 pro = ts.pro_api(token)
 
 
-def get_fund_list():
+def get_fund_list() -> Any:
     """
     获取基金列表
     """
@@ -30,7 +31,7 @@ def get_fund_list():
         return None
 
 
-def get_fund_nav(ts_code, start_date, end_date):
+def get_fund_nav(ts_code: str, start_date: str, end_date: str) -> Any:
     """
     获取基金净值数据
     """
@@ -44,7 +45,7 @@ def get_fund_nav(ts_code, start_date, end_date):
         return None
 
 
-def get_fund_manager():
+def get_fund_manager() -> Any:
     """
     获取基金经理数据
     """
@@ -58,11 +59,7 @@ def get_fund_manager():
         return None
 
 
-def main():
-    """
-    主函数
-    """
-    print("===== tushare 基金数据获取示例 =====")
+def main() -> None:
 
     # 获取基金列表
     fund_list = get_fund_list()

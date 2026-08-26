@@ -40,40 +40,22 @@ class Technical(BaseModel):
 class CapitalFlow(BaseModel):
     """资金流向数据（单位：万元）"""
 
-    main_force_inflow: float = Field(
-        description="主力净流入（万元）= 超大单净额 + 大单净额，正数为流入，负数为流出"
-    )
-    super_large_order: float = Field(
-        description="超大单净流入（万元），通常代表机构或大资金"
-    )
+    main_force_inflow: float = Field(description="主力净流入（万元）= 超大单净额 + 大单净额，正数为流入，负数为流出")
+    super_large_order: float = Field(description="超大单净流入（万元），通常代表机构或大资金")
     large_order: float = Field(description="大单净流入（万元）")
-    retail_flow: float = Field(
-        description="散户小单净流入（万元），负数通常代表散户净卖出"
-    )
-    northbound_flow: float = Field(
-        description="北向资金净流入（万元），即外资流向，暂不支持个股粒度，返回0"
-    )
-    flow_trend: str = Field(
-        description="资金流向趋势描述，如'持续流入'、'流出为主'，暂无数据时为空字符串"
-    )
-    capital_rank_in_sector: int = Field(
-        description="在同行业中的资金流入排名，暂无数据时返回0"
-    )
+    retail_flow: float = Field(description="散户小单净流入（万元），负数通常代表散户净卖出")
+    northbound_flow: float = Field(description="北向资金净流入（万元），即外资流向，暂不支持个股粒度，返回0")
+    flow_trend: str = Field(description="资金流向趋势描述，如'持续流入'、'流出为主'，暂无数据时为空字符串")
+    capital_rank_in_sector: int = Field(description="在同行业中的资金流入排名，暂无数据时返回0")
 
 
 class Sector(BaseModel):
     """行业与板块信息"""
 
     industry: str = Field(description="所属申万行业，如'白酒'、'新能源'、'医药生物'")
-    concepts: list[str] = Field(
-        description="所属概念板块列表，如['国产替代', 'AI算力']，暂无数据时为空列表"
-    )
-    sector_change_pct: float = Field(
-        description="今日所属行业板块整体涨跌幅（%），暂无数据时返回0"
-    )
-    sector_rank_today: int = Field(
-        description="今日涨跌幅在行业内的排名，暂无数据时返回0"
-    )
+    concepts: list[str] = Field(description="所属概念板块列表，如['国产替代', 'AI算力']，暂无数据时为空列表")
+    sector_change_pct: float = Field(description="今日所属行业板块整体涨跌幅（%），暂无数据时返回0")
+    sector_rank_today: int = Field(description="今日涨跌幅在行业内的排名，暂无数据时返回0")
     leading_stock: bool = Field(description="是否为今日板块龙头股")
 
 
@@ -87,7 +69,7 @@ class MarketData(BaseModel):
     sector: Sector = Field(description="行业与板块信息")
 
 
-_MARKET_DATA_CACHE = SyncTTLCache(ttl_seconds=300.0)
+_MARKET_DATA_CACHE: SyncTTLCache["MarketData"] = SyncTTLCache(ttl_seconds=300.0)
 
 
 def _normalize_ts_code(symbol: str) -> str:
@@ -134,34 +116,20 @@ def get_market_data(symbol: str) -> MarketData:
         lookback = (datetime.today() - timedelta(days=10)).strftime("%Y%m%d")
 
         with TuShareHelper() as helper:
-            daily_df = helper.daily(
-                ts_code=ts_code, start_date=lookback, end_date=today
-            ).data
-            daily_basic_df = helper.daily_basic(
-                ts_code=ts_code, start_date=lookback, end_date=today
-            ).data
-            moneyflow_df = helper.moneyflow(
-                ts_code=ts_code, start_date=lookback, end_date=today
-            ).data
-            stock_basic_df = helper.stock_basic(
-                ts_code=ts_code, fields="ts_code,name,industry"
-            ).data
+            daily_df = helper.daily(ts_code=ts_code, start_date=lookback, end_date=today).data
+            daily_basic_df = helper.daily_basic(ts_code=ts_code, start_date=lookback, end_date=today).data
+            moneyflow_df = helper.moneyflow(ts_code=ts_code, start_date=lookback, end_date=today).data
+            stock_basic_df = helper.stock_basic(ts_code=ts_code, fields="ts_code,name,industry").data
 
         d = daily_df.iloc[0]
         db = daily_basic_df.iloc[0]
         mf = moneyflow_df.iloc[0] if not moneyflow_df.empty else None
 
         name = stock_basic_df.iloc[0]["name"] if not stock_basic_df.empty else ""
-        industry = (
-            stock_basic_df.iloc[0]["industry"] if not stock_basic_df.empty else ""
-        )
+        industry = stock_basic_df.iloc[0]["industry"] if not stock_basic_df.empty else ""
 
         prev_close = float(d["pre_close"])
-        amplitude = (
-            (float(d["high"]) - float(d["low"])) / prev_close * 100
-            if prev_close
-            else 0.0
-        )
+        amplitude = (float(d["high"]) - float(d["low"])) / prev_close * 100 if prev_close else 0.0
 
         quote = Quote(
             price=float(d["close"]),

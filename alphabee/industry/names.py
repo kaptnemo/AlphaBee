@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -23,7 +24,7 @@ _ROMAN_SUFFIXES = ("Ⅲ", "Ⅱ", "Ⅰ")
 
 
 @lru_cache(maxsize=1)
-def _load() -> dict:
+def _load() -> dict[str, Any]:
     with open(_CATALOG_PATH, encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
 

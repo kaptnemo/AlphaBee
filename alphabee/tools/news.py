@@ -1,7 +1,7 @@
 from alphabee.collectors.akshare.helper import AkShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-_NEWS_CACHE = SyncTTLCache(ttl_seconds=300.0)
+_NEWS_CACHE: SyncTTLCache[str] = SyncTTLCache(ttl_seconds=300.0)
 
 
 def get_stock_news_summary(symbol: str) -> str:

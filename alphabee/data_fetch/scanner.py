@@ -23,7 +23,7 @@ from alphabee.data_fetch.models import (
     TaskStatus,
     VerificationStatus,
 )
-from alphabee.data_fetch.strategies import recommend_fix
+from alphabee.data_fetch.strategies import FixPlan, recommend_fix
 
 # issues with these statuses are eligible for fix task creation
 _SCANNABLE_STATUSES = (IssueStatus.NEW, IssueStatus.ACTIVE)
@@ -192,7 +192,7 @@ def mark_issue_fixed(issue_id: int, resolution_note: str = "", verification_stat
 def _build_prompt_context(
     issue: DataFetchIssue,
     sample_event: DataFetchEvent | None,
-    plan,
+    plan: FixPlan,
 ) -> str:
     """Build a structured prompt context for the fix agent."""
 
