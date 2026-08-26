@@ -44,6 +44,14 @@ class HypothesisItem(BaseModel):
     supporting_claims: list[str] = Field(default_factory=list)  # 支持它的 artifact/observation id
     refuting_claims: list[str] = Field(default_factory=list)  # 反对它的 id
     verification_items: list[VerificationItem] = Field(default_factory=list)
+    # 争议证据指向（P0-③ rejected 回写）：该假设若被判 rejected，应被移除的
+    # anomaly pattern id / signal id。
+    #   * disputed_pattern_ids 对应异常模式 id（如 high_cash_high_debt）；
+    #   * disputed_signal_ids 对应信号 id（如 anomaly_pattern_high_cash_high_debt）。
+    # 二者由 explore_conflicts 的 LLM 显式给出（候选 id 由上游注入 prompt），
+    # 为空时下游 ThesisEngine 会走关键词确定性兜底。
+    disputed_pattern_ids: list[str] = Field(default_factory=list)
+    disputed_signal_ids: list[str] = Field(default_factory=list)
 
 
 class VerificationResultItem(BaseModel):
@@ -151,6 +159,8 @@ class ConflictAnalysisResult(BaseModel):
                                 "status": "pending",
                                 "supporting_claims": [],
                                 "refuting_claims": [],
+                                "disputed_pattern_ids": [],
+                                "disputed_signal_ids": [],
                                 "verification_items": [
                                     {
                                         "id": "v1",

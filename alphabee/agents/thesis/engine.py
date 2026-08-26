@@ -147,9 +147,19 @@ class ThesisEngine:
         # ── 3. 计算各维度综合评分并构建 ThesisDimension ───────────────
         dimensions: dict[str, ThesisDimension] = {}
 
+        # dim_effective 保留每个维度“当前有效贡献”的 (signal_id, source_type, eff_score)，
+        # 供 _apply_conflict_analysis 的 rejected 分支精确扣除被证伪的那一块，
+        # 而不是把整维度归零。它只存内部中间态，不进入 artifact。
+        dim_effective: dict[str, list[tuple[str, str, float]]] = {}
+
         for dim_def in self.dimension_defs.values():
             dim_key = dim_def.signal_dimension_key
             contribs = dim_contributions.get(dim_key, [])
+
+            # EvidenceItem 已携带 signal_id + source_type，无需再扩展 contribs 元组；
+            # 这里只是把 (level_score×direction) 换算成最终有效分数并记录下来。
+            eff = [(e.signal_id, e.source_type, ls * d) for (ls, d, e) in contribs]
+            dim_effective[dim_def.id] = eff
 
             if not contribs:
                 # 无任何信号覆盖，维度评分默认中性，置信度为 0
@@ -159,8 +169,7 @@ class ThesisEngine:
                 confidence = 0.0
             else:
                 # 加权平均：每个信号的贡献 = level_score × impact_direction
-                effective_scores = [ls * d for ls, d, _ in contribs]
-                score = sum(effective_scores) / len(effective_scores)
+                score = sum(v for _, _, v in eff) / len(eff)
                 judgment = score_to_judgment(score)
                 evidence_list = [e for _, _, e in contribs]
                 confidence = min(1.0, len(contribs) / max(1, total_signals))
@@ -183,8 +192,11 @@ class ThesisEngine:
         # ── 4. 显式消费 conflict / verification / company_context ───────
         self._apply_conflict_analysis(
             dimensions=dimensions,
+            dim_effective=dim_effective,
             conflict_analysis=conflict_analysis,
             verification_results=verification_results,
+            signal_results=signal_results,
+            anomaly_report=anomaly_report,
         )
         self._apply_company_context(
             dimensions=dimensions,
@@ -353,8 +365,11 @@ class ThesisEngine:
         self,
         *,
         dimensions: dict[str, ThesisDimension],
+        dim_effective: dict[str, list[tuple[str, str, float]]],
         conflict_analysis: dict[str, Any] | None,
         verification_results: list[dict[str, Any]] | None,
+        signal_results: dict[str, dict],
+        anomaly_report: dict[str, Any] | None,
     ) -> None:
         if not conflict_analysis:
             return
@@ -392,12 +407,30 @@ class ThesisEngine:
                             dim.confidence = max(0.0, dim.confidence - 0.05)
                 elif status == "rejected":
                     message = summary or hypothesis.get("explanation", "")
-                    if message:
-                        for dim_id in dim_ids:
-                            dim = dimensions.get(dim_id)
-                            if dim is None:
-                                continue
+                    # P0-③：被证伪的假设必须把“它指向的那块负面贡献”从维度分数里精确扣除，
+                    # 否则会出现“大存大贷已被证伪，credit_risk 却仍被压成 strong_negative”的
+                    # 传导断裂——rejected 只写了 counter_evidence，分数却原地不动。
+                    disputed_pattern, disputed_signal = self._resolve_disputed_evidence(
+                        hypothesis=hypothesis,
+                        signal_results=signal_results,
+                        anomaly_report=anomaly_report,
+                    )
+                    for dim_id in dim_ids:
+                        dim = dimensions.get(dim_id)
+                        if dim is None:
+                            continue
+                        if message:
                             dim.counter_evidence.append(message)
+                        if disputed_pattern or disputed_signal:
+                            self._remove_disputed_contributions(
+                                dim=dim,
+                                dim_effective=dim_effective,
+                                disputed_pattern=disputed_pattern,
+                                disputed_signal=disputed_signal,
+                            )
+                        # 无论是否精确命中某条贡献，rejected 都意味着维度判断被“否定式”修订过，
+                        # 给一个轻微置信度折减，表达这条维度经历过一次排除性更新。
+                        dim.confidence = max(0.0, dim.confidence - 0.05)
                 elif status in ("unknown", "pending"):
                     missing = gaps or ([summary] if summary else [])
                     if not missing:
@@ -445,6 +478,109 @@ class ThesisEngine:
             )
             dim.score = max(-1.0, min(1.0, dim.score - penalty))
             dim.confidence = min(1.0, dim.confidence + 0.1)
+
+    def _resolve_disputed_evidence(
+        self,
+        *,
+        hypothesis: dict[str, Any],
+        signal_results: dict[str, dict],
+        anomaly_report: dict[str, Any] | None,
+    ) -> tuple[set[str], set[str]]:
+        """解析 rejected 假设指向的异常模式/信号 id（两级填充）。
+
+        1. LLM 显式给出的 ``disputed_pattern_ids`` / ``disputed_signal_ids`` 优先；
+        2. 都为空时走确定性兜底 ``_infer_disputed_evidence``（关键词精确匹配）；
+        3. 最后按 ``anomaly_pattern_<pid>`` 命名约定交叉补齐，确保 signal 与 anomaly
+           两条贡献路径一起被移除，杜绝“只删一条”导致的双重计数残留。
+        """
+        pattern_ids = {str(p) for p in (hypothesis.get("disputed_pattern_ids") or [])}
+        signal_ids = {str(s) for s in (hypothesis.get("disputed_signal_ids") or [])}
+
+        if not pattern_ids and not signal_ids:
+            pattern_ids, signal_ids = self._infer_disputed_evidence(
+                hypothesis=hypothesis,
+                signal_results=signal_results,
+                anomaly_report=anomaly_report,
+            )
+
+        # 交叉补齐：signal 规则对异常模式的命名约定为 anomaly_pattern_<pattern_id>，
+        # 例如 pattern_id=high_cash_high_debt ↔ signal_id=anomaly_pattern_high_cash_high_debt。
+        for pid in list(pattern_ids):
+            signal_ids.add(f"anomaly_pattern_{pid}")
+        for sid in list(signal_ids):
+            if sid.startswith("anomaly_pattern_"):
+                pattern_ids.add(sid[len("anomaly_pattern_") :])
+
+        return pattern_ids, signal_ids
+
+    def _infer_disputed_evidence(
+        self,
+        *,
+        hypothesis: dict[str, Any],
+        signal_results: dict[str, dict],
+        anomaly_report: dict[str, Any] | None,
+    ) -> tuple[set[str], set[str]]:
+        """确定性兜底：从假设解释文字里精确匹配异常模式名 / 信号 id。
+
+        只做“精确子串”命中，避免误删未被证伪的信号（保守）；未命中返回空集，
+        调用方保持原分数不变。模式名来自 ``anomaly_report.pattern_matches``——
+        它们才是真正参与了维度打分的“已触发模式”；信号 id 来自 ``signal_results``
+        的 key（即 signal_id）。
+        """
+        text = " ".join(str(hypothesis.get(k) or "") for k in ("explanation", "summary"))
+        pattern_ids: set[str] = set()
+        signal_ids: set[str] = set()
+
+        for pattern in (anomaly_report or {}).get("pattern_matches", []):
+            pid = str(pattern.get("pattern_id", "") or "")
+            name = str(pattern.get("pattern_name", "") or "")
+            if (pid and pid in text) or (name and name in text):
+                pattern_ids.add(pid)
+
+        for signal_id in signal_results:
+            if signal_id and signal_id in text:
+                signal_ids.add(signal_id)
+
+        return pattern_ids, signal_ids
+
+    def _remove_disputed_contributions(
+        self,
+        *,
+        dim: ThesisDimension,
+        dim_effective: dict[str, list[tuple[str, str, float]]],
+        disputed_pattern: set[str],
+        disputed_signal: set[str],
+    ) -> None:
+        """从单个维度里精确扣除被证伪的 signal / anomaly 两条贡献路径并重算分数。
+
+        “大存大贷”这类模式会以两条路径各自扣一次 credit_risk（双重计数）：
+          - 信号路径：source_id=anomaly_pattern_high_cash_high_debt，source_type="signal"
+          - 异常直连：source_id=anomaly_pattern:high_cash_high_debt，source_type="anomaly"
+        rejected 回写必须同时删掉这两条；其余未被证伪的负面信号保留，
+        维度不是整体归零，而是精确扣除被证伪的那一块。
+        """
+        eff = dim_effective.get(dim.id, [])
+        kept = [
+            (sid, stype, v)
+            for (sid, stype, v) in eff
+            if not (
+                (stype == "signal" and sid in disputed_signal)
+                or (stype == "anomaly" and any(sid == f"anomaly_pattern:{p}" for p in disputed_pattern))
+            )
+        ]
+        if kept == eff:
+            # 未命中任何贡献 → 保守不扣分，保持原分数不变。
+            return
+        dim_effective[dim.id] = kept
+        dim.score = sum(v for _, _, v in kept) / len(kept) if kept else 0.0
+        dim.evidence = [
+            e
+            for e in dim.evidence
+            if not (
+                (e.source_type == "signal" and e.signal_id in disputed_signal)
+                or (e.source_type == "anomaly" and any(e.signal_id == f"anomaly_pattern:{p}" for p in disputed_pattern))
+            )
+        ]
 
     def _apply_company_context(
         self,

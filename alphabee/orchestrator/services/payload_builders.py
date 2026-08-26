@@ -183,10 +183,24 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
                 if item.get("level") != "none"
             ][:5],
             "pattern_matches": [
-                {"name": item.get("pattern_name"), "severity": item.get("severity")}
+                {
+                    "pattern_id": item.get("pattern_id"),
+                    "name": item.get("pattern_name"),
+                    "severity": item.get("severity"),
+                }
                 for item in anomaly_report.pattern_matches
             ][:3],
         }
+
+    # P0-③ rejected 回写依赖：把可被“证伪”的候选 id 清单注入 prompt，
+    # 让 explore_conflicts 的 LLM 在假设里精确引用 disputed_pattern_ids /
+    # disputed_signal_ids，而不是凭空造 id。
+    disputed_candidates = {
+        "pattern_ids": (
+            [item.get("pattern_id") for item in anomaly_report.pattern_matches] if anomaly_report is not None else []
+        ),
+        "signal_ids": list(signal_analysis.results.keys()),
+    }
 
     # 冲突探索 prompt 只携带最能暴露背离关系的摘要层信息：
     # 最新财务快照、估值、关键衍生指标、风险信号、异常模式。
@@ -199,6 +213,7 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
         "key_signals": _build_key_signals(signal_analysis.results),
         "key_derived_facts": _build_key_derived(derived_facts.results),
         "anomaly": anomaly_summary,
+        "disputed_candidates": disputed_candidates,
         "company_track": _build_track_summary(artifacts),
     }
 
