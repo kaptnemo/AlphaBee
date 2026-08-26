@@ -168,8 +168,10 @@ def derive_track_label(
     basis_parts: list[str] = []
     for seg in scored[:5]:
         share = _effective_share(seg, candidates)
-        yoy = f"同比 {seg.revenue_yoy:+.1f}%" if seg.revenue_yoy is not None else "增速未知"
-        basis_parts.append(f"{seg.segment_name} {share:.1f}%（{yoy}）")
+        detail = f"同比 {seg.revenue_yoy:+.1f}%" if seg.revenue_yoy is not None else "增速未知"
+        if seg.gross_margin is not None:
+            detail += f"，毛利 {seg.gross_margin:.1f}%"
+        basis_parts.append(f"{seg.segment_name} {share:.1f}%（{detail}）")
     override_basis = "；".join(basis_parts)
 
     return TrackLabelResult(
@@ -182,6 +184,7 @@ def derive_track_label(
                 "name": seg.segment_name,
                 "share": round(_effective_share(seg, candidates), 2),
                 "yoy": seg.revenue_yoy,
+                "margin": seg.gross_margin,
                 "score": round(_weighted_score(seg, _effective_share(seg, candidates)), 2),
             }
             for seg in scored[:5]
@@ -238,6 +241,8 @@ def synthesize_track_label(
 ) -> tuple[str, str, str]:
     """B2：可选 LLM 复核 → ``(track_label, override_basis, method)``。
 
+    ``track_label`` 恒为规则结果（确定性，供下游 playbook 路由匹配）；LLM 只被允许
+    润色 ``override_basis``（补充「毛利率=利润核心 vs 同比=增速引擎」的解读），不改标签。
     LLM 关闭或失败 → 回退规则结果（``method="rule"``），永不阻断。
     """
     if not use_llm:
@@ -255,11 +260,11 @@ def synthesize_track_label(
             for seg in base
         )
         prompt = (
-            "你是行业研究员。基于公司业务线收入构成，给出「真实赛道」标签——穿透申万行业分类，"
-            "指向公司真正的增长引擎（例如工业富联 → 'AI 算力基础设施 ODM'）。"
-            f"规则层建议: {rule.track_label or '（无）'}。\n"
-            '只输出 JSON: {"track_label": "不超过 20 字", '
-            '"override_basis": "引用具体占比/增速数据的一句话依据"}。\n'
+            "你是行业研究员。赛道标签已由规则确定为「"
+            f"{rule.track_label or '（无）'}」，请勿修改标签。\n"
+            "你的任务：基于业务线收入构成，写一句「override_basis」依据，"
+            "指出主导业务的利润属性（毛利率）与增速引擎（同比）的区别。\n"
+            '只输出 JSON: {"override_basis": "引用具体占比/增速/毛利率的一句话依据"}。\n'
             f"业务线数据（基准报告期 {base_period}）:\n{segment_lines}"
         )
         model = create_chat_model("agent.track")
@@ -267,10 +272,10 @@ def synthesize_track_label(
         parsed = parse_json(raw)
         if not isinstance(parsed, dict):
             return rule.track_label, rule.override_basis, "rule"
-        label = str(parsed.get("track_label") or "").strip()
         basis = str(parsed.get("override_basis") or "").strip()
-        if label:
-            return label, basis or rule.override_basis, "llm"
+        if basis:
+            # LLM 只润色依据，不改标签（label 需保持确定性，供下游 playbook 路由匹配）
+            return rule.track_label, basis, "llm"
         return rule.track_label, rule.override_basis, "rule"
     except Exception:
         return rule.track_label, rule.override_basis, "rule"

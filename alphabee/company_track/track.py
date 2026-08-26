@@ -105,7 +105,7 @@ def build_company_track(
     notes.extend(rule.warnings)
     notes.extend(drift_notes)
     if method == "llm":
-        notes.append("标签由 LLM 复核生成（agent.track），需人工复核证据")
+        notes.append("赛道标签依据由 LLM 复核润色（agent.track），标签本身仍由规则确定，需人工复核证据")
 
     return CompanyTrackArtifact(
         schema_version="1",

@@ -79,6 +79,22 @@ def test_other_segments_excluded():
     assert all("其他" not in c["name"] for c in result.candidates)
 
 
+def test_margin_in_candidates_and_basis():
+    # 毛利率要进入 candidates 与 override_basis，支撑「利润核心 vs 增速引擎」的区分
+    result = derive_track_label(_gigadevice_like())
+    assert result.candidates[0]["margin"] == 42.8
+    assert all("margin" in c for c in result.candidates)
+    assert "毛利 42.8%" in result.override_basis
+
+
+def test_margin_omitted_when_missing():
+    # 毛利率缺失的分项：candidates 里 margin=None，basis 不出现「毛利」字样
+    segments = [_seg("云服务器", 60.0, 20.0), _seg("通信设备", 40.0, None)]
+    result = derive_track_label(segments)
+    assert result.candidates[0]["margin"] is None
+    assert "毛利" not in result.override_basis
+
+
 def test_category_preference():
     # 产品优先；只有行业分类时回退
     product_first = derive_track_label(
@@ -142,7 +158,7 @@ def test_synthesize_off_returns_rule(monkeypatch):
     assert label == rule.track_label
 
 
-def test_synthesize_llm_success(monkeypatch):
+def test_synthesize_llm_enriches_basis_keeps_rule_label(monkeypatch):
     import alphabee.utils.llm as llm_module
 
     class FakeModel:
@@ -150,17 +166,33 @@ def test_synthesize_llm_success(monkeypatch):
             return type(
                 "R",
                 (),
-                {
-                    "content": '{"track_label": "存储芯片设计龙头", "override_basis": "存储芯片占比 71.3% 且同比 +26.4%"}'
-                },
+                {"content": '{"override_basis": "存储芯片占比 71.3% 且同比 +26.4%，为高毛利增长引擎"}'},
             )()
 
     monkeypatch.setattr(llm_module, "create_chat_model", lambda component, **kw: FakeModel())
     rule = derive_track_label(_gigadevice_like())
     label, basis, method = synthesize_track_label(_collection(_gigadevice_like()), rule, use_llm=True)
     assert method == "llm"
-    assert label == "存储芯片设计龙头"
+    assert label == "存储芯片"  # 标签保持规则确定，LLM 只润色依据
     assert "71.3%" in basis
+
+
+def test_synthesize_llm_cannot_override_label(monkeypatch):
+    import alphabee.utils.llm as llm_module
+
+    class FakeModel:
+        def invoke(self, prompt):
+            return type(
+                "R",
+                (),
+                {"content": '{"track_label": "AI 算力龙头", "override_basis": "存储芯片占比 71.3%"}'},
+            )()
+
+    monkeypatch.setattr(llm_module, "create_chat_model", lambda component, **kw: FakeModel())
+    rule = derive_track_label(_gigadevice_like())
+    label, basis, method = synthesize_track_label(_collection(_gigadevice_like()), rule, use_llm=True)
+    assert label == "存储芯片"  # LLM 输出的 track_label 被忽略，只采纳 override_basis
+    assert basis == "存储芯片占比 71.3%"
 
 
 def test_synthesize_llm_failure_falls_back(monkeypatch):
