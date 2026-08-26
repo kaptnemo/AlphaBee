@@ -62,6 +62,20 @@ def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict | None
     return None
 
 
+def _find_artifact_id(artifacts: list[Artifact], artifact_type: str) -> str | None:
+    """Return the most recent artifact **id** matching *artifact_type*, or None.
+
+    与 ``_find_artifact``（返回 value）/ ``find_artifact_model``（返回 payload）不同，
+    这个 helper 专门用于给 ``Decision.based_on`` 提供证据引用：
+    ``based_on`` 契约要求的是 artifact **id** 而非 value，只有拿到 id 才能让
+    quality gate 的 ``build_evidence_map`` 把 decision 回溯到具体 artifact。
+    """
+    for a in reversed(artifacts):
+        if a.type == artifact_type:
+            return a.id
+    return None
+
+
 def _build_conflict_data(state: OrchestratorState) -> dict:
     """Summarise conflict+verification results for downstream nodes."""
     artifacts = state.get("artifacts", [])

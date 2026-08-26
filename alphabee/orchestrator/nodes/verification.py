@@ -18,7 +18,12 @@ from langchain_core.runnables import RunnableConfig
 
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import Artifact, ArtifactType, Decision, Issue, IssueSeverity, Step, StepStatus
-from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
+from alphabee.orchestrator.collectors import (
+    _extract_final_text,
+    _finalize_step,
+    _find_artifact_id,
+    _make_id,
+)
 from alphabee.orchestrator.contracts import (
     VerificationArtifact,
     find_artifact_model,
@@ -193,6 +198,12 @@ async def verify_hypotheses(
     #    verified / partial / rejected / unknown 的显式状态。
     settled_issues: list[Issue] = []
     settled_decisions: list[Decision] = []
+
+    # P0-④：rejected Decision 必须能回溯到其消费的 conflicts_result artifact。
+    # 拿到 artifact id 而非 value，供 quality gate 的 build_evidence_map 建立
+    # decision → artifact 的证据链（否则 evidence_coverage/grounding_score 恒为 0）。
+    conflicts_result_artifact_id = _find_artifact_id(state.get("artifacts", []), ArtifactType.CONFLICTS_RESULT)
+
     for conflict in conflicts_result.conflicts:
         settled_hypotheses = [
             hypothesis
@@ -223,6 +234,8 @@ async def verify_hypotheses(
                             f"假设已排除: {conflict.theme} — {hypothesis.explanation}. 推翻理由: {result.summary}"
                         ),
                         confidence=result.contradiction_score or 0.7,
+                        # 证据引用：这条“已排除”结论源自 conflicts_result 里被结算的假设。
+                        based_on=[conflicts_result_artifact_id] if conflicts_result_artifact_id else [],
                     )
                 )
     new_issues.extend(settled_issues)

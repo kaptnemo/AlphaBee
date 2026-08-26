@@ -36,6 +36,7 @@ from alphabee.core import (
     StepStatus,
 )
 from alphabee.orchestrator.collectors import (
+    _find_artifact_id,
     collect_raw_facts,
 )
 from alphabee.orchestrator.contracts import (
@@ -139,6 +140,16 @@ async def review_thesis(
     # ── Produce Decisions per dimension ──
     # 维度 verdict 会沉淀为 Decision，便于最终报告和质量 gate 回溯：
     # 每个维度到底是 confirmed、qualified 还是 contested，都有单独决策对象承载。
+    # P0-④：这些 Decision 必须带 based_on 证据引用（thesis + signal 两个上游 artifact），
+    # 否则 review_report 的 evidence_coverage / grounding_score 会因“决策无出处”恒为 0。
+    review_evidence_ids = [
+        x
+        for x in (
+            _find_artifact_id(artifacts, ArtifactType.THESIS_ANALYSIS),
+            _find_artifact_id(artifacts, ArtifactType.SIGNAL_ANALYSIS),
+        )
+        if x
+    ]
     for dim_id, verdict in review.dimension_verdicts.items():
         new_decisions.append(
             Decision(
@@ -157,6 +168,7 @@ async def review_thesis(
                     "insufficient": 0.3,
                     "contested": 0.2,
                 }.get(verdict.status, 0.5),
+                based_on=review_evidence_ids,
             )
         )
 

@@ -450,6 +450,25 @@ async def review_report(
     rewrite_reason = "；".join(assessment.blocking_issues[:3]) if rewrite_needed else None
     retries_remaining = rewrite_needed and review_round < state.get("max_report_review_rounds", 2)
     updated_issues: list[Issue] = []
+
+    # P0-④ 证据链前置校验（非阻塞）：若本轮到 gate 时所有 Decision 都缺
+    # based_on / evidence_refs，说明中间结论无法回溯到 artifact/observation，
+    # 产出 DATA-scope warning 提醒证据链未闭环。它只作提示，不进入 blocking_issues，
+    # 不会因“引用缺失”反复触发重写（引用缺失是过程质量问题，不是交付红线）。
+    decisions = state.get("decisions", [])
+    if decisions and not any(d.based_on or d.evidence_refs for d in decisions):
+        updated_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.MEDIUM,
+                category="evidence_chain_incomplete",
+                message="所有中间 Decision 均缺少 based_on/evidence_refs 证据引用，证据链未闭环。",
+                related_step=step.id,
+                scope=IssueScope.DATA,
+                owner_node="review_report",
+            )
+        )
+
     if not rewrite_needed:
         updated_issues.extend(
             issue.model_copy(
