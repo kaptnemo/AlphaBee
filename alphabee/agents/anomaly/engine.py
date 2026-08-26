@@ -199,15 +199,19 @@ class AnomalyEngine:
             return None
 
         # ── 计算基线 ──
-        if rule.use_statutory:
-            # 少数规则并不适合和历史均值比较，例如税率更适合对照法定税率。
-            # 这里等价于把“制度常识”当基线，而不是把历史异常当正常。
+        if rule.use_statutory and rule.statutory_as_baseline:
+            # 仅当显式开启制度基线时才用法定税率作为 z-score 基线；
+            # 默认走公司自身历史 ETR，与其它 ratio 规则一致，
+            # 避免“高新企业 15% 优惠税率”这类合规情形被误报为异常。
             baseline_mean = rule.statutory_rate
             baseline_std = rule.statutory_rate * 0.05  # 法定税率 5% 波动区间
             baseline_mode = "statutory"
             history_periods = []
         else:
             baseline_mean, baseline_std = self._compute_baseline(history)
+
+        # 法定税率只作为解释性参考，不参与 z-score 计算。
+        reference_rate = rule.statutory_rate if rule.use_statutory else None
 
         if baseline_std < _MIN_SIGMA:
             baseline_std = _MIN_SIGMA
@@ -240,6 +244,7 @@ class AnomalyEngine:
             history_periods=history_periods,
             book_ref=rule.book_ref,
             verify_questions=rule.verify_questions,
+            reference_rate=reference_rate,
         )
 
     def _evaluate_codir(

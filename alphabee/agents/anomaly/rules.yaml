@@ -117,7 +117,7 @@ rules:
   - id: effective_tax_rate
     name: "税费/利润背离"
     description: >
-      所得税占利润总额的比例显著低于法定税率（25%）。
+      所得税占利润总额的比例（有效税率）显著偏离公司自身历史水平。
       异常低的有效税率可能通过子公司利润转移、税收优惠滥用
       或递延所得税资产虚增来美化利润。
     metric_a: income_tax_expense
@@ -125,6 +125,8 @@ rules:
     rule_type: ratio
     anomaly_direction: drop
     threshold_sigma: 2.0
+    # 仅附注法定参考（供解释用），默认走公司历史 ETR 基线；
+    # 如需恢复旧的“法定税率当基线”行为，显式加 statutory_as_baseline: true。
     use_statutory: true
     statutory_rate: 0.25
     book_ref: "《手财》第七章 所得税"

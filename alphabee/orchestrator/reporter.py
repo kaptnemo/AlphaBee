@@ -58,11 +58,17 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
     ]
     signal_analysis = "\n".join(signal_lines) or "无风险信号触发"
 
-    anomaly_lines = [
-        f"- {a.get('metric')}: level={a.get('level')} z_score={a.get('z_score')}"
-        for a in payload.anomaly.anomalies
-        if a.get("level") != "none"
-    ]
+    anomaly_lines: list[str] = []
+    for a in payload.anomaly.anomalies:
+        if a.get("level") == "none":
+            continue
+        name = a.get("rule_name") or a.get("rule_id") or a.get("metric") or "未命名异常"
+        line = f"- {name}: level={a.get('level')} z_score={a.get('z_score')}"
+        ref = a.get("reference_rate")
+        if ref is not None:
+            # 法定税率仅作解释参考，低于法定可能因优惠税率（如高新 15%）而属正常。
+            line += f"（法定参考 {ref:.0%}，公司适用优惠税率时低于法定属正常）"
+        anomaly_lines.append(line)
     anomaly_lines += [
         f"- 模式 {p.get('pattern_name')} severity={p.get('severity')}" for p in payload.anomaly.pattern_matches
     ]

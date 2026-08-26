@@ -26,9 +26,11 @@ class CrossRule:
     baseline_periods: int = 4  # 基线计算期数（不含当期）
     book_ref: str = ""  # 《手财》章节引用
     verify_questions: list[str] = field(default_factory=list)  # 排查路径
-    # 特殊：对照法定税率而非历史基线
+    # 附注法定参考（仅作解释性参考，不参与历史基线 z-score）
     use_statutory: bool = False
     statutory_rate: float = 0.0
+    # 显式开启才用制度基线（如法定税率 25%±5%），默认 False → 走公司自身历史基线
+    statutory_as_baseline: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CrossRule:
@@ -48,6 +50,7 @@ class CrossRule:
             verify_questions=data.get("verify_questions", []),
             use_statutory=data.get("use_statutory", False),
             statutory_rate=data.get("statutory_rate", 0.0),
+            statutory_as_baseline=data.get("statutory_as_baseline", False),
         )
 
 
@@ -66,6 +69,7 @@ class MetricAnomaly:
     history_periods: list[str] = field(default_factory=list)
     book_ref: str = ""
     verify_questions: list[str] = field(default_factory=list)  # 排查路径
+    reference_rate: float | None = None  # 法定参考利率（仅解释用，不参与 z-score）
 
     def to_dict(self) -> dict[str, Any]:
         # 输出时做 round，是为了给报告/日志/前端稳定展示，
@@ -82,6 +86,7 @@ class MetricAnomaly:
             "history_periods": self.history_periods,
             "book_ref": self.book_ref,
             "verify_questions": self.verify_questions,
+            "reference_rate": round(self.reference_rate, 4) if self.reference_rate is not None else None,
         }
 
 
