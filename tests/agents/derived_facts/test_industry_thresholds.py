@@ -18,11 +18,17 @@ def _compute(rule_name: str, facts: dict[str, float]) -> str:
 
 def test_debt_ratio_bank_norm_is_not_aggressive():
     # 银行 92% 负债率 vs 银行行业均值 0.92 → 行业常态 → moderate（改造前为 aggressive）
-    assert _compute("debt_ratio", {"total_liabilities": 0.92, "total_assets": 1.0, "industry_avg_debt_ratio": 0.92}) == "moderate"
+    assert (
+        _compute("debt_ratio", {"total_liabilities": 0.92, "total_assets": 1.0, "industry_avg_debt_ratio": 0.92})
+        == "moderate"
+    )
 
 
 def test_debt_ratio_manufacturing_above_industry_is_aggressive():
-    assert _compute("debt_ratio", {"total_liabilities": 0.72, "total_assets": 1.0, "industry_avg_debt_ratio": 0.45}) == "aggressive"
+    assert (
+        _compute("debt_ratio", {"total_liabilities": 0.72, "total_assets": 1.0, "industry_avg_debt_ratio": 0.45})
+        == "aggressive"
+    )
 
 
 def test_debt_ratio_missing_industry_falls_back_to_absolute():
@@ -37,9 +43,14 @@ def test_debt_ratio_missing_industry_falls_back_to_absolute():
 
 def test_roe_level_relative_to_industry():
     # 制造业 ROE=6% vs 行业均值 5% → good（改造前为 weak）
-    assert _compute("roe_level", {"net_profit": 0.06, "avg_shareholders_equity": 1.0, "industry_avg_roe": 0.05}) == "good"
+    assert (
+        _compute("roe_level", {"net_profit": 0.06, "avg_shareholders_equity": 1.0, "industry_avg_roe": 0.05}) == "good"
+    )
     # ROE 明显高于行业 → excellent
-    assert _compute("roe_level", {"net_profit": 0.10, "avg_shareholders_equity": 1.0, "industry_avg_roe": 0.05}) == "excellent"
+    assert (
+        _compute("roe_level", {"net_profit": 0.10, "avg_shareholders_equity": 1.0, "industry_avg_roe": 0.05})
+        == "excellent"
+    )
 
 
 def test_roe_level_missing_industry_falls_back():
@@ -62,15 +73,9 @@ def test_peg_ratio_remains_absolute():
 
 def test_market_share_change_computes_when_industry_field_present():
     # 注入 industry_revenue_yoy（PERCENT 单位）后规则从 invalid 恢复
-    assert _compute(
-        "market_share_change", {"revenue_yoy": 25.0, "industry_revenue_yoy": 12.0}
-    ) == "gaining"
-    assert _compute(
-        "market_share_change", {"revenue_yoy": 5.0, "industry_revenue_yoy": 12.0}
-    ) == "losing"
-    assert _compute(
-        "market_share_change", {"revenue_yoy": 15.0, "industry_revenue_yoy": 12.0}
-    ) == "stable"
+    assert _compute("market_share_change", {"revenue_yoy": 25.0, "industry_revenue_yoy": 12.0}) == "gaining"
+    assert _compute("market_share_change", {"revenue_yoy": 5.0, "industry_revenue_yoy": 12.0}) == "losing"
+    assert _compute("market_share_change", {"revenue_yoy": 15.0, "industry_revenue_yoy": 12.0}) == "stable"
 
 
 def test_market_share_change_still_blocked_without_industry_field():

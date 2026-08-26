@@ -344,13 +344,13 @@ class TestOperationFactIntegration:
 class TestIndustryFactIntegration:
     @tushare_required
     def test_sw_classification_found(self):
-        """贵州茅台 should match 白酒 SW industry."""
+        """贵州茅台 should match 白酒 SW industry (L3 precise name)."""
         from alphabee.agents.facts.tools.industry_fact import get_industry_fact
 
         data = get_industry_fact(_KWEICHOW_MOUTAI)
 
         assert data["stock_code"] == _KWEICHOW_MOUTAI
-        assert data["industry"] == "白酒"
+        assert data["industry"] in ("白酒", "白酒Ⅲ")
 
         if data["sw_code"]:
             assert len(data["sw_code"]) >= 6
@@ -396,7 +396,7 @@ class TestCompetitionFactIntegration:
 
         assert data["stock_code"] == _KWEICHOW_MOUTAI
         assert data["company_name"] != ""
-        assert data["industry"] == "白酒"
+        assert data["industry"] in ("白酒", "白酒Ⅲ")
         assert data["total_peers"] > 0
 
     def test_render_with_local_data(self):

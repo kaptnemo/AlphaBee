@@ -202,6 +202,17 @@ def test_jobstore_json_structure(tmp_path):
     task_id = store.create("demo", payload={"q": 1})
     job = json.loads((tmp_path / "demo" / task_id / "job.json").read_text(encoding="utf-8"))
     assert set(job) >= {
-        "task_id", "kind", "status", "progress", "message", "created_at",
-        "started_at", "completed_at", "payload", "result", "error", "pid", "fingerprint",
+        "task_id",
+        "kind",
+        "status",
+        "progress",
+        "message",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "payload",
+        "result",
+        "error",
+        "pid",
+        "fingerprint",
     }
