@@ -404,8 +404,8 @@ def _create_loader(
     ocr_server_url: str = DEFAULT_OCR_SERVER_URL,
     dpi: int = 144,
     image_format: str = "PNG",
-    max_workers: int = 2,
-    batch_size: int = 16,
+    max_workers: int = 4,
+    batch_size: int = 32,
     keep_pages: bool = True,
 ) -> PDFOCRLoader:
     return PDFOCRLoader(
@@ -467,8 +467,8 @@ def ocr_pdf_to_markdown(
     ocr_server_url: str = DEFAULT_OCR_SERVER_URL,
     dpi: int = 144,
     image_format: str = "PNG",
-    max_workers: int = 2,
-    batch_size: int = 64,
+    max_workers: int = 4,
+    batch_size: int = 32,
     keep_pages: bool = True,
     include_content: bool = False,
 ) -> OCRMarkdownResult:
@@ -530,8 +530,8 @@ def ocr_pdf_to_documents(
     ocr_server_url: str = DEFAULT_OCR_SERVER_URL,
     dpi: int = 144,
     image_format: str = "PNG",
-    max_workers: int = 2,
-    batch_size: int = 64,
+    max_workers: int = 4,
+    batch_size: int = 32,
     keep_pages: bool = True,
     preview_size: int = 20,
     save_documents: bool = True,
@@ -587,8 +587,8 @@ def ocr_pdf_to_jsonl(
     ocr_server_url: str = DEFAULT_OCR_SERVER_URL,
     dpi: int = 144,
     image_format: str = "PNG",
-    max_workers: int = 2,
-    batch_size: int = 64,
+    max_workers: int = 4,
+    batch_size: int = 32,
     keep_pages: bool = True,
 ) -> OCRJSONLResult:
     """OCR 并把文档块保存到指定 JSONL 文件，返回输出路径。
@@ -918,8 +918,8 @@ def _run_job_worker(task_id: str) -> None:
             ocr_server_url=payload.get("ocr_server_url") or DEFAULT_OCR_SERVER_URL,
             dpi=payload.get("dpi", 144),
             image_format=payload.get("image_format", "PNG"),
-            max_workers=payload.get("max_workers", 2),
-            batch_size=payload.get("batch_size", 64),
+            max_workers=payload.get("max_workers", 4),
+            batch_size=payload.get("batch_size", 32),
             keep_pages=payload.get("keep_pages", True),
         )
 
@@ -971,8 +971,8 @@ def submit_pdf_ocr(
     ocr_server_url: str = DEFAULT_OCR_SERVER_URL,
     dpi: int = 144,
     image_format: str = "PNG",
-    max_workers: int = 2,
-    batch_size: int = 64,
+    max_workers: int = 4,
+    batch_size: int = 32,
     keep_pages: bool = True,
 ) -> SubmitOCRJobResult:
     """**异步**提交 PDF OCR 任务，立即返回 task_id（不阻塞等待 OCR 完成）。
