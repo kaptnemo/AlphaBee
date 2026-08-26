@@ -76,6 +76,6 @@ def configure_logging(
     _IS_CONFIGURED = True
 
 
-def get_logger(name: str):
+def get_logger(name: str) -> Any:
     configure_logging()
     return structlog.get_logger(name)

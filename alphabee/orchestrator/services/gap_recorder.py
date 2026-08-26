@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from alphabee.agents.signal.registry import SIGNAL_RULES
 
 
 def record_signal_data_gaps(
-    signal_analysis: dict[str, dict],
+    signal_analysis: dict[str, dict[str, Any]],
     fact_values: dict[str, float],
     symbol: str | None,
 ) -> None:

@@ -7,7 +7,7 @@ AIMessage JSON payload。
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from alphabee.company_track.contracts import CompanyTrackArtifact
 from alphabee.orchestrator.contracts import (
@@ -41,7 +41,7 @@ class TaskRecorder:
         symbol: str | None,
         flags: dict[str, bool],
         payload: dict[str, Any],
-        artifacts: list[dict] | None = None,
+        artifacts: list[dict[str, Any]] | None = None,
         start_ts: float = 0.0,
     ) -> TaskRecord:
         """从最终 payload 构建 TaskRecord。
@@ -107,10 +107,11 @@ class TaskRecorder:
     # 提取器
     # ═══════════════════════════════════════════════════════════════
 
-    def _find_artifact(self, artifacts: list[dict], atype: str) -> dict | None:
+    def _find_artifact(self, artifacts: list[dict[str, Any]], atype: str) -> dict[str, Any] | None:
         for a in reversed(artifacts):
-            if a.get("type") == atype and isinstance(a.get("value"), dict):
-                return a["value"]
+            value = a.get("value")
+            if a.get("type") == atype and isinstance(value, dict):
+                return value
         return None
 
     def _count_fact_values(self, fact_val: FactCollectionArtifact | None) -> int:
@@ -181,9 +182,9 @@ class TaskRecorder:
         if not thesis_val:
             return ""
         thesis_data = thesis_val.thesis
-        return thesis_data.get("overall_judgment", "")
+        return cast(str, thesis_data.get("overall_judgment", ""))
 
-    def _extract_review_dims(self, review_val: dict | None) -> list[DimensionVerdictSummary]:
+    def _extract_review_dims(self, review_val: dict[str, Any] | None) -> list[DimensionVerdictSummary]:
         if not review_val:
             return []
         verdicts = review_val.get("dimension_verdicts", {})
@@ -199,7 +200,7 @@ class TaskRecorder:
             for dim_id, v in verdicts.items()
         ]
 
-    def _extract_issues(self, issues: list[dict]) -> list[IssueRecord]:
+    def _extract_issues(self, issues: list[dict[str, Any]]) -> list[IssueRecord]:
         return [
             IssueRecord(
                 severity=i.get("severity", ""),

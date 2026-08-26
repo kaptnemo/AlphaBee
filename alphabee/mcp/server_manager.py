@@ -32,6 +32,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 # 进程内已启动的服务管理器（用于统一回收）
 _ACTIVE_MANAGERS: list[PdfOcrMCPServerManager] = []
@@ -108,7 +109,7 @@ class PdfOcrMCPServerManager:
         self.timeout = timeout
         self.python_executable = python_executable or sys.executable
         self.log_file = Path(log_file) if log_file else None
-        self.process: subprocess.Popen | None = None
+        self.process: subprocess.Popen[bytes] | None = None
         self.url: str | None = None
         self._started = False
 
@@ -133,13 +134,11 @@ class PdfOcrMCPServerManager:
         # 子进程从零导入 alphabee 包，需要能看到项目根目录
         project_root = str(Path(__file__).resolve().parents[2])
         existing_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            project_root + os.pathsep + existing_pythonpath if existing_pythonpath else project_root
-        )
+        env["PYTHONPATH"] = project_root + os.pathsep + existing_pythonpath if existing_pythonpath else project_root
         return env
 
     @property
-    def servers_config(self) -> dict:
+    def servers_config(self) -> dict[str, Any]:
         """``MultiServerMCPClient`` 可直接使用的服务器连接配置。"""
         if self.transport == "streamable-http":
             if self.url is None:
@@ -220,8 +219,7 @@ class PdfOcrMCPServerManager:
         if not _wait_for_port(self.host, self.port, self.timeout):
             self.stop()
             raise TimeoutError(
-                f"PDF OCR MCP server did not become ready within {self.timeout}s "
-                f"({self.host}:{self.port})"
+                f"PDF OCR MCP server did not become ready within {self.timeout}s ({self.host}:{self.port})"
             )
         self.url = f"http://{self.host}:{self.port}/mcp"
 
@@ -239,7 +237,7 @@ class PdfOcrMCPServerManager:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
             log_handle = open(self.log_file, "a", encoding="utf-8")
 
-        probe: subprocess.Popen | None = None
+        probe: subprocess.Popen[bytes] | None = None
         try:
             probe = subprocess.Popen(
                 args,
@@ -261,14 +259,13 @@ class PdfOcrMCPServerManager:
             if probe.poll() is not None:
                 self._terminate_probe(probe)
                 raise RuntimeError(
-                    f"PDF OCR MCP server (stdio) exited during startup probe: "
-                    f"returncode={probe.returncode}"
+                    f"PDF OCR MCP server (stdio) exited during startup probe: returncode={probe.returncode}"
                 )
             time.sleep(0.2)
         self._terminate_probe(probe)
 
     @staticmethod
-    def _terminate_probe(probe: subprocess.Popen) -> None:
+    def _terminate_probe(probe: subprocess.Popen[bytes]) -> None:
         if probe.poll() is None:
             try:
                 probe.terminate()

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -44,28 +44,29 @@ def extract_text(content: Any) -> str:
     return str(content)
 
 
-def tool_name_from_call(tool_call: dict) -> str:
-    return tool_call.get("name", "unknown_tool")
+def tool_name_from_call(tool_call: dict[str, Any]) -> str:
+    name = tool_call.get("name", "unknown_tool")
+    return name if isinstance(name, str) else "unknown_tool"
 
 
-def tool_args_from_call(tool_call: dict) -> dict:
+def tool_args_from_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     args = tool_call.get("args", {})
     if isinstance(args, str):
         try:
-            return json.loads(args)
+            return cast(dict[str, Any], json.loads(args))
         except Exception:
             return {"raw": args}
     return args if isinstance(args, dict) else {}
 
 
-def tool_label_from_call(tool_call: dict) -> str:
+def tool_label_from_call(tool_call: dict[str, Any]) -> str:
     tool_name = tool_name_from_call(tool_call)
     args = tool_args_from_call(tool_call)
     kind, display_name, _ = classify_call(tool_name, args)
     return f"{kind}:{display_name}"
 
 
-def parse_namespace(namespace: tuple) -> tuple[str, int]:
+def parse_namespace(namespace: tuple[str, ...]) -> tuple[str, int]:
     """Convert a LangGraph namespace tuple into a human-readable path and depth.
 
     Namespace format: ("AgentName:uuid", "ChildAgent:uuid", ...)
@@ -80,7 +81,7 @@ def parse_namespace(namespace: tuple) -> tuple[str, int]:
     return " > ".join(parts), len(parts)
 
 
-def parse_report_payload(content: Any) -> dict | None:
+def parse_report_payload(content: Any) -> dict[str, Any] | None:
     """Try to parse the final AIMessage content as a JSON report payload."""
     text = extract_text(content)
     if not text:

@@ -11,10 +11,12 @@ tushare 初始化（``ts.set_token`` 写 ``~/tk.csv``）的代价。
 
 from __future__ import annotations
 
+from typing import Any
+
 __all__ = ["alphabee_agent"]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "alphabee_agent":
         from alphabee.orchestrator.agent import alphabee_agent
 

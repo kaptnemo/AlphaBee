@@ -19,6 +19,7 @@ peer_revenue_yoy / peer_median_pe_ttm / peer_median_pb。
 from __future__ import annotations
 
 from datetime import date
+from typing import cast
 
 from langchain_core.runnables import RunnableConfig
 
@@ -94,7 +95,7 @@ async def resolve_company_track(
         peer_values, meta = derive_peer_benchmarks(peer_group.codes, industry=peer_group.name)
         track.peer_group = peer_group.codes
         track.peer_group_source = peer_group.source
-        track.peer_benchmarks = peer_values
+        track.peer_benchmarks = cast(dict[str, float | None], peer_values)
         if meta.get("error") or not peer_values:
             track.degraded = True
             track.degraded_reason = meta.get("error") or "对标组基准不可得"

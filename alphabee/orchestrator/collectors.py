@@ -54,7 +54,7 @@ def _extract_final_text(result: dict[str, Any]) -> str:
     return extract_text(messages[-1].content).strip()
 
 
-def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict | None:
+def _find_artifact(artifacts: list[Artifact], artifact_type: str) -> dict[str, Any] | None:
     """Return the most recent artifact value matching *artifact_type*, or None."""
     for a in reversed(artifacts):
         if a.type == artifact_type and isinstance(a.value, dict):
@@ -76,7 +76,7 @@ def _find_artifact_id(artifacts: list[Artifact], artifact_type: str) -> str | No
     return None
 
 
-def _build_conflict_data(state: OrchestratorState) -> dict:
+def _build_conflict_data(state: OrchestratorState) -> dict[str, Any]:
     """Summarise conflict+verification results for downstream nodes."""
     artifacts = state.get("artifacts", [])
     conflicts_raw = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)

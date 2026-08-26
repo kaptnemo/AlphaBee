@@ -14,6 +14,8 @@
 （否则会触发 runpy 的 "found in sys.modules" 警告并在每次 stdio 会话重复执行）。
 """
 
+from typing import Any
+
 from alphabee.mcp.jobs import (
     JobCancelledError,
     JobStatus,
@@ -40,7 +42,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """惰性导出 ``mcp``（FastMCP 实例），避免包导入时加载整个 OCR 服务模块。"""
     if name == "mcp":
         from alphabee.mcp.pdf_ocr_server import mcp

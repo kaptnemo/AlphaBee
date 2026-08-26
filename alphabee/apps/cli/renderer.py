@@ -151,16 +151,17 @@ def print_step_tool_result(
 # ---------------------------------------------------------------------------
 
 
-def print_node_update_summary(node_name: str, node_update: dict, elapsed: float) -> None:
+def print_node_update_summary(node_name: str, node_update: dict[str, Any], elapsed: float) -> None:
     """Print structured progress for each orchestrator node from its incremental update."""
-    issues: list = node_update.get("issues", [])
+    issues: list[Any] = node_update.get("issues", [])
     issue_tag = color(f"  ⚠ {len(issues)}", Color.YELLOW) if issues else ""
 
     # ── Helper: last artifact of a given type ─────────────────────────
-    def _last_artifact(atype: str) -> dict | None:
+    def _last_artifact(atype: str) -> dict[str, Any] | None:
         for a in reversed(node_update.get("artifacts", []) or []):
             if isinstance(a, dict) and a.get("type") == atype:
-                return a.get("value", {}) or {}
+                value = a.get("value", {})
+                return value if isinstance(value, dict) else {}
             if hasattr(a, "type") and a.type == atype:
                 return a.value if isinstance(a.value, dict) else {}
         return None
@@ -201,14 +202,14 @@ def print_node_update_summary(node_name: str, node_update: dict, elapsed: float)
         if not peer_count:
             peer_count = 0
 
-        def _count_non_null(group) -> int:
+        def _count_non_null(group: Any) -> int:
             if isinstance(group, dict):
                 return sum(1 for v in group.values() if v is not None)
             if hasattr(group, "values"):
                 return sum(1 for v in group.values() if v is not None)
             return 0
 
-        def _group_get(group, key, default=None):
+        def _group_get(group: Any, key: str, default: Any = None) -> Any:
             if isinstance(group, dict):
                 return group.get(key, default)
             if hasattr(group, "get"):
@@ -230,12 +231,12 @@ def print_node_update_summary(node_name: str, node_update: dict, elapsed: float)
         margin = _group_get(financial, "industry_avg_gross_margin")
         rev_yoy = _group_get(growth, "industry_revenue_yoy")
 
-        def _fmt(v, suffix="") -> str:
+        def _fmt(v: Any, suffix: str = "") -> str:
             if v is None:
                 return color("—", Color.DIM)
             return f"{v:g}{suffix}"
 
-        def _fmt_ratio(v) -> str:
+        def _fmt_ratio(v: Any) -> str:
             """RATIO 口径基准（ROE/负债率/毛利）→ 显示为百分比。"""
             if v is None:
                 return color("—", Color.DIM)
@@ -329,8 +330,8 @@ def print_node_update_summary(node_name: str, node_update: dict, elapsed: float)
                     level_counts[lv] = level_counts.get(lv, 0) + 1
 
         if hasattr(anomaly_report, "anomaly_count"):
-            anomaly_count = anomaly_report.anomaly_count
-            pattern_count = anomaly_report.pattern_count
+            anomaly_count = getattr(anomaly_report, "anomaly_count")
+            pattern_count = getattr(anomaly_report, "pattern_count")
         else:
             anomaly_count = anomaly_report.get("anomaly_count", 0) if isinstance(anomaly_report, dict) else 0
             pattern_count = anomaly_report.get("pattern_count", 0) if isinstance(anomaly_report, dict) else 0
@@ -388,7 +389,7 @@ def print_node_update_summary(node_name: str, node_update: dict, elapsed: float)
 
     # ─────────────────────────────────────────────────────────────────
     elif node_name == "verify_hypotheses":
-        vr = _last_artifact("verification_results") or []
+        vr: Any = _last_artifact("verification_results") or []
         if hasattr(vr, "results"):
             vr_items = [item.model_dump(mode="json") for item in vr.results]
         else:
@@ -596,7 +597,7 @@ def print_node_update_summary(node_name: str, node_update: dict, elapsed: float)
         print()
 
 
-def render_final_report(final_payload: dict) -> None:
+def render_final_report(final_payload: dict[str, Any]) -> None:
     """Parse and render the final JSON report payload in a readable format."""
     report = final_payload.get("final_report", {})
     if not report or not isinstance(report, dict):

@@ -10,9 +10,10 @@ from __future__ import annotations
 import sys
 import time
 import traceback
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langfuse.langchain import CallbackHandler
 
 from alphabee.apps.cli.colors import Color, color, hr
@@ -38,6 +39,7 @@ from alphabee.apps.cli.renderer import (
     render_final_report,
 )
 from alphabee.orchestrator.agent import alphabee_agent
+from alphabee.orchestrator.state import OrchestratorState
 from alphabee.tools.common import extract_symbols_from_query
 from alphabee.utils import get_logger
 
@@ -92,10 +94,10 @@ async def run_query(
     stage_entry_ts = start_ts
     step = 0
     final_answer = ""
-    report_payload: dict | None = None
+    report_payload: dict[str, Any] | None = None
 
     # (namespace_tuple, tool_call_id) → display_name
-    pending_calls: dict[tuple, str] = {}
+    pending_calls: dict[tuple[tuple[str, ...], str], str] = {}
 
     logger.info(
         "query_start",
@@ -105,7 +107,7 @@ async def run_query(
         llm_review=llm_review,
     )
 
-    callbacks = []
+    callbacks: list[Any] = []
     if langfuse_available():
         callbacks.append(CallbackHandler())
     else:
@@ -114,11 +116,16 @@ async def run_query(
 
     try:
         async for namespace, chunk in alphabee_agent.astream(
-            {"messages": conversation, "enhance": enhance, "llm_review": llm_review},
-            config={"callbacks": callbacks} if callbacks else {},
+            cast(
+                OrchestratorState,
+                {"messages": conversation, "enhance": enhance, "llm_review": llm_review},
+            ),
+            config=cast(RunnableConfig, {"callbacks": callbacks} if callbacks else {}),
             stream_mode="updates",
             subgraphs=True,
         ):
+            namespace = cast(tuple[str, ...], namespace)
+            chunk = cast(dict[str, Any], chunk)
             elapsed = time.monotonic() - start_ts
             agent_path, depth = parse_namespace(namespace)
 
@@ -153,7 +160,7 @@ async def run_query(
                     continue
 
                 # depth > 0: messages from nested subagent graphs
-                messages: list = node_update.get("messages", [])
+                messages: list[Any] = node_update.get("messages", [])
                 if not messages:
                     continue
 
@@ -163,7 +170,7 @@ async def run_query(
                     # ── AIMessage: model thinking or tool dispatch ──
                     if isinstance(msg, AIMessage):
                         text = extract_text(msg.content)
-                        tool_calls: list = msg.tool_calls or []
+                        tool_calls: list[Any] = msg.tool_calls or []
 
                         logger.info(
                             "model_output",

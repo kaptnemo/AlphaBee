@@ -17,17 +17,20 @@
 """
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any, cast
 
 from langchain.agents.middleware import ToolCallRequest, wrap_tool_call
 from langchain_core.messages import ToolMessage
+from langgraph.types import Command
 
 # ---------------------------------------------------------------------------
 # Pre-call：禁止通过 web_search 查询的关键词模式
 # 匹配到任意一条 → 短路拦截
 # ---------------------------------------------------------------------------
 
-_FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
+_FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("股票价格/涨跌", re.compile(r"(股价|现价|最新价|收盘价|开盘价|涨跌幅|涨停|跌停|今日.*价|当前.*价|price)", re.I)),
     ("市值/估值指标", re.compile(r"(pe|pb|ps|市盈率|市净率|市销率|总市值|流通市值|估值)", re.I)),
     ("财务数字", re.compile(r"(营收|净利润|毛利率|roe|roa|eps|每股收益|现金流|负债率|利润率)", re.I)),
@@ -52,7 +55,7 @@ _RESULT_DISCLAIMER = (
 @dataclass
 class _ScanRule:
     category: str
-    pattern: re.Pattern
+    pattern: re.Pattern[str]
     tool: str
     agent: str
 
@@ -136,14 +139,14 @@ def _detect_forbidden(query: str) -> tuple[bool, str]:
     return False, ""
 
 
-def _scan_numeric_hits(content: str) -> list[dict]:
+def _scan_numeric_hits(content: str) -> list[dict[str, Any]]:
     """扫描 web_search 结果中出现的数值型金融数据。
 
     Returns:
         命中列表，每条为 {category, snippets, tool, agent}。
         同一 category 只返回一条（去重），最多附带 2 个上下文片段。
     """
-    hits: list[dict] = []
+    hits: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for rule in _NUMERIC_SCAN_RULES:
@@ -171,10 +174,10 @@ def _scan_numeric_hits(content: str) -> list[dict]:
     return hits
 
 
-def _build_verify_directive(hits: list[dict]) -> str:
+def _build_verify_directive(hits: list[dict[str, Any]]) -> str:
     """根据扫描结果生成结构化核验指令。"""
     # 按 tool 合并同类项，避免重复指示同一工具
-    tool_groups: dict[str, dict] = {}
+    tool_groups: dict[str, dict[str, Any]] = {}
     for hit in hits:
         key = hit["tool"]
         if key not in tool_groups:
@@ -212,7 +215,10 @@ def _build_verify_directive(hits: list[dict]) -> str:
 
 
 @wrap_tool_call
-async def web_search_guard(request: ToolCallRequest, handler):
+async def web_search_guard(
+    request: ToolCallRequest,
+    handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+) -> ToolMessage | Command[Any]:
     """web_search 使用边界守卫（async）。
 
     执行顺序：
@@ -245,7 +251,7 @@ async def web_search_guard(request: ToolCallRequest, handler):
         )
 
     # ── 2. 放行，执行真实调用 ────────────────────────────────────────────────
-    result: ToolMessage = await handler(request)
+    result = cast(ToolMessage, await handler(request))
     content = result.content if isinstance(result.content, str) else ""
 
     # ── 3. Post-call：追加免责声明 ───────────────────────────────────────────

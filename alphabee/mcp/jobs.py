@@ -37,7 +37,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from alphabee import PROJECT_ROOT
@@ -65,8 +65,19 @@ class JobCancelledError(RuntimeError):
 class TaskStatus:
     """任务状态的轻量结构（可直接 ``model_dump`` 成 dict 供 MCP 返回）。"""
 
-    __slots__ = ("task_id", "kind", "status", "progress", "message", "created_at", "started_at", "completed_at",
-                 "error", "result", "pid")
+    __slots__ = (
+        "task_id",
+        "kind",
+        "status",
+        "progress",
+        "message",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "error",
+        "result",
+        "pid",
+    )
 
     def __init__(self, job: dict[str, Any]) -> None:
         self.task_id = job.get("task_id", "")
@@ -171,7 +182,7 @@ class JobStore:
         if not path.is_file():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -251,7 +262,7 @@ class JobStore:
 
     def is_cancelled(self, kind: str, task_id: str) -> bool:
         job = self.load(kind, task_id)
-        return bool(job) and job.get("status") == JobStatus.CANCELLED
+        return job is not None and job.get("status") == JobStatus.CANCELLED
 
     def status(self, kind: str, task_id: str) -> dict[str, Any] | None:
         job = self.load(kind, task_id)
@@ -357,7 +368,7 @@ def register_job_tools(
         return result
 
     get_status.__name__ = f"get_{kind}_status"
-    get_status.__doc__ = get_status.__doc__.format(label=label, kind=kind)
+    get_status.__doc__ = (get_status.__doc__ or "").format(label=label, kind=kind)
 
     async def wait_task(
         task_id: str,
@@ -385,7 +396,7 @@ def register_job_tools(
             await asyncio.sleep(min(max(0.05, poll_interval), remaining))
 
     wait_task.__name__ = f"wait_{kind}_task"
-    wait_task.__doc__ = wait_task.__doc__.format(label=label, kind=kind)
+    wait_task.__doc__ = (wait_task.__doc__ or "").format(label=label, kind=kind)
 
     async def list_tasks(status: str | None = None, limit: int = 50) -> dict[str, Any]:
         """列出 {label} 任务（按创建时间倒序），可选按 status 过滤。
@@ -396,7 +407,7 @@ def register_job_tools(
         return {"count": len(tasks), "tasks": tasks}
 
     list_tasks.__name__ = f"list_{kind}_tasks"
-    list_tasks.__doc__ = list_tasks.__doc__.format(label=label, kind=kind)
+    list_tasks.__doc__ = (list_tasks.__doc__ or "").format(label=label, kind=kind)
 
     async def cancel_task(task_id: str) -> dict[str, Any]:
         """取消 {label} 任务：置为 cancelled 并终止其 worker 进程。
@@ -412,7 +423,7 @@ def register_job_tools(
         }
 
     cancel_task.__name__ = f"cancel_{kind}_task"
-    cancel_task.__doc__ = cancel_task.__doc__.format(label=label, kind=kind)
+    cancel_task.__doc__ = (cancel_task.__doc__ or "").format(label=label, kind=kind)
 
     mcp.tool()(get_status)
     mcp.tool()(wait_task)
@@ -437,5 +448,5 @@ def register_job_tools(
             return result_renderer(store, task_id)
 
         get_result.__name__ = f"get_{kind}_result"
-        get_result.__doc__ = get_result.__doc__.format(label=label, kind=kind)
+        get_result.__doc__ = (get_result.__doc__ or "").format(label=label, kind=kind)
         mcp.tool()(get_result)

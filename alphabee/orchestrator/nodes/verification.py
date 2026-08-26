@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from alphabee.utils.prompts import json_instruction
 
@@ -35,7 +35,7 @@ from alphabee.utils.pipeline import parse_json
 
 async def _verify_single_conflict(
     conflict: ConflictItem,
-    shared_context: dict,
+    shared_context: dict[str, Any],
     step_id: str,
     config: RunnableConfig,
 ) -> tuple[list[VerificationResultItem], list[Issue]]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 from alphabee.agents.facts.tools.company_profile import get_company_profile
 from alphabee.agents.facts.tools.industry_fact import get_industry_fact
@@ -65,7 +67,7 @@ def build_company_context(
     # CompanyContext 的作用不是生成结论，而是给 thesis / review 提供“解释坐标系”：
     # 同样的增速、估值、现金流表现，在大盘蓝筹与成长股上含义可能完全不同。
     ctx.name = symbol
-    profile: dict = {}
+    profile: dict[str, Any] = {}
 
     try:
         ind_fact = get_industry_fact(symbol)

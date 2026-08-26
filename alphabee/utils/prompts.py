@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -29,7 +30,7 @@ from pydantic import BaseModel
 #   - 枚举值被表示为 {"enum": ["a","b"]} 而非直观的 'a'|'b'|'c'
 
 
-def _resolve_ref(ref: str, root_schema: dict) -> dict:
+def _resolve_ref(ref: str, root_schema: dict[str, Any]) -> dict[str, Any]:
     """解析 JSON Schema 的 ``$ref`` 引用，返回被引用的 schema 片段。
 
     Pydantic 的 model_json_schema() 对嵌套模型使用 ``$ref`` 引用
@@ -44,7 +45,7 @@ def _resolve_ref(ref: str, root_schema: dict) -> dict:
     return current
 
 
-def _describe_type(prop_schema: dict, root_schema: dict) -> str:
+def _describe_type(prop_schema: dict[str, Any], root_schema: dict[str, Any]) -> str:
     """将单个 property schema 转为紧凑的类型描述字符串。
 
     典型输出示例：
@@ -61,7 +62,8 @@ def _describe_type(prop_schema: dict, root_schema: dict) -> str:
     """
     if "$ref" in prop_schema:
         resolved = _resolve_ref(prop_schema["$ref"], root_schema)
-        return resolved.get("title", prop_schema["$ref"].split("/")[-1])
+        title = resolved.get("title")
+        return title if isinstance(title, str) else prop_schema["$ref"].split("/")[-1]
 
     # Optional 字段的 anyOf: [{"type": "string"}, {"type": "null"}]
     # 只取非 null 分支作为类型描述，null 分支由 required 列表体现
@@ -71,7 +73,7 @@ def _describe_type(prop_schema: dict, root_schema: dict) -> str:
             return _describe_type(non_null[0], root_schema)
         return "any"
 
-    type_ = prop_schema.get("type", "any")
+    type_: str = str(prop_schema.get("type", "any"))
 
     # 枚举 → 'a'|'b'|'c'
     # 用 repr() 而非 str()：repr('high') → "'high'"，LLM 能明确识别这是字符串字面量
@@ -90,7 +92,7 @@ def _describe_type(prop_schema: dict, root_schema: dict) -> str:
     return type_
 
 
-def _build_compact_schema(schema: dict) -> str:
+def _build_compact_schema(schema: dict[str, Any]) -> str:
     """从 JSON Schema 构建紧凑可读的字段定义文本。
 
     将顶层模型及其所有嵌套模型展开为平铺的字段列表，每个模型一节，
@@ -118,12 +120,12 @@ def _build_compact_schema(schema: dict) -> str:
 
 
 def _describe_model(
-    model_schema: dict,
-    root_schema: dict,
+    model_schema: dict[str, Any],
+    root_schema: dict[str, Any],
     lines: list[str],
     seen: set[str],
     indent: int,
-):
+) -> None:
     """递归描述单个 Pydantic 模型的字段，将嵌套模型展开到同级。
 
     关键设计决策：嵌套模型不在父字段下缩进多级，而是作为**平级节点**输出。
@@ -174,7 +176,7 @@ def _describe_model(
             _describe_model(ref_schema, root_schema, lines, seen, indent + 1)
 
 
-def _extract_example(schema: dict) -> dict | None:
+def _extract_example(schema: dict[str, Any]) -> dict[str, Any] | None:
     """从 JSON Schema 顶层提取 ``json_schema_extra.example``。
 
     Pydantic v2 的 ``ConfigDict(json_schema_extra={"example": {...}})``

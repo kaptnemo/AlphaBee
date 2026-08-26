@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from alphabee.agents.schemas import ReportOutput
+from alphabee.agents.schemas import ReportOutput, ReportSections
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.contracts import (
     ReportArtifact,
@@ -36,7 +37,7 @@ def _markdown_list(items: list[str], limit: int = 6) -> str:
     return "\n".join(lines) or "无"
 
 
-def build_deterministic_report(payload: ReportGenerationPayload, failure_reason: str = "") -> dict:
+def build_deterministic_report(payload: ReportGenerationPayload, failure_reason: str = "") -> dict[str, Any]:
     """LLM 报告生成失败时，用结构化 payload 拼装一份可消费的确定性报告。
 
     与 ``_fallback_report`` 的区别：这里把信号/异常/冲突/论点/审查问题等真实分析
@@ -142,21 +143,21 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
 
     return ReportArtifact(
         title=f"{symbol} 财报质量体检报告（确定性降级版）",
-        sections={
-            "executive_summary": exec_summary[:800],
-            "investment_viewpoint": viewpoint[:800],
-            "scenario_analysis": scenario[:800] or "无情景分析数据",
-            "key_metrics": key_metrics[:1000],
-            "signal_analysis": signal_analysis[:1000],
-            "anomaly_detection": anomaly_detection[:800],
-            "conflict_analysis": conflict_analysis[:1000],
-            "company_track": track_section[:1000],
-            "dimension_analysis": dimension_analysis[:1000],
-            "review_findings": review_findings[:1000],
-            "falsification_conditions": falsification[:800] or "无明确证伪条件",
-            "risks": risks[:800],
-            "disclaimer": "本报告由 AlphaBee 自动生成，不构成投资建议。",
-        },
+        sections=ReportSections(
+            executive_summary=exec_summary[:800],
+            investment_viewpoint=viewpoint[:800],
+            scenario_analysis=scenario[:800] or "无情景分析数据",
+            key_metrics=key_metrics[:1000],
+            signal_analysis=signal_analysis[:1000],
+            anomaly_detection=anomaly_detection[:800],
+            conflict_analysis=conflict_analysis[:1000],
+            company_track=track_section[:1000],
+            dimension_analysis=dimension_analysis[:1000],
+            review_findings=review_findings[:1000],
+            falsification_conditions=falsification[:800] or "无明确证伪条件",
+            risks=risks[:800],
+            disclaimer="本报告由 AlphaBee 自动生成，不构成投资建议。",
+        ),
         summary=exec_summary[:200],
         risk_count={"high": len(high_msgs), "medium": len(medium_msgs), "low": 0},
         overall_confidence="unknown" if failure_reason else "medium",
@@ -164,23 +165,23 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
     ).model_dump(mode="json")
 
 
-def _fallback_report(summary: str) -> dict:
+def _fallback_report(summary: str) -> dict[str, Any]:
     return ReportArtifact(
         title="财报质量体检报告",
-        sections={
-            "executive_summary": summary,
-            "investment_viewpoint": "",
-            "scenario_analysis": "",
-            "key_metrics": "",
-            "signal_analysis": "",
-            "anomaly_detection": "",
-            "conflict_analysis": "",
-            "dimension_analysis": "",
-            "review_findings": "",
-            "falsification_conditions": "",
-            "risks": "",
-            "disclaimer": "",
-        },
+        sections=ReportSections(
+            executive_summary=summary,
+            investment_viewpoint="",
+            scenario_analysis="",
+            key_metrics="",
+            signal_analysis="",
+            anomaly_detection="",
+            conflict_analysis="",
+            dimension_analysis="",
+            review_findings="",
+            falsification_conditions="",
+            risks="",
+            disclaimer="",
+        ),
         summary=summary,
         risk_count={},
         overall_confidence="unknown",

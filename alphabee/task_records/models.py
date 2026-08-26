@@ -115,7 +115,7 @@ class TaskRecord(BaseModel):
         signal_levels = {}
         for s in self.signal_results:
             signal_levels[s.signal_id] = s.level
-        issue_categories = {}
+        issue_categories: dict[str, int] = {}
         for i in self.issues:
             issue_categories[i.category] = issue_categories.get(i.category, 0) + 1
         return {

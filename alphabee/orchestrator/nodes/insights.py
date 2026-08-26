@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json as _json
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -28,7 +29,7 @@ from alphabee.utils.pipeline import parse_json
 
 def _insight_artifact(
     step_id: str,
-    output,
+    output: Any,
     *,
     tier: int,
     reason: str,

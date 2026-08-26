@@ -509,7 +509,7 @@ async def review_report(
             next_run = next_run.model_copy(update={"status": RunStatus.PARTIAL, "ended_at": datetime.now()})
 
     return {
-        "run": next_run,
+        **({"run": next_run} if next_run is not None else {}),
         "steps": [completed_step],
         "artifacts": new_artifacts,
         "decisions": new_decisions,

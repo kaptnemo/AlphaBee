@@ -25,9 +25,15 @@ from alphabee.market_regime.models import MarketScore, RegimeSnapshot
 # artifact contract convention (`find_artifact_model` / coerce helpers) exposes
 # them alongside the per-symbol contracts.
 __all__ = [
+    "Artifact",
+    "ConflictAnalysisResult",
+    "ConflictItem",
     "DriverProfile",
+    "IndustryContextArtifact",
     "MarketScore",
     "RegimeSnapshot",
+    "ReportOutput",
+    "VerificationResultItem",
 ]
 
 

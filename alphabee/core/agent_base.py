@@ -97,7 +97,7 @@ class AgentBase(ABC):
     def get_tool(self, name: str) -> ToolFn:
         if name not in self.tools:
             raise ValueError(f"Tool '{name}' is not registered.")
-        return self.tools.get(name)
+        return self.tools[name]
 
     async def call_tool(self, name: str, **kwargs: Any) -> Any:
         tool_fn = self.get_tool(name)

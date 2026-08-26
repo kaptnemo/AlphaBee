@@ -288,14 +288,16 @@ def finalize_message(state: OrchestratorState) -> OrchestratorState:
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 
-def _find_artifact_value(artifacts: list, artifact_type: str) -> dict | None:
+def _find_artifact_value(artifacts: list[Artifact], artifact_type: str) -> dict[str, Any] | None:
     for a in reversed(artifacts):
-        if a.type == artifact_type and isinstance(a.value, dict):
+        if a.type != artifact_type:
+            continue
+        if isinstance(a.value, dict):
             return a.value
     return None
 
 
-def _reconstruct_thesis(thesis_dict: dict):
+def _reconstruct_thesis(thesis_dict: dict[str, Any]) -> Any:
     """Reconstruct an InvestmentThesis from the dict stored in the artifact."""
     from alphabee.agents.thesis.models import InvestmentThesis
 

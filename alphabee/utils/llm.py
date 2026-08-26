@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import structlog
@@ -13,6 +13,7 @@ from langchain_core.outputs import LLMResult
 from langchain_openai import ChatOpenAI
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
+from pydantic import SecretStr
 
 from alphabee.config import settings
 
@@ -223,7 +224,7 @@ def create_chat_model(component: str, **kwargs: Any) -> ChatOpenAI:
 
     return ChatOpenAI(
         model=settings.llm.model,
-        api_key=_require_llm_api_key(),
+        api_key=SecretStr(_require_llm_api_key()),
         base_url=settings.llm.base_url,
         callbacks=callbacks,
         tags=tags,
@@ -278,4 +279,4 @@ async def tracked_chat_completion(
         completion_reasoning_tokens=usage["completion_reasoning_tokens"],
         latency_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
-    return response
+    return cast(ChatCompletion, response)

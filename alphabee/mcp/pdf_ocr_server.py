@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -335,7 +336,7 @@ def _download_pdf_bytes(pdf_url: str) -> bytes:
         },
     )
     with urlopen(request, timeout=60) as response:
-        pdf_bytes = response.read()
+        pdf_bytes = bytes(response.read())
     _validate_pdf_bytes(pdf_bytes, f"URL {pdf_url}")
     return pdf_bytes
 
@@ -348,7 +349,7 @@ def _resolve_pdf_input(
     pdf_url: str | None = None,
     file_id: str | None = None,
     file_name: str | None = None,
-):
+) -> Generator[ResolvedPDFInput]:
     """把四种输入来源统一解析为本地 PDF 路径，返回 ResolvedPDFInput。
 
     base64 / url 来源会先落到临时目录（loader 会把副本持久化到工作区后再清理）。
@@ -1070,7 +1071,8 @@ def _parse_upload_multipart(content_type: str, body: bytes) -> tuple[str, bytes]
         if field_name != "file":
             continue
         uploaded_name = part.get_filename()
-        uploaded_bytes = part.get_payload(decode=True) or b""
+        payload = part.get_payload(decode=True)
+        uploaded_bytes = payload if isinstance(payload, bytes) else b""
         break
 
     if uploaded_bytes is None:

@@ -28,7 +28,7 @@ async def run_analysis_engines(
     """Run deterministic analysis engines on the structured fact values."""
     del config
     run = state.get("run")
-    symbol = run.context.get("symbol") if run else None
+    symbol: str | None = run.context.get("symbol") if run else None
     fact_values: dict[str, float] = dict(state.get("fact_values") or {})
     financial_facts = state.get("financial_facts")
 
@@ -104,7 +104,7 @@ async def run_analysis_engines(
             try:
                 # 异常检测优先使用财务快照；员工数等经营规模字段若拿得到，
                 # 可以辅助判断异常是否来自扩张/收缩阶段，而不是纯会计噪声。
-                profile = get_company_profile(symbol)
+                profile = get_company_profile(symbol) if symbol is not None else None
                 company_data = profile.get("company", {}) if profile else {}
                 employees_raw = company_data.get("employees", {})
                 if isinstance(employees_raw, dict):

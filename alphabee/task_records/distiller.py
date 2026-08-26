@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from alphabee.task_records.analyzer import TaskAnalyzer
 from alphabee.task_records.prompts import (
@@ -36,7 +38,7 @@ class RuleDistiller:
         self.analyzer = TaskAnalyzer(store)
 
     @property
-    def _model(self):
+    def _model(self) -> ChatOpenAI:
         return create_chat_model("agent.distiller")
 
     # ── 单项蒸馏 ──────────────────────────────────────────────────
@@ -137,7 +139,7 @@ class RuleDistiller:
             return f"❌ LLM 分析失败: {exc}"
 
     @staticmethod
-    def _extract_text(content) -> str:
+    def _extract_text(content: Any) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):

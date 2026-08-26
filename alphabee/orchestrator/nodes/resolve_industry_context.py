@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
@@ -25,7 +26,7 @@ from alphabee.orchestrator.contracts import IndustryContextArtifact
 from alphabee.orchestrator.state import OrchestratorState
 
 
-def _safe_float(value: object) -> float | None:
+def _safe_float(value: Any) -> float | None:
     try:
         if value is None:
             return None
@@ -85,9 +86,9 @@ async def resolve_industry_context(
         completed_step = step.model_copy(update={"status": StepStatus.SKIPPED, "outputs": []})
         return {"steps": [completed_step], "issues": new_issues}
 
-    sw_code = str(ind_fact.get("sw_code") or "") or None
-    sw_level = str(ind_fact.get("sw_level") or "").strip() or None
-    sw_daily = ind_fact.get("sw_daily") or []
+    sw_code = str((ind_fact or {}).get("sw_code") or "") or None
+    sw_level = str((ind_fact or {}).get("sw_level") or "").strip() or None
+    sw_daily = (ind_fact or {}).get("sw_daily") or []
 
     # 估值基准：行业指数快照最新一行
     pe_ttm: float | None = None
@@ -97,7 +98,7 @@ async def resolve_industry_context(
         pb = _safe_float(sw_daily[0].get("industry_pb"))
 
     # ── 2. 财务/成长基准（成分股中位数，best-effort）────────────────
-    peer_records: list[dict] = []
+    peer_records: list[dict[str, Any]] = []
     fetch_error: str | None = None
     try:
         from alphabee.industry.data import fetch_peer_financials

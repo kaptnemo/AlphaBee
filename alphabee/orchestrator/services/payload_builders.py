@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json as _json
+from typing import Any
 
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.company_track.contracts import CompanyTrackArtifact
-from alphabee.core import ArtifactType
+from alphabee.core import Artifact, ArtifactType
 from alphabee.orchestrator.collectors import _find_artifact
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
@@ -38,7 +39,7 @@ from alphabee.orchestrator.contracts import (
 from alphabee.orchestrator.state import OrchestratorState
 
 
-def _build_track_summary(artifacts) -> dict | None:
+def _build_track_summary(artifacts: list[Artifact]) -> dict[str, Any] | None:
     """公司赛道摘要（COMPANY_TRACK Phase F4）：供冲突探索/验证参照对标组而非申万。"""
     track = find_artifact_model(artifacts, ArtifactType.COMPANY_TRACK, CompanyTrackArtifact)
     if track is None:
@@ -54,7 +55,7 @@ def _build_track_summary(artifacts) -> dict | None:
     }
 
 
-def _build_driver_profile_summary(artifacts) -> dict:
+def _build_driver_profile_summary(artifacts: list[Artifact]) -> dict[str, Any]:
     """公司驱动画像摘要（DOMAIN_CONTEXT P0）：供 InsightAgent 写 main_driver / central_tension。"""
     profile = find_artifact_model(artifacts, ArtifactType.DRIVER_PROFILE, DriverProfile)
     if profile is None:
@@ -106,7 +107,7 @@ def default_anomaly_fact_values() -> dict[str, float]:
     return values
 
 
-def _build_key_signals(signal_analysis: dict) -> list[dict]:
+def _build_key_signals(signal_analysis: dict[str, Any]) -> list[dict[str, Any]]:
     key = []
     for sig_id, result in signal_analysis.items():
         level = result.get("level", "")
@@ -124,7 +125,7 @@ def _build_key_signals(signal_analysis: dict) -> list[dict]:
     return key
 
 
-def _build_key_derived(derived_facts: dict) -> dict:
+def _build_key_derived(derived_facts: dict[str, Any]) -> dict[str, Any]:
     result = {}
     for name, item in derived_facts.items():
         level = item.get("level", "")
@@ -152,7 +153,7 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
     )
     anomaly_report = find_artifact_model(artifacts, ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
 
-    snapshot_summary: dict = {}
+    snapshot_summary: dict[str, Any] = {}
     if financial_facts and financial_facts.snapshots:
         snapshot = financial_facts.snapshots[0]
         snapshot_summary = {
@@ -164,7 +165,7 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
             "operating_cashflow_ratio": getattr(snapshot, "operating_cashflow_ratio", None),
         }
 
-    market_summary: dict = {}
+    market_summary: dict[str, Any] = {}
     if market_facts:
         market_summary = {
             "pe_ttm": getattr(market_facts, "pe_ttm", None),
@@ -172,7 +173,7 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
             "pe_ttm_5y_avg": getattr(market_facts, "pe_ttm_5y_avg", None),
         }
 
-    anomaly_summary: dict = {}
+    anomaly_summary: dict[str, Any] = {}
     if anomaly_report:
         anomaly_summary = {
             "anomaly_count": anomaly_report.anomaly_count,
@@ -228,7 +229,7 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
     )
 
 
-def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict:
+def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict[str, Any]:
     financial_facts: FinancialFacts | None = state.get("financial_facts")
     market_facts: MarketFacts | None = state.get("market_facts")
 
@@ -490,7 +491,7 @@ def build_report_generation_payload(state: OrchestratorState) -> ReportGeneratio
     return payload
 
 
-def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
+def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict[str, Any]:
     """Assemble upstream analysis context for the InsightAgent.
 
     The InsightAgent needs a concise, structured summary of all upstream
@@ -520,7 +521,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
         find_artifact_model(artifacts, ArtifactType.SIGNAL_ANALYSIS, SignalAnalysisArtifact) or SignalAnalysisArtifact()
     )
     level_order = {"high": 3, "medium": 2, "low": 1, "none": 0}
-    key_signals: list[dict] = []
+    key_signals: list[dict[str, Any]] = []
     for sig_id, result in signal_val.results.items():
         level = str(result.get("level", ""))
         if level in ("none", "unknown", "", "blocked", "missing_fact"):
@@ -539,7 +540,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
     derived_val = (
         find_artifact_model(artifacts, ArtifactType.DERIVED_FACTS, DerivedFactsArtifact) or DerivedFactsArtifact()
     )
-    key_derived: dict[str, dict] = {}
+    key_derived: dict[str, dict[str, Any]] = {}
     for name, item in derived_val.results.items():
         val = item.get(name)
         level = str(item.get("level", ""))
@@ -552,7 +553,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
 
     # ── Anomalies ────────────────────────────────────────────────────
     anomaly_report = find_artifact_model(artifacts, ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
-    anomaly_summary: dict = {}
+    anomaly_summary: dict[str, Any] = {}
     if anomaly_report:
         anomaly_summary = {
             "anomaly_count": anomaly_report.anomaly_count,
@@ -574,9 +575,9 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
         or VerificationArtifact()
     )
 
-    conflict_summary: list[dict] = []
+    conflict_summary: list[dict[str, Any]] = []
     if conflicts_result:
-        verify_by_hid: dict[str, dict] = {
+        verify_by_hid: dict[str, dict[str, Any]] = {
             vr.hypothesis_id: {
                 "status": vr.status,
                 "support_score": vr.support_score,
@@ -612,7 +613,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
             )
 
     # ── Financial snapshot ───────────────────────────────────────────
-    snapshot: dict = {}
+    snapshot: dict[str, Any] = {}
     if financial_facts and financial_facts.snapshots:
         s = financial_facts.snapshots[0]
         snapshot = {
@@ -626,7 +627,7 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict:
         }
 
     # ── Market valuation ─────────────────────────────────────────────
-    market_summary: dict = {}
+    market_summary: dict[str, Any] = {}
     if market_facts:
         market_summary = {
             "pe_ttm": getattr(market_facts, "pe_ttm", None),
