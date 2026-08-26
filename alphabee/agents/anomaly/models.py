@@ -70,6 +70,15 @@ class MetricAnomaly:
     book_ref: str = ""
     verify_questions: list[str] = field(default_factory=list)  # 排查路径
     reference_rate: float | None = None  # 法定参考利率（仅解释用，不参与 z-score）
+    # 基线来源类别：让报告端能区分“真实历史统计基线”和“合成/制度基线”，
+    # 避免把 codir 的合成显示值误当成真实历史均值。
+    baseline_kind: str = "statistical"  # "statistical" | "synthetic_codir" | "statutory"
+    # codir 规则的分量 z-score（如 {"cash": z_a, "interest_bearing_debt": z_b}），
+    # 让报告端能展示“综合偏离度 = 现金 z + 负债 z”而非伪造的历史基线。
+    component_z: dict[str, float] | None = None
+    # 是否命中“公司事件”（募资/再融资导致现金与融资现金流同向飙升）。
+    # 这类异常往往无经济风险含义，报告端据此附加提示并可降级处理。
+    regime_change: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         # 输出时做 round，是为了给报告/日志/前端稳定展示，
@@ -87,6 +96,11 @@ class MetricAnomaly:
             "book_ref": self.book_ref,
             "verify_questions": self.verify_questions,
             "reference_rate": round(self.reference_rate, 4) if self.reference_rate is not None else None,
+            "baseline_kind": self.baseline_kind,
+            "component_z": (
+                {k: round(v, 2) for k, v in self.component_z.items()} if self.component_z is not None else None
+            ),
+            "regime_change": self.regime_change,
         }
 
 

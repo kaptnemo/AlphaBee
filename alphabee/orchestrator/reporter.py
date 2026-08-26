@@ -63,11 +63,24 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
         if a.get("level") == "none":
             continue
         name = a.get("rule_name") or a.get("rule_id") or a.get("metric") or "未命名异常"
-        line = f"- {name}: level={a.get('level')} z_score={a.get('z_score')}"
+        if a.get("baseline_kind") == "synthetic_codir":
+            # codir 的 baseline_mean/std 是合成显示值，不是真实历史基线。
+            # 这里改写成“综合偏离度 + 各分量 z”，避免读者误读为“历史均值 4.0±1.0”。
+            comp = a.get("component_z") or {}
+            comp_parts = "、".join(f"{k} z={v:.2f}" for k, v in comp.items())
+            line = (
+                f"- {name}: level={a.get('level')} z_score={a.get('z_score')}"
+                f"（综合偏离度 {a.get('current_value'):.2f}：{comp_parts}）"
+            )
+        else:
+            line = f"- {name}: level={a.get('level')} z_score={a.get('z_score')}"
         ref = a.get("reference_rate")
         if ref is not None:
             # 法定税率仅作解释参考，低于法定可能因优惠税率（如高新 15%）而属正常。
             line += f"（法定参考 {ref:.0%}，公司适用优惠税率时低于法定属正常）"
+        if a.get("regime_change"):
+            # 公司事件（募资/再融资）导致的异常通常无经济风险含义，必须显式提示。
+            line += " ⚠ 本期疑似公司事件（如再融资/募资），异常可能无经济风险含义"
         anomaly_lines.append(line)
     anomaly_lines += [
         f"- 模式 {p.get('pattern_name')} severity={p.get('severity')}" for p in payload.anomaly.pattern_matches

@@ -206,9 +206,12 @@ class AnomalyEngine:
             baseline_mean = rule.statutory_rate
             baseline_std = rule.statutory_rate * 0.05  # 法定税率 5% 波动区间
             baseline_mode = "statutory"
+            baseline_kind = "statutory"
             history_periods = []
         else:
             baseline_mean, baseline_std = self._compute_baseline(history)
+            # gap/ratio 规则的基线来自公司自身历史窗口，属真实统计基线。
+            baseline_kind = "statistical"
 
         # 法定税率只作为解释性参考，不参与 z-score 计算。
         reference_rate = rule.statutory_rate if rule.use_statutory else None
@@ -245,6 +248,7 @@ class AnomalyEngine:
             book_ref=rule.book_ref,
             verify_questions=rule.verify_questions,
             reference_rate=reference_rate,
+            baseline_kind=baseline_kind,
         )
 
     def _evaluate_codir(
@@ -335,19 +339,32 @@ class AnomalyEngine:
         baseline_mode = "mixed_periods" if "mixed_periods" in {a_mode, b_mode} else "same_period"
         history_periods = a_history_periods if len(a_history_periods) >= len(b_history_periods) else b_history_periods
 
-        # current_value 用两个 z-score 和作为综合值
+        # 公司事件检测：若本期“融资现金流”与“现金”同向飙升（典型募资/再融资），
+        # 则“大存大贷”式异常很可能只是 regime change（融资到位、账面现金激增），
+        # 并不必然携带经济风险含义，因此降一级处理而非直接判定为高危。
+        regime_change = self._detect_corporate_event(snapshots, extra, rule.threshold_sigma)
+        if regime_change:
+            level = self._downgrade_level(level)
+
+        # current_value 用两个 z-score 和作为“综合偏离度”。
+        # 注意：baseline_mean/std 只是“合成显示值”（双阈值 + 固定 1.0），并非真实历史基线，
+        # 必须用 baseline_kind="synthetic_codir" 标注，让报告端改写成“综合偏离度 + 分量 z”，
+        # 而不是继续渲染成“本期值 vs 历史基线均值 4.0±1.0”这种误导性表述。
         return MetricAnomaly(
             rule_id=rule.id,
             rule_name=rule.name,
             z_score=z_score,
             current_value=z_a + z_b,  # 综合偏离度
-            baseline_mean=rule.threshold_sigma * 2,  # 双阈值
-            baseline_std=1.0,
+            baseline_mean=rule.threshold_sigma * 2,  # 合成显示：双阈值
+            baseline_std=1.0,  # 合成显示：固定标准差
             level=level,
             baseline_mode=baseline_mode,
             history_periods=history_periods,
             book_ref=rule.book_ref,
             verify_questions=rule.verify_questions,
+            baseline_kind="synthetic_codir",
+            component_z={rule.metric_a: z_a, rule.metric_b: z_b},
+            regime_change=regime_change,
         )
 
     # ── 数据提取 ──────────────────────────────────────────────────────
@@ -569,6 +586,71 @@ class AnomalyEngine:
             if abs_z >= z_cut:
                 return level
         return "low"
+
+    def _downgrade_level(self, level: str) -> str:
+        """公司事件命中时把异常等级降一档，最小降到 low。
+
+        只降一档是为了“弱化”而非“抹掉”：regime change 只是提示
+        “这个异常可能来自再融资而非经营恶化”，不代表它一定无害，
+        所以保留 low 让报告仍能看到这条线索，而不是直接归零。
+        """
+        return {"high": "medium", "medium": "low"}.get(level, level)
+
+    def _field_zscore(
+        self,
+        field: str,
+        snapshots: list,
+        extra: dict[str, float],
+        baseline_periods: int,
+    ) -> float | None:
+        """计算单个字段“本期值相对自身历史”的 z-score。
+
+        与 codir 主体逻辑复用同一套 _extract_field_series /
+        _build_history_values / _compute_baseline，保证公司事件判定
+        和异常判定用的是同一条历史基线，避免口径漂移。
+        返回 None 表示该字段数据不足以形成基线（调用方按“未命中”处理）。
+        """
+        series = self._extract_field_series(field, snapshots, extra)
+        if not series:
+            return None
+        current_period = snapshots[0].period
+        current = dict(series).get(current_period)
+        if current is None:
+            return None
+        history, _, _ = self._build_history_values(series, current_period, baseline_periods)
+        if len(history) < max(2, baseline_periods // 2):
+            return None
+        mean, std = self._compute_baseline(history)
+        std = max(std, _MIN_SIGMA)
+        return (current - mean) / std
+
+    def _detect_corporate_event(
+        self,
+        snapshots: list,
+        extra: dict[str, float] | None = None,
+        threshold: float = 2.0,
+    ) -> bool:
+        """检测“公司事件”（募资/再融资）：本期融资现金流与现金同向正向飙升。
+
+        业务背景：再融资（定增/发债）到位后，筹资活动现金流为正且货币资金激增，
+        会天然抬高“大存大贷”里“大存”一侧，同时推高有息负债一侧，
+        但这不是经营/信用恶化，而是融资行为本身带来的 regime change。
+
+        判定口径：financing_cashflow 与 cash 各自相对历史基线的 z 都大于阈值，
+        说明两变量同时“显著超出自身常态”，而非单点噪声。
+        任何一步数据缺失或异常都静默返回 False，绝不阻断异常检测主流程。
+        """
+        try:
+            extra = extra or {}
+            z_fc = self._field_zscore("financing_cashflow", snapshots, extra, baseline_periods=4)
+            z_cash = self._field_zscore("cash", snapshots, extra, baseline_periods=4)
+            if z_fc is None or z_cash is None:
+                return False
+            return z_fc > threshold and z_cash > threshold
+        except Exception:
+            # 公司事件判定只是“软化器”，失败时应保持原异常判定不变，
+            # 而不是因为某个辅助字段缺失就把整条规则打断。
+            return False
 
 
 # ── 便捷函数 ────────────────────────────────────────────────────────
