@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from alphabee.agents.signal.engine import SignalEngine
 from alphabee.agents.signal.registry import SIGNAL_RULES, load_signal_rules
 
@@ -120,7 +122,7 @@ def evaluate_signals(
     return "\n".join(sections)
 
 
-def _format_signal_result(name: str, result: dict) -> str:
+def _format_signal_result(name: str, result: dict[str, Any]) -> str:
     """将单条信号结果格式化为 Markdown 段落。"""
     level = result.get("level", "unknown")
     level_label = _LEVEL_LABELS.get(level, level)

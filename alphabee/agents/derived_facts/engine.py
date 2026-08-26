@@ -7,7 +7,7 @@ required_facts，后者只含调用方提供的 canonical 字段）。Engine 按
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from alphabee.agents.derived_facts.registry import RULES, DerivedFactRule, load_rules
 
@@ -75,7 +75,7 @@ class Engine:
         financial_facts: FinancialFacts | None = None,
         market_facts: MarketFacts | None = None,
         extra_fields: dict[str, float] | None = None,
-    ) -> dict[str, dict]:
+    ) -> dict[str, dict[str, Any]]:
         """按依赖顺序计算 rule_names（含传递依赖），返回每条规则的结果。
 
         支持两种输入方式，可混用：
@@ -114,7 +114,7 @@ class Engine:
         order = self._resolve_order(rule_names)
 
         all_values = merged.copy()
-        results: dict[str, dict] = {}
+        results: dict[str, dict[str, Any]] = {}
         failed: dict[str, str] = {}  # name → error 描述
 
         for name in order:
@@ -143,7 +143,7 @@ class Engine:
             if computed_value is not None:
                 all_values[name] = computed_value
             elif result.get("level") == "not_applicable":
-                all_values[name] = None
+                all_values[name] = None  # type: ignore[assignment]  # not_applicable 以 None 标记，供下游规则识别
             elif result.get("level") in ("invalid", "missing_fact"):
                 failed[name] = result.get("error", "计算失败")
 

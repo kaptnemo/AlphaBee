@@ -22,9 +22,11 @@ Usage::
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from alphabee.agents.thesis.models import (
     CompanyContext,
@@ -47,11 +49,11 @@ class ThesisEnhancer:
     empty ``EnhancedThesis`` with a note explaining the failure.
     """
 
-    def __init__(self):
-        self._model = None
+    def __init__(self) -> None:
+        self._model: ChatOpenAI | None = None
 
     @property
-    def _llm(self):
+    def _llm(self) -> ChatOpenAI:
         if self._model is None:
             self._model = create_chat_model("agent.thesis.enhancer")
         return self._model
@@ -62,7 +64,7 @@ class ThesisEnhancer:
         self,
         *,
         thesis: InvestmentThesis,
-        signal_results: dict[str, dict] | None = None,
+        signal_results: dict[str, dict[str, Any]] | None = None,
         company_context: CompanyContext | None = None,
         user_intent: str = "",
         fact_summary: str = "",
@@ -120,7 +122,7 @@ class ThesisEnhancer:
 
     # ── Private helpers ─────────────────────────────────────────────────
 
-    def _summarise_signals(self, signal_results: dict[str, dict]) -> dict:
+    def _summarise_signals(self, signal_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
         return {
             sig_id: {
                 "level": r.get("level", "unknown"),
@@ -134,11 +136,11 @@ class ThesisEnhancer:
         self,
         *,
         thesis: InvestmentThesis,
-        signal_details: dict,
+        signal_details: dict[str, Any],
         company_context: CompanyContext,
         user_intent: str,
         fact_summary: str,
-    ) -> dict:
+    ) -> dict[str, Any]:
         thesis_json = json.dumps(thesis.to_dict(), ensure_ascii=False, indent=2)
         signal_json = json.dumps(signal_details, ensure_ascii=False, indent=2)
         context_json = json.dumps(company_context.to_dict(), ensure_ascii=False, indent=2)
@@ -175,10 +177,11 @@ class ThesisEnhancer:
                 return self._parse_json(raw_text)
             except Exception as exc:
                 last_error = exc
+        assert last_error is not None
         raise last_error
 
-    def _extract_text(self, content) -> str:
+    def _extract_text(self, content: Any) -> str:
         return extract_text(content)
 
-    def _parse_json(self, text: str) -> dict:
-        return parse_json(text)
+    def _parse_json(self, text: str) -> dict[str, Any]:
+        return cast(dict[str, Any], parse_json(text))

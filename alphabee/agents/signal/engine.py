@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from alphabee.agents.derived_facts.engine import Engine as DerivedFactsEngine
 from alphabee.agents.signal.registry import (
@@ -31,6 +32,7 @@ class SignalEngine:
             self.signal_rules = dict(signal_rules)
 
         # 缓存 DerivedFactsEngine 实例，避免每次 run() 重新加载 21 条 YAML 规则
+        self._df_engine: DerivedFactsEngine | None
         try:
             self._df_engine = DerivedFactsEngine()
         except Exception:
@@ -41,7 +43,7 @@ class SignalEngine:
         self,
         rule_names: list[str],
         fact_values: dict[str, float],
-    ) -> dict[str, dict]:
+    ) -> dict[str, dict[str, Any]]:
         """评估指定信号规则，自动计算所需衍生事实。
 
         Args:
@@ -79,20 +81,20 @@ class SignalEngine:
                     if value is not None and isinstance(value, (int, float, bool)):
                         extended_values[df_name] = value
                     elif level == "not_applicable":
-                        extended_values[df_name] = None
+                        extended_values[df_name] = None  # type: ignore[assignment]  # not_applicable 以 None 标记，供下游规则识别
                     else:
                         derived_failed.add(df_name)
             except Exception as e:
                 # 引擎初始化或拓扑排序失败，所有衍生事实均视为失败
                 logger.warning(
-                    "derived_facts_computation_failed",
-                    error=str(e),
-                    required_facts=list(all_required_derived),
+                    "derived_facts_computation_failed error=%s required_facts=%s",
+                    str(e),
+                    list(all_required_derived),
                 )
                 derived_failed.update(all_required_derived)
 
         # ── 3. 逐条评估信号规则 ──────────────────────────────────
-        results: dict[str, dict] = {}
+        results: dict[str, dict[str, Any]] = {}
         for name in rule_names:
             rule = self.signal_rules.get(name)
             if rule is None:

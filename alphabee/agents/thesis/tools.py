@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from alphabee.agents.thesis.critic import CriticEngine
 from alphabee.agents.thesis.engine import ThesisEngine
 from alphabee.agents.thesis.models import (
@@ -14,6 +16,8 @@ from alphabee.agents.thesis.models import (
     CRITIC_SEVERITY_LABELS,
     JUDGMENT_LABELS,
     CompanyContext,
+    EnhancedThesis,
+    InvestmentThesis,
 )
 from alphabee.agents.thesis.registry import DIMENSION_DEFS, ensure_loaded
 
@@ -63,11 +67,11 @@ def list_thesis_dimensions() -> str:
 def synthesize_thesis(
     symbol: str,
     period: str,
-    signal_results: dict[str, dict],
-    anomaly_report: dict | None = None,
-    conflict_analysis: dict | None = None,
-    verification_results: list[dict] | None = None,
-    company_context: dict | None = None,
+    signal_results: dict[str, dict[str, Any]],
+    anomaly_report: dict[str, Any] | None = None,
+    conflict_analysis: dict[str, Any] | None = None,
+    verification_results: list[dict[str, Any]] | None = None,
+    company_context: dict[str, Any] | None = None,
     user_intent: str = "",
     fact_summary: str = "",
     use_llm_enhancement: bool = False,
@@ -154,7 +158,7 @@ def synthesize_thesis(
 # ── 渲染 ──────────────────────────────────────────────────────────────
 
 
-def _render_thesis(thesis) -> str:
+def _render_thesis(thesis: InvestmentThesis) -> str:
     """将 InvestmentThesis 对象渲染为 Markdown 报告。"""
     overall_label = JUDGMENT_LABELS.get(thesis.overall_judgment, thesis.overall_judgment)
     sections: list[str] = []
@@ -242,7 +246,7 @@ def _render_thesis(thesis) -> str:
     return "\n".join(sections)
 
 
-def _render_enhanced(enhanced) -> str:
+def _render_enhanced(enhanced: EnhancedThesis) -> str:
     """Render the LLM-enhanced portion as Markdown."""
     parts = ["\n---\n\n## Enhanced Analysis (LLM)\n"]
 

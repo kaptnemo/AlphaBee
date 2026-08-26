@@ -7,9 +7,11 @@ context appropriateness, and missing checks.
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from alphabee.agents.thesis.models import (
     CompanyContext,
@@ -38,11 +40,11 @@ class ThesisReviewer:
     signal consistency, context appropriateness, and missing checks.
     """
 
-    def __init__(self):
-        self._model = None
+    def __init__(self) -> None:
+        self._model: ChatOpenAI | None = None
 
     @property
-    def _llm(self):
+    def _llm(self) -> ChatOpenAI:
         if self._model is None:
             self._model = create_chat_model("agent.thesis.reviewer")
         return self._model
@@ -52,7 +54,7 @@ class ThesisReviewer:
     def review(
         self,
         thesis: InvestmentThesis,
-        signal_results: dict[str, dict] | None = None,
+        signal_results: dict[str, dict[str, Any]] | None = None,
         company_context: CompanyContext | None = None,
         use_llm: bool = False,
     ) -> ThesisReview:
@@ -90,8 +92,8 @@ class ThesisReviewer:
     def _layer1_check(
         self,
         dim_id: str,
-        dim,
-        signal_results: dict,
+        dim: Any,
+        signal_results: dict[str, dict[str, Any]],
         ctx: CompanyContext,
     ) -> DimensionVerdict:
         dim_name = dim.name if hasattr(dim, "name") else dim_id
@@ -265,12 +267,12 @@ class ThesisReviewer:
     def _call_llm(
         self,
         thesis: InvestmentThesis,
-        signal_results: dict,
+        signal_results: dict[str, dict[str, Any]],
         ctx: CompanyContext,
-    ) -> dict:
+    ) -> dict[str, Any]:
         thesis_json = json.dumps(thesis.to_dict(), ensure_ascii=False, indent=2)
 
-        signal_details: dict = {}
+        signal_details: dict[str, Any] = {}
         for sig_id, result in signal_results.items():
             signal_details[sig_id] = {
                 "level": result.get("level", "unknown"),
@@ -299,7 +301,7 @@ class ThesisReviewer:
     def _merge_llm(
         self,
         verdicts: dict[str, DimensionVerdict],
-        llm_data: dict,
+        llm_data: dict[str, Any],
     ) -> dict[str, DimensionVerdict]:
         dim_reviews = llm_data.get("dimension_reviews", {})
         for dim_id, review in dim_reviews.items():
@@ -379,8 +381,8 @@ class ThesisReviewer:
 
     # ── Text / JSON helpers ──────────────────────────────────────────────────
 
-    def _extract_text(self, content) -> str:
+    def _extract_text(self, content: Any) -> str:
         return extract_text(content)
 
-    def _parse_json(self, text: str) -> dict:
-        return parse_json(text)
+    def _parse_json(self, text: str) -> dict[str, Any]:
+        return cast(dict[str, Any], parse_json(text))

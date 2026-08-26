@@ -26,7 +26,7 @@ from alphabee.agents.anomaly.registry import (
     CROSS_RULES,
     ensure_loaded,
 )
-from alphabee.agents.facts.models import FinancialFacts
+from alphabee.agents.facts.models import FinancialFacts, FinancialSnapshot
 
 logger = structlog.get_logger(__name__)
 
@@ -170,7 +170,7 @@ class AnomalyEngine:
     def _evaluate_rule(
         self,
         rule: CrossRule,
-        snapshots: list,
+        snapshots: list[FinancialSnapshot],
         extra: dict[str, float],
     ) -> MetricAnomaly | None:
         """对单条规则求值，返回 MetricAnomaly 或 None（数据不足）。"""
@@ -254,7 +254,7 @@ class AnomalyEngine:
     def _evaluate_codir(
         self,
         rule: CrossRule,
-        snapshots: list,
+        snapshots: list[FinancialSnapshot],
         extra: dict[str, float],
     ) -> MetricAnomaly | None:
         """处理 codir 类型规则：两指标各自算基线，同时高才触发。"""
@@ -440,7 +440,7 @@ class AnomalyEngine:
     def _extract_field_series(
         self,
         field: str,
-        snapshots: list,
+        snapshots: list[FinancialSnapshot],
         extra: dict[str, float],
     ) -> list[tuple[str, float]]:
         """提取字段序列 [(period, value), ...]。
@@ -495,7 +495,7 @@ class AnomalyEngine:
     def _extract_rule_values(
         self,
         rule: CrossRule,
-        snapshots: list,
+        snapshots: list[FinancialSnapshot],
         extra: dict[str, float],
     ) -> tuple[float | None, list[float], str, list[str]]:
         """提取组合指标的多期值。
@@ -599,7 +599,7 @@ class AnomalyEngine:
     def _field_zscore(
         self,
         field: str,
-        snapshots: list,
+        snapshots: list[FinancialSnapshot],
         extra: dict[str, float],
         baseline_periods: int,
     ) -> float | None:
@@ -626,7 +626,7 @@ class AnomalyEngine:
 
     def _detect_corporate_event(
         self,
-        snapshots: list,
+        snapshots: list[FinancialSnapshot],
         extra: dict[str, float] | None = None,
         threshold: float = 2.0,
     ) -> bool:

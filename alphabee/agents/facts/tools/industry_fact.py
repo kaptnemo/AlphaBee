@@ -8,7 +8,7 @@ from alphabee.industry.classification import _SW_LEVELS, extract_sw_member, matc
 from alphabee.providers.industry import get_industry_daily
 from alphabee.tools.cache import SyncTTLCache
 
-_CACHE = SyncTTLCache(ttl_seconds=600.0)
+_CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=600.0)
 
 
 def _get_sw_member(ts_code: str) -> Any:
@@ -19,7 +19,7 @@ def _get_sw_member(ts_code: str) -> Any:
     无 ``src`` 参数，权限需 2000 积分。
     """
     try:
-        with TuShareHelper() as helper:  # type: ignore[no-untyped-call]
+        with TuShareHelper() as helper:
             return helper.index_member_all(ts_code=ts_code, is_new="Y").data
     except Exception:
         return None

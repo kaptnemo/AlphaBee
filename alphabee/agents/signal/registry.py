@@ -122,7 +122,7 @@ class SignalRule:
         # 全部条件均未命中 → none
         return self._build_result("none", fact_values)
 
-    def _build_result(self, level: str, fact_values: dict) -> dict[str, Any]:
+    def _build_result(self, level: str, fact_values: dict[str, float]) -> dict[str, Any]:
         """构建命中 level 后的完整结果字典。"""
         interpretation = self.interpretation_templates.get(
             level,

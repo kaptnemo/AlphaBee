@@ -1,7 +1,10 @@
 """InsightAgent factory — creates an LLM agent for investment viewpoint synthesis."""
 
+from typing import Any
+
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
+from langgraph.graph.state import CompiledStateGraph
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.insights.prompts import INSIGHT_AGENT_SYSTEM_PROMPT
@@ -9,7 +12,7 @@ from alphabee.middleware.common import check_message_limit
 from alphabee.utils import create_chat_model
 
 
-def insight_agent_factory():
+def insight_agent_factory() -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create an InsightAgent instance for synthesizing investment viewpoints.
 
     The InsightAgent is a pure synthesis engine — it works entirely from the

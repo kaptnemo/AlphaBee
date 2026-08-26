@@ -88,7 +88,7 @@ class ThesisEngine:
         self,
         symbol: str,
         period: str,
-        signal_results: dict[str, dict],
+        signal_results: dict[str, dict[str, Any]],
         anomaly_report: dict[str, Any] | None = None,
         conflict_analysis: dict[str, Any] | None = None,
         verification_results: list[dict[str, Any]] | None = None,
@@ -257,7 +257,7 @@ class ThesisEngine:
     def _extract_primary_risks(
         self,
         dimensions: dict[str, ThesisDimension],
-        signal_results: dict[str, dict],
+        signal_results: dict[str, dict[str, Any]],
         conflict_analysis: dict[str, Any] | None = None,
         verification_results: list[dict[str, Any]] | None = None,
     ) -> list[str]:
@@ -368,7 +368,7 @@ class ThesisEngine:
         dim_effective: dict[str, list[tuple[str, str, float]]],
         conflict_analysis: dict[str, Any] | None,
         verification_results: list[dict[str, Any]] | None,
-        signal_results: dict[str, dict],
+        signal_results: dict[str, dict[str, Any]],
         anomaly_report: dict[str, Any] | None,
     ) -> None:
         if not conflict_analysis:
@@ -483,7 +483,7 @@ class ThesisEngine:
         self,
         *,
         hypothesis: dict[str, Any],
-        signal_results: dict[str, dict],
+        signal_results: dict[str, dict[str, Any]],
         anomaly_report: dict[str, Any] | None,
     ) -> tuple[set[str], set[str]]:
         """解析 rejected 假设指向的异常模式/信号 id（两级填充）。
@@ -517,7 +517,7 @@ class ThesisEngine:
         self,
         *,
         hypothesis: dict[str, Any],
-        signal_results: dict[str, dict],
+        signal_results: dict[str, dict[str, Any]],
         anomaly_report: dict[str, Any] | None,
     ) -> tuple[set[str], set[str]]:
         """确定性兜底：从假设解释文字里精确匹配异常模式名 / 信号 id。
@@ -664,7 +664,7 @@ class ThesisEngine:
             return
 
         central_tension = str(insight.get("central_tension", "") or "")
-        counter_evidence_items: list[dict] = insight.get("counter_evidence") or []
+        counter_evidence_items: list[dict[str, Any]] = insight.get("counter_evidence") or []
         insight_confidence = str(insight.get("confidence", "medium") or "medium")
 
         # ── Attach central tension to every dimension as a context note ──

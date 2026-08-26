@@ -1,6 +1,7 @@
 """Shared utilities for FactCollectorAgent tools."""
 
 import math
+from typing import Any
 
 
 def normalize_ts_code(symbol: str) -> str:
@@ -29,7 +30,7 @@ def to_pure_code(ts_code: str) -> str:
     return ts_code.split(".")[0]
 
 
-def safe_float(value, default: float = 0.0) -> float:
+def safe_float(value: Any, default: float = 0.0) -> float:
     try:
         v = float(value)
         return default if math.isnan(v) else v
@@ -37,7 +38,7 @@ def safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def safe_str(value, default: str = "") -> str:
+def safe_str(value: Any, default: str = "") -> str:
     if value is None:
         return default
     s = str(value).strip()

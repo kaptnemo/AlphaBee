@@ -17,6 +17,8 @@ Critic 的职责：不为结论背书，而是系统性地质疑：
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
 
 from alphabee.agents.thesis.models import (
@@ -31,7 +33,7 @@ logger = structlog.get_logger(__name__)
 _SEVERITY_RANK: dict[str, int] = {"critical": 3, "important": 2, "minor": 1}
 
 # 当整体判断为积极时，补充系统级别的证伪性追问
-_POSITIVE_BIAS_QUESTIONS: list[dict] = [
+_POSITIVE_BIAS_QUESTIONS: list[dict[str, str]] = [
     {
         "question": "当前财务数据是否覆盖了完整的经济周期，乐观评估是否依赖了顺周期数据？",
         "category": "evidence_gap",
@@ -66,7 +68,7 @@ class CriticEngine:
     def enrich(
         self,
         thesis: InvestmentThesis,
-        signal_results: dict[str, dict],
+        signal_results: dict[str, dict[str, Any]],
     ) -> InvestmentThesis:
         """向 thesis 填充 critic_questions，返回同一个对象（in-place 修改）。
 

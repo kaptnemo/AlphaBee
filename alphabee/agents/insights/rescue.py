@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from alphabee.agents.insights.models import (
     CrossSignalPattern,
     EvidenceItem,
@@ -97,11 +99,11 @@ def _coerce_enum(value: object, mapping: dict[str, str], default: str) -> str:
     return default
 
 
-def _coerce_evidence_items(value: object, repairs: list[str]) -> list[dict]:
+def _coerce_evidence_items(value: object, repairs: list[str]) -> list[dict[str, str]]:
     """Accept both string items and dict items; never fail on structure."""
     if not isinstance(value, list):
         return []
-    out: list[dict] = []
+    out: list[dict[str, str]] = []
     for item in value:
         if isinstance(item, str):
             text = item.strip()
@@ -125,10 +127,10 @@ def _coerce_evidence_items(value: object, repairs: list[str]) -> list[dict]:
     return out
 
 
-def _coerce_materiality(value: object, repairs: list[str]) -> list[dict]:
+def _coerce_materiality(value: object, repairs: list[str]) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
-    out: list[dict] = []
+    out: list[dict[str, str]] = []
     for item in value:
         if not isinstance(item, dict):
             continue
@@ -145,10 +147,10 @@ def _coerce_materiality(value: object, repairs: list[str]) -> list[dict]:
     return out
 
 
-def _coerce_patterns(value: object, repairs: list[str]) -> list[dict]:
+def _coerce_patterns(value: object, repairs: list[str]) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for item in value:
         if not isinstance(item, dict):
             continue
@@ -192,7 +194,7 @@ def _coerce_conditions(value: object, repairs: list[str]) -> list[str]:
     return out
 
 
-def _unwrap_nested(payload: dict) -> dict:
+def _unwrap_nested(payload: dict[str, Any]) -> dict[str, Any]:
     """N1: 递归解包单键 dict 包装（如 ``{"insight": {...}}``）。"""
     while (
         len(payload) == 1
@@ -203,7 +205,7 @@ def _unwrap_nested(payload: dict) -> dict:
     return payload
 
 
-def _normalize_payload(parsed: dict) -> tuple[dict, list[str]]:
+def _normalize_payload(parsed: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """一次性结构修补（规则 N1-N9），只修结构不补内容。
 
     Returns:
@@ -212,7 +214,7 @@ def _normalize_payload(parsed: dict) -> tuple[dict, list[str]]:
     repairs: list[str] = []
     payload = _unwrap_nested(parsed)
 
-    normalized: dict = {}
+    normalized: dict[str, Any] = {}
     for key in _TEXT_FIELDS:
         value = _coerce_text(payload.get(key))
         if key in payload and payload.get(key) is not None and not isinstance(payload.get(key), str):
@@ -259,17 +261,17 @@ def lenient_parse(raw_text: str) -> tuple[InsightOutput, str] | None:
 _LEVEL_ORDER = {"high": 3, "medium": 2, "low": 1}
 
 
-def _count_level(signals: list[dict], level: str) -> int:
+def _count_level(signals: list[dict[str, Any]], level: str) -> int:
     return sum(1 for s in signals if str(s.get("level", "")) == level)
 
 
-def _verified_conflicts(conflicts: list[dict]) -> list[dict]:
+def _verified_conflicts(conflicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         c for c in conflicts if any(h.get("status") in ("verified", "partial") for h in (c.get("hypotheses") or []))
     ]
 
 
-def _pick_central_tension(conflicts: list[dict], anomaly: dict, high_count: int) -> str:
+def _pick_central_tension(conflicts: list[dict[str, Any]], anomaly: dict[str, Any], high_count: int) -> str:
     for conflict in _verified_conflicts(conflicts):
         theme = _coerce_text(conflict.get("theme"))
         if theme:
@@ -284,7 +286,7 @@ def _pick_central_tension(conflicts: list[dict], anomaly: dict, high_count: int)
     return ""
 
 
-def _pick_main_driver(key_derived: dict, signals: list[dict]) -> str:
+def _pick_main_driver(key_derived: dict[str, dict[str, Any]], signals: list[dict[str, Any]]) -> str:
     candidates = sorted(
         key_derived.items(),
         key=lambda kv: _LEVEL_ORDER.get(str(kv[1].get("level", "")), 0),
@@ -297,7 +299,7 @@ def _pick_main_driver(key_derived: dict, signals: list[dict]) -> str:
     return ""
 
 
-def _supporting_evidence(signals: list[dict]) -> list[EvidenceItem]:
+def _supporting_evidence(signals: list[dict[str, Any]]) -> list[EvidenceItem]:
     out: list[EvidenceItem] = []
     for sig in signals:
         if len(out) >= 3:
@@ -309,7 +311,7 @@ def _supporting_evidence(signals: list[dict]) -> list[EvidenceItem]:
         statement = interpretation or str(sig.get("signal_id", ""))
         if not statement:
             continue
-        weight = "strong" if level == "high" else "moderate"
+        weight: Literal["strong", "moderate", "weak"] = "strong" if level == "high" else "moderate"
         out.append(
             EvidenceItem(
                 statement=statement,
@@ -320,7 +322,7 @@ def _supporting_evidence(signals: list[dict]) -> list[EvidenceItem]:
     return out
 
 
-def _counter_evidence(conflicts: list[dict], anomaly: dict) -> list[EvidenceItem]:
+def _counter_evidence(conflicts: list[dict[str, Any]], anomaly: dict[str, Any]) -> list[EvidenceItem]:
     out: list[EvidenceItem] = []
     for conflict in _verified_conflicts(conflicts):
         theme = _coerce_text(conflict.get("theme"))
@@ -358,7 +360,7 @@ def _counter_evidence(conflicts: list[dict], anomaly: dict) -> list[EvidenceItem
     return out
 
 
-def _materiality_rank(key_derived: dict) -> list[MaterialityRank]:
+def _materiality_rank(key_derived: dict[str, dict[str, Any]]) -> list[MaterialityRank]:
     ranked = sorted(
         key_derived.items(),
         key=lambda kv: _LEVEL_ORDER.get(str(kv[1].get("level", "")), 0),
@@ -367,7 +369,9 @@ def _materiality_rank(key_derived: dict) -> list[MaterialityRank]:
     out: list[MaterialityRank] = []
     for name, item in ranked[:5]:
         level = str(item.get("level", ""))
-        importance = "critical" if level == "high" else "high" if level == "medium" else "medium"
+        importance: Literal["critical", "high", "medium"] = (
+            "critical" if level == "high" else "high" if level == "medium" else "medium"
+        )
         reasoning = _coerce_text(item.get("interpretation"))
         if not reasoning:
             reasoning = f"衍生指标 {name} 处于 {level} 等级"
@@ -375,7 +379,7 @@ def _materiality_rank(key_derived: dict) -> list[MaterialityRank]:
     return out
 
 
-def _falsification_conditions(conflicts: list[dict]) -> list[str]:
+def _falsification_conditions(conflicts: list[dict[str, Any]]) -> list[str]:
     """verified/partial 的 predictions 本身是可证伪陈述；unknown 用 gaps 补。"""
     conditions: list[str] = []
     for conflict in conflicts:
@@ -404,17 +408,17 @@ def _falsification_conditions(conflicts: list[dict]) -> list[str]:
     return conditions[:4]
 
 
-def build_fallback_insight(context: dict, symbol: str | None) -> InsightOutput:
+def build_fallback_insight(context: dict[str, Any], symbol: str | None) -> InsightOutput:
     """Tier 2 确定性兜底：从 ``build_insight_context`` 的返回值合成观点骨架。
 
     只转述 context 中的结构化事实，不虚构情景与数字（H1/H2/H4）。
     """
-    signals: list[dict] = context.get("key_signals") or []
-    key_derived: dict = context.get("key_derived_facts") or {}
-    anomaly: dict = context.get("anomaly") or {}
-    conflicts: list[dict] = context.get("conflicts") or []
-    company: dict = context.get("company") or {}
-    snapshot: dict = context.get("latest_snapshot") or {}
+    signals: list[dict[str, Any]] = context.get("key_signals") or []
+    key_derived: dict[str, dict[str, Any]] = context.get("key_derived_facts") or {}
+    anomaly: dict[str, Any] = context.get("anomaly") or {}
+    conflicts: list[dict[str, Any]] = context.get("conflicts") or []
+    company: dict[str, Any] = context.get("company") or {}
+    snapshot: dict[str, Any] = context.get("latest_snapshot") or {}
 
     # 上下文完全没有数据时，连"未检出高风险信号"这类断言也不该输出
     # （数据缺失 ≠ 数据健康），整体返回空骨架，由调用方判定为 Tier 3。

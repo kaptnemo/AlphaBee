@@ -10,7 +10,7 @@ from alphabee.collectors.local.helper import get_industry_peers, get_stock_basic
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-_CACHE = SyncTTLCache(ttl_seconds=1800.0)
+_CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=1800.0)
 
 
 def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
@@ -95,7 +95,7 @@ def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
             daily_basic_df = pd.DataFrame()
 
         # Fetch ROE & gross margin per peer
-        fina_map: dict[str, dict] = {}
+        fina_map: dict[str, dict[str, float]] = {}
         for code in peer_codes:
             try:
                 with TuShareHelper() as helper:
@@ -116,7 +116,7 @@ def get_competition_fact(symbol: str, max_peers: int = 10) -> dict[str, Any]:
         name_map = {peer["stock_code"]: peer["company_name"] for peer in peers}
 
         # Build peer records using canonical field names
-        peer_records: list[dict] = []
+        peer_records: list[dict[str, Any]] = []
         if not daily_basic_df.empty:
             daily_basic_df["_mv_sort"] = daily_basic_df["market_cap"].apply(safe_float)
             sorted_df = daily_basic_df.sort_values("_mv_sort", ascending=False)

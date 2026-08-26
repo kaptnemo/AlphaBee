@@ -1,6 +1,9 @@
+from typing import Any
+
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain.agents.middleware import ToolRetryMiddleware
+from langgraph.graph.state import CompiledStateGraph
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.facts.prompts import FACT_COLLECTOR_PROMPT
@@ -23,7 +26,7 @@ from alphabee.tools.common import (
 from alphabee.utils import create_chat_model
 
 
-def fact_collector_agent_factory():
+def fact_collector_agent_factory() -> CompiledStateGraph[Any, Any, Any, Any]:
     """事实收集代理工厂：创建并返回一个 FactCollectorAgent 实例。"""
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
     return create_deep_agent(

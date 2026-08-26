@@ -1,12 +1,13 @@
 import ast
 import operator as op
+from collections.abc import Callable
 from functools import singledispatchmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 RULES_DIR = Path(__file__).resolve().parent / "rules"
 
-_ALLOWED_BIN_OPS = {
+_ALLOWED_BIN_OPS: dict[type[ast.operator], Callable[[Any, Any], Any]] = {
     ast.Add: op.add,
     ast.Sub: op.sub,
     ast.Mult: op.mul,
@@ -16,12 +17,12 @@ _ALLOWED_BIN_OPS = {
     ast.Pow: op.pow,
 }
 
-_ALLOWED_UNARY_OPS = {
+_ALLOWED_UNARY_OPS: dict[type[ast.unaryop], Callable[[Any], Any]] = {
     ast.UAdd: op.pos,
     ast.USub: op.neg,
 }
 
-_ALLOWED_COMPARE_OPS = {
+_ALLOWED_COMPARE_OPS: dict[type[ast.cmpop], Callable[[Any, Any], Any]] = {
     ast.Gt: op.gt,
     ast.GtE: op.ge,
     ast.Lt: op.lt,
@@ -58,21 +59,21 @@ def safe_eval_formula(formula: str, fact_values: dict[str, float]) -> float | bo
             )
 
         if isinstance(node, ast.UnaryOp):
-            op_type = type(node.op)
-            if op_type not in _ALLOWED_UNARY_OPS:
-                raise ValueError(f"Unary operator not allowed: {op_type.__name__}")
-            return _ALLOWED_UNARY_OPS[op_type](eval_node(node.operand))
+            unary_op_type = type(node.op)
+            if unary_op_type not in _ALLOWED_UNARY_OPS:
+                raise ValueError(f"Unary operator not allowed: {unary_op_type.__name__}")
+            return _ALLOWED_UNARY_OPS[unary_op_type](eval_node(node.operand))
 
         if isinstance(node, ast.Compare):
             left = eval_node(node.left)
 
             for operator_node, comparator in zip(node.ops, node.comparators):
-                op_type = type(operator_node)
-                if op_type not in _ALLOWED_COMPARE_OPS:
-                    raise ValueError(f"Comparison not allowed: {op_type.__name__}")
+                compare_op_type = type(operator_node)
+                if compare_op_type not in _ALLOWED_COMPARE_OPS:
+                    raise ValueError(f"Comparison not allowed: {compare_op_type.__name__}")
 
                 right = eval_node(comparator)
-                if not _ALLOWED_COMPARE_OPS[op_type](left, right):
+                if not _ALLOWED_COMPARE_OPS[compare_op_type](left, right):
                     return False
 
                 left = right
@@ -96,7 +97,7 @@ def safe_eval_formula(formula: str, fact_values: dict[str, float]) -> float | bo
 
         raise ValueError(f"Expression not allowed: {type(node).__name__}")
 
-    return eval_node(tree)
+    return cast(float | bool, eval_node(tree))
 
 
 class DerivedFactRule:
@@ -104,30 +105,30 @@ class DerivedFactRule:
     required_facts: list[str]
     description: str = ""
     formula: str = ""
-    thresholds: dict[str, str] = {}
+    thresholds: dict[str, str | list[str]] = {}
     interpretation: dict[str, str] = {}
     zero_division_policy: str = "invalid"
     zero_division_error: str = "division_by_zero"
 
-    @singledispatchmethod
-    def __init__(self, fact_name: str):
+    @singledispatchmethod  # type: ignore[misc]
+    def __init__(self, fact_name: str) -> None:
         raise NotImplementedError("Unsupported type for fact_name")
 
     @__init__.register(str)
-    def _from_fact_name(self, fact_name: str):
+    def _from_fact_name(self, fact_name: str) -> None:
         self.name = fact_name
         self.fact_definition_file = RULES_DIR / f"{fact_name}.yaml"
 
         self.load_definition()
 
     @__init__.register(Path)
-    def _from_definition_file(self, definition_file: Path):
+    def _from_definition_file(self, definition_file: Path) -> None:
         self.name = definition_file.stem
         self.fact_definition_file = definition_file
 
         self.load_definition()
 
-    def load_definition(self):
+    def load_definition(self) -> None:
         import yaml
 
         with open(self.fact_definition_file, encoding="utf-8") as f:
@@ -149,7 +150,7 @@ class DerivedFactRule:
         try:
             derived_value = safe_eval_formula(self.formula, fact_values)
         except ZeroDivisionError:
-            result = {
+            result: dict[str, Any] = {
                 self.name: None,
                 "level": self.zero_division_policy,
                 "error": self.zero_division_error,
@@ -210,10 +211,10 @@ class DerivedFactRule:
         return result
 
 
-RULES = {}
+RULES: dict[str, DerivedFactRule] = {}
 
 
-def load_rules():
+def load_rules() -> None:
     for rule_file in RULES_DIR.glob("*.yaml"):
         rule = DerivedFactRule(rule_file)
         RULES[rule.name] = rule
@@ -223,5 +224,5 @@ if __name__ == "__main__":
     load_rules()
     print(RULES)
     asset_turnover = RULES["asset_turnover"]
-    fact_values = {"revenue": 100000, "total_assets": 78888}
+    fact_values: dict[str, float] = {"revenue": 100000, "total_assets": 78888}
     print(asset_turnover.compute(fact_values))

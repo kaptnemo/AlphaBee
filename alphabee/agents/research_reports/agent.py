@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import structlog
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain.agents.middleware import ToolRetryMiddleware
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.graph.state import CompiledStateGraph
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.research_reports.prompts import RESEARCH_REPORTS_PROMPT
@@ -80,7 +83,7 @@ _RETURN_SCHEMA_HINTS: dict[str, str] = {
 }
 
 
-def _enhance_mcp_tool_descriptions(tools: list) -> list:
+def _enhance_mcp_tool_descriptions(tools: list[Any]) -> list[Any]:
     """将已知 MCP 工具的返回结构说明追加到 description 中，供 LLM 读取。"""
     for tool in tools:
         hint = _RETURN_SCHEMA_HINTS.get(tool.name)
@@ -94,7 +97,7 @@ async def research_reports_fetch_agent_factory(
     *,
     mcp_transport: str = "stdio",
     require_mcp: bool = True,
-):
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """研究报告抓取代理工厂：创建并返回一个 ResearchReportsFetchAgent 实例。
 
     Args:
@@ -119,7 +122,7 @@ async def research_reports_fetch_agent_factory(
     """
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
 
-    tools = [
+    tools: list[Any] = [
         query_tushare,
         get_eastmoney_report_list,
         get_eastmoney_report_detail_by_encoded_url,
@@ -137,7 +140,7 @@ async def research_reports_fetch_agent_factory(
                 "url": mcp_server_url,
             }
         }
-        client = MultiServerMCPClient(servers)
+        client = MultiServerMCPClient(cast(dict[str, Any], servers))
         mcp_tools = await client.get_tools()
         tools.extend(_enhance_mcp_tool_descriptions(mcp_tools))
     else:
@@ -173,7 +176,7 @@ async def research_reports_fetch_agent_factory(
 if __name__ == "__main__":
     import asyncio
 
-    async def main():
+    async def main() -> None:
         agent = await research_reports_fetch_agent_factory()
         print("ResearchReportsFetchAgent created successfully.")
 

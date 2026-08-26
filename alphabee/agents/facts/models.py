@@ -100,7 +100,7 @@ class FinancialFacts(BaseModel):
 
     # ── 跨期 computed_field ────────────────────────────────────────────────
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def avg_shareholders_equity(self) -> float | None:
         """归母净资产近两期均值，用于 ROE 分母（杜邦分析口径）。"""
@@ -110,7 +110,7 @@ class FinancialFacts(BaseModel):
         b = self.snapshots[1].shareholders_equity
         return (a + b) / 2.0 if a is not None and b is not None else None
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def ebit(self) -> float | None:
         """EBIT ≈ 营业利润 + 利息费用（简化近似，适用于利息保障倍数计算）。"""
@@ -120,7 +120,7 @@ class FinancialFacts(BaseModel):
         ie = self.snapshots[0].interest_expense
         return op + ie if op is not None and ie is not None else None
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def inventory_yoy(self) -> float | None:
         """存货同比增速（%）。优先取去年同期（offset=4），数据不足时退化为环比（offset=1）。"""

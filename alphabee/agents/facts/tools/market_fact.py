@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-_CACHE = SyncTTLCache(ttl_seconds=300.0)
+_CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=300.0)
 
 
 def get_market_fact(symbol: str) -> dict[str, Any]:
@@ -107,7 +107,7 @@ def get_market_fact(symbol: str) -> dict[str, Any]:
 
 
 def extract_market_facts(
-    data: dict,
+    data: dict[str, Any],
     fields: list[str] | None = None,
 ) -> dict[str, float]:
     """从 get_market_fact() 结果中提取 canonical 行情字段值。
@@ -144,7 +144,7 @@ def extract_market_facts(
     return result
 
 
-def _extract_pe_ttm_5y_avg(data: dict) -> float | None:
+def _extract_pe_ttm_5y_avg(data: dict[str, Any]) -> float | None:
     """从返回数据中获取或计算近 5 年 PE(TTM) 均值。
 
     对历史日频 PE 取平均，近似作为 5 年估值中枢参考。

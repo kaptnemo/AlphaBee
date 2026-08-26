@@ -1,5 +1,8 @@
+from typing import Any
+
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
+from langgraph.graph.state import CompiledStateGraph
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.signal.prompts import SIGNAL_AGENT_PROMPT
@@ -8,7 +11,7 @@ from alphabee.middleware.common import check_message_limit
 from alphabee.utils import create_chat_model
 
 
-def signal_agent_factory():
+def signal_agent_factory() -> CompiledStateGraph[Any, Any, Any, Any]:
     """信号代理工厂：创建并返回一个 SignalAgent 实例。"""
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
     return create_deep_agent(

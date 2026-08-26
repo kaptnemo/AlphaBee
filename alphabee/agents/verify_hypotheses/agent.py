@@ -1,7 +1,10 @@
+from typing import Any
+
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.middleware._tool_exclusion import _ToolExclusionMiddleware
 from langchain.agents.middleware import ToolRetryMiddleware
+from langgraph.graph.state import CompiledStateGraph
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.schemas import VerificationResultList
@@ -13,7 +16,7 @@ from alphabee.tools.tushare_query import query_tushare
 from alphabee.utils import create_chat_model, json_instruction
 
 
-def verify_hypotheses_agent_factory():
+def verify_hypotheses_agent_factory() -> CompiledStateGraph[Any, Any, Any, Any]:
     """假设验证代理工厂：创建并返回一个 VerifyHypothesesAgent 实例。"""
     # 延迟导入：alphabee.tools.financial_report 会拉起 deepagents/fetch 全家桶，
     # 导入成本较高，只在真正构建验证代理时才加载。

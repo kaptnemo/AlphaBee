@@ -12,10 +12,10 @@ from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-_CACHE = SyncTTLCache(ttl_seconds=600.0)
+_CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=600.0)
 
 
-def _dedup(df, col="period"):
+def _dedup(df: Any, col: str = "period") -> Any:
     return df.drop_duplicates(subset=[col]).reset_index(drop=True)
 
 
@@ -144,7 +144,7 @@ _FIELD_EXTRACTORS: dict[str, tuple[str, str, int]] = {
 
 
 def _extract_from_table(
-    data: dict,
+    data: dict[str, Any],
     table: str,
     field: str,
     offset: int = 0,
@@ -157,7 +157,7 @@ def _extract_from_table(
 
 
 def extract_financial_facts(
-    data: dict,
+    data: dict[str, Any],
     fields: list[str] | None = None,
 ) -> dict[str, float]:
     """从 get_financial_fact() 结果中批量提取 canonical 字段值。
@@ -209,7 +209,7 @@ def extract_financial_facts(
 # ── 复合计算字段（跨行 / 跨表）────────────────────────────────
 
 
-def _extract_avg_shareholders_equity(data: dict) -> float | None:
+def _extract_avg_shareholders_equity(data: dict[str, Any]) -> float | None:
     """归母净资产近两期均值，用于 ROE 计算。"""
     cur = _extract_from_table(data, "balance", "shareholders_equity", 0)
     prev = _extract_from_table(data, "balance", "shareholders_equity", 1)
@@ -218,7 +218,7 @@ def _extract_avg_shareholders_equity(data: dict) -> float | None:
     return None
 
 
-def _extract_ebit(data: dict) -> float | None:
+def _extract_ebit(data: dict[str, Any]) -> float | None:
     """EBIT ≈ 营业利润 + 利息费用（简化近似）。"""
     op = _extract_from_table(data, "income", "operating_profit", 0)
     ie = _extract_from_table(data, "income", "interest_expense", 0)
@@ -227,7 +227,7 @@ def _extract_ebit(data: dict) -> float | None:
     return None
 
 
-def _extract_inventory_yoy(data: dict) -> float | None:
+def _extract_inventory_yoy(data: dict[str, Any]) -> float | None:
     """存货同比增速（%），取最近一期与上一期对比。
 
     优先使用同比口径（offset=4，即与去年同期比）；若数据不足则回退

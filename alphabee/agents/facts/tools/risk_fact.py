@@ -8,7 +8,7 @@ from alphabee.collectors.akshare.helper import AkShareHelper
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-_CACHE = SyncTTLCache(ttl_seconds=300.0)
+_CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=300.0)
 
 
 def get_risk_fact(symbol: str) -> dict[str, Any]:

@@ -8,7 +8,7 @@ from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, sa
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
-_CACHE = SyncTTLCache(ttl_seconds=3600.0)
+_CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=3600.0)
 
 
 def get_company_profile(symbol: str) -> dict[str, Any]:

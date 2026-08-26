@@ -206,7 +206,7 @@ def evaluate_derived_facts(
     return "\n".join(sections)
 
 
-def _format_result(name: str, result: dict) -> str:
+def _format_result(name: str, result: dict[str, Any]) -> str:
     """将单条规则结果格式化为 Markdown 段落。"""
     level = result.get("level", "unknown")
     raw_value = result.get(name)

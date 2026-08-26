@@ -204,7 +204,7 @@ class AnomalyReport:
     period: str
     anomalies: list[MetricAnomaly] = field(default_factory=list)
     pattern_matches: list[PatternMatch] = field(default_factory=list)
-    baseline_info: dict[str, dict] = field(default_factory=dict)
+    baseline_info: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         # 保留 anomalies + pattern_matches 两层结果，

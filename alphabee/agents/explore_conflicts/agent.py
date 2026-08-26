@@ -1,5 +1,8 @@
+from typing import Any
+
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
+from langgraph.graph.state import CompiledStateGraph
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.explore_conflicts.prompts import EXPLORE_CONFLICTS_PROMPT
@@ -8,7 +11,7 @@ from alphabee.middleware.common import check_message_limit
 from alphabee.utils import create_chat_model, json_instruction
 
 
-def explore_conflicts_agent_factory():
+def explore_conflicts_agent_factory() -> CompiledStateGraph[Any, Any, Any, Any]:
     """冲突探索代理工厂：创建并返回一个 ExploreConflictsAgent 实例。"""
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
 

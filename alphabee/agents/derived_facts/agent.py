@@ -1,7 +1,9 @@
 from pathlib import Path
+from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
+from langgraph.graph.state import CompiledStateGraph
 
 from alphabee import PROJECT_ROOT
 from alphabee.agents.derived_facts.prompts import DERIVED_FACT_AGENT_PROMPT
@@ -12,7 +14,7 @@ from alphabee.utils import create_chat_model
 _SKILLS_SOURCES = Path(__file__).parent / "skills"
 
 
-def derived_fact_agent_factory():
+def derived_fact_agent_factory() -> CompiledStateGraph[Any, Any, Any, Any]:
     """衍生事实代理工厂：创建并返回一个 DerivedFactAgent 实例。"""
 
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
