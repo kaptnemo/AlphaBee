@@ -1,6 +1,8 @@
 import logging
 import time
-from typing import Any
+from collections.abc import Callable
+from types import TracebackType
+from typing import Any, Self
 
 from pandas import DataFrame
 
@@ -11,7 +13,7 @@ try:
     from alphabee.utils import get_logger
 except ModuleNotFoundError:
 
-    def get_logger(name: str) -> logging.Logger:
+    def get_logger(name: str) -> Any:
         return logging.getLogger(name)
 
 
@@ -20,7 +22,7 @@ MONGO_DATABASE = "treasure_island"
 logger = get_logger(__name__)
 
 
-def _report_akshare_failure(api_name: str, exc: Exception, kwargs: dict) -> None:
+def _report_akshare_failure(api_name: str, exc: Exception, kwargs: dict[str, Any]) -> None:
     """Record an AkShare API failure in the data_fetch event database."""
     try:
         from alphabee.data_fetch.integrations import _classify_error, capture_failure
@@ -90,11 +92,11 @@ class AkShareResult:
                 mongo_db.drop_collection(collection_name)
             mongo_db[collection_name].insert_many(dataframe.to_dict("records"))
 
-    def save_to_csv(self, file_path: str, index: bool = False):
+    def save_to_csv(self, file_path: str, index: bool = False) -> None:
         """Save data to CSV."""
         self.to_dataframe().to_csv(file_path, index=index)
 
-    def save_to_parquet(self, file_path: str, index: bool = False):
+    def save_to_parquet(self, file_path: str, index: bool = False) -> None:
         """Save data to parquet."""
         self.to_dataframe().to_parquet(file_path, index=index)
 
@@ -102,20 +104,28 @@ class AkShareResult:
 class AkShareHelper:
     """Fetch data from AkShare and wrap the result with common helpers."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.akshare_api = ak
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         pass
 
     @staticmethod
-    def wrap_akshare_result(func, name):
+    def wrap_akshare_result(
+        func: Callable[..., Any],
+        name: str,
+    ) -> Callable[..., AkShareResult]:
         """Wrap AkShare API call with retry logic."""
 
-        def wrapper(*arg, **kwargs):
+        def wrapper(*arg: Any, **kwargs: Any) -> AkShareResult:
             max_retries = 1
             for attempt in range(max_retries):
                 try:
@@ -139,6 +149,8 @@ class AkShareHelper:
                         error=str(e),
                     )
                     time.sleep(wait)
+
+            raise RuntimeError(f"AkShare API {name} failed after {max_retries} attempts")
 
         return wrapper
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pandas import DataFrame
@@ -7,10 +8,10 @@ ADAPTER_CONFIG_DIR = Path(__file__).parent / "akshare"
 
 
 class AkShareAdapter:
-    def __init__(self):
+    def __init__(self) -> None:
         self.adapter_config = self.load_adapter_config()
 
-    def load_adapter_config(self) -> dict:
+    def load_adapter_config(self) -> dict[str, Any]:
         adapter_config = {}
         for root, dirs, files in ADAPTER_CONFIG_DIR.walk():
             for file in files:

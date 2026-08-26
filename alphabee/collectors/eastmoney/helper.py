@@ -11,15 +11,15 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import requests
 
 try:
-    from mongoclient import MONGO_DATABASE, mongo_client  # type: ignore[import-untyped]
+    from mongoclient import MONGO_DATABASE, mongo_client
 except ImportError:
-    mongo_client = None  # type: ignore[assignment]
-    MONGO_DATABASE = None  # type: ignore[assignment]
+    mongo_client = None
+    MONGO_DATABASE = None
 
 try:
     from pymongo import MongoClient
@@ -41,7 +41,7 @@ def jsonp_to_json(text: str) -> dict[str, Any]:
     m = re.search(r"\((.*)\)\s*;?\s*$", text, re.S)
     if not m:
         raise ValueError("JSONP parse failed: cannot find '(...)' wrapper")
-    return json.loads(m.group(1))
+    return cast(dict[str, Any], json.loads(m.group(1)))
 
 
 def _none_if_blank(v: Any) -> Any:
@@ -170,7 +170,12 @@ class EastmoneyReportResult:
                 print(f"Error processing record {x.get('infoCode')}: {e}")
         return processed
 
-    def save_to_mongo(self, collection_name: str, replace: bool = False, client: MongoClient = None):
+    def save_to_mongo(
+        self,
+        collection_name: str,
+        replace: bool = False,
+        client: MongoClient[Any] | None = None,
+    ) -> None:
         """Save the result to MongoDB.
         Args:
             collection_name (str): The name of the MongoDB collection to save the data.
@@ -190,7 +195,7 @@ class EastmoneyReportResult:
                 "mongoclient is not available. Provide a pymongo.MongoClient instance via the 'client' parameter."
             )
 
-    def _save_to_mongo(self, collection_name: str, replace: bool, client: MongoClient):
+    def _save_to_mongo(self, collection_name: str, replace: bool, client: MongoClient[Any]) -> None:
         """Internal method to save data to MongoDB."""
         if replace:
             client[MONGO_DATABASE].drop_collection(collection_name)
@@ -249,7 +254,7 @@ class EastmoneyReportDetail:
             "raw_json": self.raw_json,
         }
 
-    def save_to_mongo(self, collection_name: str, client: MongoClient | None = None):
+    def save_to_mongo(self, collection_name: str, client: MongoClient[Any] | None = None) -> None:
         if not self.info_code:
             raise ValueError("Cannot save report detail without info_code")
         doc = self.to_dict()
@@ -275,7 +280,7 @@ class EastmoneyHelper:
     This class provides methods for querying research reports and saving results to MongoDB.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def fetch_report_list(
@@ -306,7 +311,7 @@ class EastmoneyHelper:
         Returns:
             EastmoneyReportResult: The result object containing the data and save method.
         """
-        params = {
+        params: dict[str, str | int] = {
             "cb": "datatable",  # JSONP callback name can be any identifier
             "pageNo": page_num,
             "pageSize": page_size,
@@ -369,7 +374,7 @@ class EastmoneyHelper:
         records = data.get("data", [])
         if not records:
             raise ValueError(f"No report content found for encodeUrl: {encoded_url}")
-        record = records[0]
+        record: dict[str, Any] = records[0]
         record["raw_json"] = json.dumps(record, ensure_ascii=False)
         return record
 
@@ -765,7 +770,7 @@ class EastmoneyHelper:
         m = re.search(r"var zwinfo\s*=\s*(\{.*?\});", html, re.DOTALL)
         if m:
             try:
-                return json.loads(m.group(1))
+                return cast(dict[str, Any], json.loads(m.group(1)))
             except json.JSONDecodeError:
                 pass
 
@@ -823,7 +828,7 @@ class EastmoneyHelper:
             data = jsonp_to_json(r.text)
             records = data.get("data", [])
             if records:
-                record = records[0]
+                record: dict[str, Any] = records[0]
                 record["raw_json"] = json.dumps(record, ensure_ascii=False)
                 return record
         except Exception:

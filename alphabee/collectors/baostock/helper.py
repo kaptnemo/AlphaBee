@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any
+from types import TracebackType
+from typing import Any, Self
 
-import baostock as bs  # type: ignore[import-untyped]
+import baostock as bs
 import pandas as pd
 from alpha_arena.utils import get_logger
 from pymongo import MongoClient
@@ -88,7 +89,7 @@ class BaostockResult:
             with MongoClient(MONGO_HOST) as client:
                 self._save_to_mongo(collection_name, replace, client)
 
-    def save_to_csv(self, file_path: str):
+    def save_to_csv(self, file_path: str) -> None:
         """Save the data to a CSV file.
         Args:
             file_path (str): The path to the CSV file where the data will be saved.
@@ -98,7 +99,7 @@ class BaostockResult:
         else:
             logger.warning("No data to save to CSV", file_path=file_path)
 
-    def save_to_parquet(self, file_path: str):
+    def save_to_parquet(self, file_path: str) -> None:
         """Save the data to a Parquet file.
         Args:
             file_path (str): The path to the Parquet file where the data will be saved.
@@ -116,18 +117,23 @@ class BaostockHelper:
     It can be used as a context manager to ensure proper login and logout.
     """
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """Initialize BaostockHelper and login to Baostock."""
         self.login()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         """Logout from Baostock when exiting the context."""
         # self.logout()
         pass
 
     @staticmethod
-    def login():
+    def login() -> Any:
         """Login to Baostock and return the login response."""
         lg = bs.login()
         if lg.error_code != "0":
@@ -135,7 +141,7 @@ class BaostockHelper:
         return lg
 
     @staticmethod
-    def logout():
+    def logout() -> None:
         """Logout from Baostock."""
         bs.logout()
 

@@ -64,9 +64,7 @@ from alphabee.financial_report.links import (
     get_research_report_links,
 )
 from alphabee.financial_report.report_parser import reports_root, write_markdown_report_folder
-from alphabee.mcp.pdf_ocr_server import (
-    DEFAULT_OCR_SERVER_URL,
-)
+from alphabee.loader.pdf_ocr_loader import DEFAULT_OCR_SERVER_URL
 from alphabee.mcp.pdf_ocr_server import (
     ocr_pdf_to_markdown as _ocr_pdf_to_markdown_tool,
 )
@@ -264,14 +262,14 @@ def ocr_markdown(
     直接调用 MCP 工具函数（与 agent 通过 MCP 服务调用的行为完全一致），
     无需拉起子进程；产物持久化在 ``outputs/pdf_ocr/tasks/<task_id>/``。
     """
-    result = _ocr_pdf_to_markdown_tool(
+    result: dict[str, Any] = _ocr_pdf_to_markdown_tool(
         pdf_path=str(Path(pdf_path).expanduser().resolve()),
         task_id=task_id or f"pipeline-{uuid.uuid4().hex[:12]}",
         ocr_server_url=ocr_server_url or DEFAULT_OCR_SERVER_URL,
         keep_pages=keep_pages,
         include_content=include_content,
-    )
-    return result.model_dump(mode="json")
+    ).model_dump(mode="json")
+    return result
 
 
 # ── 步骤 3：解析成 reports/ 文件夹结构（report_parser.py） ────────────────

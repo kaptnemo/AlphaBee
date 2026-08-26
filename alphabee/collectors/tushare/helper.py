@@ -1,5 +1,7 @@
 import time
-from typing import Any
+from collections.abc import Callable
+from types import TracebackType
+from typing import Any, Self
 
 # import pymongo
 from pandas import DataFrame
@@ -15,7 +17,7 @@ from alphabee.utils import get_logger
 logger = get_logger(__name__)
 
 
-def _report_tushare_failure(api_name: str, exc: Exception, kwargs: dict) -> None:
+def _report_tushare_failure(api_name: str, exc: Exception, kwargs: dict[str, Any]) -> None:
     """Record a Tushare API failure in the data_fetch event database."""
     try:
         from alphabee.data_fetch.integrations import _classify_error, capture_failure
@@ -60,11 +62,11 @@ class TuShareResult:
     #         mongo_collection = (db or globals()["db"])[collection_name]
     #         mongo_collection.insert_many(self._data.to_dict("records"))
 
-    def save_to_csv(self, file_path: str, index: bool = False):
+    def save_to_csv(self, file_path: str, index: bool = False) -> None:
         """save data to csv"""
         self._data.to_csv(file_path, index=index)
 
-    def save_to_parquet(self, file_path: str, index: bool = False):
+    def save_to_parquet(self, file_path: str, index: bool = False) -> None:
         """save data to parquet"""
         self._data.to_parquet(file_path, index=index)
 
@@ -80,13 +82,18 @@ class TuShareHelper:
         "认证",
     )
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.tushare_api = ts.pro_api()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         pass
 
     @classmethod
@@ -95,7 +102,10 @@ class TuShareHelper:
         return any(kw in error_message for kw in cls._PERMANENT_ERROR_KEYWORDS)
 
     @staticmethod
-    def wrap_tushare_result(func, name):
+    def wrap_tushare_result(
+        func: Callable[..., Any],
+        name: str,
+    ) -> Callable[..., TuShareResult]:
         """wrap tushare api with retry logic (max 10 attempts, incremental backoff)
 
         Args:
@@ -103,9 +113,9 @@ class TuShareHelper:
             name (str): tushare api name used as collection name
         """
 
-        def wrapper(*arg, **kwargs):
+        def wrapper(*arg: Any, **kwargs: Any) -> TuShareResult:
             max_retries = 1
-            e = None
+            e: Exception | None = None
             for attempt in range(1, max_retries + 1):
                 try:
                     return TuShareResult(func(*arg, **kwargs), name)

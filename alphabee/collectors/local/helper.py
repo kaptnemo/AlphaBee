@@ -36,7 +36,7 @@ def get_stock_basic(stock_code: str) -> dict[str, str] | None:
     stock_info = ALL_STOCKS[ALL_STOCKS["stock_code"] == stock_code]
     if stock_info.empty:
         return None
-    row = stock_info.iloc[0].to_dict()
+    row: dict[str, str] = stock_info.iloc[0].to_dict()
     sw_industry = _sw_industry_name(row)
     if sw_industry:
         row["industry"] = sw_industry
@@ -58,7 +58,8 @@ def get_industry_peers(
         peers = ALL_STOCKS[ALL_STOCKS["industry"] == industry]
     if exclude_stock_code:
         peers = peers[peers["stock_code"] != exclude_stock_code]
-    return peers.head(max_peers).to_dict(orient="records")
+    records: list[dict[str, str]] = peers.head(max_peers).to_dict(orient="records")
+    return records
 
 
 # ── all_stocks.csv 生成（对齐申万分类）───────────────────────────────────────
@@ -122,7 +123,7 @@ def fetch_all_stocks_with_sw() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     from alphabee.collectors.tushare.helper import TuShareHelper
 
-    with TuShareHelper() as helper:  # type: ignore[no-untyped-call]
+    with TuShareHelper() as helper:
         basic = helper.stock_basic(exchange="", list_status="L").data
         l1 = helper.index_classify(level="L1", src="SW2021").data
         parts: list[pd.DataFrame] = []

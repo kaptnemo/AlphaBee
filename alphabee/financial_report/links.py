@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+from typing import Any, cast
 
 import requests
 
@@ -172,7 +172,7 @@ def _fetch_cninfo_page(
     }
     resp = requests.post(CNINFO_ANNOUNCE_URL, data=params, headers=_CNINFO_HEADERS, timeout=timeout)
     resp.raise_for_status()
-    return resp.json()
+    return cast(dict[str, Any], resp.json())
 
 
 def get_financial_report_links(

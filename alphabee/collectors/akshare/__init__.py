@@ -1,3 +1,3 @@
-import akshare as ak  # type: ignore[import-untyped]
+import akshare as ak
 
 __all__ = ["ak"]

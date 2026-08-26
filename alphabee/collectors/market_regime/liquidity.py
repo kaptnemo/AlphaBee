@@ -10,6 +10,7 @@ Sources (akshare):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -23,7 +24,7 @@ SOURCE_MONEY = "akshare:macro_china_money_supply"
 SOURCE_SF = "akshare:macro_china_shrzgm"
 
 
-def _get_ak(ak_module: Any = None):
+def _get_ak(ak_module: Any = None) -> Any:
     if ak_module is not None:
         return ak_module
     import akshare as ak  # noqa: PLC0415
@@ -54,7 +55,7 @@ def _asof_month(asof_date: str | None) -> str:
 
 
 def _best_latest_month(
-    fetch_fn,
+    fetch_fn: Callable[[], pd.DataFrame | None],
     key_col: str,
     asof_month: str | None,
     attempts: int = 3,
@@ -84,29 +85,6 @@ def _best_latest_month(
         if asof_month and current_month >= asof_month:
             break
     return best
-
-
-def _parse_cn_bond_yield(df: pd.DataFrame, column: str, asof_date: str | None) -> float | None:
-    """Parse 10y yield from bond_china_yield, restricting to 中债国债收益率曲线 rows."""
-    if df is None or df.empty or column not in df.columns:
-        return None
-    curve_rows = df
-    if "曲线名称" in df.columns:
-        curve_rows = df[df["曲线名称"] == "中债国债收益率曲线"]
-        if curve_rows.empty:
-            return None
-    row = select_latest(curve_rows, "日期", asof_date)
-    if row is None or pd.isna(row[column]):
-        return None
-    return float(row[column])
-
-
-def _parse_us_bond_yield(df: pd.DataFrame, asof_date: str | None) -> float | None:
-    """Parse US 10y yield from bond_zh_us_rate."""
-    row = select_latest(df, "日期", asof_date)
-    if row is None or pd.isna(row.get("美国国债收益率10年")):
-        return None
-    return float(row["美国国债收益率10年"])
 
 
 def _parse_cn_bond_yield(df: pd.DataFrame, column: str, asof_date: str | None) -> float | None:

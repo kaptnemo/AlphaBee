@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from openai import OpenAI
 
 from alphabee.config import settings
@@ -25,16 +25,18 @@ from alphabee.config import settings
 # ── 表格结构判断 ────────────────────────────────────────────────────────────
 
 
-def has_header(table) -> bool:
+def has_header(table: Tag) -> bool:
     return bool(table.find("th"))
 
 
-def col_count(table) -> int:
+def col_count(table: Tag) -> int:
     first_row = table.find("tr")
     return len(first_row.find_all(["td", "th"])) if first_row else 0
 
 
-def get_consecutive_html_tables_range_v2(md_lines: list[str], start_idx: int = 0, min_tables: int = 2):
+def get_consecutive_html_tables_range_v2(
+    md_lines: list[str], start_idx: int = 0, min_tables: int = 2
+) -> tuple[int, int] | None:
     """从 ``start_idx`` 开始查找连续的 HTML 表格块范围（至少 ``min_tables`` 个 table）。
 
     兼容 ``<table`` / ``</table>`` 不在行首/行尾、同行出现多次标签等情况。
@@ -85,7 +87,7 @@ def get_consecutive_html_tables_range_v2(md_lines: list[str], start_idx: int = 0
     return None
 
 
-def _normalized_col_count(table) -> int:
+def _normalized_col_count(table: Tag) -> int:
     """估算表格总列数（尊重 colspan，取前几行的最大值）。"""
     rows = table.find_all("tr")
     if not rows:
@@ -96,7 +98,7 @@ def _normalized_col_count(table) -> int:
         for cell in row.find_all(["td", "th"]):
             span = cell.get("colspan")
             try:
-                span_val = int(span) if span is not None else 1
+                span_val = int(str(span)) if span is not None else 1
             except (TypeError, ValueError):
                 span_val = 1
             cols += max(span_val, 1)
@@ -105,7 +107,7 @@ def _normalized_col_count(table) -> int:
     return max_cols
 
 
-def _tables_compatible(left, right) -> bool:
+def _tables_compatible(left: Tag, right: Tag) -> bool:
     """启发式判断两个相邻表格是否可以合并（列数 / 行签名兼容）。"""
     left_cols = _normalized_col_count(left)
     right_cols = _normalized_col_count(right)
@@ -116,9 +118,7 @@ def _tables_compatible(left, right) -> bool:
         left_row = left.find_all("tr")[-1:]
         right_row = right.find_all("tr")[:1]
         if left_row and right_row:
-            left_signature = tuple(
-                (cell.name, cell.get("colspan", "1")) for cell in left_row[0].find_all(["td", "th"])
-            )
+            left_signature = tuple((cell.name, cell.get("colspan", "1")) for cell in left_row[0].find_all(["td", "th"]))
             right_signature = tuple(
                 (cell.name, cell.get("colspan", "1")) for cell in right_row[0].find_all(["td", "th"])
             )
@@ -130,12 +130,12 @@ def _tables_compatible(left, right) -> bool:
                 return True
         return False
 
-    def row_signature(row):
-        signature = []
+    def row_signature(row: Tag) -> tuple[tuple[str | None, int], ...]:
+        signature: list[tuple[str | None, int]] = []
         for cell in row.find_all(["td", "th"]):
             span = cell.get("colspan")
             try:
-                span_val = int(span) if span is not None else 1
+                span_val = int(str(span)) if span is not None else 1
             except (TypeError, ValueError):
                 span_val = 1
             signature.append((cell.name, max(span_val, 1)))
@@ -177,11 +177,7 @@ def merge_split_tables(html: str) -> str:
 
 
 def is_markdown_header(lines: list[str]) -> bool:
-    return (
-        len(lines) >= 2
-        and "|" in lines[0]
-        and set(lines[1].replace("|", "").strip()) <= {"-", ":"}
-    )
+    return len(lines) >= 2 and "|" in lines[0] and set(lines[1].replace("|", "").strip()) <= {"-", ":"}
 
 
 def merge_markdown_tables(md_text: str) -> str:
@@ -270,7 +266,7 @@ def extract_table_name_from_post_lines(lines: list[str], start_idx: int) -> tupl
     return None, start_idx
 
 
-def extract_tables_from_text(md_text: str) -> list[dict]:
+def extract_tables_from_text(md_text: str) -> list[dict[str, str]]:
     """从 Markdown 文本中抽取表格块与文本块。
 
     返回 ``blocks`` 列表，元素为 ``{"type": "table"|"text", "content": str, "table_name"?: str}``。

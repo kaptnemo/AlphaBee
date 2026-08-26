@@ -4,6 +4,7 @@ import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from markdown_it import MarkdownIt
 
@@ -24,12 +25,14 @@ def _ngram_split_lines(text_lines: list[str], n: int = 3, threshold: int = 2) ->
     return [ngram for ngram, count in ngram_counts.items() if count > threshold]
 
 
-def _split_markdown_by_sections(md_text: str, file_name: str | None = None, file_type: str | None = None) -> list[dict]:
+def _split_markdown_by_sections(
+    md_text: str, file_name: str | None = None, file_type: str | None = None
+) -> list[dict[str, Any]]:
     md = MarkdownIt()
     tokens = md.parse(md_text)
 
-    sections: list[dict] = []
-    current_section = {
+    sections: list[dict[str, Any]] = []
+    current_section: dict[str, Any] = {
         "metadata": {
             "source": file_name,
             "file_type": file_type,
@@ -44,8 +47,8 @@ def _split_markdown_by_sections(md_text: str, file_name: str | None = None, file
     }
 
     SECTION_PATTERN = re.compile(r"^(?P<number>\d+(?:\.\d+)*)(?:\s+|[.:;-]+)(?P<title>.+)$")
-    section_stack = []
-    section_numbers_stack = []
+    section_stack: list[str] = []
+    section_numbers_stack: list[str] = []
     for idx, token in enumerate(tokens):
         if token.type == "heading_open":
             if current_section.get("content"):
@@ -97,14 +100,14 @@ def _split_markdown_by_sections(md_text: str, file_name: str | None = None, file
 
 def parse_markdown_to_cleaned_sections(
     md_text: str, page_count: int, file_name: str | None, file_type: str | None
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     sections = _split_markdown_by_sections(md_text, file_name=file_name, file_type=file_type)
     if not sections or page_count <= 0:
         return sections
 
     title_counts: dict[str, int] = {}
     for section in sections:
-        title = section.get("title")
+        title: str = section.get("title", "")
         title_counts[title] = title_counts.get(title, 0) + 1
 
     # 页眉页脚判定：标题须至少在 2 个页面出现且占比 >= 60%（避免单页报告被整体误删）
@@ -121,7 +124,7 @@ def parse_markdown_to_cleaned_sections(
     }
 
     ngram_threshold = 3
-    cleaned_sections: list[dict] = []
+    cleaned_sections: list[dict[str, Any]] = []
     for section in sections:
         if section.get("title") in header_footer_titles:
             section_ngrams = ngram_dict.get(section["title"], [])
@@ -152,10 +155,10 @@ def parse_markdown_to_cleaned_sections(
     return cleaned_sections
 
 
-def parse_sections_to_folder_structure(sections: list[dict], save_dir: Path) -> dict:
+def parse_sections_to_folder_structure(sections: list[dict[str, Any]], save_dir: Path) -> dict[str, Any]:
     """把sections解析成文件夹结构，并生成对应的文件夹和文件"""
 
-    content_parts = {}
+    content_parts: dict[str, list[str]] = {}
     for section in sections:
         section_path = section["metadata"]["section_path"]
         if not section_path:

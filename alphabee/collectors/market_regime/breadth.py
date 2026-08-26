@@ -19,7 +19,7 @@ from alphabee.market_regime.models import CollectorOutput
 SOURCE = "akshare:stock_market_activity_legu"
 
 
-def _get_ak(ak_module: Any = None):
+def _get_ak(ak_module: Any = None) -> Any:
     if ak_module is not None:
         return ak_module
     import akshare as ak  # noqa: PLC0415

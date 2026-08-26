@@ -180,7 +180,7 @@ def enhance_for_table_ocr(
         horiz = cv2.dilate(horiz, horiz_kernel, iterations=2)
         horiz = cv2.bitwise_and(horiz, bw)
 
-        num, lab, st, _ = cv2.connectedComponentsWithStats(horiz, 8)
+        num, lab, st, _ = cv2.connectedComponentsWithStats(horiz, connectivity=8)
         horiz_thick = np.zeros_like(horiz)
         thick_kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1))
         for i in range(1, num):
@@ -202,7 +202,7 @@ def enhance_for_table_ocr(
             repair_kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(15, hh // 90)))
             vert = cv2.morphologyEx(vert, cv2.MORPH_CLOSE, repair_kernel_v, iterations=1)
 
-            num, lab, st, _ = cv2.connectedComponentsWithStats(vert, 8)
+            num, lab, st, _ = cv2.connectedComponentsWithStats(vert, connectivity=8)
             vert_keep = np.zeros_like(vert)
             min_h = int(0.35 * hh)
             max_w = 10
@@ -314,7 +314,7 @@ class PDFOCRLoader:
 
     # ── OCR pipeline helpers ──────────────────────────────────────────────
 
-    def _get_thread_pipeline(self):
+    def _get_thread_pipeline(self) -> Any:
         # 惰性导入：模块 import 时不加载 paddleocr（启动 MCP server 更快）
         from paddleocr import PaddleOCRVL
 
@@ -334,7 +334,7 @@ class PDFOCRLoader:
         pipeline = self._get_thread_pipeline()
 
         paths = [str(p) for p in image_paths]
-        outputs: list | None = None
+        outputs: list[Any] | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
                 outputs = pipeline.predict(paths, temperature=0.0, top_p=1.0)
@@ -373,7 +373,7 @@ class PDFOCRLoader:
         page = pdf_document[page_num]
         pixmap = page.get_pixmap(matrix=matrix, alpha=False)
         img_data = pixmap.tobytes("png")
-        img = Image.open(io.BytesIO(img_data))
+        img: Image.Image = Image.open(io.BytesIO(img_data))
 
         if self.image_format.upper() != "PNG" and img.mode in ("RGBA", "LA"):
             background = Image.new("RGB", img.size, (255, 255, 255))
@@ -404,7 +404,7 @@ class PDFOCRLoader:
 
     # ── Markdown post-processing（与旧实现一致） ──────────────────────────
 
-    def section_to_documents(self, sections: list[dict], llm_format_table: bool = False) -> list[Document]:
+    def section_to_documents(self, sections: list[dict[str, Any]], llm_format_table: bool = False) -> list[Document]:
         docs: list[Document] = []
         for content in sections:
             section = content.get("metadata", {}).get("title", "未知章节")
@@ -463,12 +463,12 @@ class PDFOCRLoader:
     @staticmethod
     def _split_markdown_by_sections(
         md_text: str, file_name: str | None = None, file_type: str | None = None
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         md = MarkdownIt()
         tokens = md.parse(md_text)
 
-        sections: list[dict] = []
-        current_section = {
+        sections: list[dict[str, Any]] = []
+        current_section: dict[str, Any] = {
             "metadata": {
                 "source": file_name,
                 "file_type": file_type,
@@ -577,7 +577,7 @@ class PDFOCRLoader:
     ) -> str:
         """A + B 结合的标题后处理：过滤误识别 + 依据中文编号前缀重建标题层级。"""
         lines = md_text.splitlines()
-        head_entries: list[dict] = []
+        head_entries: list[dict[str, Any]] = []
         for idx, line in enumerate(lines):
             m = _HEADING_RE.match(line)
             if not m:
@@ -653,7 +653,9 @@ class PDFOCRLoader:
         return [ngram for ngram, count in ngram_counts.items() if count > threshold]
 
     @classmethod
-    def _parse_markdown(cls, md_text: str, page_count: int, file_name: str | None, file_type: str | None) -> list[dict]:
+    def _parse_markdown(
+        cls, md_text: str, page_count: int, file_name: str | None, file_type: str | None
+    ) -> list[dict[str, Any]]:
         """按章节切分 + ngram 页眉页脚去重，返回清洗后的 sections。"""
         sections = cls._split_markdown_by_sections(md_text, file_name=file_name, file_type=file_type)
         if not sections or page_count <= 0:
@@ -661,7 +663,7 @@ class PDFOCRLoader:
 
         title_counts: dict[str, int] = {}
         for section in sections:
-            title = section.get("title")
+            title: str = section.get("title", "")
             title_counts[title] = title_counts.get(title, 0) + 1
 
         header_footer_titles = [
@@ -676,7 +678,7 @@ class PDFOCRLoader:
         ngram_dict = {title: cls._ngram_split_lines(lines, n=5, threshold=5) for title, lines in content_lines.items()}
 
         ngram_threshold = 3
-        cleaned_sections: list[dict] = []
+        cleaned_sections: list[dict[str, Any]] = []
         for section in sections:
             if section.get("title") in header_footer_titles:
                 section_ngrams = ngram_dict.get(section["title"], [])
@@ -696,7 +698,7 @@ class PDFOCRLoader:
         return cleaned_sections
 
     @staticmethod
-    def _concat_markdown_from_sections(sections: list[dict]) -> str:
+    def _concat_markdown_from_sections(sections: list[dict[str, Any]]) -> str:
         md_lines: list[str] = []
         for section in sections:
             level = section.get("level", 0)

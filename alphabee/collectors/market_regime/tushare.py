@@ -29,7 +29,7 @@ INDEX_CODES: list[tuple[str, str]] = [
 ]
 
 
-def _get_ts(ts_module: Any = None):
+def _get_ts(ts_module: Any = None) -> Any:
     """Return a tushare Pro API client; ``ts_module`` allows test injection."""
     if ts_module is not None:
         return ts_module
@@ -101,7 +101,7 @@ def fetch_index_valuation(asof_date: str | None = None, *, ts_module: Any = None
 
 
 def _daily_rate_fetch(
-    pro,
+    pro: Any,
     api_name: str,
     value_col: str,
     asof_date: str | None,

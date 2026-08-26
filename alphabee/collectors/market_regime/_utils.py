@@ -8,12 +8,13 @@ map). Everything downstream only reads canonical field names.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from typing import Any
 
 import pandas as pd
 from pandas import Series
 
 
-def _coerce_date(value) -> date | None:
+def _coerce_date(value: Any) -> date | None:
     """Coerce common source date representations to a ``date``."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
@@ -22,7 +23,7 @@ def _coerce_date(value) -> date | None:
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, pd.Timestamp):
-        return value.date()
+        return datetime(value.year, value.month, value.day)
     text = str(value).strip()
     for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S"):
         try:
@@ -57,7 +58,7 @@ def select_latest(df: pd.DataFrame, date_col: str, asof_date: str | None = None)
     return valid.iloc[-1]
 
 
-def month_key(value) -> str | None:
+def month_key(value: Any) -> str | None:
     """Normalize a ``月份`` value to ``YYYYMM`` (supports ``202604`` / ``2008年01月份``)."""
     if value is None:
         return None

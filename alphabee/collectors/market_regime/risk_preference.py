@@ -10,6 +10,7 @@ ETF 资金流（etf_net_inflow）无稳定免费数据源，登记为 schema fie
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -21,7 +22,7 @@ SOURCE_TURNOVER = "akshare:stock_sse_deal_daily/stock_szse_summary"
 SOURCE_MARGIN = "akshare:stock_margin_sse/stock_margin_szse"
 
 
-def _get_ak(ak_module: Any = None):
+def _get_ak(ak_module: Any = None) -> Any:
     if ak_module is not None:
         return ak_module
     import akshare as ak  # noqa: PLC0415
@@ -89,7 +90,11 @@ def margin_balance_from(sse: float | None, szse: float | None) -> float | None:
 # ── 按日拉取（带最近交易日回退） ─────────────────────────────────────────
 
 
-def _fetch_with_walkback(per_date_fn, asof_date: str | None, max_days: int = 8):
+def _fetch_with_walkback(
+    per_date_fn: Callable[[str], float | None],
+    asof_date: str | None,
+    max_days: int = 8,
+) -> float | None:
     """Try ``per_date_fn(YYYYMMDD)`` on successive dates until it returns a value."""
     for date_str in walk_back_dates(asof_date, max_days=max_days):
         result = per_date_fn(date_str)

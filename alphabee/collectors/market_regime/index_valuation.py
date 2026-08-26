@@ -30,7 +30,7 @@ INDEX_SYMBOLS: list[tuple[str, str]] = [
 HS300_SINA_SYMBOL = "sh000300"
 
 
-def _get_ak(ak_module: Any = None):
+def _get_ak(ak_module: Any = None) -> Any:
     if ak_module is not None:
         return ak_module
     import akshare as ak  # noqa: PLC0415

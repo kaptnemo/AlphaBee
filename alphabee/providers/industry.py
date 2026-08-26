@@ -107,7 +107,7 @@ def _try_akshare_sw_daily(sw_code: str, start: str, end: str) -> IndustryDailyRe
     try:
         from alphabee.collectors.akshare.helper import AkShareHelper
 
-        with AkShareHelper() as helper:  # type: ignore[no-untyped-call]
+        with AkShareHelper() as helper:
             hist = helper.index_hist_sw(symbol=swcode6, period="day").to_dataframe()
             pe_val, pb_val = _get_sw_index_pe_pb(sw_code)
     except Exception:
@@ -153,7 +153,7 @@ def _get_sw_index_pe_pb(sw_code: str) -> tuple[float | None, float | None]:
     try:
         from alphabee.collectors.akshare.helper import AkShareHelper
 
-        with AkShareHelper() as helper:  # type: ignore[no-untyped-call]
+        with AkShareHelper() as helper:
             for name in (
                 "sw_index_first_info",
                 "sw_index_second_info",
@@ -258,7 +258,7 @@ def _get_akshare_pe_pb(industry: str) -> tuple[float | None, float | None]:
 # ── helpers ────────────────────────────────────────────────────────────
 
 
-def _to_rows(df, extra: bool) -> list[dict[str, Any]]:
+def _to_rows(df: Any, extra: bool) -> list[dict[str, Any]]:
     """Convert DataFrame to canonical row dicts.
 
     After TuShare adapter renaming, columns are already canonical names.
@@ -277,7 +277,7 @@ def _to_rows(df, extra: bool) -> list[dict[str, Any]]:
     return rows
 
 
-def _safe_float(row_or_val, col: str | None = None) -> float:
+def _safe_float(row_or_val: Any, col: str | None = None) -> float:
     import math
 
     val = row_or_val
@@ -290,7 +290,7 @@ def _safe_float(row_or_val, col: str | None = None) -> float:
         return 0.0
 
 
-def _safe_str(row_or_val, col: str | None = None) -> str:
+def _safe_str(row_or_val: Any, col: str | None = None) -> str:
     try:
         if col is not None and hasattr(row_or_val, "get"):
             val = row_or_val.get(col, row_or_val)
