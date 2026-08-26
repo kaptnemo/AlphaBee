@@ -318,7 +318,7 @@ def write_markdown_report_folder(
 
     parse_sections_to_folder_structure(sections, target)
     # 保留完整全文副本，便于整体阅读/其它工具直接读文件
-    # (target / f"{leaf}.md").write_text(md_text, encoding="utf-8")
+    (target / f"{leaf}.md").write_text(md_text, encoding="utf-8")
 
     file_count = sum(1 for p in target.rglob("*") if p.is_file())
     if file_count == 0:
