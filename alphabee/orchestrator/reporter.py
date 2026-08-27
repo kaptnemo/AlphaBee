@@ -99,7 +99,8 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
     dim_lines: list[str] = []
     for dim_id, d in (payload.thesis or {}).get("dimensions", {}).items():
         dim_lines.append(
-            f"- {dim_id}: judgment={d.get('judgment')} score={d.get('score')} confidence={d.get('confidence')}"
+            f"- {dim_id}: judgment={d.get('judgment')} score={d.get('score')} "
+            f"confidence={d.get('confidence')} effective_score={d.get('effective_score')}"
         )
     dimension_analysis = "\n".join(dim_lines) or "无维度分析"
 

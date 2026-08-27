@@ -111,6 +111,7 @@ class ThesisDimension:
     context_notes: list[str] = field(default_factory=list)
     interpretation: str = ""
     confidence: float = 1.0  # 0-1，信号覆盖度越高置信度越高
+    effective_score: float = 0.0  # score × confidence，方向强度与证据覆盖度的净得分
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], dim_id: str = "") -> ThesisDimension:
@@ -125,6 +126,7 @@ class ThesisDimension:
             context_notes=list(data.get("context_notes", [])),
             interpretation=data.get("interpretation", ""),
             confidence=float(data.get("confidence", 1.0)),
+            effective_score=float(data.get("effective_score", 0.0)),
         )
 
 
@@ -177,6 +179,7 @@ class InvestmentThesis:
                     "judgment": d.judgment,
                     "score": round(d.score, 3),
                     "confidence": round(d.confidence, 2),
+                    "effective_score": round(d.effective_score, 3),
                     "interpretation": d.interpretation,
                     "evidence": [
                         {
@@ -248,8 +251,16 @@ class InvestmentThesis:
         )
 
 
-def score_to_judgment(score: float) -> str:
-    """将 [-1.0, 1.0] 综合评分转换为判断档位。"""
+def score_to_judgment(score: float, confidence: float = 1.0) -> str:
+    """将 [-1.0, 1.0] 综合评分转换为判断档位。
+
+    confidence 用于“强档降级”：当方向判断被打到极端（score 恰为 ±1.0）、
+    但证据覆盖度很低（confidence < 0.3）时，不给出 strong_positive/strong_negative
+    这类绝对化档位，而是退到普通 positive/negative，避免“极端结论 + 极少证据”
+    的自相矛盾表达。默认 confidence=1.0 表示不降级。
+    """
+    if confidence < 0.3 and score in (-1.0, 1.0):
+        return "negative" if score < 0 else "positive"
     for threshold, judgment in JUDGMENT_THRESHOLDS:
         if score >= threshold:
             return judgment

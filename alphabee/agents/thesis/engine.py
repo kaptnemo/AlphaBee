@@ -704,7 +704,12 @@ class ThesisEngine:
             if dim_def is None:
                 continue
             dim.score = max(-1.0, min(1.0, dim.score))
-            dim.judgment = score_to_judgment(dim.score)
+            # 净得分 = 方向强度 × 证据覆盖度：它把“结论有多极端”和“证据有多足”
+            # 合成一个可横向比较的数，报告端据此区分“有把握的强判断”和“证据单薄的强判断”。
+            dim.effective_score = dim.score * dim.confidence
+            # 判断档位带上置信度：证据覆盖度很低时，极端的 strong_* 会退到普通档，
+            # 避免出现“strong_negative -1.0 但置信度只有 10%”这类自我矛盾表述。
+            dim.judgment = score_to_judgment(dim.score, dim.confidence)
             interpretation = dim_def.get_interpretation(dim.judgment)
             if dim.context_notes:
                 interpretation = f"{interpretation} 语境校准：" + " ".join(
