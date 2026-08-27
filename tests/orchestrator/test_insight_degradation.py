@@ -120,7 +120,9 @@ def test_lenient_rescue_missing_field_and_string_evidence():
     assert output.supporting_evidence[0].source == "insight:raw"
     assert output.counter_evidence[0].weight == "strong"  # significant → strong
     assert output.materiality_rank[0].importance == "high"  # major → high
-    assert output.what_would_change_my_mind == ["若毛利率下滑则改变判断"]
+    assert len(output.what_would_change_my_mind) == 1
+    assert output.what_would_change_my_mind[0].condition == "若毛利率下滑则改变判断"
+    assert output.what_would_change_my_mind[0].kind == "disconfirm"  # dict 未给 kind → 默认证伪
     assert output.confidence == "medium"  # moderate → medium
     assert "lenient_rescue" in reason
 
@@ -207,7 +209,7 @@ def test_fallback_synthesizes_from_context():
     assert output.supporting_evidence[0].source == "signal:cashflow_quality"
     assert output.counter_evidence[0].source == "conflict:盈利增长但现金流恶化"
     # verified 假设的 predictions 是可证伪条件来源
-    assert any("经营现金流/净利润持续低于1" in c for c in output.what_would_change_my_mind)
+    assert any("经营现金流/净利润持续低于1" in c.condition for c in output.what_would_change_my_mind)
     assert output.bull_case == "" and output.bear_case == ""  # H2：不虚构情景
     assert "行业: 白酒" in output.business_model_context
     assert "高风险信号" in output.core_view

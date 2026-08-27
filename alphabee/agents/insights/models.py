@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from alphabee.agents.schemas import FalsificationCondition, coerce_falsification_conditions
+
 
 class CrossSignalPattern(BaseModel):
     """A cross-signal pattern discovered by the InsightAgent."""
@@ -75,13 +77,19 @@ class InsightOutput(BaseModel):
     base_case: str = Field(default="", description="Base-case scenario narrative")
     bull_case: str = Field(default="", description="Bull-case scenario narrative — what must go right")
     bear_case: str = Field(default="", description="Bear-case scenario narrative — what could go wrong")
-    what_would_change_my_mind: list[str] = Field(
+    what_would_change_my_mind: list[FalsificationCondition] = Field(
         default_factory=list,
-        description="Falsification conditions — evidence that would reverse the conclusion",
+        description="可证伪/确认/支持/风险升级条件——什么证据会改变当前判断",
     )
     confidence: Literal["high", "medium", "low"] = Field(
         default="medium", description="Overall confidence in the core view"
     )
+
+    @field_validator("what_would_change_my_mind", mode="before")
+    @classmethod
+    def _coerce_falsification_conditions(cls, v: object) -> list[FalsificationCondition]:
+        # 兼容旧版纯字符串输出：字符串条件默认按 disconfirm（证伪）处理。
+        return coerce_falsification_conditions(v)
 
     @field_validator("confidence", mode="before")
     @classmethod

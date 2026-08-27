@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from alphabee.agents.schemas import (
     ConflictAnalysisResult,
     ConflictItem,
+    FalsificationCondition,
     ReportOutput,
     VerificationResultItem,
+    coerce_falsification_conditions,
 )
 from alphabee.core import Artifact
 from alphabee.domain_context.contracts import DriverProfile  # noqa: F401  (re-export)
@@ -29,6 +31,7 @@ __all__ = [
     "ConflictAnalysisResult",
     "ConflictItem",
     "DriverProfile",
+    "FalsificationCondition",
     "IndustryContextArtifact",
     "MarketScore",
     "RegimeSnapshot",
@@ -137,13 +140,19 @@ class InsightArtifact(BaseModel):
     base_case: str = ""
     bull_case: str = ""
     bear_case: str = ""
-    what_would_change_my_mind: list[str] = Field(default_factory=list)
+    what_would_change_my_mind: list[FalsificationCondition] = Field(default_factory=list)
     confidence: str = "medium"
     # ── 降级标记（ROADMAP 0.4，见 docs/design/INSIGHT_DEGRADATION_DESIGN.md）──
     # fallback_tier: 0=完整 1=宽松救援 2=确定性兜底 3=最小骨架
     degraded: bool = False
     fallback_tier: int = 0
     degradation_reason: str = ""
+
+    @field_validator("what_would_change_my_mind", mode="before")
+    @classmethod
+    def _coerce_falsification_conditions(cls, v: Any) -> list[FalsificationCondition]:
+        # 兼容历史 artifact 里存的纯字符串列表：默认按证伪（disconfirm）处理。
+        return coerce_falsification_conditions(v)
 
 
 class ReportArtifact(ReportOutput):
@@ -254,9 +263,14 @@ class ReportInsightPayload(BaseModel):
     base_case: str = ""
     bull_case: str = ""
     bear_case: str = ""
-    what_would_change_my_mind: list[str] = Field(default_factory=list)
+    what_would_change_my_mind: list[FalsificationCondition] = Field(default_factory=list)
     confidence: str = "medium"
     degraded: bool = False  # 观点层是否降级产出（true 时允许报告走结构化摘要模式）
+
+    @field_validator("what_would_change_my_mind", mode="before")
+    @classmethod
+    def _coerce_falsification_conditions(cls, v: Any) -> list[FalsificationCondition]:
+        return coerce_falsification_conditions(v)
 
 
 class ReportCompanyTrackPayload(BaseModel):

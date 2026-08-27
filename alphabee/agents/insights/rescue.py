@@ -25,6 +25,7 @@ from alphabee.agents.insights.models import (
     InsightOutput,
     MaterialityRank,
 )
+from alphabee.agents.schemas import FalsificationCondition
 from alphabee.utils.pipeline import parse_json
 
 # ── 枚举容错映射（补齐 models.py 里 _coerce_* 未覆盖的部分）──────────────
@@ -175,22 +176,37 @@ def _coerce_patterns(value: object, repairs: list[str]) -> list[dict[str, Any]]:
     return out
 
 
-def _coerce_conditions(value: object, repairs: list[str]) -> list[str]:
-    """what_would_change_my_mind: accept strings or dicts with common keys."""
+def _coerce_conditions(value: object, repairs: list[str]) -> list[FalsificationCondition]:
+    """what_would_change_my_mind: 兼容纯字符串与 {condition, kind, direction} 对象。
+
+    纯字符串按旧语义默认成 disconfirm（证伪）；对象保留 kind/direction，
+    让下游报告能区分“证伪/确认/支持/风险升级”而非笼统当作证伪条件。
+    """
     if not isinstance(value, list):
         return []
-    out: list[str] = []
+    out: list[FalsificationCondition] = []
     for item in value:
         if isinstance(item, str):
             text = item.strip()
             if text:
-                out.append(text)
+                out.append(FalsificationCondition(condition=text))
         elif isinstance(item, dict):
-            for key in ("condition", "evidence", "statement", "falsification"):
-                text = _coerce_text(item.get(key))
-                if text:
-                    out.append(text)
-                    break
+            text = _coerce_text(item.get("condition"))
+            if not text:
+                # 兼容旧 dict 的其它键名（evidence / statement / falsification）
+                for key in ("evidence", "statement", "falsification"):
+                    text = _coerce_text(item.get(key))
+                    if text:
+                        break
+            if not text:
+                continue
+            out.append(
+                FalsificationCondition(
+                    condition=text,
+                    kind=_coerce_text(item.get("kind")) or "disconfirm",
+                    direction=_coerce_text(item.get("direction")),
+                )
+            )
     return out
 
 
@@ -379,9 +395,13 @@ def _materiality_rank(key_derived: dict[str, dict[str, Any]]) -> list[Materialit
     return out
 
 
-def _falsification_conditions(conflicts: list[dict[str, Any]]) -> list[str]:
-    """verified/partial 的 predictions 本身是可证伪陈述；unknown 用 gaps 补。"""
-    conditions: list[str] = []
+def _falsification_conditions(conflicts: list[dict[str, Any]]) -> list[FalsificationCondition]:
+    """verified/partial 的 predictions 本身是可证伪陈述；unknown 用 gaps 补。
+
+    确定性兜底无法判断每条条件对核心观点的精确方向，统一标为 disconfirm（证伪），
+    不假装能“确认”相反结论。
+    """
+    conditions: list[FalsificationCondition] = []
     for conflict in conflicts:
         for hyp in conflict.get("hypotheses") or []:
             if len(conditions) >= 2:
@@ -390,7 +410,7 @@ def _falsification_conditions(conflicts: list[dict[str, Any]]) -> list[str]:
                 for prediction in (hyp.get("predictions") or [])[:1]:
                     text = _coerce_text(prediction)
                     if text:
-                        conditions.append(text)
+                        conditions.append(FalsificationCondition(condition=text, kind="disconfirm"))
         if len(conditions) >= 2:
             break
     if len(conditions) < 2:
@@ -402,7 +422,7 @@ def _falsification_conditions(conflicts: list[dict[str, Any]]) -> list[str]:
                     for gap in (hyp.get("gaps") or [])[:1]:
                         text = _coerce_text(gap)
                         if text:
-                            conditions.append(f"待验证: {text}")
+                            conditions.append(FalsificationCondition(condition=f"待验证: {text}", kind="disconfirm"))
             if len(conditions) >= 4:
                 break
     return conditions[:4]

@@ -76,7 +76,11 @@ INSIGHT_AGENT_SYSTEM_PROMPT = """
   "bull_case": "乐观情景及其前提条件",
   "bear_case": "悲观情景及其触发因素",
   "what_would_change_my_mind": [
-    "如果出现 X 证据，核心观点将被推翻"
+    {
+      "condition": "如果出现 X 证据，核心观点将被推翻",
+      "kind": "disconfirm",
+      "direction": "削弱当前观点"
+    }
   ],
   "confidence": "high"
 }
@@ -123,7 +127,11 @@ ${context_json}
 3. **supporting_evidence** 和 **counter_evidence** 必须各至少列出 2-4 条，并标注来源。
 4. **materiality_rank** 列出最重要的 3-5 个变量。
 5. **cross_signal_patterns** 识别 1-3 个跨信号组合模式（如多维度恶化、激进会计等），说明涉及的信号和推理逻辑。
-6. **what_would_change_my_mind** 必须写 2-4 条具体的可证伪条件。
+6. **what_would_change_my_mind** 必须写 2-4 条具体条件，每条用对象形式给出：
+   - `condition`：条件内容（什么证据出现）
+   - `kind`：disconfirm（证伪/削弱当前观点）| confirm（确认/加强）| support（旁证）| escalate（风险升级）
+   - `direction`：成立时对当前观点的影响方向（可空）
+   注意语义边界：一条条件通常只能"证伪某个具体假设"（disconfirm），不能自动"证明相反结论"——不要把 disconfirm 表述成 confirm。
 7. 三个情景（base/bull/bear）需要有实质内容，不是一个词概括。
 
 只输出 JSON，不要附带额外说明文字。"""

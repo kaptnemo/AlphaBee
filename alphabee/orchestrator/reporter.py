@@ -8,7 +8,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from alphabee.agents.schemas import ReportOutput, ReportSections
+from alphabee.agents.schemas import FalsificationCondition, ReportOutput, ReportSections
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.contracts import (
     ReportArtifact,
@@ -34,6 +34,37 @@ def _markdown_list(items: list[str], limit: int = 6) -> str:
             lines.append(f"- … 共 {len(items)} 项")
             break
         lines.append(f"- {item}")
+    return "\n".join(lines) or "无"
+
+
+_FALSIFICATION_KIND_LABELS = {
+    "disconfirm": "证伪",
+    "confirm": "确认",
+    "support": "支持",
+    "escalate": "风险升级",
+}
+
+
+def _falsification_markdown(conditions: list[FalsificationCondition], limit: int = 6) -> str:
+    """按 kind 分组渲染“改变判断的条件”，并显式说明每条条件的语义方向。
+
+    disconfirm 只表示“削弱当前观点”，不等于“证明相反结论”，
+    因此对这类条件追加澄清文案，避免报告把证伪写成过度武断的反向结论。
+    """
+    lines: list[str] = []
+    for idx, cond in enumerate(conditions or []):
+        if idx >= limit:
+            lines.append(f"- … 共 {len(conditions)} 项")
+            break
+        text = (cond.condition or "").strip()
+        if not text:
+            continue
+        kind = cond.kind or "disconfirm"
+        label = _FALSIFICATION_KIND_LABELS.get(kind, kind)
+        line = f"- [{label}] {text}"
+        if kind == "disconfirm":
+            line += "（该条件削弱当前观点，而非证明相反观点）"
+        lines.append(line)
     return "\n".join(lines) or "无"
 
 
@@ -114,7 +145,7 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
     scenario = ""
     if insight:
         scenario = f"基准情景：{insight.base_case}\n乐观情景：{insight.bull_case}\n悲观情景：{insight.bear_case}"
-    falsification = _markdown_list(insight.what_would_change_my_mind if insight else [])
+    falsification = _falsification_markdown(insight.what_would_change_my_mind if insight else [])
 
     high_msgs = [i.message for i in payload.issues if i.severity in ("high", "critical")]
     medium_msgs = [i.message for i in payload.issues if i.severity == "medium"]

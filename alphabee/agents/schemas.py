@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ThesisDimensionId = Literal[
     "financial_quality",
@@ -101,6 +101,66 @@ class VerificationResultList(BaseModel):
     )
 
     results: list[VerificationResultItem]
+
+
+class FalsificationCondition(BaseModel):
+    """一条可能改变当前判断的条件（证伪/确认/支持/风险升级）。
+
+    ``kind`` 描述该条件成立时对当前观点的作用方向：
+      - disconfirm：证伪/削弱当前观点（默认，兼容旧的纯字符串形式）
+      - confirm：确认/加强当前观点
+      - support：旁证支持，强度弱于 confirm
+      - escalate：风险升级，成立意味着风险比当前判断更严重
+    ``direction`` 用自然语言补充成立时的影响方向，可空。
+    """
+
+    condition: str = Field(default="", description="触发条件的具体内容")
+    kind: str = Field(default="disconfirm", description="条件类型")
+    direction: str = Field(default="", description="成立时对当前观点的影响方向")
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _normalize_kind(cls, v: object) -> str:
+        _synonyms = {
+            "disconfirm": "disconfirm",
+            "falsify": "disconfirm",
+            "weaken": "disconfirm",
+            "confirm": "confirm",
+            "strengthen": "confirm",
+            "support": "support",
+            "supporting": "support",
+            "escalate": "escalate",
+            "escalation": "escalate",
+            "risk_up": "escalate",
+        }
+        if isinstance(v, str):
+            return _synonyms.get(v.strip().lower(), "disconfirm")
+        return "disconfirm"
+
+
+def coerce_falsification_conditions(value: Any) -> list[FalsificationCondition]:
+    """把旧的 ``list[str]`` / ``list[dict]`` / 混合形式统一成 typed 条件列表。
+
+    向后兼容：纯字符串项被包装成 ``kind="disconfirm"``（默认语义）。
+    """
+    if not isinstance(value, list):
+        return []
+    result: list[FalsificationCondition] = []
+    for item in value:
+        if isinstance(item, FalsificationCondition):
+            result.append(item)
+        elif isinstance(item, str):
+            text = item.strip()
+            if text:
+                result.append(FalsificationCondition(condition=text))
+        elif isinstance(item, dict):
+            try:
+                result.append(FalsificationCondition.model_validate(item))
+            except Exception:
+                text = str(item.get("condition") or item.get("statement") or item.get("falsification") or "").strip()
+                if text:
+                    result.append(FalsificationCondition(condition=text))
+    return result
 
 
 class ConflictItem(BaseModel):

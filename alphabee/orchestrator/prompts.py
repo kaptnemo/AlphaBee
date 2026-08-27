@@ -63,7 +63,7 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的投资分析报告生成器。
     "conflict_analysis": "逐条分析检测到的数据矛盾：\n  - 每个冲突：主题 + 严重等级 + 一句话描述\n  - 对 verified/partial 的假设：解释、支撑证据摘要、置信度\n  - 对 rejected 的假设：推翻理由\n  - **与核心观点的关系**：此冲突是支撑还是挑战 insight.core_view？是否意味着 central_tension 比预期更尖锐？\n  无冲突时写'未检测到显著数据矛盾，多维度指标之间逻辑自洽。'",
     "dimension_analysis": "各维度投资论点。每个维度必须同时展示 judgment（判断档位）、score（方向强度评分）、confidence（置信度）、effective_score（净得分=score×confidence）、证据、解释与审查状态；当 effective_score 明显弱于 score 时，说明该维度方向虽极端但证据覆盖不足，需在文字中如实指出“该判断证据支撑较弱”。\n若 insight 存在，在每个维度分析末尾附加一句话说明该维度判断与 core_view 的一致性。",
     "review_findings": "审查发现。blocking_issues 优先、warning_issues 其次。无 review 数据时写'未执行审查'",
-    "falsification_conditions": "【可证伪条件】列出 what_would_change_my_mind 中的每条条件，说明为什么这条证据能推翻当前核心观点。这是报告的关键输出，不是脚注。若 insight 为 null，此节写'无可证伪条件。'；若 insight.degraded=true 且 what_would_change_my_mind 非空，逐条转述；为空则写'观点层降级，暂无明确证伪条件。'",
+    "falsification_conditions": "【可证伪条件】列出 what_would_change_my_mind 中的每条条件，并按 kind 分组呈现：disconfirm=证伪（削弱当前观点）、confirm=确认（加强当前观点）、support=旁证、escalate=风险升级。对 kind=disconfirm 的条件，必须明确写出'该条件削弱当前观点，而非证明相反观点'，不要把它表述成'证明了相反结论'。这是报告的关键输出，不是脚注。若 insight 为 null，此节写'无可证伪条件。'；若 insight.degraded=true 且 what_would_change_my_mind 非空，逐条转述；为空则写'观点层降级，暂无明确证伪条件。'",
     "risks": "主要风险列表（综合 thesis.primary_risks、review.blocking_issues、以及 counter_evidence 中揭示的风险）",
     "disclaimer": "免责声明：本报告基于公开财务数据和规则引擎分析生成，不构成投资建议。"
   },
