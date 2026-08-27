@@ -79,6 +79,27 @@ def _load_report_output(state: OrchestratorState) -> ReportOutput | None:
         return None
 
 
+# cross_source_consistency 口径修正。
+# 冲突 issue 要区分两类，不能一股脑都算“跨来源不一致”：
+#
+# - UNRESOLVED_INCONSISTENCY：尚未结算/尚未消解的真实不一致。
+#   cross_source_conflict / time_mismatch（数据源或时点口径打架）、
+#   numeric_inconsistency（数字自洽性被打破）、conflict（未分类冲突）。
+#   只要命中任一类别，报告就尚未形成稳定结论，cross_source_consistency 应为 False。
+#
+# - SETTLED_CONFLICT：已被验证流程结算或已被识别的论点矛盾。
+#   verified_conflict（verify_hypotheses 已证实的高严重度冲突）与
+#   thesis_conflict（review_thesis 识别的正向论点 vs 已验证冲突）。
+#   它们是“做了实质冲突验证后如实披露”的结果，不是“跨来源打架”；
+#   若把它们算进 cross_source_consistency，任何认真做了验证的报告都会必然 False，
+#   再叠加 _deterministic_assessment 触发无意义重写。
+#   这类冲突的披露义务由 issue_handling（disclosed_issue_ids）承接，见 _issue_disclosure_status。
+UNRESOLVED_INCONSISTENCY: frozenset[str] = frozenset(
+    {"cross_source_conflict", "time_mismatch", "numeric_inconsistency", "conflict"}
+)
+SETTLED_CONFLICT: frozenset[str] = frozenset({"verified_conflict", "thesis_conflict"})
+
+
 def _issue_disclosure_status(
     state: OrchestratorState,
 ) -> tuple[list[Issue], set[str], set[str], list[Issue]]:
@@ -194,22 +215,25 @@ def compute_report_metrics(state: OrchestratorState) -> EvaluateMetrics:
 
     # gate 直接读取前面节点沉淀的 issues，
     # 用来判断报告是否把“已知不确定性”如实暴露，而不是只看文案是否流畅。
-    source_issues, _, _, undisclosed = _issue_disclosure_status(state)
+    source_issues, disclosed_ids, _, undisclosed = _issue_disclosure_status(state)
     issue_categories = {issue.category for issue in source_issues}
     numeric_consistency = not any(
         category in issue_categories for category in {"numeric_inconsistency", "conflict", "cross_source_conflict"}
     )
-    # cross_source_consistency 只统计"已结算"的矛盾：
-    # - thesis_conflict / verified_conflict：经过验证的冲突（真实存在的不一致）
-    # - cross_source_conflict / time_mismatch：数据源或时点口径冲突
-    # 探索阶段的 provisional 冲突（ROADMAP 0.5）不会生成 "conflict" 类别 issue，
-    # 因此不再把"待验证怀疑"误判为最终不一致。
-    cross_source_consistency = not any(
-        category in issue_categories
-        for category in {"cross_source_conflict", "verified_conflict", "time_mismatch", "thesis_conflict"}
-    )
+    # cross_source_consistency 只统计“未结算/未消解”的不一致（UNRESOLVED_INCONSISTENCY）。
+    # verified_conflict / thesis_conflict 是“已结算冲突”（SETTLED_CONFLICT），
+    # 它们代表验证/审查流程正常工作，而非“跨来源打架”；若继续把它们算进这里，
+    # 任何做了实质验证的报告都会必然 false 并触发无意义重写。
+    cross_source_consistency = not any(category in issue_categories for category in UNRESOLVED_INCONSISTENCY)
 
-    issue_handling = not undisclosed
+    # SETTLED_CONFLICT 的披露义务由 issue_handling 承接：它们不再算“跨来源不一致”，
+    # 但作为已被验证/识别的高严重度冲突，仍必须出现在报告的 disclosed_issue_ids 中。
+    # 这里显式把“已结算冲突未披露”单独兜底（而非只依赖“所有 high/critical 都要披露”），
+    # 让披露契约不因未来 severity 口径调整而悄悄失效。
+    settled_undisclosed = [
+        issue for issue in source_issues if issue.category in SETTLED_CONFLICT and issue.id not in disclosed_ids
+    ]
+    issue_handling = not undisclosed and not settled_undisclosed
 
     freshness_values = {observation.freshness.value for observation in state.get("observations", [])}
     if not freshness_values:
@@ -293,6 +317,8 @@ def _deterministic_assessment(state: OrchestratorState, metrics: EvaluateMetrics
     if not metrics.issue_handling:
         missing = "；".join(f"{issue.id}:{issue.category}" for issue in undisclosed[:4])
         blocking_issues.append(f"报告没有充分显式披露高优先级问题，至少遗漏：{missing}。")
+    # 只有未结算/未消解的不一致（UNRESOLVED_INCONSISTENCY）才会触发阻断；
+    # 已结算冲突（SETTLED_CONFLICT）走 issue_handling 的披露检查，不在这里阻断。
     if not metrics.cross_source_consistency:
         blocking_issues.append("当前结果存在跨来源或跨维度冲突，报告未形成稳定结论。")
 
