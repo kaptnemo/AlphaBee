@@ -37,3 +37,6 @@ __pycache__/
 # docs
 docs/_sidebar.md
 docs/README.md
+
+# dsh-agent-teams
+.agent-teams/
