@@ -55,6 +55,66 @@ class CognitiveState(StrEnum):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 软状态 / 状态迁移（文档 §2b / §4）
+# ─────────────────────────────────────────────────────────────────────────────
+class Consistency(StrEnum):
+    """因子一致性标注（文档 §4.4）：共振 / 背离 / 独立。
+
+    - ``resonant``：多因子同向（如 F↑ + E↑ + T↑ 三共振，S3 健康）；
+    - ``divergent``：业绩好但股价不涨（F 强、E/T 弱），本身即 Conflict；
+    - ``independent``：各因子独立，无同向也无背离。
+    """
+
+    RESONANT = "resonant"  # 同向共振
+    DIVERGENT = "divergent"  # 背离
+    INDEPENDENT = "independent"  # 独立
+
+
+class StateBelief(BaseModel):
+    """软状态（Soft State）——把 State 从点估计降级为概率分布（文档 §2b）。
+
+    应对过渡态 / 矛盾态 / 多 Thesis / 层级错位等「不标准」状态：``distribution`` 承载
+    概率质量分布（和约 1），``argmax_state`` 仅作为动作类型锚点（取值域
+    :class:`CognitiveState`），``entropy`` 量化状态模糊度（越高越「不标准」），
+    ``drift`` 记录相比上一帧的概率质量流向（无上一帧时显式 ``None``）。
+    """
+
+    distribution: dict[str, float]  # {"S1":0.1,"S2":0.7,...} 概率质量，和为 1
+    argmax_state: str  # 名义状态（CognitiveState 取值域），动作类型锚点
+    entropy: float  # 分布熵 = 状态模糊度（越高越「不标准」）
+    drift: dict[str, float] | None = None  # 相比上一帧概率质量流向（无上一帧=None）
+
+
+class StateTransition(BaseModel):
+    """状态迁移判定（文档 §4.5）：classifier 只描述「生命周期在哪 + 是否合法迁移」。
+
+    ``legal`` 表示迁移是否合法（S1→S2→S3→S4→S5 及反向降级合法；跳级如 S1→S3 非法）；
+    ``kind`` 区分迁移类型（``reopen`` = 第二增长曲线重开预期差，§31–§32）；
+    ``consistency`` 汇总触发迁移因子的整体一致性（共振 / 背离 / 独立）。
+    """
+
+    from_state: str = ""  # 迁移前状态（CognitiveState 取值域）
+    to_state: str = ""  # 迁移后状态（CognitiveState 取值域）
+    legal: bool = False  # 是否合法迁移（跳级=False，§41）
+    trigger_factors: list[str] = Field(default_factory=list)  # 触发迁移的因子（如 ["E","T"]）
+    kind: str = "normal"  # 迁移类型：normal / downgrade / reopen / illegal 等
+    consistency: Consistency = Consistency.INDEPENDENT  # resonant / divergent / independent
+
+
+class FactorDelta(BaseModel):
+    """单个因子的方向分变化 + 一致性标注（文档 §4.4）。
+
+    ``delta`` 为该因子方向分的边际变化（正 = 改善 / 走强 / 赔率提高）；
+    ``consistency`` 标注该因子相对其他因子是共振（resonant）/ 背离（divergent）/
+    独立（independent）。背离是 S3→S4 与 EmergencyRiskStop 的前置信号。
+    """
+
+    factor: str = ""  # 因子标识：F/E/T/V/C/R/M
+    delta: float | None = None  # 方向分变化 Δscore（缺失显式 None）
+    consistency: Consistency = Consistency.INDEPENDENT  # resonant / divergent / independent
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 七因子快照（FactorSnapshot 的因子维度）
 # ─────────────────────────────────────────────────────────────────────────────
 class FundamentalFactor(BaseModel):
@@ -372,7 +432,7 @@ class CompanyStateArtifact(BaseModel):
 
     schema_version: str = "1"
     symbol: str = ""
-    state: str = "S0"  # CognitiveState
+    state: StateBelief | None = None  # 软状态（§2b；CognitiveState 为其 argmax_state 取值域）
     thesis: str = ""  # 核心假设 H
     thesis_confidence: float = 0.0  # P(H|Evidence) 后验
     prior_confidence: float = 0.0  # 先验 P(H)
