@@ -281,7 +281,7 @@ def aggregate_consensus(
     ups, downs = _rating_direction_counts(reports, asof, rating_window_days)
     values["rating_upgrade_1m"] = ups
     values["rating_downgrade_1m"] = downs
-    if ups is None:
+    if ups is None or downs is None:
         missing.append("consensus_missing: rating_upgrade_1m")
         missing.append("consensus_missing: rating_downgrade_1m")
         values["revision_breadth"] = None

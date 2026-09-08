@@ -59,7 +59,7 @@ def _excess_return(
     return out[0], out[1]
 
 
-def _fetch_constituents(helper: TuShareHelper, sw_code: str, sw_level: str) -> list[str] | None:
+def _fetch_constituents(helper: TuShareHelper, sw_code: str | None, sw_level: str | None) -> list[str] | None:
     """按申万层级取当前有效成分股 ts_code 列表（index_member_all，is_new=Y）。
 
     成分表接口无 adapter mapping，故直接读外部列名 ``ts_code`` / ``out_date``
@@ -122,8 +122,8 @@ def _compute_breadths(
         for window in (20, 60):
             if len(closes) < window + 1:
                 continue
-            window_closes = closes[-window:]
-            if any(v is None or v <= 0 for v in window_closes):
+            window_closes = [v for v in closes[-window:] if v is not None]
+            if len(window_closes) < window or any(v <= 0 for v in window_closes):
                 continue
             ma = sum(window_closes) / len(window_closes)
             valid[window] += 1

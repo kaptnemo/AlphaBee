@@ -20,7 +20,7 @@ from alphabee.collectors.crowding.engine import normalize_code, sc_to_code, to_i
 # （engineer-e 2026-09-06 复验 HTTP 200；响应信封为 {globalId,message,status,code,data,stack}，
 #   data[] 每行 {sc, rk, rc, hisRc}，仅 top100）。
 EMAPP_HOT_RANK_URL = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
-EMAPP_HOT_RANK_PAYLOAD = {
+EMAPP_HOT_RANK_PAYLOAD: dict[str, Any] = {
     "appId": "appId01",
     "globalId": "786e4c21-70dc-435a-93bb-38",
     "marketType": "",
@@ -45,7 +45,8 @@ def fetch_hot_rank(code: str, *, timeout: int = 20) -> int | None:
     for row in data:
         if not isinstance(row, dict):
             continue
-        if sc_to_code(row.get("sc")) == sec_code:
+        sc = row.get("sc")
+        if isinstance(sc, str) and sc_to_code(sc) == sec_code:
             return to_int(row.get("rk"))
     return None
 
@@ -56,10 +57,11 @@ def fetch_hot_rank_akshare(code: str, *, ak_module: Any = None) -> int | None:
     沙箱内该函数会抛 ProxyError（push2 域名不可达）；生产需确认 push2 可达。
     返回 ``code`` 的排名（1-100）；未上榜/接口失败 → None。
     """
-    if ak_module is not None:
-        ak = ak_module
-    else:
-        import akshare as ak  # noqa: PLC0415
+    ak = ak_module
+    if ak is None:
+        import akshare
+
+        ak = akshare
 
     sec_code = normalize_code(code)
     if not sec_code:

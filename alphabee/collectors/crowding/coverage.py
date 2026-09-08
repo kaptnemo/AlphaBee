@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from alphabee.collectors.crowding.engine import normalize_code, rank_by_coverage
+from alphabee.collectors.crowding.engine import normalize_code, rank_by_coverage, to_int
 
 
 def fetch_coverage_count(
@@ -33,7 +33,7 @@ def fetch_coverage_count(
             timeout=timeout,
             max_pages=max_pages,
         )
-        return aggregate_consensus(records).values.get("coverage_count")
+        return to_int(aggregate_consensus(records).values.get("coverage_count"))
     except Exception:
         return None
 
