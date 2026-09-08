@@ -21,3 +21,10 @@ stk_rewards:
   name:    executive_name
   title:   executive_title
   reward:  executive_reward   # 万元
+
+fina_audit:
+  end_date:     period
+  audit_result: audit_opinion
+  audit_fees:   audit_fees
+  audit_agency: audit_agency
+  audit_sign:   audit_sign

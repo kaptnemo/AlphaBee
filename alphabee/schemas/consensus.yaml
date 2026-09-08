@@ -1,0 +1,176 @@
+# AlphaBee 内部标准字段 — 分析师一致预期域 (Analyst Consensus)
+# 覆盖：卖方分析师对个股 EPS / 目标价 / 评级的一致预期及其 revision 变化
+# 频率：weekly（由东财研报列表按报告期聚合得到）
+# 注意：外部字段名只允许出现在 adapters/eastmoney/ 与 collector/fetcher 层，
+#       下游 derived_facts / signals / thesis 一律使用本文件的 canonical 字段名。
+
+# ─────────────────────────────────────────
+# 一致预期基础 (Consensus Base)
+# ─────────────────────────────────────────
+
+eps_fy1:
+  category: consensus
+  type: float
+  unit: CNY_PER_SHARE
+  frequency: [weekly]
+  description: 分析师一致预期的下一财年（FY1）每股收益（元/股），按报告期聚合同日预测中位数
+  aliases:
+    zh: [一致预期EPS, FY1每股收益预测, 预测当年EPS]
+    en: [consensus FY1 EPS, predicted this year EPS]
+  source_mappings:
+    eastmoney: [predictThisYearEps]
+
+eps_fy2:
+  category: consensus
+  type: float
+  unit: CNY_PER_SHARE
+  frequency: [weekly]
+  description: 分析师一致预期的下下财年（FY2）每股收益（元/股），按报告期聚合同日预测中位数
+  aliases:
+    zh: [FY2每股收益预测, 预测明年EPS]
+    en: [consensus FY2 EPS, predicted next year EPS]
+  source_mappings:
+    eastmoney: [predictNextYearEps]
+
+eps_fy3:
+  category: consensus
+  type: float
+  unit: CNY_PER_SHARE
+  frequency: [weekly]
+  description: 分析师一致预期的第三财年（FY3）每股收益（元/股），覆盖率较低，缺失时显式置 null
+  aliases:
+    zh: [FY3每股收益预测, 预测后年EPS]
+    en: [consensus FY3 EPS, predicted next two year EPS]
+  source_mappings:
+    eastmoney: [predictNextTwoYearEps]
+
+target_price:
+  category: consensus
+  type: float
+  unit: CNY
+  frequency: [weekly]
+  description: 分析师一致目标价（元），取有值子集中位数；覆盖率低时显式产出 consensus_missing 并置 null，绝不静默回退为 0
+  aliases:
+    zh: [一致目标价, 目标价]
+    en: [consensus target price, price target]
+  source_mappings:
+    eastmoney: [indvAimPriceT]
+
+rating_mean:
+  category: consensus
+  type: float
+  unit: RATING
+  frequency: [weekly]
+  description: 分析师评级均值（按东财 emRatingValue 数值编码聚合：持有=1/增持=2/买入=3，数值越大越看多）
+  aliases:
+    zh: [一致评级, 平均评级]
+    en: [consensus rating mean, average rating]
+  source_mappings:
+    eastmoney: [emRatingValue]
+  notes: 东财评级编码方向与设计文档 §3.4 的旧假设相反，务必以实测 emRatingValue（持有1/增持2/买入3）为准；emRatingName 是中文名称，仅展示、不可参与均值聚合。
+
+coverage_count:
+  category: consensus
+  type: int
+  unit: COUNT
+  frequency: [weekly]
+  description: 参与一致预期聚合的研报（或机构）数量；用于中小盘/冷门股覆盖不足的阈值判断
+  aliases:
+    zh: [覆盖机构数, 分析师覆盖数, 研报覆盖数]
+    en: [coverage count, analyst coverage]
+  source_mappings:
+    eastmoney: [derived_from_report_count]
+  notes: 由聚合引擎按 (股票, 报告期) 统计有效研报数，非东财单一字段。
+
+# ─────────────────────────────────────────
+# EPS Revision（盈利预测修正）
+# ─────────────────────────────────────────
+
+eps_fy1_revision_1m:
+  category: consensus
+  type: float
+  unit: PERCENT
+  frequency: [weekly]
+  description: FY1 一致预期 EPS 近 1 个月修正幅度（%）= 今日一致 EPS / 30 日前一致 EPS - 1
+  aliases:
+    zh: [EPS一个月修正, FY1盈利预测1月修正]
+    en: [FY1 EPS revision 1m, 1-month EPS revision]
+  source_mappings:
+    eastmoney: [derived_from_eps_fy1_time_series]
+
+eps_fy1_revision_3m:
+  category: consensus
+  type: float
+  unit: PERCENT
+  frequency: [weekly]
+  description: FY1 一致预期 EPS 近 3 个月修正幅度（%）= 今日一致 EPS / 90 日前一致 EPS - 1
+  aliases:
+    zh: [EPS三个月修正, FY1盈利预测3月修正]
+    en: [FY1 EPS revision 3m, 3-month EPS revision]
+  source_mappings:
+    eastmoney: [derived_from_eps_fy1_time_series]
+
+eps_fy2_revision_1m:
+  category: consensus
+  type: float
+  unit: PERCENT
+  frequency: [weekly]
+  description: FY2 一致预期 EPS 近 1 个月修正幅度（%）= 今日一致 EPS / 30 日前一致 EPS - 1
+  aliases:
+    zh: [FY2 EPS一个月修正, FY2盈利预测1月修正]
+    en: [FY2 EPS revision 1m, 1-month FY2 EPS revision]
+  source_mappings:
+    eastmoney: [derived_from_eps_fy2_time_series]
+
+revision_breadth:
+  category: consensus
+  type: float
+  unit: RATIO
+  frequency: [weekly]
+  description: 评级上调机构占比（0-1），近 1 个月窗口内按 emRatingValue vs lastEmRatingValue 差分统计
+  aliases:
+    zh: [上调机构占比, 修正广度]
+    en: [revision breadth, upgrade ratio]
+  source_mappings:
+    eastmoney: [derived_from_emRatingValue_diff]
+  notes: 方向差分用同一记录内 emRatingValue vs lastEmRatingValue，不要读 ratingChange；窗口与 rating_upgrade_1m / rating_downgrade_1m 一致（近 1 个月）。
+
+revision_acceleration:
+  category: consensus
+  type: float
+  unit: PERCENT
+  frequency: [weekly]
+  description: EPS 修正加速度（%）= revision_1m_t - revision_1m_{t-1}（revision 的二阶差分）
+  aliases:
+    zh: [修正加速度, EPS修正二阶差分]
+    en: [revision acceleration, revision second difference]
+  source_mappings:
+    eastmoney: [derived_from_revision_1m_time_series]
+
+# ─────────────────────────────────────────
+# Rating Revision（评级修正）
+# ─────────────────────────────────────────
+
+rating_upgrade_1m:
+  category: consensus
+  type: int
+  unit: COUNT
+  frequency: [weekly]
+  description: 近 1 个月评级上调次数（emRatingValue vs lastEmRatingValue 正向差分计数）
+  aliases:
+    zh: [评级上调次数, 一个月评级上调]
+    en: [rating upgrade count 1m, 1-month rating upgrades]
+  source_mappings:
+    eastmoney: [derived_from_emRatingValue_diff]
+
+rating_downgrade_1m:
+  category: consensus
+  type: int
+  unit: COUNT
+  frequency: [weekly]
+  description: 近 1 个月评级下调次数（emRatingValue vs lastEmRatingValue 负向差分计数）
+  aliases:
+    zh: [评级下调次数, 一个月评级下调]
+    en: [rating downgrade count 1m, 1-month rating downgrades]
+  source_mappings:
+    eastmoney: [derived_from_emRatingValue_diff]

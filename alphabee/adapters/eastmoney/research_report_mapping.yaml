@@ -1,0 +1,36 @@
+# AlphaBee Eastmoney Adapter — 东财研报列表 → consensus 一致预期字段映射
+# API: GET https://reportapi.eastmoney.com/report/list (JSONP)
+# 下游 collector 直接消费 tools.eastmoney.get_eastmoney_report_list 的 reports[]，
+# 不经过 financial_report/links.py（后者只透出 title/date/org/rating/url，丢弃 EPS/目标价字段）。
+#
+# ⚠️ ratingChange 契约（实测 2026-09-06 确认）：
+#   ratingChange 在东财 report/list 里是分类码、并非评级上/下调方向，实测 600519 出现 1/2/3 且语义不明，
+#   因此【本 mapping 刻意不映射 ratingChange】。评级方向差分一律用同一记录内的
+#   emRatingValue vs lastEmRatingValue 差分，禁止读 ratingChange。
+#
+# ⚠️ emRatingValue 编码方向（实测，与设计文档 §3.4 旧假设相反）：
+#   持有=1 / 增持=2 / 买入=3（数值越大越看多）。rating_mean 聚合必须按此方向，而不是“买入1/增持2/中性3/减持4/卖出5”。
+#   emRatingName 是中文名称，仅用于展示，不能直接求均值；数值聚合用 emRatingValue。
+#
+# 缺失值：目标价 indvAimPriceT 覆盖率低（实测 ~38%）、EPS 越远年份覆盖率越低（fy3 24%~32%）。
+#   adapter 转换时缺失字段保持 None（不置 0），collector 需显式产出 consensus_missing 降级。
+
+research_report:
+  # ── 一致预期基础（consensus base）──
+  predictThisYearEps:      eps_fy1       # FY1 每股收益预测（元/股）
+  predictNextYearEps:      eps_fy2       # FY2 每股收益预测（元/股）
+  predictNextTwoYearEps:   eps_fy3       # FY3 每股收益预测（元/股）
+  indvAimPriceT:           target_price  # 目标价（元）；覆盖率低，缺失保持 null
+  emRatingValue:           rating_mean   # 评级数值编码（持有1/增持2/买入3，越大越看多）；rating_mean 的数值来源
+  emRatingName:            rating_name   # 评级名称（中文），仅展示辅助，不参与均值聚合
+  lastEmRatingValue:       last_rating_value  # 该机构上一评级编码（辅助：方向差分用）
+
+  # ── 聚合所需的元信息（auxiliary，供 collectors/consensus 分组/翻页/去重）──
+  orgSName:                org_short_name  # 机构简称
+  orgName:                 org_name        # 机构全称
+  researcher:              researcher_name # 研究员
+  publishDate:             publish_date    # 发布日期
+  infoCode:                info_code       # 研报详情标识
+  encodeUrl:               encode_url      # PDF/详情编码 URL
+
+  # 明确不映射：ratingChange（分类码，恒为 3 或 1/2/3 混用，不可当上/下调方向）

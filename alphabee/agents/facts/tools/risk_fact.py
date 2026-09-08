@@ -12,13 +12,13 @@ _CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=300.0)
 
 
 def get_risk_fact(symbol: str) -> dict[str, Any]:
-    """获取A股公司的风险事实数据，包括最新新闻资讯、股权质押情况、股票回购记录和重大违规/处罚公告。
+    """获取A股公司的风险事实数据，包括最新新闻资讯、股权质押情况、股票回购记录和财务审计意见（审计异常信号）。
 
     适用场景：
     - 了解公司最新负面新闻、舆情风险
     - 查看大股东股权质押比例（高质押率意味着爆仓风险）
     - 跟踪公司股票回购计划执行情况（正面信号）
-    - 排查监管处罚、违规记录等合规风险
+    - 排查审计意见异常（非标准无保留意见）等审计风险
     - 在投资前进行风险尽职调查
 
     Args:
@@ -33,7 +33,7 @@ def get_risk_fact(symbol: str) -> dict[str, Any]:
     def _compute() -> dict[str, Any]:
         lookback_365 = (datetime.date.today() - datetime.timedelta(days=365)).strftime("%Y%m%d")
 
-        result: dict[str, Any] = {"stock_code": ts_code}
+        result: dict[str, Any] = {"stock_code": ts_code, "risk_missing": []}
 
         # 1. 最新新闻（AkShare）→ 规范为 news_title / news_publish_time
         try:
@@ -97,6 +97,25 @@ def get_risk_fact(symbol: str) -> dict[str, Any]:
         except Exception:
             result["stk_rewards"] = []
 
+        # 5. 财务审计意见（fina_audit，审计异常直接字段）。
+        # 设计文档 §7.3 原「Tushare penalty 违规处罚」接口不存在（t3 实测），改以审计意见承载。
+        try:
+            with TuShareHelper() as helper:
+                audit_df = helper.fina_audit(
+                    ts_code=ts_code,
+                    fields="ts_code,ann_date,end_date,audit_result,audit_fees,audit_agency,audit_sign",
+                ).data
+            result["audit"] = audit_df.head(5).to_dict(orient="records") if not audit_df.empty else []
+            result["audit_error"] = None
+            if audit_df.empty:
+                # 空返回显式标记缺失，不静默跳过
+                result["risk_missing"].append("audit_opinion")
+        except Exception as e:
+            # 无权限/接口异常显式降级为 risk_missing，不静默跳过
+            result["audit"] = []
+            result["audit_error"] = str(e)
+            result["risk_missing"].append("audit_opinion")
+
         return result
 
     return _CACHE.get_or_compute(("risk_fact", ts_code), _compute)
@@ -112,6 +131,9 @@ def render(data: dict[str, Any]) -> str:
     repurchase = data.get("repurchase", [])
     repurchase_error = data.get("repurchase_error")
     stk_rewards = data.get("stk_rewards", [])
+    audit = data.get("audit", [])
+    audit_error = data.get("audit_error")
+    risk_missing = data.get("risk_missing", [])
 
     lines = [f"## {stock_code} 风险事实数据\n"]
 
@@ -192,5 +214,30 @@ def render(data: dict[str, Any]) -> str:
                 f"| {safe_float(row.get('executive_reward')):.2f} |"
             )
         lines.append("")
+
+    # 5. 财务审计意见
+    if audit_error:
+        lines.append(f"_审计意见数据获取失败：{audit_error}_\n")
+    elif audit:
+        lines += [
+            "### 财务审计意见（近年）",
+            "| 报告期 | 公告日 | 审计意见 | 审计机构 | 审计费用(元) | 签字会计师 |",
+            "|--------|--------|---------|---------|------------|----------|",
+        ]
+        for row in audit:
+            lines.append(
+                f"| {safe_str(row.get('period'))} "
+                f"| {safe_str(row.get('ann_date'))} "
+                f"| {safe_str(row.get('audit_opinion'))} "
+                f"| {safe_str(row.get('audit_agency'))} "
+                f"| {safe_float(row.get('audit_fees')):.0f} "
+                f"| {safe_str(row.get('audit_sign'))} |"
+            )
+        lines.append("")
+    else:
+        lines.append("_暂无审计意见数据_\n")
+
+    if risk_missing:
+        lines.append(f"_风险数据缺失标记：{'、'.join(risk_missing)}_\n")
 
     return "\n".join(lines)

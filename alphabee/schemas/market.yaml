@@ -245,6 +245,34 @@ pe_ttm_5y_avg:
   source_mappings: {}
   notes: 由历史 pe_ttm 序列均值计算，需调用方从 Tushare daily_basic 历史数据中计算并传入。
 
+pe_ttm_5y_percentile:
+  category: market
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 当前 PE-TTM 在近5年历史序列中的分位（0-1），低分位=估值便宜/赔率高
+  aliases:
+    zh: [PE历史分位, 市盈率分位, 估值分位]
+    en: [PE TTM 5-year percentile, valuation percentile]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 由当前 pe_ttm 在已拉取的 5 年 daily_basic 历史 pe_ttm 序列中的分位计算；历史序列不足或当前值缺失时显式返回 null，不静默回退为 0。
+
+pb_5y_percentile:
+  category: market
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 当前 PB 在近5年历史序列中的分位（0-1），低分位=估值便宜/赔率高
+  aliases:
+    zh: [PB历史分位, 市净率分位]
+    en: [PB 5-year percentile]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 由当前 pb_ratio 在已拉取的 5 年 daily_basic 历史 pb 序列中的分位计算；历史序列不足或当前值缺失时显式返回 null，不静默回退为 0。
+
 # ─────────────────────────────────────────
 # 资金流向 (Capital Flow)
 # ─────────────────────────────────────────
@@ -390,3 +418,35 @@ medium_order_flow:
   source_mappings:
     tushare: [buy_md_amount, sell_md_amount]
   notes: Tushare moneyflow 表；buy_md_amount - sell_md_amount 计算得到。
+
+# ─────────────────────────────────────────
+# 相对强度 (Relative Strength，自算)
+# ─────────────────────────────────────────
+
+rs_stock_market:
+  category: market
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 个股相对全市场（沪深300）的 20/60 日超额收益（%）
+  aliases:
+    zh: [个股相对强度, 个股相对市场超额收益]
+    en: [stock relative strength vs market, excess return vs CSI300]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 自算字段（零新数据源）。rs_stock_market_Nd = 个股 N 日收益 − 沪深300 N 日收益（N ∈ {20, 60}）。由 market_fact.py 复用已有 daily（个股收盘）与 index_daily（000300.SH 收盘）计算，输出 rs_stock_market_20d / rs_stock_market_60d 两个 horizon；历史序列不足 N+1 时显式返回 null。
+
+rs_stock_industry:
+  category: market
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 个股相对所属行业的 20/60 日超额收益（%）
+  aliases:
+    zh: [个股相对行业超额收益, 行业内相对强度]
+    en: [stock relative strength vs industry, excess return vs industry]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 自算字段（零新数据源）。rs_stock_industry_Nd = 个股 N 日收益 − 行业指数 N 日收益（N ∈ {20, 60}）。由 industry_fact.py 复用已有 daily（个股收盘）与 index_daily/sw_daily（行业指数收盘）计算，输出 rs_stock_industry_20d / rs_stock_industry_60d；历史序列不足时显式返回 null。

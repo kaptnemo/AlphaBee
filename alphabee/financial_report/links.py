@@ -289,8 +289,11 @@ def get_research_report_links(
     Returns:
         dict: ``source`` / ``code`` / ``count`` / ``has_next`` / ``reports``；
         ``reports`` 每条为 ``{title, date, org, researcher, rating,
-        download_url, info_code, encode_url, pages}``。个别研报若解析不到
-        PDF 直链，其 ``download_url`` 为 ``None``，但条目仍保留。
+        download_url, info_code, encode_url, pages, eps_fy1, eps_fy2,
+        eps_fy3, target_price}``，其中 ``eps_fy1/fy2/fy3/target_price`` 为
+        一致预期字段（东财 predict*Eps / indvAimPriceT 的 canonical 名，
+        缺失为 ``None``）。个别研报若解析不到 PDF 直链，其 ``download_url``
+        为 ``None``，但条目仍保留。
     """
     sec_code = _normalize_stock_code(code)
     if not sec_code:
@@ -332,6 +335,12 @@ def get_research_report_links(
                     "info_code": info_code,
                     "encode_url": encode_url,
                     "pages": item.get("attachPages"),
+                    # 一致预期字段（canonical 名，缺失保持 None，绝不静默回退 0）；
+                    # 来源为东财 predict*Eps / indvAimPriceT（见 adapters/eastmoney 映射）
+                    "eps_fy1": item.get("predictThisYearEps"),
+                    "eps_fy2": item.get("predictNextYearEps"),
+                    "eps_fy3": item.get("predictNextTwoYearEps"),
+                    "target_price": item.get("indvAimPriceT"),
                 }
             )
 

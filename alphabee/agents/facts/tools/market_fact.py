@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 from typing import TYPE_CHECKING, Any
 
 from alphabee.agents.facts.tools._utils import normalize_ts_code, safe_float, safe_str
@@ -14,6 +15,79 @@ from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import SyncTTLCache
 
 _CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=300.0)
+
+# 估值分位计算的最小历史观测数：低于该阈值视为「历史序列不足」→ 显式返回 None。
+_MIN_PERCENTILE_OBSERVATIONS = 20
+
+
+def _opt_float(value: Any) -> float | None:
+    """转 float；NaN / 无法解析返回 None（区别于 safe_float 的 0 值兜底）。
+
+    相对强度与估值分位都是「缺失即缺失」的语义，绝不能用 0 代替缺失。
+    """
+    try:
+        v = float(value)
+        return None if math.isnan(v) else v
+    except (TypeError, ValueError):
+        return None
+
+
+def _sorted_values(df: Any, col: str) -> list[float | None]:
+    """按 trade_date 升序取出某列的收盘/估值序列（返回可空的 float 列表）。"""
+    if df is None or getattr(df, "empty", True) or col not in df.columns:
+        return []
+    d = df.sort_values("trade_date") if "trade_date" in df.columns else df
+    return [_opt_float(v) for v in d[col]]
+
+
+def _latest_value(df: Any, col: str) -> float | None:
+    """取出最新一行的某列值（按 trade_date 降序后取首行）。"""
+    if df is None or getattr(df, "empty", True) or col not in df.columns:
+        return None
+    d = df.sort_values("trade_date", ascending=False) if "trade_date" in df.columns else df
+    return _opt_float(d.iloc[0][col])
+
+
+def _pct_return(closes: list[float | None], window: int) -> float | None:
+    """窗口期收益（%）= (最新收盘 / N 日前收盘 - 1) × 100。
+
+    序列须按交易日升序；不足 window+1 个观测或端点缺失时返回 None。
+    """
+    if len(closes) < window + 1:
+        return None
+    start, end = closes[-window - 1], closes[-1]
+    if start is None or end is None or start <= 0:
+        return None
+    return round((end / start - 1.0) * 100.0, 4)
+
+
+def _percentile_rank(history: list[float | None], current: float | None) -> float | None:
+    """current 在 history 序列中的分位（0-1，历史中 ≤ current 的占比）。
+
+    仅统计正值观测；历史观测数不足或 current 缺失/非正时返回 None（不静默回退 0）。
+    """
+    vals = [v for v in history if v is not None and v > 0]
+    if current is None or current <= 0 or len(vals) < _MIN_PERCENTILE_OBSERVATIONS:
+        return None
+    below_or_equal = sum(1 for v in vals if v <= current)
+    return round(below_or_equal / len(vals), 4)
+
+
+def _compute_excess_return(
+    stock_df: Any,
+    bench_df: Any,
+    stock_col: str,
+    bench_col: str,
+) -> tuple[float | None, float | None]:
+    """个股相对基准的 20/60 日超额收益（PERCENT）；历史不足时对应 horizon 为 None。"""
+    stock_closes = _sorted_values(stock_df, stock_col)
+    bench_closes = _sorted_values(bench_df, bench_col)
+    out: list[float | None] = []
+    for window in (20, 60):
+        sr = _pct_return(stock_closes, window)
+        br = _pct_return(bench_closes, window)
+        out.append(round(sr - br, 4) if sr is not None and br is not None else None)
+    return out[0], out[1]
 
 
 def get_market_fact(symbol: str) -> dict[str, Any]:
@@ -55,6 +129,10 @@ def get_market_fact(symbol: str) -> dict[str, Any]:
                 ts_code=ts_code, start_date=lookback, end_date=today, fields="ts_code,trade_date,close"
             ).data
             stock_basic_df = helper.stock_basic(ts_code=ts_code, fields="ts_code,name").data
+            # 沪深300 指数日收盘（复用已有 index_daily 接口，零新数据源），用于计算个股相对强度
+            hs300_df = helper.index_daily(
+                ts_code="000300.SH", start_date=lookback, end_date=today, fields="ts_code,trade_date,close"
+            ).data
 
         company_name = stock_basic_df.iloc[0]["company_name"] if not stock_basic_df.empty else ts_code
 
@@ -85,6 +163,20 @@ def get_market_fact(symbol: str) -> dict[str, Any]:
 
         pe_ttm_5y_avg = _compute_pe_ttm_5y_avg(daily_basic_history_df)
 
+        # 相对强度（个股 vs 沪深300，20/60 日超额收益，PERCENT）
+        rs_stock_market_20d, rs_stock_market_60d = _compute_excess_return(
+            hist_df, hs300_df, "close_price", "industry_close"
+        )
+        # 个股历史估值分位（当前 pe_ttm/pb 在 5 年 daily_basic 历史中的分位，RATIO 0-1）
+        pe_ttm_5y_percentile = _percentile_rank(
+            _sorted_values(daily_basic_history_df, "pe_ttm"),
+            _latest_value(daily_basic_df, "pe_ttm"),
+        )
+        pb_5y_percentile = _percentile_rank(
+            _sorted_values(daily_basic_history_df, "pb_ratio"),
+            _latest_value(daily_basic_df, "pb_ratio"),
+        )
+
         return {
             "stock_code": ts_code,
             "company_name": company_name,
@@ -94,6 +186,10 @@ def get_market_fact(symbol: str) -> dict[str, Any]:
             "ma": ma,
             "history": daily_df.head(10).to_dict(orient="records"),
             "pe_ttm_5y_avg": pe_ttm_5y_avg,
+            "pe_ttm_5y_percentile": pe_ttm_5y_percentile,
+            "pb_5y_percentile": pb_5y_percentile,
+            "rs_stock_market_20d": rs_stock_market_20d,
+            "rs_stock_market_60d": rs_stock_market_60d,
         }
 
     return _CACHE.get_or_compute(("market_fact", ts_code), _compute)
@@ -119,7 +215,15 @@ def extract_market_facts(
     Returns:
         ``{canonical_field_name: float_value}``，缺失字段不出现在结果中。
     """
-    all_fields = {"pe_ttm", "pb_ratio", "pe_ttm_5y_avg"}
+    all_fields = {
+        "pe_ttm",
+        "pb_ratio",
+        "pe_ttm_5y_avg",
+        "pe_ttm_5y_percentile",
+        "pb_5y_percentile",
+        "rs_stock_market_20d",
+        "rs_stock_market_60d",
+    }
     target = set(fields) if fields is not None else all_fields
 
     result: dict[str, float] = {}
@@ -140,6 +244,13 @@ def extract_market_facts(
         val = _extract_pe_ttm_5y_avg(data)
         if val is not None:
             result["pe_ttm_5y_avg"] = val
+
+    # 相对强度与估值分位为 get_market_fact 顶层自算字段；缺失（None）不进入结果。
+    for key in ("pe_ttm_5y_percentile", "pb_5y_percentile", "rs_stock_market_20d", "rs_stock_market_60d"):
+        if key in target:
+            val = _opt_float(data.get(key))
+            if val is not None:
+                result[key] = val
 
     return result
 
@@ -311,6 +422,22 @@ def render(data: dict[str, Any]) -> str:
         for key, label in ma_labels.items():
             if key in ma:
                 lines.append(f"| {label} | {ma[key]:.2f} |")
+        lines.append("")
+
+    rs_20d = _opt_float(data.get("rs_stock_market_20d"))
+    rs_60d = _opt_float(data.get("rs_stock_market_60d"))
+    pe_pct = _opt_float(data.get("pe_ttm_5y_percentile"))
+    pb_pct = _opt_float(data.get("pb_5y_percentile"))
+    if any(v is not None for v in (rs_20d, rs_60d, pe_pct, pb_pct)):
+        lines += ["### 相对强度与估值分位", "| 指标 | 数值 |", "|------|------|"]
+        if rs_20d is not None:
+            lines.append(f"| 个股相对沪深300 20日超额收益（%） | {rs_20d:+.2f} |")
+        if rs_60d is not None:
+            lines.append(f"| 个股相对沪深300 60日超额收益（%） | {rs_60d:+.2f} |")
+        if pe_pct is not None:
+            lines.append(f"| PE-TTM 5年分位（0-1） | {pe_pct:.2f} |")
+        if pb_pct is not None:
+            lines.append(f"| PB 5年分位（0-1） | {pb_pct:.2f} |")
         lines.append("")
 
     lines += [

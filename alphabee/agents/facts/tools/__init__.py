@@ -1,4 +1,11 @@
-"""FactCollectorAgent tools package."""
+"""FactCollectorAgent tools package.
+
+注意：consensus（E 因子）与 crowding（C 因子）采集器**不是** fact 工具（无 LLM 直接
+调用入口），它们作为 source-specific collector 位于 ``alphabee.collectors.consensus`` /
+``alphabee.collectors.crowding``，由其 ``build_consensus`` / ``build_crowding`` 产出
+canonical 字段，供后续 midterm 决策层消费（见 INDEX.yaml 的 field_consumers）。
+此处保持独立、不在此 re-export，避免与 get_*_fact 工具族混淆。
+"""
 
 from alphabee.agents.facts.tools.company_profile import get_company_profile
 from alphabee.agents.facts.tools.competition_fact import get_competition_fact

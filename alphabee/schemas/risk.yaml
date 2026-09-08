@@ -195,3 +195,59 @@ news_publish_time:
     en: [publish time, news time]
   source_mappings:
     akshare: [发布时间, publish_time]
+
+# ─────────────────────────────────────────
+# 财务审计意见 (Audit Opinion)
+# 来源：Tushare fina_audit（doc_id=80，免费可用；t3 实测）。原设计 §7.3 的
+# Tushare penalty（违规处罚）接口不存在，改以审计意见作审计风险直接字段。
+# ─────────────────────────────────────────
+
+audit_opinion:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 财务审计意见（如 标准无保留意见 / 保留意见 / 无法表示意见 等），非标准无保留意见为审计风险信号
+  aliases:
+    zh: [审计意见, 审计意见类型]
+    en: [audit opinion, audit result]
+  source_mappings:
+    tushare: [audit_result]
+  notes: 来自 Tushare fina_audit；标准无保留意见为正常，其余意见类型可作审计异常风险信号。
+
+audit_agency:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 审计机构（会计师事务所名称）
+  aliases:
+    zh: [审计机构, 会计师事务所]
+    en: [audit agency, audit firm]
+  source_mappings:
+    tushare: [audit_agency]
+
+audit_fees:
+  category: risk
+  type: float
+  unit: CNY
+  frequency: [annual]
+  description: 审计费用（元）
+  aliases:
+    zh: [审计费用, 审计费]
+    en: [audit fees]
+  source_mappings:
+    tushare: [audit_fees]
+  notes: Tushare fina_audit 原始单位为元。
+
+audit_sign:
+  category: risk
+  type: str
+  unit: TEXT
+  frequency: [annual]
+  description: 签字会计师（姓名）
+  aliases:
+    zh: [签字会计师, 签字注册会计师]
+    en: [audit sign, signing accountant]
+  source_mappings:
+    tushare: [audit_sign]

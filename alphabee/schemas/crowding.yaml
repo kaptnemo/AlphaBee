@@ -1,0 +1,163 @@
+# AlphaBee 内部标准字段 — 拥挤度域 (Crowding)
+# 覆盖：谁已建仓（持仓）· 交易多热（流量）· 多少人盯着（关注）· 筹码集中度（结构）·
+#       估值多极端（估值）· 供给多压（供给）。
+# 外部字段名只允许出现在 adapters/ 与 collector/fetcher 层，下游一律使用本文件 canonical 名。
+# 缺失值用 null 显式标记（如人气榜未上榜、股东户数缺失），绝不静默回退为 0。
+
+# ─────────────────────────────────────────
+# C2 交易热度（流量）
+# ─────────────────────────────────────────
+
+turnover_rate:
+  category: crowding
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 换手率（%），成交量 / 流通股本；拥挤度视角的绝对量（口径同 market.yaml 的 turnover_rate）
+  aliases:
+    zh: [换手率]
+    en: [turnover rate, churn rate]
+  source_mappings:
+    tushare: [turnover_rate]
+  notes: 与 market.yaml 的 turnover_rate 同源（daily_basic），此处承载拥挤度视角，绝对值口径见 market.yaml。
+
+turnover_rate_percentile:
+  category: crowding
+  type: float
+  unit: RATIO
+  frequency: [daily]
+  description: 当前换手率在自身历史序列中的分位（0-1），越高越拥挤
+  aliases:
+    zh: [换手率分位, 历史换手率分位]
+    en: [turnover rate percentile]
+  source_mappings: {}
+  notes: 由历史 turnover_rate 序列自算（无直接数据源）。
+
+amount_pct_of_market:
+  category: crowding
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 个股成交额占全市场成交额比例（%）
+  aliases:
+    zh: [成交额占比, 占全市场成交额比]
+    en: [amount pct of market, turnover share]
+  source_mappings: {}
+  notes: 派生计算：turnover_amount（market.yaml）÷ market_turnover（market_regime.yaml）× 100。
+
+# ─────────────────────────────────────────
+# C4 筹码集中度（结构）
+# ─────────────────────────────────────────
+
+holder_count_change:
+  category: crowding
+  type: float
+  unit: PERCENT
+  frequency: [quarterly]
+  description: 股东户数增幅（%）；户数增加 = 筹码分散（拥挤度下降），户数减少 = 筹码集中
+  aliases:
+    zh: [股东户数增幅, 股东人数增幅]
+    en: [holder count change, shareholder count growth]
+  source_mappings:
+    akshare: [股东人数增幅]
+  notes: AkShare stock_hold_num_cninfo 的「股东人数增幅」已是百分比数值（如 -1.79 表示 -1.79%），不得再乘 100。
+
+per_capita_holding_change:
+  category: crowding
+  type: float
+  unit: PERCENT
+  frequency: [quarterly]
+  description: 人均持股数量增幅（%）；人均持股增加 = 筹码集中（拥挤度上升）
+  aliases:
+    zh: [人均持股增幅, 人均持股数量增幅]
+    en: [per capita holding change]
+  source_mappings:
+    akshare: [人均持股数量增幅]
+  notes: AkShare stock_hold_num_cninfo 的「人均持股数量增幅」已是百分比数值，不得再乘 100。
+
+institutional_holding_ratio:
+  category: crowding
+  type: float
+  unit: PERCENT
+  frequency: [quarterly]
+  description: 前十大股东（机构）集中度（%）；集中度越高越拥挤
+  aliases:
+    zh: [前十大集中度, 机构持股集中度]
+    en: [institutional holding ratio, top10 concentration]
+  source_mappings:
+    tushare: [hold_ratio]
+  notes: 与 company.yaml 的 top10_holder_ratio 同源（top10_holders），此处承载拥挤度视角。
+
+# ─────────────────────────────────────────
+# C1 持仓（两融）
+# ─────────────────────────────────────────
+
+margin_balance_yoy:
+  category: crowding
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 个股两融余额同比（%）
+  aliases:
+    zh: [两融余额同比, 融资融券余额同比]
+    en: [margin balance YoY]
+  source_mappings: {}
+  notes: 派生计算：(margin_balance / 一年前 margin_balance - 1) × 100；个股两融明细需积分，缺失时置 null。
+
+# ─────────────────────────────────────────
+# C3 关注度（关注）
+# ─────────────────────────────────────────
+
+analyst_coverage_rank:
+  category: crowding
+  type: int
+  unit: RANK
+  frequency: [weekly]
+  description: 研报覆盖热度排名（覆盖机构/研报数在样本中的排名，越小越热）
+  aliases:
+    zh: [研报覆盖热度排名, 分析师覆盖排名]
+    en: [analyst coverage rank, research coverage rank]
+  source_mappings:
+    eastmoney: [derived_from_report_count]
+  notes: 由东财研报列表 coverage_count（consensus.yaml）在样本内排序派生；无覆盖=缺失。
+
+hot_rank:
+  category: crowding
+  type: int
+  unit: RANK
+  frequency: [daily]
+  description: 东财人气榜排名（1-100）；未上榜 = 缺失（null），绝不回退为 0
+  aliases:
+    zh: [人气榜排名, 东财人气排名]
+    en: [hot rank, popularity rank]
+  source_mappings:
+    akshare: [当前排名, rk]
+  notes: stock_hot_rank_em() 完整函数沙箱 ProxyError（push2 域名不可达）；采集器应直接消费底层 emappdata.eastmoney.com/stockrank/getAllCurrentList 的 rk/sc（top100）。
+
+news_heat:
+  category: crowding
+  type: float
+  unit: SCORE
+  frequency: [daily]
+  description: 新闻热度评分（0-100）
+  aliases:
+    zh: [新闻热度]
+    en: [news heat, news heat score]
+  source_mappings: {}
+  notes: 由新闻舆情（akshare stock_news_em / risk.yaml news_title）频次聚合派生，无直接数据源。
+
+# ─────────────────────────────────────────
+# C2/C6 供给与集中度
+# ─────────────────────────────────────────
+
+leader_concentration:
+  category: crowding
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 龙头成交集中度（%），板块内龙头成交额占比
+  aliases:
+    zh: [龙头成交集中度]
+    en: [leader concentration, leader turnover share]
+  source_mappings: {}
+  notes: 由板块成分股成交额占比派生，无直接数据源；缺失置 null。

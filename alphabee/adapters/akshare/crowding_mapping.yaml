@@ -1,0 +1,43 @@
+# AlphaBee AkShare Adapter — 拥挤度域字段映射
+# API:
+#   stock_hold_num_cninfo(date="YYYYMMDD")  —— 巨潮股东户数全市场快照（季度末披露日）
+#   stock_hot_rank_em()                      —— 东财人气榜 top100（无参）
+#
+# 频率（frequency）：
+#   stock_hold_num_cninfo → quarterly（0331/0630/0930/1231 季度末披露日）
+#   stock_hot_rank_em     → daily（当日 top100）
+#
+# ⚠️ 契约（docs/midterm/DATA_CONTRACTS_VERIFIED.md §2/§3，实测确认）：
+#   1. stock_hold_num_cninfo 的「股东人数增幅」「人均持股数量增幅」已是百分比数值
+#      （如 -1.79 表示 -1.79%），映射到 canonical 后不得再乘 100（避免二次放大）。
+#   2. stock_hold_num_cninfo 参数是 date（非 symbol），返回全市场某日快照；
+#      非季度末日期（如 20240915）抛 KeyError('records')，调用方需 try/except。
+#   3. stock_hot_rank_em() 完整函数在沙箱抛 ProxyError（push2.eastmoney.com 不可达）；
+#      采集器应直接消费底层 emappdata.eastmoney.com/stockrank/getAllCurrentList
+#      （返回 {sc 如 "SZ000592", rk 1-100, rc, hisRc}，仅 top100），rk → hot_rank、sc → stock_code。
+#   4. 人气榜未上榜、股东户数缺失 → 显式 null（缺失），绝不静默回退 0。
+
+# ─────────────────────────────────────────
+# 股东户数（季度末披露日快照）
+# ─────────────────────────────────────────
+stock_hold_num_cninfo:
+  证券代码:         stock_code
+  证券简称:         stock_name
+  变动日期:         report_date
+  本期股东人数:     holder_count
+  上期股东人数:     holder_count_prev
+  股东人数增幅:     holder_count_change          # 已是百分比数值，勿 ×100
+  本期人均持股数量: per_capita_holding
+  上期人均持股数量: per_capita_holding_prev
+  人均持股数量增幅: per_capita_holding_change    # 已是百分比数值，勿 ×100
+
+# ─────────────────────────────────────────
+# 东财人气榜 top100（每日）
+# ─────────────────────────────────────────
+stock_hot_rank_em:
+  当前排名: hot_rank
+  代码:     stock_code
+  股票名称: stock_name
+  最新价:   latest_price
+  涨跌额:   price_change_amount
+  涨跌幅:   price_change_pct

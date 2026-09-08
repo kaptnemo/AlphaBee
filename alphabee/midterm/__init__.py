@@ -1,0 +1,86 @@
+"""AlphaBee 中期（midterm）决策层契约包。
+
+本包落地 ROADMAP 7.5 / 7.6 的 typed contracts：七因子快照（FactorSnapshot）、
+赔率/期望值（ExpectedValue）、S0–S5 认知状态机（CompanyStateArtifact）以及
+仓位 / 组合 / 日志等决策层数据结构。
+
+数据单向约束（alphabee-schema-steward + alphabee-pipeline-contract-steward）：
+外部数据源字段 → adapter/mapping → canonical 字段 → FactorSnapshot / VariableScores
+→ CompanyStateArtifact → PositionDecision / PortfolioAllocation → SnapshotDiff。
+"""
+
+# factors.py 采用函数内惰性导入数据源，顶层只依赖 models（Pydantic），
+# 因此在此顶层导入不会触发 tushare/akshare 初始化副作用。
+from alphabee.midterm.factors import (
+    build_crowding_factor,
+    build_expectation_factor,
+    build_fundamental_factor,
+    build_market_factor,
+    build_risk_factor,
+    build_trend_factor,
+    build_valuation_factor,
+    get_factor_snapshot,
+)
+from alphabee.midterm.models import (
+    AuditSnapshot,
+    CognitiveState,
+    CompanyStateArtifact,
+    CrowdingFactor,
+    DecisionJournalEntry,
+    EvidenceEvent,
+    ExitCondition,
+    ExpectationFactor,
+    ExpectationGap,
+    ExpectedValue,
+    FactorSnapshot,
+    FundamentalFactor,
+    HoldingWeight,
+    IndustryRiskSnapshot,
+    MarketFactor,
+    PortfolioAllocation,
+    PositionDecision,
+    ResearchTask,
+    RiskFactor,
+    ScenarioOutcome,
+    SnapshotDiff,
+    ThesisVersion,
+    TrendFactor,
+    ValuationFactor,
+    VariableScores,
+)
+
+__all__ = [
+    "AuditSnapshot",
+    "CognitiveState",
+    "CompanyStateArtifact",
+    "CrowdingFactor",
+    "DecisionJournalEntry",
+    "EvidenceEvent",
+    "ExitCondition",
+    "ExpectationFactor",
+    "ExpectationGap",
+    "ExpectedValue",
+    "FactorSnapshot",
+    "FundamentalFactor",
+    "HoldingWeight",
+    "IndustryRiskSnapshot",
+    "MarketFactor",
+    "PortfolioAllocation",
+    "PositionDecision",
+    "ResearchTask",
+    "RiskFactor",
+    "ScenarioOutcome",
+    "SnapshotDiff",
+    "ThesisVersion",
+    "TrendFactor",
+    "ValuationFactor",
+    "VariableScores",
+    "build_crowding_factor",
+    "build_expectation_factor",
+    "build_fundamental_factor",
+    "build_market_factor",
+    "build_risk_factor",
+    "build_trend_factor",
+    "build_valuation_factor",
+    "get_factor_snapshot",
+]

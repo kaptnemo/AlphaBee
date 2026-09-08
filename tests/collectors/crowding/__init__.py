@@ -1,0 +1,1 @@
+"""Crowding collector package tests."""

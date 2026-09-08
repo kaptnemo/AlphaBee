@@ -1,0 +1,1 @@
+"""Consensus collector package tests."""

@@ -283,3 +283,49 @@ peer_median_pb:
     en: [peer median PB]
   source_mappings: {}
   notes: 由对标组成分股 daily_basic pb 正值中位数计算。
+
+# ─────────────────────────────────────────
+# 相对强度与行业宽度 (Relative Strength & Breadth，自算)
+# ─────────────────────────────────────────
+
+rs_industry_market:
+  category: industry
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 行业指数相对全市场（沪深300）的 20/60 日超额收益（%）
+  aliases:
+    zh: [行业相对强度, 行业相对市场超额收益]
+    en: [industry relative strength vs market]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 自算字段（零新数据源）。rs_industry_market_Nd = 行业指数 N 日收益 − 沪深300 N 日收益（N ∈ {20, 60}）。由 industry_fact.py 复用已有 index_daily/sw_daily（行业指数收盘）与 index_daily（000300.SH 收盘）计算，输出 rs_industry_market_20d / rs_industry_market_60d；历史序列不足时显式返回 null。
+
+industry_breadth_20:
+  category: industry
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 行业成分股中收盘价高于 20 日均线的占比（%）
+  aliases:
+    zh: [行业宽度20, 20日行业宽度, 成分股站上20日均线占比]
+    en: [industry breadth 20, share of constituents above MA20]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 自算字段（零新数据源）。行业成分股 P>MA20 占比，由 industry_fact.py 复用已有 daily（成分股收盘）计算；成分股无法取得、成分股过多或历史序列不足时显式返回 null，不静默回退为 0。
+
+industry_breadth_60:
+  category: industry
+  type: float
+  unit: PERCENT
+  frequency: [daily]
+  description: 行业成分股中收盘价高于 60 日均线的占比（%）
+  aliases:
+    zh: [行业宽度60, 60日行业宽度, 成分股站上60日均线占比]
+    en: [industry breadth 60, share of constituents above MA60]
+  required_by:
+    derived_facts: []
+  source_mappings: {}
+  notes: 自算字段（零新数据源）。行业成分股 P>MA60 占比，由 industry_fact.py 复用已有 daily（成分股收盘）计算；成分股无法取得、成分股过多或历史序列不足时显式返回 null，不静默回退为 0。
