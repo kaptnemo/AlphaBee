@@ -2,7 +2,7 @@
 
 它解决的不是“股价跌多少买、涨多少卖”，而是：
 
-[
+$$
 \boxed{
 预期差发现
 \rightarrow
@@ -14,7 +14,7 @@
 \rightarrow
 退出
 }
-]
+$$
 
 并通过 **Evidence / Expectation / Price / Valuation / Risk** 的持续变化决定状态迁移和仓位。
 
@@ -39,14 +39,11 @@
 
 而我们现在这套体系应该是：
 
-[
+$$
 \boxed{
-Investment\ Decision
-====================
-
-f(F,E,T,V,C,R,M)
+Investment\ Decision(F,E,T,V,C,R,M)
 }
-]
+$$
 
 其中：
 
@@ -62,9 +59,9 @@ f(F,E,T,V,C,R,M)
 
 但还有一个比 Score 更重要的变量：
 
-[
+$$
 \boxed{State}
-]
+$$
 
 所以不能简单：
 
@@ -91,9 +88,9 @@ f(F,E,T,V,C,R,M)
 
 完整生命周期：
 
-[
+$$
 S0\rightarrow S1\rightarrow S2\rightarrow S3\rightarrow S4\rightarrow SX
-]
+$$
 
 但注意：
 
@@ -101,23 +98,23 @@ S0\rightarrow S1\rightarrow S2\rightarrow S3\rightarrow S4\rightarrow SX
 
 完全允许：
 
-[
+$$
 S3\rightarrow S2
-]
+$$
 
 甚至：
 
-[
+$$
 S3\rightarrow SX
-]
+$$
 
 因此这不是“持仓时间阶段”。
 
 而是：
 
-[
+$$
 \boxed{Investment\ State}
-]
+$$
 
 ---
 
@@ -141,25 +138,25 @@ S3\rightarrow SX
 
 这个阶段经常出现：
 
-[
+$$
 Price\ Weak
-]
+$$
 
-[
+$$
 Consensus\ Weak
-]
+$$
 
 但：
 
-[
+$$
 LeadingEvidence\uparrow
-]
+$$
 
 因此：
 
-[
+$$
 ExpectationGap>0
-]
+$$
 
 ---
 
@@ -169,21 +166,21 @@ ExpectationGap>0
 
 不能因为：
 
-[
+$$
 PE低
-]
+$$
 
 或者：
 
-[
+$$
 PriceDrawdown=-50%
-]
+$$
 
 就定义为S1。
 
 真正的S1应该满足：
 
-[
+$$
 \boxed{
 LowExpectation
 +
@@ -191,7 +188,7 @@ PotentialPositiveChange
 +
 AsymmetricPayoff
 }
-]
+$$
 
 也就是：
 
@@ -199,9 +196,9 @@ AsymmetricPayoff
 
 否则：
 
-[
+$$
 LowPE + BadBusiness
-]
+$$
 
 只是：
 
@@ -233,9 +230,9 @@ Deadline
 
 也就是说：
 
-[
+$$
 S1=HypothesisDriven
-]
+$$
 
 而不是：
 
@@ -247,9 +244,9 @@ S1=HypothesisDriven
 
 因为：
 
-[
+$$
 Confidence
-]
+$$
 
 仍然比较低。
 
@@ -257,21 +254,21 @@ Confidence
 
 如果定义：
 
-[
+$$
 EquityExposure=60%
-]
+$$
 
 单股在权益仓中的研究仓：
 
-[
+$$
 5%-10%
-]
+$$
 
 对应总资产：
 
-[
+$$
 3%-6%
-]
+$$
 
 更合理。
 
@@ -281,9 +278,9 @@ EquityExposure=60%
 
 真正仓位以后应该由：
 
-[
+$$
 Position=f(State,Confidence,Risk,Portfolio)
-]
+$$
 
 决定。
 
@@ -299,31 +296,31 @@ S1最不应该做的是：
 
 如果核心假设：
 
-[
+$$
 H_1
-]
+$$
 
 被证伪：
 
-[
+$$
 P(H_1)\downarrow
-]
+$$
 
 应该退出。
 
 甚至：
 
-[
+$$
 Price=-2%
-]
+$$
 
 也可以退出。
 
 反过来，即使：
 
-[
+$$
 Price=+5%
-]
+$$
 
 但证据没出现，也不能自动进入S2。
 
@@ -331,9 +328,9 @@ Price=+5%
 
 S1还有非常重要的：
 
-[
+$$
 \boxed{TimeStop}
-]
+$$
 
 比如：
 
@@ -355,9 +352,9 @@ EPS继续下修
 
 因为资本存在：
 
-[
+$$
 OpportunityCost
-]
+$$
 
 ---
 
@@ -365,9 +362,9 @@ OpportunityCost
 
 如果突然：
 
-[
+$$
 Price=-10%
-]
+$$
 
 不要自动理解：
 
@@ -375,11 +372,11 @@ Price=-10%
 
 而应该问：
 
-[
+$$
 \boxed{
 Market\ Knows\ Something\ I\ Don't?
 }
-]
+$$
 
 尤其：
 
@@ -390,21 +387,21 @@ Market\ Knows\ Something\ I\ Don't?
 
 应该自动触发：
 
-[
+$$
 ResearchTask
-]
+$$
 
 所以：
 
-[
+$$
 Price\rightarrow InformationSignal
-]
+$$
 
 而不是：
 
-[
+$$
 Price\rightarrow AutomaticTrade
-]
+$$
 
 ---
 
@@ -412,9 +409,9 @@ Price\rightarrow AutomaticTrade
 
 这是我认为整个体系里：
 
-[
+$$
 \boxed{\text{最重要的开仓/加仓阶段}}
-]
+$$
 
 S1解决：
 
@@ -426,25 +423,25 @@ S2解决：
 
 例如：
 
-[
+$$
 RevenueInflection
-]
+$$
 
-[
+$$
 MarginInflection
-]
+$$
 
-[
+$$
 IndustryData\uparrow
-]
+$$
 
-[
+$$
 EPSRevision\uparrow
-]
+$$
 
-[
+$$
 NewProductSuccess
-]
+$$
 
 开始出现。
 
@@ -473,37 +470,37 @@ S4
 
 所以：
 
-[
+$$
 \boxed{
 OptimalEntry
 \approx
 S1Late\rightarrow S2Early
 }
-]
+$$
 
 这是：
 
-[
+$$
 Probability\uparrow
-]
+$$
 
 但：
 
-[
+$$
 ExpectationGap
-]
+$$
 
 仍然较大的阶段。
 
 本质上是：
 
-[
+$$
 \boxed{
 Evidence\ Confirmed
 \quad but\quad
 Consensus\ Not\ Fully\ Formed
 }
-]
+$$
 
 ---
 
@@ -513,41 +510,41 @@ Consensus\ Not\ Fully\ Formed
 
 比如：
 
-[
+$$
 Profit+50%
-]
+$$
 
 不代表：
 
-[
+$$
 S2
-]
+$$
 
 因为市场可能原来预期：
 
-[
+$$
 +80%
-]
+$$
 
 真正需要：
 
-[
+$$
 Actual>Expectation
-]
+$$
 
 或者：
 
-[
+$$
 FutureExpectation\uparrow
-]
+$$
 
 所以：
 
-[
+$$
 \boxed{
 S2核心不是Growth，而是PositiveEvidenceChange
 }
-]
+$$
 
 ---
 
@@ -555,19 +552,19 @@ S2核心不是Growth，而是PositiveEvidenceChange
 
 例如：
 
-[
+$$
 EPS_{2027}:
 3.0
 \rightarrow3.2
 \rightarrow3.5
 \rightarrow3.8
-]
+$$
 
 说明：
 
-[
+$$
 Expectation\uparrow
-]
+$$
 
 这通常比：
 
@@ -577,31 +574,31 @@ Expectation\uparrow
 
 因此：
 
-[
+$$
 \boxed{
 RevisionMomentum
 }
-]
+$$
 
 应该成为AlphaBee核心因子。
 
 至少包括：
 
-[
+$$
 Revision_{1M}
-]
+$$
 
-[
+$$
 Revision_{3M}
-]
+$$
 
-[
+$$
 RevisionBreadth
-]
+$$
 
-[
+$$
 RevisionAcceleration
-]
+$$
 
 ---
 
@@ -609,15 +606,15 @@ RevisionAcceleration
 
 如果S1：
 
-[
+$$
 ResearchPosition
-]
+$$
 
 那么：
 
-[
+$$
 S1\rightarrow S2
-]
+$$
 
 意味着：
 
@@ -625,15 +622,15 @@ S1\rightarrow S2
 
 于是：
 
-[
+$$
 ResearchPosition\rightarrow NormalPosition
-]
+$$
 
 例如权益仓内部：
 
-[
+$$
 10%-15%
-]
+$$
 
 而不是简单：
 
@@ -641,11 +638,11 @@ ResearchPosition\rightarrow NormalPosition
 
 真正的加仓原因应该是：
 
-[
+$$
 \boxed{
 EvidenceStrength\uparrow
 }
-]
+$$
 
 ---
 
@@ -653,59 +650,59 @@ EvidenceStrength\uparrow
 
 因为你加仓的原因是：
 
-[
+$$
 Evidence\uparrow
-]
+$$
 
 所以减仓自然应该来自：
 
-[
+$$
 Evidence\downarrow
-]
+$$
 
 例如原来：
 
-[
+$$
 Volume\uparrow
-]
+$$
 
-[
+$$
 Margin\uparrow
-]
+$$
 
-[
+$$
 EPSRevision\uparrow
-]
+$$
 
 后来：
 
-[
+$$
 Volume\uparrow
-]
+$$
 
 但：
 
-[
+$$
 Margin\downarrow
-]
+$$
 
 同时：
 
-[
+$$
 EPSRevision\downarrow
-]
+$$
 
 那么：
 
-[
+$$
 S2\rightarrow S1
-]
+$$
 
 仓位：
 
-[
+$$
 NormalPosition\rightarrow ResearchPosition
-]
+$$
 
 ---
 
@@ -713,19 +710,19 @@ NormalPosition\rightarrow ResearchPosition
 
 整个系统不能只有：
 
-[
+$$
 Buy/Hold/Sell
-]
+$$
 
 而应该：
 
-[
+$$
 \boxed{
 StateTransition
 \rightarrow
 PositionTransition
 }
-]
+$$
 
 例如：
 
@@ -762,21 +759,21 @@ S1 → Broken
 
 典型状态：
 
-[
+$$
 F\uparrow
-]
+$$
 
-[
+$$
 E\uparrow
-]
+$$
 
-[
+$$
 T\uparrow
-]
+$$
 
 也就是：
 
-[
+$$
 \boxed{
 Fundamental
 +
@@ -784,7 +781,7 @@ Expectation
 +
 Price
 }
-]
+$$
 
 形成共振。
 
@@ -798,15 +795,15 @@ Price
 
 已经不是早期预期差：
 
-[
+$$
 Mispricing
-]
+$$
 
 而更多是：
 
-[
+$$
 ConsensusExpansion
-]
+$$
 
 也就是：
 
@@ -814,33 +811,33 @@ ConsensusExpansion
 
 卖方上调：
 
-[
+$$
 TargetPrice\uparrow
-]
+$$
 
 机构：
 
-[
+$$
 Position\uparrow
-]
+$$
 
 EPS：
 
-[
+$$
 Revision\uparrow
-]
+$$
 
 股价：
 
-[
+$$
 RS\uparrow
-]
+$$
 
 于是形成：
 
-[
+$$
 PositiveFeedbackLoop
-]
+$$
 
 ---
 
@@ -850,47 +847,47 @@ PositiveFeedbackLoop
 
 真正的大趋势：
 
-[
+$$
 +100%
-]
+$$
 
 过程中可能出现：
 
-[
+$$
 -8%
-]
+$$
 
-[
+$$
 -12%
-]
+$$
 
 甚至：
 
-[
+$$
 -20%
-]
+$$
 
 如果：
 
-[
+$$
 F\uparrow
-]
+$$
 
-[
+$$
 E\uparrow
-]
+$$
 
 行业景气：
 
-[
+$$
 \uparrow
-]
+$$
 
 那么：
 
-[
+$$
 PriceCorrection
-]
+$$
 
 很多时候只是：
 
@@ -898,11 +895,11 @@ PriceCorrection
 
 所以：
 
-[
+$$
 \boxed{
 S3是四个阶段中PriceTolerance最高的阶段
 }
-]
+$$
 
 不能使用：
 
@@ -914,15 +911,15 @@ S3是四个阶段中PriceTolerance最高的阶段
 
 健康状态：
 
-[
+$$
 F\uparrow+E\uparrow+T\uparrow
-]
+$$
 
 第一阶段：
 
-[
+$$
 E:\uparrow\rightarrow Flat
-]
+$$
 
 但F、T仍强。
 
@@ -930,37 +927,37 @@ E:\uparrow\rightarrow Flat
 
 第二阶段：
 
-[
+$$
 E\downarrow
-]
+$$
 
 同时：
 
-[
+$$
 RS\downarrow
-]
+$$
 
 → **减仓20%-30%。**
 
 第三阶段：
 
-[
+$$
 E\downarrow+TrendBreak
-]
+$$
 
 →
 
-[
+$$
 S3\rightarrow S2/S4
-]
+$$
 
 降到正常仓。
 
 第四阶段：
 
-[
+$$
 FundamentalThesisBroken
-]
+$$
 
 → Exit。
 
@@ -972,11 +969,11 @@ FundamentalThesisBroken
 
 很多顶部的顺序是：
 
-[
+$$
 \boxed{
 E\rightarrow T\rightarrow F
 }
-]
+$$
 
 即：
 
@@ -984,9 +981,9 @@ E\rightarrow T\rightarrow F
 
 盈利预测停止上修。
 
-[
+$$
 Revision\uparrow\rightarrow Flat
-]
+$$
 
 ### 第二阶段
 
@@ -1006,15 +1003,15 @@ Revision\uparrow\rightarrow Flat
 
 这也是为什么：
 
-[
+$$
 GoodEarnings + WeakPrice
-]
+$$
 
 本身就是重要的：
 
-[
+$$
 Conflict
-]
+$$
 
 AlphaBee应该自动研究。
 
@@ -1030,37 +1027,37 @@ S4不意味着：
 
 它真正意味着：
 
-[
+$$
 \boxed{
 CompanyStillGood
 \quad but\quad
 RiskRewardBad
 }
-]
+$$
 
 例如：
 
-[
+$$
 Revenue+50%
-]
+$$
 
-[
+$$
 Profit+70%
-]
+$$
 
 都很好。
 
 但是市场已经预期：
 
-[
+$$
 Profit+80%
-]
+$$
 
 于是：
 
-[
+$$
 ExpectationGap\leq0
-]
+$$
 
 这就是S4。
 
@@ -1076,19 +1073,19 @@ ExpectationGap\leq0
 
 ### ② Revision开始减速
 
-[
+$$
 \uparrow\uparrow
 \rightarrow
 \uparrow
 \rightarrow
 Flat
-]
+$$
 
 ### ③ Valuation扩张
 
-[
+$$
 PE\uparrow
-]
+$$
 
 ### ④ Crowding上升
 
@@ -1100,9 +1097,9 @@ PE\uparrow
 
 这是非常重要的：
 
-[
+$$
 PriceResponseToGoodNews\downarrow
-]
+$$
 
 ### ⑥ 对小利空异常敏感
 
@@ -1120,15 +1117,15 @@ PriceResponseToGoodNews\downarrow
 
 所以不能：
 
-[
+$$
 S4Detected\rightarrow SellAll
-]
+$$
 
 更合理的是：
 
-[
+$$
 CorePosition\rightarrow ReducedPosition
-]
+$$
 
 然后：
 
@@ -1136,15 +1133,15 @@ CorePosition\rightarrow ReducedPosition
 
 因此S4主要赚：
 
-[
+$$
 ResidualMomentum
-]
+$$
 
 而不是：
 
-[
+$$
 FundamentalAlpha
-]
+$$
 
 ---
 
@@ -1152,39 +1149,39 @@ FundamentalAlpha
 
 S3：
 
-[
+$$
 PriceTolerance=High
-]
+$$
 
 S4：
 
-[
+$$
 PriceTolerance\downarrow
-]
+$$
 
 因为：
 
-[
+$$
 ExpectedUpside\downarrow
-]
+$$
 
 而：
 
-[
+$$
 DrawdownRisk\uparrow
-]
+$$
 
 因此应该逐渐使用：
 
-[
+$$
 TrailingStop
-]
+$$
 
 例如从阶段高点：
 
-[
+$$
 -10%\sim-15%
-]
+$$
 
 结合：
 
@@ -1205,9 +1202,9 @@ TrailingStop
 
 假设：
 
-[
+$$
 Price=-10%
-]
+$$
 
 ### S1
 
@@ -1229,9 +1226,9 @@ Price=-10%
 
 如果：
 
-[
+$$
 F,E
-]
+$$
 
 仍然强：
 
@@ -1249,7 +1246,7 @@ F,E
 
 所以：
 
-[
+$$
 \boxed{
 SamePriceMove
 +
@@ -1258,13 +1255,13 @@ DifferentState
 
 DifferentMeaning
 }
-]
+$$
 
 这也是为什么我越来越不建议用统一：
 
-[
+$$
 -8% StopLoss
-]
+$$
 
 ---
 
@@ -1291,15 +1288,15 @@ DifferentMeaning
 
 不是：
 
-[
+$$
 S1>S2>S3>S4
-]
+$$
 
 也不是：
 
-[
+$$
 S4>S3>S2>S1
-]
+$$
 
 而大概是一条钟形曲线：
 
@@ -1318,23 +1315,23 @@ S1   S2        S3   S4
 
 最高点大致：
 
-[
+$$
 \boxed{S1Late\rightarrow S2Early}
-]
+$$
 
 因为这里：
 
-[
+$$
 Odds
-]
+$$
 
 还比较高，
 
 而：
 
-[
+$$
 Probability
-]
+$$
 
 已经开始明显提高。
 
@@ -1344,15 +1341,15 @@ Probability
 
 初步可以理解：
 
-[
+$$
 S1 < S2 < S3
-]
+$$
 
 但不能简单：
 
-[
+$$
 S4=0
-]
+$$
 
 更合理：
 
@@ -1370,7 +1367,7 @@ Exit
 
 可以抽象成：
 
-[
+$$
 \boxed{
 Position_i
 ==========
@@ -1385,7 +1382,7 @@ RiskAdjustment
 \times
 PortfolioAdjustment
 }
-]
+$$
 
 这才适合真正实现进AlphaBee。
 
@@ -1421,9 +1418,9 @@ Confidence描述：
 
 所以：
 
-[
+$$
 State\neq Score
-]
+$$
 
 ---
 
@@ -1433,21 +1430,21 @@ State\neq Score
 
 不仅记录：
 
-[
+$$
 State_t
-]
+$$
 
 还应该记录：
 
-[
+$$
 \Delta State
-]
+$$
 
 甚至：
 
-[
+$$
 StateVelocity
-]
+$$
 
 例如：
 
@@ -1467,17 +1464,17 @@ S1 → S2 → S3
 
 B显然意味着：
 
-[
+$$
 EvidenceArrivalRate
-]
+$$
 
 非常高。
 
 所以：
 
-[
+$$
 StateVelocity\uparrow
-]
+$$
 
 本身就是重要信号。
 
@@ -1498,15 +1495,15 @@ RS ↑
 
 可以定义：
 
-[
+$$
 StateMomentum
-]
+$$
 
 这就是我们分析工业富联时提到的：
 
-[
+$$
 S3Late\rightarrow S3Acceleration
-]
+$$
 
 也就是说：
 
@@ -1514,23 +1511,23 @@ S3Late\rightarrow S3Acceleration
 
 如果突然出现重大新产品周期：
 
-[
+$$
 ExpectationGap
-]
+$$
 
 重新打开。
 
 完全可能：
 
-[
+$$
 S3Late\rightarrow S3Acceleration
-]
+$$
 
 甚至形成新的：
 
-[
+$$
 S1'
-]
+$$
 
 即：
 
@@ -1553,9 +1550,9 @@ S0 → S1 → S2 → S3 → S4 → Exit
 
 一家公司可以经历：
 
-[
+$$
 Cycle_1
-]
+$$
 
 然后因为：
 
@@ -1563,15 +1560,15 @@ Cycle_1
 
 进入：
 
-[
+$$
 Cycle_2
-]
+$$
 
 所以State必须和：
 
-[
+$$
 Thesis
-]
+$$
 
 绑定。
 
@@ -1599,51 +1596,51 @@ Company Aggregate State = S3
 
 AI高速铜缆产业：
 
-[
+$$
 SectorState\approx S3
-]
+$$
 
 但沃尔公司：
 
-[
+$$
 CompanyState\approx S2
-]
+$$
 
 因为：
 
-[
+$$
 RevenueStory
-]
+$$
 
 已经验证，
 
 但：
 
-[
+$$
 ProfitStory
-]
+$$
 
 尚未完全验证。
 
 所以：
 
-[
+$$
 \boxed{
 SectorState\neq CompanyState
 }
-]
+$$
 
 同样：
 
-[
+$$
 MarketState
-]
+$$
 
 也应该独立存在。
 
 最终：
 
-[
+$$
 InvestmentState
 ===============
 
@@ -1653,7 +1650,7 @@ SectorState,
 CompanyState,
 ThesisState
 )
-]
+$$
 
 ---
 
@@ -1701,11 +1698,11 @@ invalidation:
 
 然后真正有价值的是：
 
-[
+$$
 \boxed{
 Snapshot_t-Snapshot_{t-1}
 }
-]
+$$
 
 ---
 
@@ -1763,18 +1760,18 @@ Information Value可能很低。
 
 可能直接改变：
 
-[
+$$
 State
-]
+$$
 
 所以应该估计：
 
-[
+$$
 \boxed{
 EVI=
 ExpectedValueOfInformation
 }
-]
+$$
 
 EVI高：
 
@@ -1796,9 +1793,9 @@ EVI低：
 
 更合理的是：
 
-[
+$$
 \boxed{ExitEngine}
-]
+$$
 
 包含五层：
 
@@ -1816,9 +1813,9 @@ EVI低：
 
 ### 4. State Stop
 
-[
+$$
 S3\rightarrow S2
-]
+$$
 
 等状态退化。
 
@@ -1828,9 +1825,9 @@ S3\rightarrow S2
 
 另外还有独立：
 
-[
+$$
 EmergencyRiskStop
-]
+$$
 
 处理：
 
@@ -1854,37 +1851,37 @@ EmergencyRiskStop
 
 也可能：
 
-[
+$$
 PortfolioRisk=TooHigh
-]
+$$
 
 因为它们可能全部暴露于：
 
-[
+$$
 AI\ Capex
-]
+$$
 
 或者：
 
-[
+$$
 SmallCapGrowth
-]
+$$
 
 或者：
 
-[
+$$
 LithiumCycle
-]
+$$
 
 因此最终仓位不是：
 
-[
+$$
 Position=f(StockState)
-]
+$$
 
 而是：
 
-[
+$$
 \boxed{
 Position_i
 ==========
@@ -1899,7 +1896,7 @@ PortfolioExposure,
 MarketState
 )
 }
-]
+$$
 
 ---
 
@@ -1928,29 +1925,29 @@ MarketState
 
 真正应该优先搜索：
 
-[
+$$
 \boxed{
 S1Late\rightarrow S2Early
 }
-]
+$$
 
 其次：
 
-[
+$$
 S2
-]
+$$
 
 然后：
 
-[
+$$
 S3Early
-]
+$$
 
 而对于：
 
-[
+$$
 S3Late/S4
-]
+$$
 
 除非出现：
 
@@ -1964,11 +1961,11 @@ S3Late/S4
 
 这也是：
 
-[
+$$
 \boxed{
 GoodCompany\neq GoodInvestment
 }
-]
+$$
 
 在State Machine中的表达。
 
@@ -1987,15 +1984,15 @@ if state == S2:
 
 因为：
 
-[
+$$
 State
-]
+$$
 
 只是描述投资生命周期。
 
 最终决策应该是：
 
-[
+$$
 Decision
 ========
 
@@ -2008,29 +2005,29 @@ RiskReward,
 Portfolio,
 Market
 )
-]
+$$
 
 例如两个都是S2：
 
 ### A
 
-[
+$$
 PE=15X
-]
+$$
 
-[
+$$
 Confidence=80%
-]
+$$
 
 ### B
 
-[
+$$
 PE=50X
-]
+$$
 
-[
+$$
 Confidence=55%
-]
+$$
 
 当然不能给一样的仓位。
 
@@ -2040,7 +2037,7 @@ Confidence=55%
 
 最终还是：
 
-[
+$$
 EV
 ==
 
@@ -2049,35 +2046,35 @@ P_{bull}R_{bull}
 P_{base}R_{base}
 +
 P_{bear}R_{bear}
-]
+$$
 
 再除以风险：
 
-[
+$$
 RiskAdjustedEV
-]
+$$
 
 State Machine最大的作用不是替代EV。
 
 而是帮助判断：
 
-[
+$$
 P_{bull}
-]
+$$
 
-[
+$$
 P_{base}
-]
+$$
 
-[
+$$
 P_{bear}
-]
+$$
 
 如何随证据变化。
 
 也就是：
 
-[
+$$
 Evidence
 \rightarrow
 BeliefUpdate
@@ -2087,7 +2084,7 @@ ScenarioProbability
 ExpectedReturn
 \rightarrow
 Position
-]
+$$
 
 这才是最终成熟版本。
 
@@ -2095,7 +2092,7 @@ Position
 
 # 四十三、所以整个 AlphaBee 的核心闭环已经可以正式写成
 
-[
+$$
 \boxed{
 Discover
 \rightarrow
@@ -2117,7 +2114,7 @@ Monitor
 \rightarrow
 Update
 }
-]
+$$
 
 展开：
 
@@ -2155,39 +2152,39 @@ Update
 
 ### S1
 
-[
+$$
 \boxed{\text{我可能发现市场错了，但我还没有足够证据。}}
-]
+$$
 
 **小仓试错，Thesis/Time Stop。**
 
 ### S2
 
-[
+$$
 \boxed{\text{现实开始证明我是对的，但市场还没有完全相信。}}
-]
+$$
 
 **这是最重要的开仓/加仓区域。**
 
 ### S3
 
-[
+$$
 \boxed{\text{市场开始和我站在一起，趋势和盈利形成共振。}}
-]
+$$
 
 **减少交易，允许波动，让利润奔跑。**
 
 ### S4
 
-[
+$$
 \boxed{\text{大家都知道它很好，现在的问题是还有多少没有Price In。}}
-]
+$$
 
 **停止恋战，从追求收益转向保护收益。**
 
 最终：
 
-[
+$$
 \boxed{
 S1:\ Think
 \rightarrow
@@ -2197,17 +2194,17 @@ S3:\ Hold
 \rightarrow
 S4:\ Harvest
 }
-]
+$$
 
 而贯穿整个过程的纪律是：
 
-[
+$$
 \boxed{
 不是因为价格上涨证明自己正确，
 也不是因为价格下跌证明自己错误；
 而是不断问：
 “相对于我建立仓位时，证据、预期和赔率究竟发生了什么变化？”
 }
-]
+$$
 
 我认为到这里，这套东西已经足够成为 **AlphaBee 投资决策层的核心领域模型**，而不只是一个选股指标。下一步真正值得做的也不是继续增加 S5/S6，而是把 **`Thesis → Evidence → Belief Update → State Transition → Position Action`** 这条链的数据结构和状态迁移规则正式固化下来。
