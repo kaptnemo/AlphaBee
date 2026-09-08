@@ -1,0 +1,68 @@
+id: trend_break_risk
+
+name: 趋势破位风险
+
+category: trend
+
+dimension: trend
+
+description: >
+  综合个股相对强度（RS）与价格均线结构，识别趋势转弱/破位风险。
+  rs_stock_market_20d / rs_stock_market_60d 为个股相对全市场（沪深300）的 20/60 日
+  超额收益（canonical 字段 rs_stock_market 的两个 horizon，PERCENT）；rs_stock_industry_*
+  为个股相对所属行业指数的 20/60 日超额收益（canonical 字段 rs_stock_industry 的两个 horizon）。
+  收盘价跌破 60 日均线（ma60）视为中期趋势破位。RS 为负表示个股跑输基准，20/60 日同时转负
+  表示相对强度持续恶化，与价格破位叠加时风险最高。
+
+required_facts:
+  - rs_stock_market_20d
+  - rs_stock_market_60d
+  - rs_stock_industry_20d
+  - rs_stock_industry_60d
+  - close_price
+  - ma60
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: rs_stock_market_60d < 0 and rs_stock_industry_60d < 0 and close_price < ma60
+
+  medium:
+    condition: (rs_stock_market_20d < 0 and rs_stock_market_60d < 0) or close_price < ma60
+
+  low:
+    condition: rs_stock_market_20d < 0 or rs_stock_industry_20d < 0
+
+interpretation_templates:
+
+  high: >
+    个股相对市场与行业 60 日超额收益双双转负，且收盘价已跌破 60 日均线，
+    中期趋势破位且相对强度持续恶化，趋势风险显著。需警惕动量资金离场与趋势反转，
+    结合基本面判断是趋势性走弱还是超跌修复前的最后一跌。
+
+  medium: >
+    个股相对强度短期与中期均走弱（20/60 日超额收益转负），或价格已跌破 60 日均线，
+    趋势动能减弱。需关注是否由基本面变化驱动，还是板块/市场系统性调整所致。
+
+  low: >
+    个股相对市场或行业 20 日超额收益转负，短期相对强度走弱，
+    但中期趋势尚未确认破位。建议继续观察相对强度能否在 60 日维度修复。
+
+  none: >
+    个股相对市场与行业均未明显转弱，价格位于 60 日均线上方，未发现显著趋势破位风险。
+
+critic_questions:
+  - 相对强度转负是个股自身基本面恶化，还是所属行业/全市场系统性走弱？
+  - 跌破 60 日均线是否伴随成交量放大（放量下跌往往更具趋势确认意义）？
+  - 20/60 日超额收益口径是否已扣除分红复权影响？
+  - 是否处于行业景气拐点或政策冲击期，导致相对强度与绝对价格同时走弱？
+
+thesis_impact:
+
+  trend:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive

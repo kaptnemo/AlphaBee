@@ -1,0 +1,67 @@
+id: crowding_risk
+
+name: 拥挤度风险
+
+category: crowding
+
+dimension: crowding
+
+description: >
+  综合人气榜排名、股东户数增幅、换手率历史分位与成交额占全市场比，
+  识别交易拥挤/过热风险。hot_rank 为东财人气榜排名（canonical 字段，RANK，越小越热，
+  1=最热；未上榜=缺失）；holder_count_change 为股东户数增幅（PERCENT，大幅为正代表筹码
+  快速分散/散户涌入）；turnover_rate_percentile 为换手率在历史序列中的分位（RATIO 0-1）；
+  amount_pct_of_market 为个股成交额占全市场成交额比（PERCENT）。任一输入缺失时显式降级为
+  missing_fact，绝不默认中性或回退 0。
+
+required_facts:
+  - hot_rank
+  - holder_count_change
+  - turnover_rate_percentile
+  - amount_pct_of_market
+
+required_derived_facts: []
+
+trigger_rules:
+
+  high:
+    condition: (hot_rank <= 10 and turnover_rate_percentile > 0.9) or (turnover_rate_percentile > 0.95 and amount_pct_of_market > 2.0)
+
+  medium:
+    condition: hot_rank <= 20 or turnover_rate_percentile > 0.8 or holder_count_change > 50
+
+  low:
+    condition: hot_rank <= 50 or turnover_rate_percentile > 0.6 or holder_count_change > 30 or amount_pct_of_market > 2.0
+
+interpretation_templates:
+
+  high: >
+    个股同时处于人气榜头部且换手率达到历史极高位，或换手率历史分位极高且成交额占全市场
+    比显著偏高，交易拥挤/过热风险显著。此时预期可能已被充分交易，追高性价比低，
+    一旦情绪退潮易出现剧烈回撤，需警惕拥挤交易反转。
+
+  medium: >
+    个股关注度较高（人气榜前列）或换手率处于历史偏高位，或股东户数快速增加，
+    筹码趋于分散，拥挤度上升。建议评估资金性质（机构/游资/散户）与换手是否由基本面驱动。
+
+  low: >
+    个股关注度或换手率略偏高，或成交额占全市场比较高，存在一定拥挤迹象，
+    但尚未进入过热区间。可继续跟踪人气与换手率分位变化。
+
+  none: >
+    个股未处于人气榜显著高位，换手率分位适中，股东户数与成交额占比未见异常，
+    未发现显著拥挤/过热风险。
+
+critic_questions:
+  - 高换手是基本面拐点吸引增量资金，还是纯情绪/题材炒作导致的拥挤？
+  - 人气榜排名上升是否伴随股东户数快速增加（散户涌入）？
+  - 换手率历史分位的计算窗口是否足够长（避免次新股上市初期的高换手误判）？
+  - 成交额占全市场比偏高是个股体量增长还是短期资金集中博弈？
+
+thesis_impact:
+
+  crowding:
+    high: negative
+    medium: slightly_negative
+    low: neutral
+    none: positive
