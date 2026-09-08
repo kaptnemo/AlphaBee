@@ -9,8 +9,11 @@
 → CompanyStateArtifact → PositionDecision / PortfolioAllocation → SnapshotDiff。
 """
 
-# factors.py 采用函数内惰性导入数据源，顶层只依赖 models（Pydantic），
-# 因此在此顶层导入不会触发 tushare/akshare 初始化副作用。
+# factors.py 采用函数内惰性导入数据源，四引擎与编排入口均为确定性纯函数，
+# 顶层只依赖 models（Pydantic），因此在此顶层导入不会触发 tushare/akshare 初始化副作用。
+from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
+from alphabee.midterm.classifier import ClassifierResult, classify_state
+from alphabee.midterm.decision_model import evaluate, get_decision
 from alphabee.midterm.factors import (
     build_crowding_factor,
     build_expectation_factor,
@@ -52,6 +55,8 @@ from alphabee.midterm.models import (
     ValuationFactor,
     VariableScores,
 )
+from alphabee.midterm.position import build_position
+from alphabee.midterm.score_engine import compress_scores
 
 __all__ = [
     "AuditSnapshot",
@@ -91,4 +96,14 @@ __all__ = [
     "build_trend_factor",
     "build_valuation_factor",
     "get_factor_snapshot",
+    # 四引擎 + 编排入口
+    "ClassifierResult",
+    "ScenarioProbability",
+    "build_position",
+    "classify_state",
+    "compress_scores",
+    "evaluate",
+    "get_decision",
+    "scenario_probability",
+    "update_confidence",
 ]
