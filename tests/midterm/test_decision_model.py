@@ -78,6 +78,26 @@ def test_evaluate_missing_valuation_ev_none():
     assert art.expected_value.ev is None  # 估值缺失 → EV 显式 None，不静默回退
 
 
+def test_market_exposure_midpoint():
+    snap = _snapshot(market=MarketFactor(market_score=60.0, position_low=0.5, position_high=0.8))
+    art = evaluate(snap)
+    assert art.position.portfolio_exposure == pytest.approx(0.65)
+    assert art.position.actual_weight == pytest.approx(0.65 * art.position.stock_weight)
+    assert any("取中值" in r for r in art.position.rationale)
+
+
+def test_market_exposure_one_sided():
+    snap = _snapshot(market=MarketFactor(market_score=60.0, position_low=0.5))
+    assert evaluate(snap).position.portfolio_exposure == pytest.approx(0.5)
+
+
+def test_market_exposure_missing_is_none():
+    snap = _snapshot(market=MarketFactor())
+    art = evaluate(snap)
+    assert art.position.portfolio_exposure is None
+    assert art.position.actual_weight is None
+
+
 def test_uncertain_adds_research_to_next_evidence():
     # 空快照 → 全方向分缺失 → 熵高 uncertain → 研究任务落入 next_evidence_to_watch
     empty = FactorSnapshot(symbol="000001.SZ")

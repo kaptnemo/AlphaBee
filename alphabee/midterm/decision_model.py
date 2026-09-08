@@ -33,6 +33,7 @@ from alphabee.midterm.models import (
     EvidenceEvent,
     ExpectedValue,
     FactorSnapshot,
+    MarketFactor,
     ScenarioOutcome,
     VariableScores,
 )
@@ -47,6 +48,22 @@ _BULL_SCALE = 40.0  # PERCENT 估值分位 0 → bull 估值扩张贡献 +40%
 _BEAR_SCALE = 30.0  # PERCENT 估值分位 1 → bear 估值压缩额外 -30%
 _BEAR_BASE = 10.0  # PERCENT bear 基础下行 -10%（即使分位 0）
 _EARN_SCALE = 10.0  # PERCENT E 修订 +1 → 收益 earnings 贡献 +10%
+
+
+def _market_exposure(market: MarketFactor) -> float | None:
+    """把 M 的 PositionAdvice（position_low/high）合成单值市场暴露（§7.1）。
+
+    取 ``[position_low, position_high]`` **中值**作为中性暴露（既不激进也不保守，
+    且确定性）；仅一侧有值时用该侧；两侧都缺失 → ``None``（``position.actual_weight``
+    随之 ``None``，不静默回退 0）。
+    """
+    low = market.position_low
+    high = market.position_high
+    if low is not None and high is not None:
+        return (low + high) / 2.0
+    if low is not None:
+        return low
+    return high
 
 
 def _estimate_expected_value(
@@ -169,10 +186,14 @@ def evaluate(
         cls.state,
         confidence=confidence,
         risk_adjusted_ev=ev.risk_adjusted_ev,
-        market_exposure=snapshot.market.position_high,
+        market_exposure=_market_exposure(snapshot.market),
         risk_adjustment=scores.r_risk,
         portfolio_adjustment=portfolio_adjustment,
         single_stock_cap=single_stock_cap,
+    )
+    position.rationale.append(
+        f"市场暴露：PositionAdvice=[{snapshot.market.position_low}, "
+        f"{snapshot.market.position_high}] → 取中值 {_market_exposure(snapshot.market)}"
     )
 
     prior = prior_confidence if prior_confidence is not None else 0.0
