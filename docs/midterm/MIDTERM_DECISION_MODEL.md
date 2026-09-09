@@ -80,6 +80,65 @@
 
 ---
 
+## 2b. 软状态（Soft State）——应对"不标准"的状态
+
+§2 的硬分类隐含一个假设：一只股票会干净地落在某个 `S0–S5` 格子里。**现实不是这样**——过渡态（E 已上修、T 刚改善未共振）、矛盾态（F 强但 E/T 弱，§20）、多 Thesis 并发（§32）、层级错位（§33）都会让"它是 S2 还是 S3"变得无法唯一回答。
+
+**正确建模：把 State 从"点估计"降级为"概率分布"（软状态 / State Belief）。**
+
+### 2b.1 StateBelief 模型（升级 `CognitiveState` 的点值）
+
+```python
+class StateBelief(BaseModel):
+    distribution: dict[str, float]   # {"S1":0.1,"S2":0.7,"S3":0.2,...} 和为1
+    argmax_state: str                # 名义状态（动作类型的锚点）
+    entropy: float                   # 分布熵 = 状态模糊度（越高越"不标准"）
+    drift: dict[str, float] | None   # 相比上一帧，概率质量往哪个状态流动
+```
+
+`CognitiveState`（枚举）保留，作为 `argmax_state` 的取值域；`CompanyStateArtifact.state` 由 `str` 改为 `StateBelief`。
+
+### 2b.2 四类"不标准"情况的软状态表达
+
+| 情况 | 软状态表现 | 动作 |
+|------|-----------|------|
+| 过渡态 S2.5 | 质量分散在 `S2=0.4, S3=0.6` | 期望仓位 = 0.4×正常仓 + 0.6×核心仓 |
+| 矛盾态（F强/E·T弱） | 分布**宽**（熵高），横跨 S2/S3/S4 | 不硬贴标签 → 触发 `Conflict` 研究 |
+| 多 Thesis 并发 | 每个 Thesis 一个 `StateBelief`，聚合 | 按 Thesis 概率/重要性加权 |
+| 层级错位 | Market/Sector/Company/Thesis 四个独立 `StateBelief` | 分层各自算，再合成 |
+
+### 2b.3 决策读软状态：对分布求期望，而非取 argmax
+
+```text
+动作类型 = argmax_state                       # 粗粒度（试探/加仓/持有/减仓）
+动作力度 = Σ_k P(S_k) × weight_band(S_k)       # 对状态分布求期望仓位带
+          × Confidence × RiskAdjustedEV
+```
+
+`argmax_state` 只决定"动作类型"，**实际仓位对分布求期望**：S2.5 自然得到介于正常仓与核心仓之间的仓位；
+熵高时期望仓位自动更保守——**不确定性本身就在压低仓位**，无需额外规则。
+
+### 2b.4 entropy 与 Confidence 是两个不同量（须分开）
+
+- `entropy` = 状态模糊度（我分不清在第几阶段）；
+- `Confidence` = Thesis 效度（我的判断整体对不对，P(H|E)）。
+
+低 Confidence 通常使质量集中在 S1/S2（未验证），高 Confidence 集中在 S3/S4（已验证）——它们联动，但不是同一根轴。
+
+### 2b.5 "不知道"是合法输出（§20/§8）
+
+矛盾态或证据缺失时**不要**强行选 argmax 照常行动：
+
+```text
+if entropy > 阈值 或 信号方向冲突（consistency=divergent）:
+    输出 = "uncertain" + 触发 ResearchTask（研究"市场知道什么我不知道"）
+    动作 = 退到试探仓 / 维持现状，不据此加仓
+```
+
+对应 §8：`Price → InformationSignal`，不是 `Price → AutomaticTrade`。矛盾不是买卖信号，是研究信号。
+
+---
+
 ## 3. Layer 1：FactorSnapshot → VariableScores（压缩）
 
 ### 3.1 输入：FactorSnapshot（原始值，已实现）
@@ -123,12 +182,15 @@ class VariableScores(BaseModel):
 
 State 由**因子模式**决定，classifier 输出 `StateTransition`（含 `legal` + `trigger_factors`）。
 
-### 4.1 状态定义（`CognitiveState` 已实现）
+### 4.1 状态定义（`CognitiveState` 已实现，承载于软状态）
 
 ```text
 S0 研究候选 → S1 预期差(试探) → S2 证据确认(加仓) → S3 共识扩散(持有)
 → S4 充分定价(减仓) → S5 退出
 ```
+
+> 迁移到软状态后（§2b），`CognitiveState` 仅作为 `StateBelief.argmax_state` 的取值域；
+> §4.2 的"因子模式 → 状态"映射实际输出的是**概率质量分布**，而非硬标签。
 
 ### 4.2 因子模式 → 状态映射表
 
@@ -232,9 +294,13 @@ State 只决定**动作类型**，不决定**动作力度**。两个 S2 股票�
 
 | 轴 | 决定 | 输出 |
 |----|------|------|
-| State | 动作类型 | `position_band`：试探 / 加仓 / 核心 / 减仓 / 清仓 |
-| Confidence | 动作力度 | 仓位带内的实际权重缩放 |
+| State | 动作类型 | `argmax_state` → `position_band`：试探 / 加仓 / 核心 / 减仓 / 清仓 |
+| State 分布 | 动作力度（修正） | `Σ P(S_k)·weight_band(S_k)` 期望仓位带（软状态，§2b） |
+| Confidence | 动作力度 | 仓位带内的实际权重缩放（后验越高越敢下注） |
 | RiskAdjustedEV | 赔率门槛 | EV 不足（如 < 阈值）→ 压到 0 或减仓 |
+
+> `argmax_state` 决定**动作类型**，但仓位对**状态分布求期望**（§2b.3），而非对 argmax 取点值；
+> 熵高时期望仓位自动更保守。
 
 ### 6.3 动作类型 → 仓位带（§6/§13/§16，示意，非固定数字）
 
@@ -303,7 +369,7 @@ class PositionDecision(BaseModel):
 |----|--------------------------------------|------|------|
 | Layer 1 | `VariableScores` | `score_engine.py` | ❌ 缺 |
 | Layer 1' | `EvidenceEvent` / `CompanyStateArtifact` | `bayes.py` | ❌ 缺 |
-| Layer 2a | `CognitiveState` / `StateTransition`(待补) | `classifier.py` | ❌ 缺 |
+| Layer 2a | `CognitiveState` + `StateBelief`(软状态，待补) / `StateTransition`(待补) | `classifier.py` | ❌ 缺 |
 | Layer 2b | `ExpectedValue` / `ScenarioOutcome` | `bayes.py`(概率) + 情景估值 | ❌ 缺 |
 | Layer 3 | `CompanyStateArtifact`（承载 State+Confidence+EV） | 决策合成 | ❌ 缺 |
 | Layer 4 | `PositionDecision` | `position.py` | ❌ 缺 |
@@ -332,3 +398,4 @@ class PositionDecision(BaseModel):
 4. **状态机服务 EV**：状态机估计 P，EV 才是最终决策核心（§42）。
 5. **组合独立**：Position = 个股决策 × MarketExposure × Portfolio调整，分层相乘（§28/§38）。
 6. **State 非指令**：`if state==S2: buy()` 是反模式，动作力度由 Confidence+EV 决定（§41）。
+7. **软状态**：State 是概率分布（`StateBelief`），决策对分布求期望而非取 argmax；熵高→仓位自动保守（§2b）。
