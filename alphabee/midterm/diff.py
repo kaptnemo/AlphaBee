@@ -20,13 +20,15 @@
 步骤 6（L4 赔率差）、步骤 7（L5 仓位差）、步骤 8（证据差集）、步骤 9（归因，模板
 兜底）、步骤 10（退出检查）、步骤 11（degraded/missing 边界）。数值核心全部确定性
 计算，本模块不调 LLM；归因 note 为模板句，LLM 润色 / thesis_broken 语义判断在消费
-方（D4）做。
+方（D4）做。另提供 design §6 的 :func:`diff_series` 速度/加速度序列派生（纯规则）。
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 from typing import Any
+
+from pydantic import BaseModel
 
 from alphabee.midterm.bayes import _logit
 from alphabee.midterm.classifier import _BACKWARD, _FORWARD, _REOPEN, _STATES, _drift
@@ -770,3 +772,64 @@ def diff(
         missing_appeared=missing_appeared,
         missing_disappeared=missing_disappeared,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# diff 序列速度/加速度派生（design §6，纯规则，不落单帧）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class DiffVelocity(BaseModel):
+    """diff 序列派生的速度/加速度（design §6）。
+
+    速度/加速度是 **diff 序列** 的派生量（加速度天然需要第三帧），故不硬存在单帧
+    :class:`CompanyStateDiff` 内（避免单帧自指），只由 :func:`diff_series` 派生。
+    """
+
+    date: str = ""  # 对应帧的 curr date（YYYY-MM-DD）
+    elapsed_days: int = 0
+    belief_velocity: float | None = None  # tv_distance / elapsed_days（信念位移速度）
+    evidence_arrival_rate: float | None = None  # len(new_evidence) / elapsed_days（证据到达率）
+    belief_acceleration: float | None = None  # velocity_t − velocity_{t-1}（首帧 None）
+
+
+def _per_day(numerator: float, elapsed_days: int) -> float | None:
+    """每交易日速率 ``numerator / elapsed_days``；``elapsed_days <= 0`` → ``None``。"""
+    if elapsed_days is None or elapsed_days <= 0:
+        return None
+    return numerator / elapsed_days
+
+
+def diff_series(diffs: list[CompanyStateDiff]) -> list[DiffVelocity]:
+    """从 diff 序列派生逐帧速度/加速度（纯规则禁 LLM，design §6）。
+
+    - ``belief_velocity = tv_distance / elapsed_days``（状态无漂移 → 0.0；首帧
+      ``elapsed_days=0`` → ``None``）；
+    - ``evidence_arrival_rate = len(new_evidence) / elapsed_days``；
+    - ``belief_acceleration = belief_velocity_t − belief_velocity_{t-1}``（首帧或任一
+      侧 velocity 为 ``None`` → ``None``）。
+
+    Args:
+        diffs: 同一标的按时间顺序排列的 diff 序列（``diff()`` 产物）。
+
+    Returns:
+        与 ``diffs`` 等长的 :class:`DiffVelocity` 列表（空序列 → 空列表）。
+    """
+    velocities: list[DiffVelocity] = []
+    prev_velocity: float | None = None
+    for d in diffs:
+        tv = d.state_shift.tv_distance if d.state_shift is not None else 0.0
+        velocity = _per_day(tv, d.elapsed_days)
+        arrival = _per_day(len(d.new_evidence), d.elapsed_days)
+        acceleration = (velocity - prev_velocity) if (velocity is not None and prev_velocity is not None) else None
+        velocities.append(
+            DiffVelocity(
+                date=d.curr.date,
+                elapsed_days=d.elapsed_days,
+                belief_velocity=velocity,
+                evidence_arrival_rate=arrival,
+                belief_acceleration=acceleration,
+            )
+        )
+        prev_velocity = velocity
+    return velocities

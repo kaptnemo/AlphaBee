@@ -9,8 +9,9 @@
 
 import pytest
 
-from alphabee.midterm.diff import diff
+from alphabee.midterm.diff import diff, diff_series
 from alphabee.midterm.models import (
+    ArtifactRef,
     CompanyStateArtifact,
     CompanyStateDiff,
     EvidenceEvent,
@@ -22,6 +23,7 @@ from alphabee.midterm.models import (
     PositionDecision,
     ScenarioOutcome,
     StateBelief,
+    StateShift,
     TrendFactor,
     VariableScores,
 )
@@ -661,3 +663,85 @@ def test_missing_first_frame_empty():
     d = diff(None, curr)
     assert d.missing_appeared == []
     assert d.missing_disappeared == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# diff_series 速度/加速度派生（design §6）
+# ─────────────────────────────────────────────────────────────────────────────
+def _diff_frame(
+    date: str,
+    elapsed_days: int,
+    tv_distance: float | None = None,
+    new_evidence_count: int = 0,
+) -> CompanyStateDiff:
+    state_shift = None
+    if tv_distance is not None:
+        state_shift = StateShift(argmax_from="S1", argmax_to="S2", tv_distance=tv_distance, entropy_to=1.0)
+    evidence = [
+        EvidenceEvent(
+            id=f"e{i}", date=date, kind="thesis", description="x", effect_on_thesis="confirming", confidence_delta=0.1
+        )
+        for i in range(new_evidence_count)
+    ]
+    return CompanyStateDiff(
+        symbol="000977",
+        prev=None,
+        curr=ArtifactRef(id=f"000977:{date}", date=date),
+        elapsed_days=elapsed_days,
+        state_shift=state_shift,
+        new_evidence=evidence,
+    )
+
+
+def test_diff_series_empty():
+    assert diff_series([]) == []
+
+
+def test_diff_series_single_frame_no_acceleration():
+    # 首帧 elapsed_days=0 → 速度无法定义（None），加速度 None
+    series = diff_series([_diff_frame("2026-01-01", elapsed_days=0)])
+    assert len(series) == 1
+    v = series[0]
+    assert v.belief_velocity is None
+    assert v.evidence_arrival_rate is None
+    assert v.belief_acceleration is None
+
+
+def test_diff_series_multi_frame_acceleration():
+    # 三帧：首帧无加速度；后续帧 velocity/rate/acceleration 按公式派生
+    series = diff_series(
+        [
+            _diff_frame("2026-01-01", elapsed_days=0),  # 首帧
+            _diff_frame("2026-01-05", elapsed_days=4, tv_distance=0.4, new_evidence_count=2),
+            _diff_frame("2026-01-09", elapsed_days=4, tv_distance=0.8, new_evidence_count=1),
+        ]
+    )
+    assert len(series) == 3
+    # 帧 1：velocity=0.4/4=0.1，rate=2/4=0.5，加速度 None（prev 无速度）
+    assert series[1].belief_velocity == pytest.approx(0.1)
+    assert series[1].evidence_arrival_rate == pytest.approx(0.5)
+    assert series[1].belief_acceleration is None
+    # 帧 2：velocity=0.8/4=0.2，rate=1/4=0.25，加速度=0.2−0.1=0.1
+    assert series[2].belief_velocity == pytest.approx(0.2)
+    assert series[2].evidence_arrival_rate == pytest.approx(0.25)
+    assert series[2].belief_acceleration == pytest.approx(0.1)
+
+
+def test_diff_series_acceleration_negative_when_decelerating():
+    # 信念速度下降 → 负加速度
+    series = diff_series(
+        [
+            _diff_frame("2026-01-01", elapsed_days=0),
+            _diff_frame("2026-01-05", elapsed_days=4, tv_distance=0.8),
+            _diff_frame("2026-01-09", elapsed_days=4, tv_distance=0.4),
+        ]
+    )
+    assert series[1].belief_velocity == pytest.approx(0.2)
+    assert series[2].belief_velocity == pytest.approx(0.1)
+    assert series[2].belief_acceleration == pytest.approx(-0.1)
+
+
+def test_diff_series_no_state_shift_zero_velocity():
+    # 状态无漂移（state_shift=None）→ tv=0 → velocity=0.0（非 None，elapsed>0）
+    series = diff_series([_diff_frame("2026-01-05", elapsed_days=4, tv_distance=None)])
+    assert series[0].belief_velocity == pytest.approx(0.0)
