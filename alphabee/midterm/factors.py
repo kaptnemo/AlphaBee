@@ -379,6 +379,17 @@ def build_valuation_factor(
     return factor, _missing_fields(factor, _VALUATION_FIELDS)
 
 
+def _single_stock_coverage_sample(crowding: Any) -> bool:
+    """判断 ``analyst_coverage_rank`` 是否来自单股票样本（无对标样本）。
+
+    单股票样本下 collector 的 ``rank_by_coverage`` 恒返回 1（「覆盖排名第 1」不可信）；
+    collector 已在 ``CrowdingOutput.warnings`` 登记单样本 warning，据此把该字段显式
+    缺失，而非把 rank=1 当作真实排名。
+    """
+    warnings = getattr(crowding, "warnings", None) or []
+    return any("single-stock sample" in str(w) for w in warnings)
+
+
 def build_crowding_factor(
     market_data: dict[str, Any] | None,
     crowding: Any | None,
@@ -388,11 +399,17 @@ def build_crowding_factor(
     ``build_crowding`` 返回 ``CrowdingOutput``：``values`` 承载 6 个 P0 canonical
     字段（holder/per_capita/hot_rank/coverage_rank/turnover_rate_percentile/
     amount_pct_of_market），``missing`` 记录 ``crowding_missing: <field>``。
-    其余字段（前十大集中度/两融同比/新闻热度/龙头集中度）本批无数据源 → ``None``。
+    覆盖热度排名仅在传入有效对标样本时才是真实排名；单股票样本（``warnings`` 含
+    single-stock sample）时 ``analyst_coverage_rank`` 显式 ``None``（不把 rank=1
+    当作可信排名）。其余字段（前十大集中度/两融同比/新闻热度/龙头集中度）本批无数据源 → ``None``。
     """
     m = market_data or {}
     db = m.get("latest_daily_basic") or {}
     cvals = getattr(crowding, "values", None) or {}
+
+    coverage_rank = _opt_int(cvals.get("analyst_coverage_rank"))
+    if _single_stock_coverage_sample(crowding):
+        coverage_rank = None  # 单股票样本 rank 恒为 1 → 显式缺失（登记进 missing_facts）
 
     factor = CrowdingFactor(
         turnover_rate=_opt(db.get("turnover_rate")),
@@ -402,7 +419,7 @@ def build_crowding_factor(
         per_capita_holding_change=_opt(cvals.get("per_capita_holding_change")),
         institutional_holding_ratio=None,
         margin_balance_yoy=None,
-        analyst_coverage_rank=_opt_int(cvals.get("analyst_coverage_rank")),
+        analyst_coverage_rank=coverage_rank,
         hot_rank=_opt_int(cvals.get("hot_rank")),
         news_heat=None,
         leader_concentration=None,

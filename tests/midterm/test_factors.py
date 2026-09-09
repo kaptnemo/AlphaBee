@@ -215,6 +215,42 @@ def test_build_crowding_factor_turnover_and_p0_values():
     }
 
 
+def test_build_crowding_factor_single_stock_coverage_rank_missing():
+    """单股票样本（无对标样本）→ analyst_coverage_rank 显式缺失，不再恒为 1 误导。"""
+    crowding = SimpleNamespace(
+        values={
+            "turnover_rate_percentile": 0.7,
+            "amount_pct_of_market": 1.5,
+            "holder_count_change": -1.0,
+            "per_capita_holding_change": 2.0,
+            "analyst_coverage_rank": 1,  # collector 单样本下恒给 1
+            "hot_rank": 10,
+        },
+        warnings=["analyst_coverage_rank computed over single-stock sample (rank=1 means covered)"],
+    )
+    factor, missing = build_crowding_factor(_market(), crowding)
+    assert factor.analyst_coverage_rank is None
+    assert "analyst_coverage_rank" in missing
+
+
+def test_build_crowding_factor_sample_coverage_rank_kept():
+    """有对标样本（无单样本 warning）→ 保留真实覆盖排名。"""
+    crowding = SimpleNamespace(
+        values={
+            "turnover_rate_percentile": 0.7,
+            "amount_pct_of_market": 1.5,
+            "holder_count_change": -1.0,
+            "per_capita_holding_change": 2.0,
+            "analyst_coverage_rank": 5,  # 真实对标样本排名
+            "hot_rank": 10,
+        },
+        warnings=[],
+    )
+    factor, missing = build_crowding_factor(_market(), crowding)
+    assert factor.analyst_coverage_rank == 5
+    assert "analyst_coverage_rank" not in missing
+
+
 def test_build_risk_factor_audit_list_nested():
     risk = {
         "pledge": [{"pledge_ratio": 12.0}],
