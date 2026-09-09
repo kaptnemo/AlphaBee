@@ -15,6 +15,18 @@
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
 from alphabee.midterm.classifier import ClassifierResult, classify_state
 from alphabee.midterm.decision_model import evaluate, get_decision
+
+# state diff 引擎 + 持久化 + 消费方（D1–D4；数值核心纯规则禁 LLM）
+from alphabee.midterm.diff import DiffVelocity, diff, diff_series
+from alphabee.midterm.diff_consumers import (
+    ExitSignal,
+    MonitorTrigger,
+    anchor_diff,
+    check_exit,
+    monitor_triggers,
+    project_journal,
+    project_narrative,
+)
 from alphabee.midterm.factors import (
     build_crowding_factor,
     build_expectation_factor,
@@ -65,6 +77,7 @@ from alphabee.midterm.models import (
     ValuationFactor,
     VariableScores,
 )
+from alphabee.midterm.persistence import append_artifact, drop_artifact, latest_artifact, load_artifacts
 from alphabee.midterm.position import build_position
 from alphabee.midterm.score_engine import compress_scores
 
@@ -125,4 +138,19 @@ __all__ = [
     "get_decision",
     "scenario_probability",
     "update_confidence",
+    # state diff 引擎 + 持久化 + 消费方（D1–D4）
+    "DiffVelocity",
+    "ExitSignal",
+    "MonitorTrigger",
+    "anchor_diff",
+    "append_artifact",
+    "check_exit",
+    "diff",
+    "diff_series",
+    "drop_artifact",
+    "latest_artifact",
+    "load_artifacts",
+    "monitor_triggers",
+    "project_journal",
+    "project_narrative",
 ]
