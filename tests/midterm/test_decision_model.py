@@ -72,6 +72,77 @@ def test_evaluate_no_evidence_no_prior():
     assert art.expected_value.probability_source == "state_prior"
 
 
+def test_evaluate_writes_back_state_and_confidence():
+    # 无证据无先验：confidence 缺失 → 按模型非空字段约定回退 0.0（与 thesis_confidence 同口径）
+    art = evaluate(_snapshot())
+    snap = art.factor_snapshot
+    assert snap is not None
+    assert snap.state == art.state.argmax_state  # 顶层 state 与快照 state 一致（不再残留 S0）
+    assert snap.confidence == 0.0
+
+    # 有证据 + 先验：后验回写进快照
+    art2 = evaluate(_snapshot(), [_ev("confirming", 0.5)], prior_confidence=0.5)
+    assert art2.factor_snapshot.confidence == pytest.approx(0.75)
+    assert art2.factor_snapshot.state == art2.state.argmax_state
+
+
+def test_evaluate_writes_back_direction_scores():
+    """方向分回写：子模型 direction/score 与 VariableScores 不再两套不一致。"""
+    art = evaluate(_snapshot())
+    snap = art.factor_snapshot
+    scores = art.variable_scores
+
+    # F=0.5 / E=0.4 / T=0.375 → 均 improving；V=0.3 恰在阈值 → fair
+    assert snap.fundamental.direction == "improving"
+    assert snap.fundamental.score == pytest.approx(50.0 + 50.0 * scores.f_fundamental_trend)
+    assert snap.expectation.direction == "improving"
+    assert snap.expectation.score == pytest.approx(50.0 + 50.0 * scores.e_revision)
+    assert snap.trend.direction == "improving"
+    assert snap.trend.score == pytest.approx(50.0 + 50.0 * scores.t_relative_strength)
+    assert snap.valuation.direction == "fair"
+    assert snap.valuation.score == pytest.approx(50.0 + 50.0 * scores.v_valuation_percentile)
+    assert snap.crowding.direction == "normal"
+    assert snap.crowding.score == pytest.approx(50.0 + 50.0 * scores.c_crowding)
+    assert snap.risk.direction == "neutral"
+    assert snap.risk.score == pytest.approx(50.0 + 50.0 * scores.r_risk)
+
+
+def test_writeback_sign_convention_valuation_crowding_risk():
+    """C/R 反向（越拥挤/越风险越负）+ V 用估值分位（低分位=便宜=正）。"""
+    snap = _snapshot(
+        valuation=ValuationFactor(pe_ttm_5y_percentile=0.05, pb_5y_percentile=0.05),
+        crowding=CrowdingFactor(holder_count_change=-10.0, hot_rank=1, turnover_rate_percentile=0.9),
+        risk=RiskFactor(pledge_ratio=80.0, debt_to_assets=80.0),
+    )
+    art = evaluate(snap)
+    s = art.factor_snapshot
+    assert s.valuation.direction == "cheap"
+    assert s.valuation.score > 50.0
+    assert s.crowding.direction == "overheated"
+    assert s.crowding.score < 50.0
+    assert s.risk.direction == "risk_rising"
+    assert s.risk.score < 50.0
+
+
+def test_writeback_missing_direction_keeps_default():
+    """空快照 → 方向分缺失 → 子模型 score 保持 None、direction 保持模型默认（不制造方向）。"""
+    empty = FactorSnapshot(symbol="000001.SZ")
+    art = evaluate(empty)
+    snap = art.factor_snapshot
+    assert snap.fundamental.direction == "stable"
+    assert snap.fundamental.score is None
+    assert snap.expectation.direction == "neutral"
+    assert snap.expectation.score is None
+    assert snap.trend.direction == "neutral"
+    assert snap.trend.score is None
+    assert snap.valuation.direction == "neutral"
+    assert snap.valuation.score is None
+    assert snap.crowding.direction == "neutral"
+    assert snap.crowding.score is None
+    assert snap.risk.direction == "neutral"
+    assert snap.risk.score is None
+
+
 def test_evaluate_missing_valuation_ev_none():
     art = evaluate(_snapshot(valuation=ValuationFactor()))
     assert art.expected_value is not None

@@ -26,6 +26,8 @@ FactorSnapshot
 
 from __future__ import annotations
 
+from typing import Any
+
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
 from alphabee.midterm.classifier import classify_state
 from alphabee.midterm.models import (
@@ -64,6 +66,59 @@ def _market_exposure(market: MarketFactor) -> float | None:
     if low is not None:
         return low
     return high
+
+
+# 方向分 → 子模型 direction 标签的阈值（与 classifier._UP_T / _DOWN_T 同口径，±0.3）
+_DIRECTION_UP = 0.3
+_DIRECTION_DOWN = -0.3
+
+
+def _score_0_100(direction_score: float | None) -> float | None:
+    """``[-1, 1]`` 方向分 → ``0-100`` 分数（50=中性，100=最有利，0=最不利）。
+
+    缺失方向分（``None``）→ ``None``（缺失显式 None，不静默回退 50）。
+    """
+    if direction_score is None:
+        return None
+    return 50.0 + 50.0 * direction_score
+
+
+def _writeback_directions(snapshot: FactorSnapshot, scores: VariableScores) -> None:
+    """把 ``compress_scores`` 的方向分回写进各因子子模型的 ``direction`` / ``score``。
+
+    消除「``VariableScores`` 已有方向分，但子模型仍停在 ``direction=neutral`` /
+    ``score=None``」的两套不一致（dead 字段）。映射（方向分均为 ``[-1, 1]``，
+    正 = 对多头有利）：
+
+    - F/E/T：直接用方向分；``> +0.3`` → improving，``< -0.3`` → deteriorating，
+      否则 F 为 stable、E/T 为 neutral；
+    - V：方向分正 = 估值分位低（便宜）→ cheap；负 → expensive；中间 → fair；
+    - C：方向分正 = 不拥挤（冷）→ cold；负 → overheated；中间 → normal；
+    - R：方向分正 = 风险下降 → risk_declining；负 → risk_rising；中间 → neutral。
+
+    ``score`` 统一映射为 0-100（50=中性），与「正=有利」约定一致。方向分缺失时
+    保持子模型默认（``score=None``，``direction`` 维持原默认值），不制造虚假方向。
+    """
+
+    def _label(score: float, up: str, down: str, neutral: str) -> str:
+        if score > _DIRECTION_UP:
+            return up
+        if score < _DIRECTION_DOWN:
+            return down
+        return neutral
+
+    def _apply(factor: Any, score: float | None, up: str, down: str, neutral: str) -> None:
+        if score is None:
+            return  # 缺失：保持模型默认（direction 默认值 + score=None）
+        factor.direction = _label(score, up, down, neutral)
+        factor.score = _score_0_100(score)
+
+    _apply(snapshot.fundamental, scores.f_fundamental_trend, "improving", "deteriorating", "stable")
+    _apply(snapshot.expectation, scores.e_revision, "improving", "deteriorating", "neutral")
+    _apply(snapshot.trend, scores.t_relative_strength, "improving", "deteriorating", "neutral")
+    _apply(snapshot.valuation, scores.v_valuation_percentile, "cheap", "expensive", "fair")
+    _apply(snapshot.crowding, scores.c_crowding, "cold", "overheated", "normal")
+    _apply(snapshot.risk, scores.r_risk, "risk_declining", "risk_rising", "neutral")
 
 
 def _estimate_expected_value(
@@ -179,6 +234,15 @@ def evaluate(
     cls = classify_state(scores)
 
     confidence = update_confidence(evidence, prior=prior_confidence)
+
+    # 回写快照：消除顶层 StateBelief（argmax=Sx）与 factor_snapshot.state 残留 S0、
+    # confidence 残留默认值的自相矛盾，并把方向分写进各因子子模型（消除
+    # direction/score 与 VariableScores 两套不一致的 dead 字段）。
+    snapshot.state = cls.state.argmax_state
+    # confidence 缺失（无证据无先验）时按模型非空字段约定回退 0.0（与 thesis_confidence 同口径）
+    snapshot.confidence = confidence if confidence is not None else 0.0
+    _writeback_directions(snapshot, scores)
+
     scenario_probs = scenario_probability(cls.state.argmax_state, confidence=confidence)
     ev = _estimate_expected_value(snapshot, scenario_probs, scores)
 
@@ -240,3 +304,29 @@ def get_decision(
 
     snapshot = get_factor_snapshot(symbol, include_market=include_market)
     return evaluate(snapshot, evidence, prior_confidence=prior_confidence, thesis=thesis)
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="AlphaBee Midterm Decision Model")
+    parser.add_argument("symbol", type=str, help="股票代码（如 600519）")
+    parser.add_argument("--evidence", type=str, default=None, help="证据日志 JSON 文件路径")
+    parser.add_argument("--prior_confidence", type=float, default=None, help="先验 P(H)")
+    parser.add_argument("--thesis", type=str, default="", help="核心假设 H")
+    args = parser.parse_args()
+
+    evidence = None
+    if args.evidence:
+        with open(args.evidence, encoding="utf-8") as f:
+            evidence = [EvidenceEvent(**item) for item in json.load(f)]
+
+    artifact = get_decision(
+        symbol=args.symbol,
+        evidence=evidence,
+        prior_confidence=args.prior_confidence,
+        thesis=args.thesis,
+    )
+
+    print(artifact.model_dump_json(indent=2, ensure_ascii=False))
