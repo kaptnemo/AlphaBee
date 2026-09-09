@@ -106,6 +106,78 @@ def test_fundamental_missing_is_none():
     assert compress_scores(snap).f_fundamental_trend is None
 
 
+def test_fundamental_negative_cashflow_penalized():
+    """profit_without_cash：高增长但经营/自由现金流双负 → F 被显著惩罚。"""
+    snap = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=30.0,
+            net_profit_yoy=269.0,
+            eps_growth_yoy=30.0,
+            operating_cashflow=-7_490_000_000.0,
+            free_cashflow=-8_650_000_000.0,
+        )
+    )
+    f = compress_scores(snap).f_fundamental_trend
+    assert f < 1.0  # 不再是净利 +269% 拉满的 1.0
+    assert f < 0.5  # 双负现金流 → 显著惩罚
+
+
+def test_fundamental_single_negative_cashflow_penalized():
+    """单个负现金流（经营或自由）也惩罚，但轻于双负。"""
+    both_neg = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=30.0,
+            net_profit_yoy=30.0,
+            eps_growth_yoy=30.0,
+            operating_cashflow=-1.0,
+            free_cashflow=-1.0,
+        )
+    )
+    single_neg = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=30.0,
+            net_profit_yoy=30.0,
+            eps_growth_yoy=30.0,
+            operating_cashflow=-1.0,
+            free_cashflow=1.0,
+        )
+    )
+    clean = _snapshot(fundamental=FundamentalFactor(revenue_yoy=30.0, net_profit_yoy=30.0, eps_growth_yoy=30.0))
+    f_both = compress_scores(both_neg).f_fundamental_trend
+    f_single = compress_scores(single_neg).f_fundamental_trend
+    f_clean = compress_scores(clean).f_fundamental_trend
+    assert f_both < f_single < f_clean
+
+
+def test_fundamental_cashflow_missing_no_penalty():
+    """现金流缺失 → 不惩罚（不静默假设为负）。"""
+    snap = _snapshot(fundamental=FundamentalFactor(revenue_yoy=30.0, net_profit_yoy=30.0, eps_growth_yoy=30.0))
+    assert compress_scores(snap).f_fundamental_trend == pytest.approx(1.0)
+
+
+def test_fundamental_inline_no_beat():
+    """net_profit_yoy 落在预告区间内 → in-line，不额外加分。"""
+    snap = _snapshot(
+        fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=20.0, eps_growth_yoy=15.0),
+        expectation=ExpectationFactor(profit_forecast_min_change=10.0, profit_forecast_max_change=50.0),
+    )
+    # 纯增长分 = mean(saturate(10/30), saturate(20/30), saturate(15/30)) = 0.5
+    assert compress_scores(snap).f_fundamental_trend == pytest.approx(0.5)
+
+
+def test_fundamental_beat_bonus():
+    """net_profit_yoy 超预告上限 → beat 加分（+_BEAT_BONUS）。"""
+    beat = _snapshot(
+        fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=80.0, eps_growth_yoy=15.0),
+        expectation=ExpectationFactor(profit_forecast_min_change=10.0, profit_forecast_max_change=50.0),
+    )
+    base = _snapshot(fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=80.0, eps_growth_yoy=15.0))
+    f_beat = compress_scores(beat).f_fundamental_trend
+    f_base = compress_scores(base).f_fundamental_trend
+    assert f_beat > f_base
+    assert f_beat - f_base == pytest.approx(0.2)  # _BEAT_BONUS
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # E —— 上修 → 正（核心因子）
 # ─────────────────────────────────────────────────────────────────────────────
@@ -113,12 +185,30 @@ def test_fundamental_missing_is_none():
 
 def test_revision_upward_positive():
     snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=5.0))
-    assert compress_scores(snap).e_revision == pytest.approx(1.0)
+    assert compress_scores(snap).e_revision == pytest.approx(0.3882, abs=1e-3)
 
 
 def test_revision_downward_negative():
     snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=-5.0))
-    assert compress_scores(snap).e_revision == pytest.approx(-1.0)
+    assert compress_scores(snap).e_revision == pytest.approx(-0.3882, abs=1e-3)
+
+
+def test_revision_antisaturation_45_vs_100():
+    """反饱和：+45% 与 +100% 不再都 clip 到 1.0，保留幅度差异。"""
+    s45 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0))).e_revision
+    s100 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=100.0))).e_revision
+    assert s45 != s100
+    assert s100 > s45
+    assert s45 < 1.0  # 45% 不再饱和到 1.0
+    assert s100 == pytest.approx(1.0)  # 100% → 归一化参考点 ±1
+
+
+def test_revision_antisaturation_monotonic():
+    """反饱和单调：上修幅度越大方向分越高（5% < 45% < 100%）。"""
+    s5 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=5.0))).e_revision
+    s45 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0))).e_revision
+    s100 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=100.0))).e_revision
+    assert 0.0 < s5 < s45 < s100
 
 
 def test_revision_breadth_neutral_zero():

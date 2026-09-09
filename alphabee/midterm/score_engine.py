@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from alphabee.midterm.models import (
@@ -42,13 +43,19 @@ from alphabee.midterm.models import (
 # ─────────────────────────────────────────────────────────────────────────────
 
 _FUNDAMENTAL_YOY_SCALE = 30.0  # PERCENT 营收/净利/每股 YoY 饱和点（30% → ±1）
-_REVISION_SCALE = 5.0  # PERCENT EPS 上修饱和点（5% → ±1）
+# e_revision 反饱和（log1p 压缩，§12）：不再线性 clip 到 ±1，保留 +45% vs +100% 幅度差异。
+_REVISION_REF = 100.0  # PERCENT 归一化参考点（100% 上修 → ±1；45% → ≈0.83）
+_REVISION_REF_LOG = math.log1p(_REVISION_REF)
 _RS_SCALE = 20.0  # PERCENT 相对强度超额收益饱和点（20% → ±1）
 _HOLDER_CHANGE_SCALE = 20.0  # PERCENT 股东户数增幅饱和点（20% → ±1）
 _PLEDGE_SCALE = 50.0  # PERCENT 质押率饱和点（50% → -1）
 _DEBT_NEUTRAL = 50.0  # PERCENT 资产负债率中性点（50% → 0）
 _DEBT_SCALE = 50.0  # PERCENT 资产负债率饱和步长（100% → -1，0% → +1）
 _GOODWILL_SCALE = 1_000_000_000.0  # CNY 商誉饱和点（10 亿 → -1）
+
+# F 现金质量 / 超预期（§11「S2 是 PositiveEvidenceChange 非 Growth」+ profit_without_cash）
+_CASH_NEGATIVE_PENALTY = 0.5  # 单个负现金流（经营或自由）对 F 的惩罚力度
+_BEAT_BONUS = 0.2  # net_profit_yoy 超预告上限的 beat 加分
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,6 +69,17 @@ def _saturate(value: float, scale: float) -> float:
     return max(-1.0, min(1.0, ratio))
 
 
+def _log1p_saturate(value: float, ref_log: float) -> float:
+    """log1p 反饱和：把 PERCENT 修订量压缩到 ``[-1, 1]``，保留大值幅度差异。
+
+    ``sign(x) * log1p(|x|) / ref_log``。相比线性 ``_saturate``，+45% 与 +100% 不再
+    都饱和到 1.0（100% → ±1，45% → ≈±0.83，5% → ≈±0.39）。缺失值由调用方过滤。
+    """
+    sign = 1.0 if value >= 0.0 else -1.0
+    magnitude = math.log1p(abs(value)) / ref_log
+    return sign * min(1.0, magnitude)
+
+
 def _mean(values: list[float]) -> float | None:
     """均值；空列表 → ``None``（缺失而非回退 0）。"""
     return sum(values) / len(values) if values else None
@@ -72,29 +90,64 @@ def _mean(values: list[float]) -> float | None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _fundamental_trend(f: FundamentalFactor) -> float | None:
-    """F 方向分：边际改善 → 正。
+def _cash_quality_penalty(f: FundamentalFactor) -> float:
+    """现金质量惩罚（profit_without_cash）：经营/自由现金流为负 → 负向。
+
+    每项为负记 ``-_CASH_NEGATIVE_PENALTY``；现金流缺失（``None``）不惩罚（不静默假设）。
+    """
+    penalty = 0.0
+    if f.operating_cashflow is not None and f.operating_cashflow < 0.0:
+        penalty += _CASH_NEGATIVE_PENALTY
+    if f.free_cashflow is not None and f.free_cashflow < 0.0:
+        penalty += _CASH_NEGATIVE_PENALTY
+    return -penalty
+
+
+def _beat_bonus(net_profit_yoy: float | None, max_change: float | None) -> float:
+    """超预期 beat（§11「S2 是 PositiveEvidenceChange 非 Growth」）。
+
+    ``net_profit_yoy`` 超预告上限 → ``+_BEAT_BONUS``；in-line（含落区间内）/
+    预告区间缺失 → 0（不额外加分）。
+    """
+    if net_profit_yoy is not None and max_change is not None and net_profit_yoy > max_change:
+        return _BEAT_BONUS
+    return 0.0
+
+
+def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | None:
+    """F 方向分：边际改善 + 现金质量惩罚 + 超预期 beat。
 
     §3.3 口径 ``gross_margin_trend + revenue_yoy + net_profit_yoy`` 的边际方向；
     ``FactorSnapshot`` 是单帧、无 ``gross_margin_trend`` 时序，故用营收/净利/EPS
-    三组 YoY（本身即边际变化）作为「改善」代理。全部缺失 → ``None``。
+    三组 YoY（本身即边际变化）作为「改善」代理，并叠加：
+
+    - 现金质量（profit_without_cash）：经营/自由现金流为负 → 显著惩罚（避免
+      net_profit_yoy 高增长掩盖现金流失血）；
+    - 超预期（beat）：net_profit_yoy 超预告上限才加分，in-line 不加分。
+
+    全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。
     """
     yoys = [f.revenue_yoy, f.net_profit_yoy, f.eps_growth_yoy]
     contribs = [_saturate(v, _FUNDAMENTAL_YOY_SCALE) for v in yoys if v is not None]
-    return _mean(contribs)
+    growth = _mean(contribs)
+    if growth is None:
+        return None
+
+    score = growth + _cash_quality_penalty(f) + _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
+    return _saturate(score, 1.0)
 
 
 def _revision(e: ExpectationFactor) -> float | None:
     """E 方向分（核心因子）：分析师上修 → 正。
 
     §3.3 口径 ``eps_fy1_revision_1m/3m + revision_breadth``。revision 字段为 PERCENT
-    （上修为正），``revision_breadth`` 为上调占比 0-1（0.5 中性 → 映射到 0）。
-    全部缺失 → ``None``。
+    （上修为正），用 ``_log1p_saturate`` 反饱和（保留 +45% vs +100% 幅度差异）；
+    ``revision_breadth`` 为上调占比 0-1（0.5 中性 → 映射到 0）。全部缺失 → ``None``。
     """
     contribs: list[float] = []
     for rev in (e.eps_fy1_revision_1m, e.eps_fy1_revision_3m, e.eps_fy2_revision_1m):
         if rev is not None:
-            contribs.append(_saturate(rev, _REVISION_SCALE))
+            contribs.append(_log1p_saturate(rev, _REVISION_REF_LOG))
     if e.revision_breadth is not None:
         contribs.append(2.0 * e.revision_breadth - 1.0)  # 0.5 → 0，1 → +1，0 → -1
     return _mean(contribs)
@@ -226,7 +279,7 @@ def compress_scores(snapshot: FactorSnapshot | None) -> VariableScores:
 
     return VariableScores(
         m=_market_summary(snapshot.market),
-        f_fundamental_trend=_fundamental_trend(snapshot.fundamental),
+        f_fundamental_trend=_fundamental_trend(snapshot.fundamental, snapshot.expectation),
         e_revision=_revision(snapshot.expectation),
         t_relative_strength=_relative_strength(snapshot.trend),
         v_valuation_percentile=_valuation_percentile(snapshot.valuation),
