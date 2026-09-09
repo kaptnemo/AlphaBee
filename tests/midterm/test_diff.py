@@ -1,9 +1,10 @@
-"""diff.py 引擎 + L1/L2（D2-1）+ L3/L3'/L4（D2-2）单测。
+"""diff.py 引擎 + L1/L2（D2-1）+ L3/L3'/L4（D2-2）+ L5/归因/退出/边界（D2-3）单测。
 
 覆盖 design §4 步骤 0/1（校验 + 首帧基线登记）、步骤 2（L1 因子差）、步骤 3
-（L2 评分差）、步骤 4（L3 状态漂移）、步骤 5（L3' 置信度差）、步骤 6（L4 赔率差）。
-纪律：数值核心纯规则禁 LLM；appeared/disappeared 与 up/down 严格区分；缺失显式
-None；软状态漂移与 argmax/熵正确区分。
+（L2 评分差）、步骤 4（L3 状态漂移）、步骤 5（L3' 置信度差）、步骤 6（L4 赔率差）、
+步骤 7（L5 仓位差）、步骤 8（证据差集）、步骤 9（归因模板兜底）、步骤 10（退出检查）、
+步骤 11（degraded/missing 边界）。纪律：数值核心纯规则禁 LLM；appeared/disappeared
+与 up/down 严格区分；缺失显式 None；软状态漂移与 argmax/熵正确区分。
 """
 
 import pytest
@@ -13,10 +14,12 @@ from alphabee.midterm.models import (
     CompanyStateArtifact,
     CompanyStateDiff,
     EvidenceEvent,
+    ExitCondition,
     ExpectedValue,
     FactorSnapshot,
     FieldChange,
     FundamentalFactor,
+    PositionDecision,
     ScenarioOutcome,
     StateBelief,
     TrendFactor,
@@ -34,6 +37,9 @@ def _artifact(
     thesis_confidence: float = 0.0,
     expected_value: ExpectedValue | None = None,
     evidence_log: list[EvidenceEvent] | None = None,
+    position: PositionDecision | None = None,
+    exit_conditions: list[ExitCondition] | None = None,
+    degraded: bool = False,
 ) -> CompanyStateArtifact:
     return CompanyStateArtifact(
         schema_version=schema_version,
@@ -45,6 +51,9 @@ def _artifact(
         thesis_confidence=thesis_confidence,
         expected_value=expected_value,
         evidence_log=evidence_log or [],
+        position=position,
+        exit_conditions=exit_conditions or [],
+        degraded=degraded,
     )
 
 
@@ -449,3 +458,206 @@ def test_ev_none_when_curr_expected_value_missing():
     curr = _artifact(as_of_date="2026-01-05", expected_value=None)
     d = diff(prev, curr)
     assert d.ev is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# L5 仓位差（步骤 7）
+# ─────────────────────────────────────────────────────────────────────────────
+def _pos(stock_weight=None, actual_weight=None, exposure=None, band="") -> PositionDecision:
+    return PositionDecision(
+        stock_weight=stock_weight, actual_weight=actual_weight, portfolio_exposure=exposure, position_band=band
+    )
+
+
+def test_position_diff_deltas_and_band():
+    prev = _artifact(
+        as_of_date="2026-01-01", position=_pos(stock_weight=0.10, actual_weight=0.08, exposure=0.8, band="试探")
+    )
+    curr = _artifact(
+        as_of_date="2026-01-05", position=_pos(stock_weight=0.15, actual_weight=0.12, exposure=0.8, band="加仓")
+    )
+    d = diff(prev, curr)
+    pd = d.position
+    assert pd.stock_weight_delta == pytest.approx(0.05)
+    assert pd.actual_weight_delta == pytest.approx(0.04)
+    assert pd.exposure_delta == pytest.approx(0.0)
+    assert pd.band_from == "试探"
+    assert pd.band_to == "加仓"
+
+
+def test_position_band_weight_divergence_band_unchanged():
+    # band 未变但 actual_weight 变化超过阈值 → 背离
+    prev = _artifact(as_of_date="2026-01-01", position=_pos(actual_weight=0.10, band="核心"))
+    curr = _artifact(as_of_date="2026-01-05", position=_pos(actual_weight=0.03, band="核心"))
+    d = diff(prev, curr)
+    assert d.position.band_weight_divergence is True
+
+
+def test_position_band_weight_divergence_opposite_direction():
+    # band 升（试探→核心）但 actual_weight 下降 → 背离
+    prev = _artifact(as_of_date="2026-01-01", position=_pos(actual_weight=0.10, band="试探"))
+    curr = _artifact(as_of_date="2026-01-05", position=_pos(actual_weight=0.05, band="核心"))
+    d = diff(prev, curr)
+    assert d.position.band_weight_divergence is True
+
+
+def test_position_no_divergence_when_consistent():
+    # band 升且 actual_weight 上升 → 不背离
+    prev = _artifact(as_of_date="2026-01-01", position=_pos(actual_weight=0.05, band="试探"))
+    curr = _artifact(as_of_date="2026-01-05", position=_pos(actual_weight=0.10, band="加仓"))
+    d = diff(prev, curr)
+    assert d.position.band_weight_divergence is False
+
+
+def test_position_none_when_curr_position_missing():
+    prev = _artifact(as_of_date="2026-01-01", position=_pos(actual_weight=0.10, band="核心"))
+    curr = _artifact(as_of_date="2026-01-05", position=None)
+    d = diff(prev, curr)
+    assert d.position is None
+
+
+def test_position_drivers_decomposition():
+    prev = _artifact(
+        as_of_date="2026-01-01",
+        position=_pos(actual_weight=0.08, exposure=0.8, band="试探"),
+        thesis_confidence=0.58,
+    )
+    curr = _artifact(
+        as_of_date="2026-01-05",
+        position=_pos(actual_weight=0.12, exposure=0.9, band="加仓"),
+        thesis_confidence=0.72,
+    )
+    d = diff(prev, curr)
+    # band 变 → state；confidence 变 → confidence；exposure 变 → market
+    assert "state" in d.position.drivers
+    assert "confidence" in d.position.drivers
+    assert "market" in d.position.drivers
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 证据差集（步骤 8）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_new_evidence_id_diff():
+    e1 = EvidenceEvent(
+        id="e1", date="2026-01-01", kind="thesis", description="旧", effect_on_thesis="confirming", confidence_delta=0.1
+    )
+    e2 = EvidenceEvent(
+        id="e2",
+        date="2026-01-03",
+        kind="expectation",
+        description="新",
+        effect_on_thesis="confirming",
+        confidence_delta=0.2,
+    )
+    prev = _artifact(as_of_date="2026-01-01", evidence_log=[e1])
+    curr = _artifact(as_of_date="2026-01-05", evidence_log=[e1, e2])
+    d = diff(prev, curr)
+    assert [e.id for e in d.new_evidence] == ["e2"]
+
+
+def test_new_evidence_first_frame_empty():
+    e1 = EvidenceEvent(
+        id="e1", date="2026-01-01", kind="thesis", description="x", effect_on_thesis="confirming", confidence_delta=0.1
+    )
+    curr = _artifact(as_of_date="2026-01-01", evidence_log=[e1])
+    d = diff(None, curr)
+    assert d.new_evidence == []  # 首帧不产证据差集
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 归因（步骤 9，模板兜底）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_attribution_template_note():
+    prev = _artifact(
+        as_of_date="2026-01-01",
+        snapshot=_snapshot(fundamental=_fundamental(revenue_yoy=10.0)),
+        state=_belief({"S1": 0.7, "S2": 0.3}, argmax="S1", entropy=0.6),
+        thesis_confidence=0.58,
+    )
+    curr = _artifact(
+        as_of_date="2026-01-05",
+        snapshot=_snapshot(fundamental=_fundamental(revenue_yoy=15.0)),
+        state=_belief({"S1": 0.3, "S2": 0.7}, argmax="S2", entropy=0.6),
+        thesis_confidence=0.72,
+    )
+    d = diff(prev, curr)
+    assert len(d.attribution) == 1
+    att = d.attribution[0]
+    assert "F" in att.factor_deltas  # revenue_yoy 变化 → F 因子入选
+    assert any("state:S1→S2" in e for e in att.decision_effects)
+    assert any("confidence:+0.140" in e for e in att.decision_effects)
+    assert att.note != ""  # 模板兜底 note 非空
+    # thesis_delta = 归因投影
+    assert d.thesis_delta == att.note
+
+
+def test_attribution_first_frame_empty():
+    curr = _artifact(as_of_date="2026-01-01", snapshot=_snapshot(fundamental=_fundamental(revenue_yoy=10.0)))
+    d = diff(None, curr)
+    assert d.attribution == []
+    assert d.thesis_delta == ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 退出检查（步骤 10）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_exit_conditions_newly_met():
+    prev = _artifact(
+        as_of_date="2026-01-01", exit_conditions=[ExitCondition(kind="revision_stop", condition="x", met=False)]
+    )
+    curr = _artifact(
+        as_of_date="2026-01-05",
+        exit_conditions=[
+            ExitCondition(kind="revision_stop", condition="x", met=True),
+            ExitCondition(kind="thesis_broken", condition="y", met=False),
+        ],
+    )
+    d = diff(prev, curr)
+    assert d.exit_conditions_met == ["revision_stop"]
+
+
+def test_exit_conditions_already_met_not_recounted():
+    prev = _artifact(
+        as_of_date="2026-01-01", exit_conditions=[ExitCondition(kind="revision_stop", condition="x", met=True)]
+    )
+    curr = _artifact(
+        as_of_date="2026-01-05", exit_conditions=[ExitCondition(kind="revision_stop", condition="x", met=True)]
+    )
+    d = diff(prev, curr)
+    assert d.exit_conditions_met == []  # 已 met 的不再重复报告
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# degraded / missing 边界（步骤 11）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_degraded_flip():
+    prev = _artifact(as_of_date="2026-01-01", degraded=False)
+    curr = _artifact(as_of_date="2026-01-05", degraded=True)
+    d = diff(prev, curr)
+    assert d.degraded_flip == "False→True"
+
+
+def test_degraded_no_flip_empty():
+    prev = _artifact(as_of_date="2026-01-01", degraded=False)
+    curr = _artifact(as_of_date="2026-01-05", degraded=False)
+    d = diff(prev, curr)
+    assert d.degraded_flip == ""
+
+
+def test_missing_appeared_and_disappeared():
+    prev = _artifact(as_of_date="2026-01-01", snapshot=_snapshot())
+    prev.factor_snapshot.missing_facts = ["turnover_rate", "eps_fy1"]
+    curr = _artifact(as_of_date="2026-01-05", snapshot=_snapshot())
+    curr.factor_snapshot.missing_facts = ["turnover_rate", "hot_rank"]
+    d = diff(prev, curr)
+    # eps_fy1 之前缺失现在补齐 → missing_appeared；hot_rank 之前有现在缺失 → missing_disappeared
+    assert d.missing_appeared == ["eps_fy1"]
+    assert d.missing_disappeared == ["hot_rank"]
+
+
+def test_missing_first_frame_empty():
+    curr = _artifact(as_of_date="2026-01-01", snapshot=_snapshot())
+    curr.factor_snapshot.missing_facts = ["turnover_rate"]
+    d = diff(None, curr)
+    assert d.missing_appeared == []
+    assert d.missing_disappeared == []

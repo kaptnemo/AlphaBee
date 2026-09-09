@@ -15,10 +15,12 @@
 - **引用不内嵌**：diff 只存 ``prev/curr/anchor`` 的 :class:`ArtifactRef` 引用，
   不复制整帧（反漂移）。
 
-本文件按 D2 分步落地：当前实现步骤 0/1（校验 + 首帧基线登记）、步骤 2（L1 因子
-差）、步骤 3（L2 评分差）、步骤 4（L3 状态漂移）、步骤 5（L3' 置信度差）、步骤 6
-（L4 赔率差）；步骤 7–11（仓位 / 证据 / 归因 / 退出检查 / 边界）由后续 D2 步骤
-补齐，未实现的层保持 typed contract 缺省值。
+本文件实现 design §4 全部步骤（纯规则）：步骤 0/1 校验 + 首帧基线登记、步骤 2
+（L1 因子差）、步骤 3（L2 评分差）、步骤 4（L3 状态漂移）、步骤 5（L3' 置信度差）、
+步骤 6（L4 赔率差）、步骤 7（L5 仓位差）、步骤 8（证据差集）、步骤 9（归因，模板
+兜底）、步骤 10（退出检查）、步骤 11（degraded/missing 边界）。数值核心全部确定性
+计算，本模块不调 LLM；归因 note 为模板句，LLM 润色 / thesis_broken 语义判断在消费
+方（D4）做。
 """
 
 from __future__ import annotations
@@ -40,14 +42,17 @@ from alphabee.midterm.factors import (
 )
 from alphabee.midterm.models import (
     ArtifactRef,
+    ChangeAttribution,
     CompanyStateArtifact,
     CompanyStateDiff,
     ConfidenceDelta,
     EVDiff,
+    EvidenceEvent,
     FactorDelta,
     FactorSnapshot,
     FieldChange,
     FieldDelta,
+    PositionDiff,
     ScenarioOutcome,
     StateShift,
     VariableScores,
@@ -402,10 +407,17 @@ def _state_shift(prev_state: Any, curr_state: Any) -> StateShift | None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _new_evidence_ids(prev: CompanyStateArtifact, curr: CompanyStateArtifact) -> list[str]:
-    """本窗口新增 EvidenceEvent 的 id（按 id 差集，纯规则）。"""
+def _new_evidence(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> list[EvidenceEvent]:
+    """本窗口新增 EvidenceEvent（按 id 差集，纯规则；首帧不产证据差集 → ``[]``）。"""
+    if prev is None:
+        return []
     prev_ids = {e.id for e in prev.evidence_log}
-    return [e.id for e in curr.evidence_log if e.id not in prev_ids]
+    return [e for e in curr.evidence_log if e.id not in prev_ids]
+
+
+def _new_evidence_ids(prev: CompanyStateArtifact, curr: CompanyStateArtifact) -> list[str]:
+    """本窗口新增 EvidenceEvent 的 id（由 :func:`_new_evidence` 派生）。"""
+    return [e.id for e in _new_evidence(prev, curr)]
 
 
 def _confidence_delta(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> ConfidenceDelta:
@@ -498,6 +510,195 @@ def _ev_diff(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> E
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# L5 仓位差（步骤 7，纯规则）
+# ─────────────────────────────────────────────────────────────────────────────
+
+_BAND_DIVERGENCE_EPS = 0.01  # 仓位带未变但实际仓位变化超过 1% → 背离（结构示意阈值）
+_DRIVER_EPS = 1e-3  # drivers 检测阈值
+
+# 仓位带排序（清仓最低、核心最高；减仓与观察同档，介于清仓与试探之间）
+_BAND_RANK: dict[str, int] = {"清仓": 0, "减仓": 1, "观察": 1, "试探": 2, "加仓": 3, "核心": 4}
+
+
+def _delta(prev_val: Any, curr_val: Any) -> float | None:
+    """数值差 ``curr − prev``；任一侧缺失 → ``None``（不静默回退 0）。"""
+    if prev_val is None or curr_val is None:
+        return None
+    return curr_val - prev_val
+
+
+def _band_direction(band_from: str, band_to: str) -> int:
+    """仓位带升降方向：+1 升 / -1 降 / 0 未知或不变。"""
+    r_from = _BAND_RANK.get(band_from)
+    r_to = _BAND_RANK.get(band_to)
+    if r_from is None or r_to is None or r_from == r_to:
+        return 0
+    return 1 if r_to > r_from else -1
+
+
+def _band_weight_divergence(band_from: str, band_to: str, actual_delta: float | None) -> bool:
+    """标签与实际仓位背离（design §7 / §8 实跑已踩坑）。
+
+    - band 未变但 ``|Δactual_weight| > 阈值`` → 背离（标签没动仓位却大幅变了）；
+    - band 升/降 与 weight 变化方向相反 → 背离（如 band 升但实际仓位下降）。
+    """
+    if actual_delta is None:
+        return False
+    if band_from == band_to:
+        return abs(actual_delta) > _BAND_DIVERGENCE_EPS
+    band_dir = _band_direction(band_from, band_to)
+    weight_dir = 1 if actual_delta > _EPS else (-1 if actual_delta < -_EPS else 0)
+    if band_dir == 0 or weight_dir == 0:
+        return False
+    return band_dir != weight_dir
+
+
+def _position_drivers(
+    band_from: str,
+    band_to: str,
+    actual_delta: float | None,
+    exposure_delta: float | None,
+    state_shift: StateShift | None,
+    confidence: ConfidenceDelta | None,
+    ev: EVDiff | None,
+) -> list[str]:
+    """仓位 drivers 数值分解（纯规则）：state / confidence / ev / market / portfolio。"""
+    drivers: list[str] = []
+    if band_from != band_to:
+        drivers.append("state")
+    if confidence is not None and confidence.delta is not None and abs(confidence.delta) > _DRIVER_EPS:
+        drivers.append("confidence")
+    if ev is not None and ev.risk_adjusted_ev_delta is not None and abs(ev.risk_adjusted_ev_delta) > _DRIVER_EPS:
+        drivers.append("ev")
+    if exposure_delta is not None and abs(exposure_delta) > _DRIVER_EPS:
+        drivers.append("market")
+    # portfolio：仓位实际变化但非 state/confidence/ev/market 任一轴解释（组合层调整）
+    if not drivers and actual_delta is not None and abs(actual_delta) > _DRIVER_EPS:
+        drivers.append("portfolio")
+    return drivers
+
+
+def _position_diff(
+    prev: CompanyStateArtifact | None,
+    curr: CompanyStateArtifact,
+    state_shift: StateShift | None,
+    confidence: ConfidenceDelta | None,
+    ev: EVDiff | None,
+) -> PositionDiff | None:
+    """L5 仓位差：Δstock_weight / Δactual_weight / Δexposure / band 变化 + 背离 + drivers。"""
+    curr_pos = curr.position
+    if curr_pos is None:
+        return None
+    prev_pos = prev.position if prev is not None else None
+
+    stock_delta = _delta(prev_pos.stock_weight if prev_pos else None, curr_pos.stock_weight)
+    actual_delta = _delta(prev_pos.actual_weight if prev_pos else None, curr_pos.actual_weight)
+    exposure_delta = _delta(prev_pos.portfolio_exposure if prev_pos else None, curr_pos.portfolio_exposure)
+    band_from = prev_pos.position_band if prev_pos else ""
+    band_to = curr_pos.position_band
+
+    return PositionDiff(
+        stock_weight_delta=stock_delta,
+        actual_weight_delta=actual_delta,
+        exposure_delta=exposure_delta,
+        band_from=band_from,
+        band_to=band_to,
+        band_weight_divergence=_band_weight_divergence(band_from, band_to, actual_delta),
+        drivers=_position_drivers(band_from, band_to, actual_delta, exposure_delta, state_shift, confidence, ev),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 归因（步骤 9，候选生成+排序纯规则；note 模板兜底，禁 LLM）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _template_note(factor_deltas: list[str], decision_effects: list[str]) -> str:
+    """归因 note 的模板兜底（design §12.3-②：LLM 失败退模板，diff 不中断）。
+
+    diff 引擎本身禁 LLM，故 note 永远是确定性模板句；LLM 润色在消费方（D4）做。
+    """
+    parts: list[str] = []
+    if factor_deltas:
+        parts.append(f"因子 {','.join(factor_deltas)} 变化")
+    if decision_effects:
+        parts.append("；".join(decision_effects))
+    return "；".join(parts) if parts else ""
+
+
+def _attribution(
+    factors: list[FactorDelta],
+    state_shift: StateShift | None,
+    confidence: ConfidenceDelta | None,
+    new_evidence: list[EvidenceEvent],
+) -> list[ChangeAttribution]:
+    """归因链（§5）：evidence → factor → decision（候选生成+排序纯规则）。
+
+    ``evidence_ids`` = 本窗口新增证据；``factor_deltas`` = 发生字段变化的因子；
+    ``decision_effects`` = 状态迁移 + 置信度变化；``note`` = 模板句（LLM 增强留 D4）。
+    """
+    evidence_ids = [e.id for e in new_evidence]
+    factor_deltas = [f.factor for f in factors if f.fields]
+    decision_effects: list[str] = []
+    if state_shift is not None and state_shift.argmax_from != state_shift.argmax_to:
+        decision_effects.append(f"state:{state_shift.argmax_from}→{state_shift.argmax_to}")
+    if confidence is not None and confidence.delta is not None and abs(confidence.delta) > _DRIVER_EPS:
+        decision_effects.append(f"confidence:{confidence.delta:+.3f}")
+
+    if not evidence_ids and not factor_deltas and not decision_effects:
+        return []
+    return [
+        ChangeAttribution(
+            evidence_ids=evidence_ids,
+            factor_deltas=factor_deltas,
+            decision_effects=decision_effects,
+            note=_template_note(factor_deltas, decision_effects),
+        )
+    ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 退出检查（步骤 10）+ 降级/缺失边界（步骤 11，纯规则）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _exit_conditions_met(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> list[str]:
+    """退出检查：``curr`` 中 ``met=True`` 且 ``prev`` 未 met 的 kind（纯规则）。
+
+    数值类 stop（revision/state/price）阈值由上游判定，本步只做集合差；thesis_broken
+    语义判断在消费方（D4 ExitEngine）做，LLM 兜底转研究不直接退出。
+    """
+    if prev is None:
+        return []
+    prev_met = {e.kind for e in prev.exit_conditions if e.met}
+    return [e.kind for e in curr.exit_conditions if e.met and e.kind not in prev_met]
+
+
+def _degraded_flip(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> str:
+    """降级状态翻转（False→True / True→False）显式记录；首帧/无翻转 → ``""``。"""
+    if prev is None:
+        return ""
+    if prev.degraded != curr.degraded:
+        return f"{prev.degraded}→{curr.degraded}"
+    return ""
+
+
+def _missing_diff(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> tuple[list[str], list[str]]:
+    """missing_facts 差集（纯规则）：``(missing_appeared, missing_disappeared)``。
+
+    - ``missing_appeared`` = 新出现（数据源补齐）的字段 = prev 缺失且 curr 不再缺失；
+    - ``missing_disappeared`` = 新缺失（降级/覆盖消失）的字段 = curr 缺失且 prev 未缺失。
+    """
+    if prev is None:
+        return [], []
+    prev_missing = set(prev.factor_snapshot.missing_facts) if prev.factor_snapshot else set()
+    curr_missing = set(curr.factor_snapshot.missing_facts) if curr.factor_snapshot else set()
+    missing_appeared = sorted(prev_missing - curr_missing)
+    missing_disappeared = sorted(curr_missing - prev_missing)
+    return missing_appeared, missing_disappeared
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -510,9 +711,9 @@ def diff(
     """差分两个 CompanyStateArtifact（纯函数，禁 LLM）。
 
     步骤 0 校验 → 步骤 1 首帧基线登记 → 步骤 2 L1 因子差 → 步骤 3 L2 评分差 →
-    步骤 4 L3 状态漂移 → 步骤 5 L3' 置信度差 → 步骤 6 L4 赔率差。
-    步骤 7–11（仓位 / 证据 / 归因 / 退出 / 边界）由后续 D2 步骤补齐，当前以 typed
-    contract 缺省值承载（首帧时各层按基线登记处理）。
+    步骤 4 L3 状态漂移 → 步骤 5 L3' 置信度差 → 步骤 6 L4 赔率差 → 步骤 7 L5 仓位差
+    → 步骤 8 证据差集 → 步骤 9 归因（模板兜底）→ 步骤 10 退出检查 → 步骤 11 边界。
+    首帧按基线登记处理（不产归因/退出/证据差集）。
 
     Args:
         prev: 上一帧（首帧为 ``None``）。
@@ -539,6 +740,14 @@ def diff(
     state_shift = _state_shift(prev.state if prev is not None else None, curr.state)
     confidence = _confidence_delta(prev, curr)
     ev = _ev_diff(prev, curr)
+    position = _position_diff(prev, curr, state_shift, confidence, ev)
+
+    new_evidence = _new_evidence(prev, curr)
+    attribution = [] if is_first else _attribution(factors, state_shift, confidence, new_evidence)
+    thesis_delta = "；".join(a.note for a in attribution)
+    exit_conditions_met = _exit_conditions_met(prev, curr)
+    degraded_flip = _degraded_flip(prev, curr)
+    missing_appeared, missing_disappeared = _missing_diff(prev, curr)
 
     return CompanyStateDiff(
         symbol=curr.symbol,
@@ -552,13 +761,12 @@ def diff(
         state_shift=state_shift,
         confidence=confidence,
         ev=ev,
-        # L5 及归因/退出/边界（步骤 7–11）由后续 D2 步骤补齐，暂为缺省值。
-        position=None,
-        new_evidence=[],
-        attribution=[],
-        thesis_delta="",
-        exit_conditions_met=[],
-        degraded_flip="",
-        missing_appeared=[],
-        missing_disappeared=[],
+        position=position,
+        new_evidence=new_evidence,
+        attribution=attribution,
+        thesis_delta=thesis_delta,
+        exit_conditions_met=exit_conditions_met,
+        degraded_flip=degraded_flip,
+        missing_appeared=missing_appeared,
+        missing_disappeared=missing_disappeared,
     )
