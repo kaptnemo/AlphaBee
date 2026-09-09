@@ -16,8 +16,9 @@
   不复制整帧（反漂移）。
 
 本文件按 D2 分步落地：当前实现步骤 0/1（校验 + 首帧基线登记）、步骤 2（L1 因子
-差）、步骤 3（L2 评分差）；步骤 4–11（状态漂移 / 置信 / 赔率 / 仓位 / 证据 / 归因 /
-退出检查 / 边界）由后续 D2 步骤补齐，未实现的层保持 typed contract 缺省值。
+差）、步骤 3（L2 评分差）、步骤 4（L3 状态漂移）、步骤 5（L3' 置信度差）、步骤 6
+（L4 赔率差）；步骤 7–11（仓位 / 证据 / 归因 / 退出检查 / 边界）由后续 D2 步骤
+补齐，未实现的层保持 typed contract 缺省值。
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
+from alphabee.midterm.bayes import _logit
+from alphabee.midterm.classifier import _BACKWARD, _FORWARD, _REOPEN, _STATES, _drift
 from alphabee.midterm.factors import (
     _AUDIT_FIELDS,
     _CROWDING_FIELDS,
@@ -39,10 +42,14 @@ from alphabee.midterm.models import (
     ArtifactRef,
     CompanyStateArtifact,
     CompanyStateDiff,
+    ConfidenceDelta,
+    EVDiff,
     FactorDelta,
     FactorSnapshot,
     FieldChange,
     FieldDelta,
+    ScenarioOutcome,
+    StateShift,
     VariableScores,
 )
 
@@ -313,6 +320,184 @@ def _score_deltas(prev_scores: VariableScores, curr_scores: VariableScores) -> d
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# L3 状态漂移（步骤 4，纯规则）
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STATE_ORDER: dict[str, int] = {s: i for i, s in enumerate(_STATES)}
+
+
+def _shift_legal_kind(from_state: str, to_state: str) -> tuple[bool, str]:
+    """迁移合法性与 kind（复用 classifier 的 _FORWARD/_BACKWARD/_REOPEN 判定口径）。
+
+    ``kind`` 映射到 design §3 取值域 upgrade / downgrade / same / reopen；
+    非法跳级（如 S1→S3）``legal=False``，kind 按名义方向（argmax 序号升/降）给出。
+    """
+    if from_state == to_state:
+        return True, "same"
+    if (from_state, to_state) in _REOPEN:
+        return True, "reopen"
+    if (from_state, to_state) in _FORWARD:
+        return True, "upgrade"
+    if (from_state, to_state) in _BACKWARD:
+        return True, "downgrade"
+    # 非法跳级：legal=False，kind 按名义方向
+    kind = "upgrade" if _STATE_ORDER.get(to_state, 99) > _STATE_ORDER.get(from_state, -1) else "downgrade"
+    return False, kind
+
+
+def _full_distribution(distribution: dict[str, float]) -> dict[str, float]:
+    """把（可能部分稀疏的）软状态分布补齐为全 6 态（缺省 0.0），对齐 classifier._STATES 口径。"""
+    return {s: distribution.get(s, 0.0) for s in _STATES}
+
+
+def _state_shift(prev_state: Any, curr_state: Any) -> StateShift | None:
+    """L3 软状态漂移：质量流动 + TV 距离 + 熵差（argmax 只是投影之一）。
+
+    ``mass_delta`` 承载逐状态质量流动；``tv_distance=0.5·Σ|ΔP|`` 为信念位移总量；
+    ``entropy_delta``（负=变确定 / 正=变模糊）与「整体平移」分开表达；``drift`` 复用
+    ``classifier._drift`` 口径；``legal/kind`` 复用 classifier 迁移判定。
+    """
+    if curr_state is None:
+        return None
+    if prev_state is None:
+        # 状态层首次出现（无上一帧软状态）
+        return StateShift(
+            argmax_from=None,
+            argmax_to=curr_state.argmax_state,
+            mass_delta={},
+            tv_distance=0.0,
+            entropy_from=None,
+            entropy_to=curr_state.entropy,
+            entropy_delta=None,
+            drift=None,
+            legal=True,
+            kind="same",
+        )
+
+    curr_full = _full_distribution(curr_state.distribution)
+    prev_full = _full_distribution(prev_state.distribution)
+    mass_delta = {s: curr_full[s] - prev_full[s] for s in _STATES}
+    tv_distance = 0.5 * sum(abs(v) for v in mass_delta.values())
+    entropy_delta = curr_state.entropy - prev_state.entropy
+    legal, kind = _shift_legal_kind(prev_state.argmax_state, curr_state.argmax_state)
+    # _drift 要求 curr distribution 为全 6 态（内部直接下标）；prev 用 .get 兼容稀疏
+    drift = _drift(curr_full, prev_state)
+
+    return StateShift(
+        argmax_from=prev_state.argmax_state,
+        argmax_to=curr_state.argmax_state,
+        mass_delta=mass_delta,
+        tv_distance=tv_distance,
+        entropy_from=prev_state.entropy,
+        entropy_to=curr_state.entropy,
+        entropy_delta=entropy_delta,
+        drift=drift,
+        legal=legal,
+        kind=kind,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# L3' 置信度差（步骤 5，纯规则）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _new_evidence_ids(prev: CompanyStateArtifact, curr: CompanyStateArtifact) -> list[str]:
+    """本窗口新增 EvidenceEvent 的 id（按 id 差集，纯规则）。"""
+    prev_ids = {e.id for e in prev.evidence_log}
+    return [e.id for e in curr.evidence_log if e.id not in prev_ids]
+
+
+def _confidence_delta(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> ConfidenceDelta:
+    """L3' 置信度差：Δ = posterior − prior，log_odds_delta = logit 差。
+
+    ``prior`` 取上一帧 ``thesis_confidence``（t-1 的后验即 t 的先验）；首帧
+    ``prior=None``、``delta/log_odds_delta=None``。``evidence_ids`` = 本窗口新增证据
+    的 id（其原料 EvidenceEvent 由上游抽取，数值差本身纯规则）。
+    """
+    if prev is None:
+        return ConfidenceDelta(
+            prior=None,
+            posterior=curr.thesis_confidence,
+            delta=None,
+            log_odds_delta=None,
+            evidence_ids=[],
+        )
+    prior = prev.thesis_confidence
+    posterior = curr.thesis_confidence
+    delta = posterior - prior
+    log_odds_delta = _logit(posterior) - _logit(prior)
+    return ConfidenceDelta(
+        prior=prior,
+        posterior=posterior,
+        delta=delta,
+        log_odds_delta=log_odds_delta,
+        evidence_ids=_new_evidence_ids(prev, curr),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# L4 赔率差（步骤 6，纯规则）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _scenario_map(scenarios: list[ScenarioOutcome]) -> dict[str, ScenarioOutcome]:
+    return {s.scenario: s for s in scenarios}
+
+
+def _ev_diff(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> EVDiff | None:
+    """L4 赔率差：ΔEV / ΔRAEV / 各情景 ΔP / ΔR、probability_source 变化。
+
+    任一帧无 ``expected_value`` 或对应值为 ``None`` 时 delta 显式 ``None``；
+    ``scenario_return_delta`` 允许 ``None`` 值（R 缺失/无法求差）。首帧按基线登记
+    （``ev_from=None``、各情景 ΔP=当前值、ΔR=None）。
+    """
+    curr_ev = curr.expected_value
+    if curr_ev is None:
+        return None
+    prev_ev = prev.expected_value if prev is not None else None
+
+    ev_from = prev_ev.ev if prev_ev is not None else None
+    ev_to = curr_ev.ev
+    ev_delta = (ev_to - ev_from) if (ev_from is not None and ev_to is not None) else None
+    rae_from = prev_ev.risk_adjusted_ev if prev_ev is not None else None
+    rae_to = curr_ev.risk_adjusted_ev
+    rae_delta = (rae_to - rae_from) if (rae_from is not None and rae_to is not None) else None
+
+    prev_scen = _scenario_map(prev_ev.scenarios) if prev_ev is not None else {}
+    curr_scen = _scenario_map(curr_ev.scenarios)
+    prob_delta: dict[str, float] = {}
+    ret_delta: dict[str, float | None] = {}
+    for name in ("bull", "base", "bear"):
+        pc = curr_scen.get(name)
+        pp = prev_scen.get(name)
+        p_curr = pc.probability if pc is not None else None
+        p_prev = pp.probability if pp is not None else None
+        if p_curr is None and p_prev is None:
+            continue
+        prob_delta[name] = (p_curr if p_curr is not None else 0.0) - (p_prev if p_prev is not None else 0.0)
+        r_curr = pc.expected_return if pc is not None else None
+        r_prev = pp.expected_return if pp is not None else None
+        ret_delta[name] = (r_curr - r_prev) if (r_curr is not None and r_prev is not None) else None
+
+    prev_source = prev_ev.probability_source if prev_ev is not None else None
+    curr_source = curr_ev.probability_source
+    source_change = ""
+    if prev_source is not None and prev_source != curr_source:
+        source_change = f"{prev_source} → {curr_source}"
+
+    return EVDiff(
+        ev_from=ev_from,
+        ev_to=ev_to,
+        ev_delta=ev_delta,
+        risk_adjusted_ev_delta=rae_delta,
+        scenario_probability_delta=prob_delta,
+        scenario_return_delta=ret_delta,
+        probability_source_change=source_change,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -324,9 +509,10 @@ def diff(
 ) -> CompanyStateDiff:
     """差分两个 CompanyStateArtifact（纯函数，禁 LLM）。
 
-    步骤 0 校验 → 步骤 1 首帧基线登记 → 步骤 2 L1 因子差 → 步骤 3 L2 评分差。
-    步骤 4–11（状态漂移 / 置信 / 赔率 / 仓位 / 证据 / 归因 / 退出 / 边界）由后续
-    D2 步骤补齐，当前以 typed contract 缺省值承载（首帧时按基线登记处理）。
+    步骤 0 校验 → 步骤 1 首帧基线登记 → 步骤 2 L1 因子差 → 步骤 3 L2 评分差 →
+    步骤 4 L3 状态漂移 → 步骤 5 L3' 置信度差 → 步骤 6 L4 赔率差。
+    步骤 7–11（仓位 / 证据 / 归因 / 退出 / 边界）由后续 D2 步骤补齐，当前以 typed
+    contract 缺省值承载（首帧时各层按基线登记处理）。
 
     Args:
         prev: 上一帧（首帧为 ``None``）。
@@ -350,6 +536,10 @@ def diff(
         factors = _factor_deltas(prev.factor_snapshot, curr.factor_snapshot)
         scores = _score_deltas(prev.variable_scores, curr.variable_scores)
 
+    state_shift = _state_shift(prev.state if prev is not None else None, curr.state)
+    confidence = _confidence_delta(prev, curr)
+    ev = _ev_diff(prev, curr)
+
     return CompanyStateDiff(
         symbol=curr.symbol,
         prev=prev_ref,
@@ -359,10 +549,10 @@ def diff(
         elapsed_days=_elapsed_days(prev, curr),
         factors=factors,
         scores=scores,
-        # L3–L5 及归因/退出/边界（步骤 4–11）由后续 D2 步骤补齐，暂为缺省值。
-        state_shift=None,
-        confidence=None,
-        ev=None,
+        state_shift=state_shift,
+        confidence=confidence,
+        ev=ev,
+        # L5 及归因/退出/边界（步骤 7–11）由后续 D2 步骤补齐，暂为缺省值。
         position=None,
         new_evidence=[],
         attribution=[],
