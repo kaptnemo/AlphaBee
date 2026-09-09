@@ -6,7 +6,7 @@
   <meta name="description" content="AlphaBee 多智能体投资分析系统文档">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
-  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify-darklight-theme@3/dist/style.min.css" title="docsify-darklight-theme">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify-sidebar-collapse/dist/sidebar.min.css">
 </head>
 <body>
@@ -31,6 +31,9 @@
         depth: 4,
         paths: 'auto',
       },
+      darklightTheme: {
+        defaultTheme: 'light',
+      },
     };
   </script>
   <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
@@ -40,5 +43,7 @@
   <script src="//cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <!-- 3. 加载 docsify-latex 插件 -->
   <script src="//cdn.jsdelivr.net/npm/docsify-latex@0"></script>
+  <!-- 4. 加载 docsify-darklight-theme 主题插件（深色/浅色切换） -->
+  <script src="//cdn.jsdelivr.net/npm/docsify-darklight-theme@3/dist/index.min.js"></script>
 </body>
 </html>
