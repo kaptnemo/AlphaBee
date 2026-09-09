@@ -136,6 +136,29 @@ def test_divergent_triggers_uncertain_and_research():
     assert any(t.id == "research-divergent" for t in r.research_tasks)
 
 
+def test_e_up_t_down_named_divergent_conflict():
+    """E 强上修 + T 走弱 → 具名 conflict（业绩上修 vs 股价走弱），consistency=divergent。"""
+    r = classify_state(_scores(f=0.0, e=0.8, t=-0.5))
+    deltas = {d.factor: d for d in r.factor_deltas}
+    assert deltas["E"].consistency == Consistency.DIVERGENT
+    assert deltas["T"].consistency == Consistency.DIVERGENT
+    assert r.uncertain is True
+    # 具名 conflict 进入 rationale（不再只是「熵高」一句笼统话）
+    assert any("业绩上修" in line and "股价" in line for line in r.rationale)
+    # 具名 conflict 进入研究触发，供下游 explore_conflicts 消费
+    div_tasks = [t for t in r.research_tasks if t.id == "research-divergent"]
+    assert div_tasks
+    assert any("业绩上修" in t.unknown and "股价" in t.unknown for t in div_tasks)
+
+
+def test_e_up_t_down_does_not_mislabel_resonant():
+    """E↑+T↓ 不应被误判为共振（S3），而是 divergent。"""
+    r = classify_state(_scores(f=0.8, e=0.8, t=-0.5))
+    assert r.state.argmax_state != "S3"
+    deltas = {d.factor: d for d in r.factor_deltas}
+    assert deltas["E"].consistency == Consistency.DIVERGENT
+
+
 def test_independent_consistency_when_missing():
     # 任一因子缺失 → 无法判定共振/背离 → independent
     r = classify_state(_scores(f=0.8, e=0.8))

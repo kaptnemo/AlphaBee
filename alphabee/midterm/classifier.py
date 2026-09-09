@@ -99,7 +99,9 @@ def _triad_consistency(f: float | None, e: float | None, t: float | None) -> Con
     """F/E/T 三因子一致性（§4.4）。
 
     - ``resonant``：F↑E↑T↑ 同向；
-    - ``divergent``：F 强但 E/T 弱（业绩好股价不涨，本身即 Conflict）；
+    - ``divergent``：两类背离——
+      ① F 强但 E/T 弱（业绩好股价不涨，本身即 Conflict）；
+      ② E 强上修但 T 走弱（业绩上修 vs 价格走弱，§20 顶部顺序 E→T→F 的第二步「T 弱」）；
     - ``independent``：其余（含任一因子缺失 → 无法判定）。
     """
     if f is None or e is None or t is None:
@@ -113,7 +115,29 @@ def _triad_consistency(f: float | None, e: float | None, t: float | None) -> Con
         return Consistency.RESONANT
     if f_up and not e_up and not t_up and (e_dn or t_dn):
         return Consistency.DIVERGENT
+    if e_up and t_dn:
+        return Consistency.DIVERGENT  # E↑ + T↓ 背离（具名 conflict）
     return Consistency.INDEPENDENT
+
+
+def _divergence_reason(f: float | None, e: float | None, t: float | None) -> str | None:
+    """返回具名背离描述（无背离 → ``None``），供 rationale / 研究触发 / explore_conflicts 消费。
+
+    与 :func:`_triad_consistency` 的两类 ``divergent`` 分支一一对应，产出可读的具名冲突，
+    避免把 E↑T↓ 这类背离埋进笼统的「熵高」。
+    """
+    if f is None or e is None or t is None:
+        return None
+    f_up = f > _UP_T
+    e_up = e > _UP_T
+    t_up = t > _UP_T
+    e_dn = e < _DOWN_T
+    t_dn = t < _DOWN_T
+    if f_up and not e_up and not t_up and (e_dn or t_dn):
+        return "业绩好但股价不涨：F 强而 E/T 弱"
+    if e_up and t_dn:
+        return "业绩上修 vs 股价相对走弱：E 强上修而 T 短期走弱"
+    return None
 
 
 def _active_factors(scores: VariableScores) -> list[str]:
@@ -214,14 +238,24 @@ def _drift(distribution: dict[str, float], previous: StateBelief | None) -> dict
     return drift or None
 
 
-def _research_tasks(uncertain: bool, divergent: bool, entropy: float) -> list[ResearchTask]:
-    """熵高 / 方向冲突（divergent）时触发的研究任务（§2b.5 / §20）。"""
+def _research_tasks(
+    uncertain: bool,
+    divergent: bool,
+    entropy: float,
+    divergence_reason: str | None = None,
+) -> list[ResearchTask]:
+    """熵高 / 方向冲突（divergent）时触发的研究任务（§2b.5 / §20）。
+
+    ``divergence_reason`` 为具名背离描述（``_divergence_reason``），落入研究任务的
+    ``unknown``，供下游 ``explore_conflicts`` 消费（不再只是一句笼统话）。
+    """
     tasks: list[ResearchTask] = []
     if divergent:
+        unknown = divergence_reason or "业绩好但股价不涨：F 强而 E/T 弱"
         tasks.append(
             ResearchTask(
                 id="research-divergent",
-                unknown="业绩好但股价不涨：F 强而 E/T 弱，市场知道什么我们不知道（§20/§8）",
+                unknown=f"{unknown}，市场知道什么我们不知道（§20/§8）",
                 importance="high",
                 decides=["thesis_state"],
                 status="open",
@@ -287,6 +321,11 @@ def classify_state(
 
     consistency = _triad_consistency(scores.f_fundamental_trend, scores.e_revision, scores.t_relative_strength)
     divergent = consistency == Consistency.DIVERGENT
+    divergence_reason = (
+        _divergence_reason(scores.f_fundamental_trend, scores.e_revision, scores.t_relative_strength)
+        if divergent
+        else None
+    )
     uncertain = divergent or entropy > _ENTROPY_UNCERTAIN
 
     # 逐因子一致性标注（§4.4）：F/E/T 用三因子一致性，V/C/R 为 independent
@@ -321,6 +360,8 @@ def classify_state(
         f"T={scores.t_relative_strength}）",
         f"entropy={entropy:.3f}, consistency={consistency.value}",
     ]
+    if divergence_reason:
+        rationale.append(f"具名冲突={divergence_reason}（consistency=divergent）")
     if uncertain:
         rationale.append("uncertain=True（熵高或方向冲突，触发研究而非直接加仓）")
 
@@ -329,6 +370,6 @@ def classify_state(
         transition=transition,
         factor_deltas=factor_deltas,
         uncertain=uncertain,
-        research_tasks=_research_tasks(uncertain, divergent, entropy),
+        research_tasks=_research_tasks(uncertain, divergent, entropy, divergence_reason),
         rationale=rationale,
     )
