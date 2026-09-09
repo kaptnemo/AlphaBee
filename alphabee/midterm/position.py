@@ -4,9 +4,11 @@
 核心纪律：
 
 - **确定性纯函数**：不调 LLM、不读外部状态；同一输入必得同一输出。
-- **三轴正交，永不合并**（§6.2）：State 决定动作**类型**（``position_band``），
+- **三轴正交，永不合并**（§6.2）：State 决定动作**类型**（``argmax_state`` 粗粒度意图锚点），
   状态分布决定动作**力度**（对分布求期望，§2b.3），Confidence 缩放力度，
   RiskAdjustedEV 作赔率**门槛**（EV 不足 → 压 0）。三者相乘，不求和。
+  最终 ``position_band`` 标签由**折减后实际仓位**（``actual_weight``）映射，
+  避免「argmax=核心」标签与 0.6% 实际仓位的背离。
 - **禁止 `if state == S2: buy()` 反模式**（§41）：动作类型与力度由数据驱动映射 +
   软状态期望得出，不写硬编码分支。
 - **软状态期望**（§2b.3）：``Σ_k P(S_k) · weight_band(S_k)``，熵高（分布宽）时期望
@@ -25,8 +27,8 @@ from alphabee.midterm.models import PositionDecision, StateBelief
 # 仓位带映射（§6.3，结构性示意常量）
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 动作类型（position_band），由 argmax_state 决定
-_POSITION_BAND: dict[str, str] = {
+# 动作类型（argmax_state → 粗粒度意图锚点），仅作动作类型语义，不再直接充当 position_band
+_ACTION_BAND: dict[str, str] = {
     "S0": "观察",  # 研究候选（无仓位）
     "S1": "试探",  # 5–10%
     "S2": "加仓",  # 10–15%
@@ -34,6 +36,15 @@ _POSITION_BAND: dict[str, str] = {
     "S4": "减仓",  # 降至试探/退出
     "S5": "清仓",  # 0
 }
+
+# 折减后实际仓位（actual_weight，portfolio 层）→ position_band 标签。
+# 阈值与 _WEIGHT_BAND 权益仓参考带对齐（S1 5% / S2 10% / S3 15%）。
+# 低于 5% 的微小仓位统一标「观察」（观望，未成气候），0 标「清仓」。
+_ACTUAL_BAND_UP: tuple[tuple[float, str], ...] = (
+    (0.15, "核心"),
+    (0.10, "加仓"),
+    (0.05, "试探"),
+)
 
 # 权益仓内参考带（lower, upper），§6.3 示意
 _WEIGHT_BAND: dict[str, tuple[float, float]] = {
@@ -61,6 +72,25 @@ _EV_THRESHOLD = 1.0  # RiskAdjustedEV < 阈值 → 赔率不足 → 压 0（EV/r
 
 def _clip(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _band_from_weight(weight: float | None, fallback: str) -> str:
+    """按折减后实际仓位映射回仓位标签（清仓/观察/试探/加仓/核心）。
+
+    - ``weight <= 0`` → 清仓；
+    - ``(0, 0.05)`` → 观察（微小仓位，观望）；
+    - ``[0.05, 0.10)`` → 试探；``[0.10, 0.15)`` → 加仓；``>= 0.15`` → 核心。
+    - ``weight`` 为 ``None``（无市场暴露且 stock_weight 缺失，防御分支）→ 回退到
+      argmax 动作类型标签（粗粒度意图）。
+    """
+    if weight is None:
+        return fallback
+    if weight <= 0.0:
+        return "清仓"
+    for threshold, label in _ACTUAL_BAND_UP:
+        if weight >= threshold:
+            return label
+    return "观察"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,14 +129,16 @@ def build_position(
     Returns:
         :class:`PositionDecision`：``stock_weight`` = BaseRiskBudget × 期望仓位带 ×
         Confidence × RiskAdjustment × PortfolioAdjustment；``actual_weight`` =
-        ``portfolio_exposure × stock_weight``；``restricted`` 由单股上限置位。
+        ``portfolio_exposure × stock_weight``；``position_band`` 由折减后实际仓位
+        （``actual_weight``，缺失时回退 ``stock_weight``）映射，而非裸 ``argmax_state``。
+        ``restricted`` 由单股上限置位。
     """
     rationale: list[str] = []
 
-    # 1. 动作类型：argmax_state → position_band（数据驱动，非硬编码分支）
+    # 1. 动作类型：argmax_state → 粗粒度意图锚点（仅语义，不直接充当 position_band）
     argmax = state.argmax_state
-    position_band = _POSITION_BAND.get(argmax, "观察")
-    rationale.append(f"动作类型={position_band}（argmax_state={argmax}）")
+    action_type = _ACTION_BAND.get(argmax, "观察")
+    rationale.append(f"动作类型={action_type}（argmax_state={argmax}，粗粒度意图锚点）")
 
     # 2. 动作力度：对状态分布求期望 Σ P(S_k)·weight_band(S_k)（软状态，§2b.3）
     distribution = state.distribution
@@ -148,6 +180,15 @@ def build_position(
     actual_weight = (
         portfolio_exposure * stock_weight if portfolio_exposure is not None and stock_weight is not None else None
     )
+
+    # 9. position_band：由折减后实际仓位映射（而非裸 argmax_state），消除「核心」标签与
+    #    0.6% 实际仓位的背离。市场暴露缺失时回退到 stock_weight（置信度/风险折减后权益仓内权重）。
+    effective_weight = actual_weight if actual_weight is not None else stock_weight
+    position_band = _band_from_weight(effective_weight, action_type)
+    if actual_weight is None:
+        rationale.append(f"position_band={position_band}（市场暴露缺失，按 stock_weight={effective_weight:.4f} 映射）")
+    else:
+        rationale.append(f"position_band={position_band}（按 actual_weight={actual_weight:.4f} 映射）")
 
     return PositionDecision(
         portfolio_exposure=portfolio_exposure,
