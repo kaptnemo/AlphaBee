@@ -70,6 +70,21 @@ class Consistency(StrEnum):
     INDEPENDENT = "independent"  # 独立
 
 
+class FieldChange(StrEnum):
+    """L1 字段级变化类型（design §3 / §7）。
+
+    严格区分「出现/消失」与「增减」（alphabee-schema-steward）：``None→值`` 是
+    ``appeared``、``值→None`` 是 ``disappeared``，二者绝不得与 ``up`` / ``down``
+    混淆（出现/消失是数据可用性变化，up/down 是口径内数值变化）。
+    """
+
+    APPEARED = "appeared"  # None → 有值（基线登记 / 数据源补齐）
+    DISAPPEARED = "disappeared"  # 有值 → None（降级 / 覆盖消失）
+    UP = "up"  # 数值上升（同名同口径）
+    DOWN = "down"  # 数值下降（同名同口径）
+    UNCHANGED = "unchanged"  # 数值不变
+
+
 class StateBelief(BaseModel):
     """软状态（Soft State）——把 State 从点估计降级为概率分布（文档 §2b）。
 
@@ -101,12 +116,17 @@ class StateTransition(BaseModel):
     consistency: Consistency = Consistency.INDEPENDENT  # resonant / divergent / independent
 
 
-class FactorDelta(BaseModel):
+class FactorScoreDelta(BaseModel):
     """单个因子的方向分变化 + 一致性标注（文档 §4.4）。
 
     ``delta`` 为该因子方向分的边际变化（正 = 改善 / 走强 / 赔率提高）；
     ``consistency`` 标注该因子相对其他因子是共振（resonant）/ 背离（divergent）/
     独立（independent）。背离是 S3→S4 与 EmergencyRiskStop 的前置信号。
+
+    注意：本模型承载的是 L2 评分层的「方向分 Δ + 一致性」，属 classifier 的
+    ``ClassifierResult.factor_deltas`` 契约。L1 数据层的「因子级字段变化聚合」由
+    diff 引擎的 :class:`FactorDelta`（见下方 Snapshot Diff 子模型区）承载，二者
+    口径不同（评分层 vs 数据层），故分开命名。
     """
 
     factor: str = ""  # 因子标识：F/E/T/V/C/R/M
@@ -464,7 +484,10 @@ class ThesisVersion(BaseModel):
 
 
 class SnapshotDiff(BaseModel):
-    """Snapshot_t − Snapshot_{t-1}：报告的核心是「发生了什么变化」。"""
+    """Snapshot_t − Snapshot_{t-1}：报告的核心是「发生了什么变化」。
+
+    薄壳，仅 6 字段；由 :class:`CompanyStateDiff`（D1 升级）替换承载五层分层差分。
+    """
 
     prev_date: str = ""
     curr_date: str = ""
@@ -473,6 +496,121 @@ class SnapshotDiff(BaseModel):
     variable_deltas: dict[str, float | None] = Field(default_factory=dict)  # 七变量差分
     evidence_changed: list[str] = Field(default_factory=list)  # 新增/变化证据
     thesis_delta: str = ""  # 认知变化摘要
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Snapshot Diff 子模型（design MIDTERM_STATE_DIFF_DESIGN.md §3；D1 typed contracts）
+#
+# 五层正交分层：L1 数据（FieldDelta / FactorDelta）→ L2 评分（scores，见主模型）
+# → L3 状态（StateShift）+ 置信（ConfidenceDelta）→ L4 赔率（EVDiff）→ L5 仓位
+# （PositionDiff）。归因链（ChangeAttribution）自下而上承载 evidence → factor →
+# decision。全部为纯数据契约，不承载计算逻辑（计算由 ``diff.py`` 实现）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ArtifactRef(BaseModel):
+    """快照引用（不内嵌，append-only 反漂移，design §1.5）。"""
+
+    id: str  # CompanyStateArtifact 持久化 id
+    date: str  # YYYY-MM-DD
+    symbol: str = ""
+
+
+class FieldDelta(BaseModel):
+    """L1 字段级变化（最小粒度，design §3）。
+
+    只在同名同口径字段间计算（``revision_1m → revision_1m``）。``change`` 严格区分
+    ``appeared``（None→值）/ ``disappeared``（值→None）与 ``up`` / ``down`` /
+    ``unchanged``——出现/消失不得与增减混淆（alphabee-schema-steward）。
+    """
+
+    field: str  # canonical 字段名
+    prev: float | None
+    curr: float | None
+    delta: float | None  # 绝对差 curr - prev（单位随 canonical）
+    rel_delta: float | None  # 相对差 curr/prev - 1（跨量纲可比）
+    change: FieldChange  # appeared | disappeared | up | down | unchanged
+
+
+class FactorDelta(BaseModel):
+    """L1 因子级变化（聚合，design §3）。
+
+    仅聚合发生变化（``change != unchanged``）的字段；``direction`` 为
+    improving / neutral / deteriorating（由关键字段 ``rel_delta`` 方向聚合）；
+    ``consistency`` 为与其它因子的共振 / 背离 / 独立（resonant / divergent /
+    independent）。
+
+    注意：与 :class:`FactorScoreDelta`（L2 方向分 Δ，classifier 产物）口径不同，
+    本模型承载的是 L1 数据层的字段变化聚合，供 diff 引擎消费。
+    """
+
+    factor: str  # F / E / T / V / C / R / M
+    direction: str  # improving | neutral | deteriorating
+    fields: list[FieldDelta] = Field(default_factory=list)  # 仅含发生变化的字段
+    consistency: str = ""  # resonant | divergent | independent（与其它因子）
+
+
+class StateShift(BaseModel):
+    """L3 软状态漂移（design §3 / §2b）。
+
+    State 变化 = 分布漂移，不是 argmax 跳变：``tv_distance`` 承载信念位移总量，
+    ``mass_delta`` 承载逐状态质量流动，``entropy_delta`` 区分「整体平移」与
+    「越来越拿不准」。``argmax_from/argmax_to`` 只是漂移的一个投影。
+    """
+
+    argmax_from: str | None  # 首帧为 None
+    argmax_to: str
+    mass_delta: dict[str, float] = Field(default_factory=dict)  # {S_k: P_curr - P_prev}
+    tv_distance: float = 0.0  # 0.5·Σ|ΔP|，信念位移总量 0-1
+    entropy_from: float | None = None
+    entropy_to: float = 0.0
+    entropy_delta: float | None = None  # 变确定（负）/ 变模糊（正）
+    drift: dict[str, float] | None = None  # 质量流向（复用 classifier._drift 口径）
+    legal: bool = False  # 迁移合法性（classifier 判定）
+    kind: str = ""  # upgrade | downgrade | same | reopen
+
+
+class ConfidenceDelta(BaseModel):
+    """置信度变化（L3'，与状态漂移正交，design §3）。"""
+
+    prior: float | None
+    posterior: float | None
+    delta: float | None  # posterior − prior
+    log_odds_delta: float | None  # logit(posterior) − logit(prior)
+    evidence_ids: list[str] = Field(default_factory=list)  # 驱动变化的 EvidenceEvent id
+
+
+class EVDiff(BaseModel):
+    """L4 赔率变化（design §3）。"""
+
+    ev_from: float | None
+    ev_to: float | None
+    ev_delta: float | None
+    risk_adjusted_ev_delta: float | None
+    scenario_probability_delta: dict[str, float] = Field(default_factory=dict)  # {bull/base/bear: ΔP}
+    scenario_return_delta: dict[str, float | None] = Field(default_factory=dict)  # {bull/base/bear: ΔR}
+    probability_source_change: str = ""  # 如 state_prior → bayes_posterior
+
+
+class PositionDiff(BaseModel):
+    """L5 仓位变化（design §3）。"""
+
+    stock_weight_delta: float | None = None
+    actual_weight_delta: float | None = None
+    exposure_delta: float | None = None  # M 的市场暴露变化
+    band_from: str = ""
+    band_to: str = ""
+    band_weight_divergence: bool = False  # ⚠️ 标签与实际仓位背离（实跑已踩坑）
+    drivers: list[str] = Field(default_factory=list)  # 归因：state / confidence / ev / market / portfolio
+
+
+class ChangeAttribution(BaseModel):
+    """归因（为什么变，design §3 / §5）：evidence → factor → decision。"""
+
+    evidence_ids: list[str] = Field(default_factory=list)  # 触发变化的证据
+    factor_deltas: list[str] = Field(default_factory=list)  # 受影响的因子（如 ["E","F"]）
+    decision_effects: list[str] = Field(default_factory=list)  # 决策层影响（如 ["state:S2→S3","confidence:+0.2"]）
+    note: str = ""  # 一句话因果解释
 
 
 class ResearchTask(BaseModel):

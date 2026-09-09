@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from alphabee.midterm.models import (
     Consistency,
-    FactorDelta,
+    FactorScoreDelta,
     ResearchTask,
     StateBelief,
     StateTransition,
@@ -285,7 +285,7 @@ class ClassifierResult:
 
     state: StateBelief
     transition: StateTransition | None
-    factor_deltas: list[FactorDelta]
+    factor_deltas: list[FactorScoreDelta]
     uncertain: bool
     research_tasks: list[ResearchTask] = field(default_factory=list)
     rationale: list[str] = field(default_factory=list)
@@ -338,7 +338,7 @@ def classify_state(
         "R": scores.r_risk,
     }
     factor_deltas = [
-        FactorDelta(
+        FactorScoreDelta(
             factor=name,
             delta=factor_scores[name],
             consistency=consistency if name in ("F", "E", "T") else Consistency.INDEPENDENT,
