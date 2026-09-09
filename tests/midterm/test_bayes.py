@@ -117,6 +117,22 @@ def test_probability_source_state_prior():
     assert sp.probability_source == "state_prior"
 
 
+def test_no_evidence_conservative_prior():
+    # 无证据 → 保守先验：S3 bull 显著下修（不再无脑 0.55），向 base/bear 收缩
+    sp = scenario_probability("S3", confidence=None)
+    assert sp.probability_source == "state_prior"
+    assert sp.p_bull < 0.55
+    assert sp.p_bull == pytest.approx(0.44, abs=1e-2)  # 0.55 → 0.44
+    assert sp.p_bear > 0.15  # 保守：bear 上修
+
+
+def test_has_evidence_false_forces_state_prior():
+    # 显式 has_evidence=False：即使给了 confidence 也走保守先验，不标 bayes_posterior
+    sp = scenario_probability("S3", confidence=0.7, has_evidence=False)
+    assert sp.probability_source == "state_prior"
+    assert sp.p_bull < 0.55
+
+
 def test_probability_source_bayes_posterior():
     sp = scenario_probability("S3", confidence=0.7)
     assert sp.probability_source == "bayes_posterior"

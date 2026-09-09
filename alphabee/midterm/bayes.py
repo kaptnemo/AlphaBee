@@ -64,6 +64,10 @@ _STATE_BULL_DIRECTION = {
 _CONFIDENCE_MAGNITUDE = 0.35  # 高确信（confidence→1）时 bull/bear 极化幅度
 _PROB_MIN, _PROB_MAX = 0.02, 0.98  # 情景概率夹紧边界（避免退化到 0/1）
 
+# 无证据（state_prior）时的保守先验收缩：把 §5.2 状态锚点向均匀先验 1/3 收缩，
+# 避免「因子→S3→bull 0.55→EV」的状态先验自我引用给激进 EV（S3 bull 0.55 → 0.44）。
+_STATE_PRIOR_SHRINK = 0.5
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # log-odds 辅助（纯函数）
@@ -103,6 +107,18 @@ def _event_logodds(event: EvidenceEvent) -> float:
 
 def _clip_prob(p: float) -> float:
     return max(_PROB_MIN, min(_PROB_MAX, p))
+
+
+def _conservative_prior(bull: float, bear: float) -> tuple[float, float]:
+    """无证据时的保守先验：把 §5.2 状态 bull/bear 锚点向均匀先验 1/3 收缩。
+
+    S3：bull 0.55 → 0.44、bear 0.15 → 0.24；S5：bull 0.10 → 0.21、bear 0.60 → 0.47。
+    零证据下状态先验不再「无脑」给高 bull，避免自我引用给激进 EV。
+    """
+    flat = 1.0 / 3.0
+    b = flat + (bull - flat) * _STATE_PRIOR_SHRINK
+    be = flat + (bear - flat) * _STATE_PRIOR_SHRINK
+    return b, be
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,17 +184,27 @@ def scenario_probability(
     state: str,
     *,
     confidence: float | None = None,
+    has_evidence: bool | None = None,
 ) -> ScenarioProbability:
     """由 State（``StateBelief.argmax_state``）与 Confidence 联合驱动三情景概率。
 
     §5.2 表：S1 低 / S2 快升 / S3 最高 / S4 下降。``confidence`` 升高时按状态多空
-    方向极化 bull/bear（看多态更 bull、看空态更 bear），``confidence=None`` 时退回
-    状态先验（``probability_source="state_prior"``）。
+    方向极化 bull/bear（看多态更 bull、看空态更 bear）。
+
+    概率来源语义（§5.2 Evidence → BeliefUpdate → ScenarioProbability）：
+
+    - **有证据**（``has_evidence=True``，或未显式传 ``has_evidence`` 且 ``confidence``
+      非 ``None``）→ ``probability_source="bayes_posterior"``，用置信后验极化；
+    - **无证据**（``has_evidence=False``，或 ``confidence is None``）→
+      ``probability_source="state_prior"``，用**保守先验**（§5.2 锚点向均匀先验收缩，
+      S3 bull 0.55 → 0.44），不再无脑给高 bull。
 
     Args:
         state: 名义状态（``argmax_state``，S0–S5）。
         confidence: 后验 P(H|E)（0-1，来自 ``update_confidence``）；``None`` 表示
-            无证据，只用状态先验。
+            无证据。
+        has_evidence: 是否有证据日志；``None`` 时按 ``confidence is not None`` 推断
+            （向后兼容）。显式 ``False`` 时即使给了 ``confidence`` 也走保守先验。
 
     Returns:
         :class:`ScenarioProbability`（三情景概率和≈1 + 概率来源）。
@@ -188,13 +214,19 @@ def scenario_probability(
     if b0 is None or be0 is None:
         raise ValueError(f"未知状态: {state!r}（应为 S0–S5 之一）")
 
-    if confidence is None:
+    evidence = has_evidence if has_evidence is not None else confidence is not None
+
+    if not evidence:
+        b, be = _conservative_prior(b0, be0)
         return ScenarioProbability(
-            p_bull=b0,
-            p_base=1.0 - b0 - be0,
-            p_bear=be0,
+            p_bull=b,
+            p_base=1.0 - b - be,
+            p_bear=be,
             probability_source="state_prior",
         )
+
+    if confidence is None:  # 防御：has_evidence=True 但 confidence 缺失
+        confidence = _NEUTRAL_PRIOR
 
     c = 2.0 * confidence - 1.0  # confidence 0-1 → 确信方向强度 [-1,1]
     direction = _STATE_BULL_DIRECTION[state]

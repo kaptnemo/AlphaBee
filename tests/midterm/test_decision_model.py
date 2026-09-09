@@ -49,7 +49,7 @@ def _ev(effect: str, delta: float) -> EvidenceEvent:
 
 
 def test_evaluate_assembles_artifact():
-    art = evaluate(_snapshot())
+    art = evaluate(_snapshot(), [_ev("confirming", 0.5)], prior_confidence=0.5)
     assert art.symbol == "600519.SH"
     assert art.state is not None  # StateBelief
     assert art.state.argmax_state in ("S0", "S1", "S2", "S3", "S4", "S5")
@@ -57,7 +57,16 @@ def test_evaluate_assembles_artifact():
     assert art.factor_snapshot is not None
     assert art.position is not None
     assert art.expected_value is not None
-    assert art.expected_value.ev is not None  # 估值存在 → EV 可算
+    assert art.expected_value.ev is not None  # 有证据 + 估值存在 → EV 可算
+
+
+def test_evaluate_no_evidence_ev_degraded():
+    # 零证据 → EV 显式降级（ev=None），不静默由 state_prior 给激进 EV
+    art = evaluate(_snapshot())
+    assert art.expected_value is not None
+    assert art.expected_value.ev is None
+    assert art.expected_value.probability_source == "state_prior"
+    assert "零证据" in art.expected_value.note
 
 
 def test_evaluate_with_evidence_updates_confidence():
@@ -92,10 +101,10 @@ def test_evaluate_writes_back_direction_scores():
     snap = art.factor_snapshot
     scores = art.variable_scores
 
-    # F=0.5 / E=0.4 / T=0.375 → 均 improving；V=0.3 恰在阈值 → fair
+    # F=0.5 / T=0.375 → improving；E≈0.25（log1p 反饱和后）→ neutral；V=0.3 恰在阈值 → fair
     assert snap.fundamental.direction == "improving"
     assert snap.fundamental.score == pytest.approx(50.0 + 50.0 * scores.f_fundamental_trend)
-    assert snap.expectation.direction == "improving"
+    assert snap.expectation.direction == "neutral"
     assert snap.expectation.score == pytest.approx(50.0 + 50.0 * scores.e_revision)
     assert snap.trend.direction == "improving"
     assert snap.trend.score == pytest.approx(50.0 + 50.0 * scores.t_relative_strength)
@@ -144,7 +153,7 @@ def test_writeback_missing_direction_keeps_default():
 
 
 def test_evaluate_missing_valuation_ev_none():
-    art = evaluate(_snapshot(valuation=ValuationFactor()))
+    art = evaluate(_snapshot(valuation=ValuationFactor()), [_ev("confirming", 0.5)], prior_confidence=0.5)
     assert art.expected_value is not None
     assert art.expected_value.ev is None  # 估值缺失 → EV 显式 None，不静默回退
 

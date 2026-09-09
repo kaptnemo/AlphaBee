@@ -125,13 +125,29 @@ def _estimate_expected_value(
     snapshot: FactorSnapshot,
     scenario_probs: ScenarioProbability,
     scores: VariableScores,
+    *,
+    has_evidence: bool = True,
 ) -> ExpectedValue:
     """由 ScenarioProbability + 估值分位 + EPS 修订估计 ExpectedValue（§5.2）。
 
     R 分解为 ``earnings_contribution``（E 修订驱动）与 ``valuation_contribution``
     （估值分位驱动，低分位=便宜=上行空间）。估值分位缺失时 R/EV 显式 ``None``
     （不静默回退）；E 修订缺失时 earnings 贡献显式 ``None``，仅估值贡献 R。
+
+    零证据（``has_evidence=False``）时 EV 显式降级：保守 state_prior 不支撑可信 EV，
+    ``ev=None`` 并注明降级原因，不静默给激进 EV。
     """
+    if not has_evidence:
+        return ExpectedValue(
+            scenarios=scenario_probs.as_scenarios(),
+            ev=None,
+            risk=None,
+            risk_adjusted_ev=None,
+            probability_source=scenario_probs.probability_source,
+            as_of_date=snapshot.as_of_date,
+            note="零证据：EV 无 EvidenceEvent 支撑，由保守 state_prior 推导，显式降级（ev=None）",
+        )
+
     percentile = snapshot.valuation.percentile
     if percentile is None:
         percentile = snapshot.valuation.pe_ttm_5y_percentile
@@ -243,8 +259,9 @@ def evaluate(
     snapshot.confidence = confidence if confidence is not None else 0.0
     _writeback_directions(snapshot, scores)
 
-    scenario_probs = scenario_probability(cls.state.argmax_state, confidence=confidence)
-    ev = _estimate_expected_value(snapshot, scenario_probs, scores)
+    has_evidence = bool(evidence)
+    scenario_probs = scenario_probability(cls.state.argmax_state, confidence=confidence, has_evidence=has_evidence)
+    ev = _estimate_expected_value(snapshot, scenario_probs, scores, has_evidence=has_evidence)
 
     position = build_position(
         cls.state,
