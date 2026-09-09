@@ -150,7 +150,7 @@ def _active_factors(scores: VariableScores) -> list[str]:
         "C": scores.c_crowding,
         "R": scores.r_risk,
     }
-    return [k for k in _FACTOR_ORDER if values[k] is not None and abs(values[k]) > _ACTIVE_T]
+    return [k for k in _FACTOR_ORDER if (v := values[k]) is not None and abs(v) > _ACTIVE_T]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -316,7 +316,7 @@ def classify_state(
     """
     evidence = _state_evidence(scores)
     distribution = _softmax(evidence, _SOFTMAX_TEMPERATURE)
-    argmax = max(_STATES, key=distribution.get)
+    argmax = max(_STATES, key=lambda s: distribution.get(s, 0.0))
     entropy = _entropy(distribution)
 
     consistency = _triad_consistency(scores.f_fundamental_trend, scores.e_revision, scores.t_relative_strength)

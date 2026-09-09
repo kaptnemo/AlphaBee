@@ -174,6 +174,9 @@ def _estimate_expected_value(
     bear_val = -(percentile * _BEAR_SCALE + _BEAR_BASE)
     base_val = 0.0
 
+    bull_earn: float | None
+    base_earn: float | None
+    bear_earn: float | None
     if e_rev is not None:
         bull_earn = e_rev * _EARN_SCALE
         base_earn = e_rev * _EARN_SCALE * 0.5
