@@ -13,8 +13,10 @@ EVDiff / PositionDiff / ChangeAttribution。
 from alphabee.midterm.models import (
     ArtifactRef,
     ChangeAttribution,
+    CompanyStateDiff,
     ConfidenceDelta,
     EVDiff,
+    EvidenceEvent,
     FactorDelta,
     FactorScoreDelta,
     FieldChange,
@@ -244,3 +246,104 @@ def test_factor_delta_and_score_delta_are_distinct_contracts():
     l1_delta = FactorDelta(factor="E", direction="improving")
     assert l1_delta.fields == []
     assert not hasattr(l1_delta, "delta")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CompanyStateDiff（主模型：五层正交 + 证据归因 + 退出检查 + 元信息）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_company_state_diff_minimal():
+    prev = ArtifactRef(id="cs-001", date="2026-01-01", symbol="000977")
+    curr = ArtifactRef(id="cs-002", date="2026-01-05", symbol="000977")
+    d = CompanyStateDiff(symbol="000977", prev=prev, curr=curr, elapsed_days=4)
+    assert d.symbol == "000977"
+    assert d.prev.id == "cs-001"
+    assert d.curr.id == "cs-002"
+    assert d.elapsed_days == 4
+    assert d.is_first is False
+    assert d.anchor is None
+
+
+def test_company_state_diff_first_frame():
+    curr = ArtifactRef(id="cs-001", date="2026-01-01", symbol="600519")
+    d = CompanyStateDiff(symbol="600519", prev=None, curr=curr, is_first=True, elapsed_days=0)
+    assert d.is_first is True
+    assert d.prev is None
+    assert d.state_shift is None  # 首帧无状态漂移
+    assert d.factors == []
+    assert d.scores == {}
+
+
+def test_company_state_diff_five_layers_carried():
+    # 五层分层：factors(L1) / scores(L2) / state_shift(L3) / confidence(L3') / ev(L4) / position(L5)
+    d = CompanyStateDiff(
+        symbol="000977",
+        prev=ArtifactRef(id="a", date="2026-01-01"),
+        curr=ArtifactRef(id="b", date="2026-01-05"),
+        elapsed_days=4,
+        factors=[FactorDelta(factor="E", direction="improving")],
+        scores={"e_revision": 0.3},
+        state_shift=StateShift(argmax_from="S1", argmax_to="S2", tv_distance=0.2, entropy_to=1.0),
+        confidence=ConfidenceDelta(prior=0.58, posterior=0.72, delta=0.14, log_odds_delta=0.62),
+        ev=EVDiff(ev_from=12.0, ev_to=15.0, ev_delta=3.0, risk_adjusted_ev_delta=0.5),
+        position=PositionDiff(stock_weight_delta=0.05),
+    )
+    assert len(d.factors) == 1
+    assert d.scores["e_revision"] == 0.3
+    assert d.state_shift.kind == ""
+    assert d.state_shift.argmax_to == "S2"
+    assert d.confidence.delta == 0.14
+    assert d.ev.ev_delta == 3.0
+    assert d.position.stock_weight_delta == 0.05
+
+
+def test_company_state_diff_evidence_attribution_exit():
+    ev1 = EvidenceEvent(
+        id="e1",
+        date="2026-01-05",
+        kind="expectation",
+        description="EPS 上修",
+        effect_on_thesis="confirming",
+        confidence_delta=0.1,
+    )
+    att = ChangeAttribution(
+        evidence_ids=["e1"], factor_deltas=["E"], decision_effects=["state:S1→S2"], note="EPS 上修驱动"
+    )
+    d = CompanyStateDiff(
+        symbol="000977",
+        prev=ArtifactRef(id="a", date="2026-01-01"),
+        curr=ArtifactRef(id="b", date="2026-01-05"),
+        elapsed_days=4,
+        new_evidence=[ev1],
+        attribution=[att],
+        thesis_delta="Q2 收入与 EPS 上修驱动状态迁移",
+        exit_conditions_met=["revision_stop"],
+        degraded_flip="False→True",
+        missing_appeared=["eps_fy1_revision_1m"],
+        missing_disappeared=["turnover_rate"],
+    )
+    assert d.new_evidence[0].id == "e1"
+    assert d.attribution[0].factor_deltas == ["E"]
+    assert d.thesis_delta == "Q2 收入与 EPS 上修驱动状态迁移"
+    assert d.exit_conditions_met == ["revision_stop"]
+    assert d.degraded_flip == "False→True"
+    assert d.missing_appeared == ["eps_fy1_revision_1m"]
+    assert d.missing_disappeared == ["turnover_rate"]
+
+
+def test_company_state_diff_round_trip():
+    d = CompanyStateDiff(
+        symbol="600519",
+        prev=ArtifactRef(id="a", date="2026-01-01"),
+        curr=ArtifactRef(id="b", date="2026-01-05"),
+        elapsed_days=4,
+        scores={"e_revision": 0.3},
+        state_shift=StateShift(
+            argmax_from="S1", argmax_to="S2", tv_distance=0.2, entropy_to=1.0, legal=True, kind="upgrade"
+        ),
+    )
+    data = d.model_dump()
+    assert data["symbol"] == "600519"
+    assert data["state_shift"]["kind"] == "upgrade"
+    # round-trip 回构造
+    d2 = CompanyStateDiff(**data)
+    assert d2 == d

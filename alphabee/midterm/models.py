@@ -9,7 +9,7 @@
         → FactorSnapshot（七因子快照）
         → VariableScores（0-100 / 方向分）
         → CompanyStateArtifact（S0–S5 认知状态 + 证据日志 + 贝叶斯后验）
-        → PositionDecision（三层仓位）→ SnapshotDiff（"发生了什么变化"）
+        → PositionDecision（三层仓位）→ CompanyStateDiff（"发生了什么变化"）
 
 约束：
 
@@ -23,7 +23,7 @@
 下游承载关系（S1–S4 状态机）：
 
 - ``FactorSnapshot`` 是「第三十四节 Snapshot」的 typed 化：每次重要事件后保存一帧，
-  真正有信息量的产物是 ``Snapshot_t − Snapshot_{t-1}``（:class:`SnapshotDiff`）。
+  真正有信息量的产物是 ``Snapshot_t − Snapshot_{t-1}``（:class:`CompanyStateDiff`）。
 - ``CompanyStateArtifact`` 是 S0–S5 认知状态的持久化契约，内嵌
   ``expectation_gap`` / ``variable_scores`` / ``evidence_log`` / ``position``，
   由 ``bayes.py`` 用证据日志做 log-odds 更新，由 ``classifier.py`` 做合法迁移判定。
@@ -329,7 +329,7 @@ class FactorSnapshot(BaseModel):
     """七因子快照（文档 S1–S4 第三十四节「Snapshot」的 typed 化）。
 
     整个中期决策层最核心的可落盘数据。每次重要事件后保存一帧，真正有信息量的
-    增量产物是 ``Snapshot_t − Snapshot_{t-1}``（见 :class:`SnapshotDiff`）。
+    增量产物是 ``Snapshot_t − Snapshot_{t-1}``（见 :class:`CompanyStateDiff`）。
     七个维度字段名均使用 canonical 名；缺失维度显式 ``None`` 并登记
     ``missing_facts``（绝不静默回退）。
     """
@@ -483,21 +483,6 @@ class ThesisVersion(BaseModel):
     invalidation: list[str] = Field(default_factory=list)  # 当时的证伪条件
 
 
-class SnapshotDiff(BaseModel):
-    """Snapshot_t − Snapshot_{t-1}：报告的核心是「发生了什么变化」。
-
-    薄壳，仅 6 字段；由 :class:`CompanyStateDiff`（D1 升级）替换承载五层分层差分。
-    """
-
-    prev_date: str = ""
-    curr_date: str = ""
-    state_from: str = ""
-    state_to: str = ""
-    variable_deltas: dict[str, float | None] = Field(default_factory=dict)  # 七变量差分
-    evidence_changed: list[str] = Field(default_factory=list)  # 新增/变化证据
-    thesis_delta: str = ""  # 认知变化摘要
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Snapshot Diff 子模型（design MIDTERM_STATE_DIFF_DESIGN.md §3；D1 typed contracts）
 #
@@ -505,6 +490,7 @@ class SnapshotDiff(BaseModel):
 # → L3 状态（StateShift）+ 置信（ConfidenceDelta）→ L4 赔率（EVDiff）→ L5 仓位
 # （PositionDiff）。归因链（ChangeAttribution）自下而上承载 evidence → factor →
 # decision。全部为纯数据契约，不承载计算逻辑（计算由 ``diff.py`` 实现）。
+# 主模型 :class:`CompanyStateDiff` 定义在子模型之后（见下方）。
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -611,6 +597,50 @@ class ChangeAttribution(BaseModel):
     factor_deltas: list[str] = Field(default_factory=list)  # 受影响的因子（如 ["E","F"]）
     decision_effects: list[str] = Field(default_factory=list)  # 决策层影响（如 ["state:S2→S3","confidence:+0.2"]）
     note: str = ""  # 一句话因果解释
+
+
+class CompanyStateDiff(BaseModel):
+    """五层分层差分主模型（design §3；D1 升级替换薄壳 ``SnapshotDiff``）。
+
+    承载同一标的两个时间点的 ``CompanyStateArtifact`` 变化：五层正交分层
+    （L1 ``factors`` / L2 ``scores`` / L3 ``state_shift`` + ``confidence`` /
+    L4 ``ev`` / L5 ``position``）+ 证据归因（``new_evidence`` / ``attribution`` /
+    ``thesis_delta``）+ 退出检查（``exit_conditions_met``）+ 元信息（降级翻转、
+    missing 差集）。首帧（``is_first=True``）各层按「基线登记」处理。
+
+    旧 ``SnapshotDiff`` 字段语义迁移：``state_from/state_to`` →
+    :class:`StateShift` 的 ``argmax_from/argmax_to``；``variable_deltas`` →
+    ``scores`` + ``factors[].fields`` 分层承载；``evidence_changed`` →
+    ``new_evidence`` + ``attribution[].evidence_ids``。
+    """
+
+    symbol: str
+    prev: ArtifactRef | None  # 首帧为 None
+    curr: ArtifactRef
+    anchor: ArtifactRef | None = None  # 建仓锚点（可选，§44）
+    is_first: bool = False
+    elapsed_days: int
+
+    # 五层变化（首帧时各层按「基线登记」处理）
+    factors: list[FactorDelta] = Field(default_factory=list)  # L1
+    scores: dict[str, float | None] = Field(default_factory=dict)  # L2：canonical 方向分名 → Δ
+    state_shift: StateShift | None = None  # L3
+    confidence: ConfidenceDelta | None = None  # L3'
+    ev: EVDiff | None = None  # L4
+    position: PositionDiff | None = None  # L5
+
+    # 证据与归因
+    new_evidence: list[EvidenceEvent] = Field(default_factory=list)
+    attribution: list[ChangeAttribution] = Field(default_factory=list)
+    thesis_delta: str = ""  # 可读总结（由 attribution 投影 / LLM 润色）
+
+    # 退出检查（§37 ExitEngine）
+    exit_conditions_met: list[str] = Field(default_factory=list)  # 新满足的退出条件 kind
+
+    # 元信息
+    degraded_flip: str = ""  # 降级状态翻转（False→True / True→False）说明
+    missing_appeared: list[str] = Field(default_factory=list)  # 新出现（数据源补齐）的字段
+    missing_disappeared: list[str] = Field(default_factory=list)  # 新缺失（降级/覆盖消失）的字段
 
 
 class ResearchTask(BaseModel):

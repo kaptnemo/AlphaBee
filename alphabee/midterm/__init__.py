@@ -6,7 +6,8 @@
 
 数据单向约束（alphabee-schema-steward + alphabee-pipeline-contract-steward）：
 外部数据源字段 → adapter/mapping → canonical 字段 → FactorSnapshot / VariableScores
-→ CompanyStateArtifact → PositionDecision / PortfolioAllocation → SnapshotDiff。
+→ CompanyStateArtifact → PositionDecision / PortfolioAllocation → CompanyStateDiff
+（五层分层差分，D1 已替换薄壳 SnapshotDiff）。
 """
 
 # factors.py 采用函数内惰性导入数据源，四引擎与编排入口均为确定性纯函数，
@@ -30,6 +31,7 @@ from alphabee.midterm.models import (
     ChangeAttribution,
     CognitiveState,
     CompanyStateArtifact,
+    CompanyStateDiff,
     ConfidenceDelta,
     Consistency,
     CrowdingFactor,
@@ -55,7 +57,6 @@ from alphabee.midterm.models import (
     ResearchTask,
     RiskFactor,
     ScenarioOutcome,
-    SnapshotDiff,
     StateBelief,
     StateShift,
     StateTransition,
@@ -73,6 +74,7 @@ __all__ = [
     "ChangeAttribution",
     "CognitiveState",
     "CompanyStateArtifact",
+    "CompanyStateDiff",
     "ConfidenceDelta",
     "Consistency",
     "CrowdingFactor",
@@ -98,7 +100,6 @@ __all__ = [
     "ResearchTask",
     "RiskFactor",
     "ScenarioOutcome",
-    "SnapshotDiff",
     "StateBelief",
     "StateShift",
     "StateTransition",
