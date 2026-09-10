@@ -16,15 +16,17 @@ import json
 from langchain_core.messages import AIMessage
 
 from alphabee.midterm.evidence_extractor import (
+    FactEventCache,
     _build_messages,
     _build_stage_b_messages,
     _fact_id,
     _normalize_texts,
     assemble_events,
+    dedupe_events,
     extract_facts,
     judge_facts,
 )
-from alphabee.midterm.models import EffectOnThesis, EvidenceJudgment, FactEvent, Strength
+from alphabee.midterm.models import EffectOnThesis, EvidenceEvent, EvidenceJudgment, FactEvent, Strength
 
 
 class FakeModel:
@@ -336,3 +338,91 @@ def test_assemble_events_drops_orphan_judgment():
         )
     ]
     assert assemble_events(facts, judgments) == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 去重（§7）：dedupe_events
+# ─────────────────────────────────────────────────────────────────────────────
+def _event(eid="e1", refs=None, effect="confirming", delta=0.1):
+    return EvidenceEvent(
+        id=eid,
+        date="2026-06-30",
+        kind="expectation",
+        description="营收同比增长 10%",
+        effect_on_thesis=effect,
+        confidence_delta=delta,
+        source_refs=refs if refs is not None else [],
+    )
+
+
+def test_dedupe_events_merges_multi_source():
+    # 多来源同事件（财报原文 / 东财快讯 / 研报点评）→ 同 id 合并 source_refs
+    events = [_event(refs=["财报原文"]), _event(refs=["东财快讯", "研报点评"])]
+    merged = dedupe_events(events)
+    assert len(merged) == 1
+    assert merged[0].source_refs == ["东财快讯", "研报点评", "财报原文"]  # sorted set 合并
+
+
+def test_dedupe_events_same_topic_counted_once():
+    # 同主题多篇报道（同 id）→ 只算一次，避免 log-odds 累加虚高
+    events = [_event(refs=["报道1"]), _event(refs=["报道2"]), _event(refs=["报道3"])]
+    assert len(dedupe_events(events)) == 1
+
+
+def test_dedupe_events_distinct_ids_kept():
+    assert len(dedupe_events([_event(eid="e1"), _event(eid="e2")])) == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FactEvent 缓存（§4 两阶段动机 + §10 成本控制）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_fact_cache_put_get_idempotent():
+    cache = FactEventCache()
+    fact = _fact(fid="f1")
+    cache.put(fact)
+    cache.put(fact)  # 幂等：同 id 覆盖
+    assert len(cache) == 1
+    assert cache.get("f1") == fact
+    assert "f1" in cache
+    assert cache.get("missing") is None
+
+
+def test_fact_cache_put_all_and_get_many():
+    cache = FactEventCache()
+    cache.put_all([_fact(fid="f1"), _fact(fid="f2")])
+    got = cache.get_many(["f2", "missing", "f1"])
+    assert [f.id for f in got] == ["f2", "f1"]  # 忽略未命中
+
+
+def test_extract_facts_caches_facts():
+    cache = FactEventCache()
+    facts = extract_facts("原文", symbol="600519", source_type="forecast", model=FakeModel(_valid_json()), cache=cache)
+    assert len(facts) == 1
+    assert len(cache) == 1
+    assert cache.get(facts[0].id) == facts[0]
+
+
+def test_fact_cache_reuse_for_new_thesis():
+    # Stage A 只跑一次，thesis 变化只重跑 Stage B（复用缓存事实，§4/§10）
+    cache = FactEventCache()
+    stage_a = FakeModel(_valid_json())
+    facts = extract_facts("原文", symbol="600519", source_type="forecast", model=stage_a, cache=cache)
+    assert stage_a.calls == 1  # Stage A 只调用一次
+    assert len(facts) == 1
+    assert len(cache) == 1
+
+    cached = cache.all()
+    fid = cached[0].id
+    for thesis in ("H1: 营收高增长", "H2: 利润稳健"):
+        jjson = json.dumps(
+            {
+                "judgments": [
+                    {"fact_id": fid, "effect_on_thesis": "confirming", "strength": "medium", "reasoning": "引用原文"}
+                ]
+            },
+            ensure_ascii=False,
+        )
+        judgments = judge_facts(cached, thesis=thesis, model=FakeModel(jjson))
+        events = assemble_events(cached, judgments)
+        assert len(events) == 1
+    assert stage_a.calls == 1  # thesis 变化未重抽 Stage A

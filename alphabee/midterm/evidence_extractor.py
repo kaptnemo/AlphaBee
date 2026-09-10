@@ -181,6 +181,7 @@ def extract_facts(
     symbol: str = "",
     source_type: str = "",
     model: Any = None,
+    cache: FactEventCache | None = None,
 ) -> list[FactEvent]:
     """Stage A 客观事实抽取：非结构化文本 → FactEvent[]（LLM 必需，失败降级 []）。
 
@@ -190,6 +191,8 @@ def extract_facts(
         source_type: 来源类型提示（financial_report / forecast / research_report /
             announcement / news），回填到 FactEvent.source_type。
         model: 可选注入的 LLM 实例（测试用）；缺省复用 ``create_structured_model``。
+        cache: 可选 FactEventCache，抽取结果入库（§4 两阶段动机 + §10：thesis 变化
+            只重跑 Stage B，不必重抽 Stage A）。
 
     Returns:
         FactEvent[]（去重后；LLM 失败 / 解析失败 / 结构校验失败均返回 ``[]``，
@@ -212,7 +215,10 @@ def extract_facts(
         return []
 
     facts = [fact for draft in flist.events if (fact := _finalize(draft, symbol, source_type)) is not None]
-    return _dedup(facts)
+    facts = _dedup(facts)
+    if cache is not None:
+        cache.put_all(facts)  # 入库（幂等，§4/§10）
+    return facts
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -307,8 +313,16 @@ def _build_stage_b_messages(facts: list[FactEvent], thesis: str) -> list[Any]:
     return [SystemMessage(content=_STAGE_B_SYSTEM_PROMPT), HumanMessage(content=user)]
 
 
-def _dedup_events(events: list[EvidenceEvent]) -> list[EvidenceEvent]:
-    """按 id 去重（§7）：同 id 合并 source_refs。"""
+def dedupe_events(events: list[EvidenceEvent]) -> list[EvidenceEvent]:
+    """证据去重（§7）：按事件签名 id=hash(date+kind+主体+数值) 去重。
+
+    - 多来源同事件（财报原文 / 东财快讯 / 研报点评都在说同一份业绩）→ 同 id 合并
+      ``source_refs``（去重保序）；
+    - 同主题多篇报道只算一次（避免 log-odds 累加虚高，§7）。
+
+    仅合并 ``source_refs``（id 相同时 description/effect/confidence_delta 视为同一
+    事件的确定性字段，保留首条）。
+    """
     merged: dict[str, EvidenceEvent] = {}
     for ev in events:
         if ev.id in merged:
@@ -318,6 +332,46 @@ def _dedup_events(events: list[EvidenceEvent]) -> list[EvidenceEvent]:
         else:
             merged[ev.id] = ev
     return list(merged.values())
+
+
+class FactEventCache:
+    """FactEvent 缓存（§4 两阶段动机 + §10 成本控制）。
+
+    Stage A 事实入库后，thesis 变化只重跑 Stage B（``judge_facts``），不必重抽
+    Stage A（``extract_facts``）。key 用 fact id（事件签名哈希，§7），读写幂等：
+    同 id 覆盖写入，未命中返回 ``None``/``[]``。
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, FactEvent] = {}
+
+    def put(self, fact: FactEvent) -> FactEvent:
+        """写入单条事实（幂等：同 id 覆盖）。"""
+        self._store[fact.id] = fact
+        return fact
+
+    def put_all(self, facts: list[FactEvent]) -> None:
+        """批量写入（幂等）。"""
+        for fact in facts:
+            self.put(fact)
+
+    def get(self, fact_id: str) -> FactEvent | None:
+        """按 id 读回单条事实；未命中 → None。"""
+        return self._store.get(fact_id)
+
+    def get_many(self, fact_ids: list[str]) -> list[FactEvent]:
+        """按 id 列表读回（忽略未命中的 id）。"""
+        return [fact for fid in fact_ids if (fact := self._store.get(fid)) is not None]
+
+    def all(self) -> list[FactEvent]:
+        """读回全部已缓存事实。"""
+        return list(self._store.values())
+
+    def __contains__(self, fact_id: str) -> bool:
+        return fact_id in self._store
+
+    def __len__(self) -> int:
+        return len(self._store)
 
 
 def judge_facts(
@@ -391,4 +445,4 @@ def assemble_events(
                 source_refs=[*fact.quotes, *fact.source_refs],
             )
         )
-    return _dedup_events(events)
+    return dedupe_events(events)
