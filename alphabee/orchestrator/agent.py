@@ -48,6 +48,7 @@ from alphabee.orchestrator.gates import review_report, route_after_report_review
 from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.insights import synthesize_insights
+from alphabee.orchestrator.nodes.midterm import resolve_midterm_decision
 from alphabee.orchestrator.nodes.resolve_company_track import resolve_company_track
 from alphabee.orchestrator.nodes.resolve_driver_profile import resolve_driver_profile
 from alphabee.orchestrator.nodes.resolve_industry_context import resolve_industry_context
@@ -307,6 +308,17 @@ def _reconstruct_thesis(thesis_dict: dict[str, Any]) -> Any:
 # ── graph assembly ──────────────────────────────────────────────────────────
 
 
+def route_after_thesis(state: OrchestratorState) -> str:
+    """review_thesis 之后的条件路由：flag 门控中期决策节点。
+
+    - ``midterm=True``：review_thesis → resolve_midterm_decision → generate_report；
+    - ``midterm=False``（默认）：review_thesis → generate_report，行为与现状完全一致。
+    """
+    if state.get("midterm", False):
+        return "resolve_midterm_decision"
+    return "generate_report"
+
+
 _graph = StateGraph(OrchestratorState)
 
 _graph.add_node("collect_raw_facts", collect_raw_facts)
@@ -319,6 +331,7 @@ _graph.add_node("verify_hypotheses", verify_hypotheses)
 _graph.add_node("synthesize_insights", synthesize_insights)
 _graph.add_node("run_thesis", run_thesis)
 _graph.add_node("review_thesis", review_thesis)
+_graph.add_node("resolve_midterm_decision", resolve_midterm_decision)
 _graph.add_node("generate_report", generate_report)
 _graph.add_node("review_report", review_report)
 _graph.add_node("finalize_message", finalize_message)
@@ -333,7 +346,16 @@ _graph.add_edge("explore_conflicts", "verify_hypotheses")
 _graph.add_edge("verify_hypotheses", "synthesize_insights")
 _graph.add_edge("synthesize_insights", "run_thesis")
 _graph.add_edge("run_thesis", "review_thesis")
-_graph.add_edge("review_thesis", "generate_report")
+# 中期决策节点由 flag 门控：开 → 走 resolve_midterm_decision，关 → 直接生成报告。
+_graph.add_conditional_edges(
+    "review_thesis",
+    route_after_thesis,
+    {
+        "resolve_midterm_decision": "resolve_midterm_decision",
+        "generate_report": "generate_report",
+    },
+)
+_graph.add_edge("resolve_midterm_decision", "generate_report")
 _graph.add_edge("generate_report", "review_report")
 # 整个主流程是单向串联，只有 report quality gate 允许一次受控回环。
 # 这样既能保留“先收集事实 → 再计算 → 再形成论点 → 再出报告”的业务顺序，

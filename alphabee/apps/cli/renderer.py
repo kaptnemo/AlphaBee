@@ -39,13 +39,15 @@ STAGE_MAP: dict[str, tuple[str, str, str]] = {
 # ---------------------------------------------------------------------------
 
 
-def print_header(query: str, enhance: bool, llm_review: bool) -> None:
+def print_header(query: str, enhance: bool, llm_review: bool, midterm: bool = False) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     flags = []
     if enhance:
         flags.append("增强层")
     if llm_review:
         flags.append("LLM审查")
+    if midterm:
+        flags.append("中期决策")
     flag_str = f"  [{' + '.join(flags)}]" if flags else ""
 
     print()
@@ -762,7 +764,7 @@ def render_final_report(final_payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_footer(total_steps: int, total_time: float, enhance: bool, llm_review: bool) -> None:
+def print_footer(total_steps: int, total_time: float, enhance: bool, llm_review: bool, midterm: bool = False) -> None:
     print(hr("═", 70, Color.CYAN))
     print(
         color("  ✔  完成", Color.BOLD, Color.GREEN)
@@ -774,6 +776,8 @@ def print_footer(total_steps: int, total_time: float, enhance: bool, llm_review:
         flags.append("增强层 ✅")
     if llm_review:
         flags.append("LLM审查 ✅")
+    if midterm:
+        flags.append("中期决策 ✅")
     if flags:
         print(color("      模式: " + "  ".join(flags), Color.YELLOW))
     print(hr("═", 70, Color.CYAN))

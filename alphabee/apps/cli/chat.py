@@ -16,6 +16,7 @@ async def run_chat_session(
     *,
     enhance: bool = False,
     llm_review: bool = False,
+    midterm: bool = False,
 ) -> None:
     history: list[Any] = []
     turn = 1
@@ -24,7 +25,7 @@ async def run_chat_session(
 
     if initial_query:
         initial_query = normalize_query(initial_query)
-        answer = await run_query(initial_query, history, enhance=enhance, llm_review=llm_review)
+        answer = await run_query(initial_query, history, enhance=enhance, llm_review=llm_review, midterm=midterm)
         append_turn_history(history, initial_query, answer)
         turn += 1
 
@@ -57,6 +58,6 @@ async def run_chat_session(
             continue
 
         query = normalize_query(query)
-        answer = await run_query(query, history, enhance=enhance, llm_review=llm_review)
+        answer = await run_query(query, history, enhance=enhance, llm_review=llm_review, midterm=midterm)
         append_turn_history(history, query, answer)
         turn += 1

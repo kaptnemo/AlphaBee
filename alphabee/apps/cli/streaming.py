@@ -82,12 +82,13 @@ async def run_query(
     *,
     enhance: bool = False,
     llm_review: bool = False,
+    midterm: bool = False,
 ) -> str:
     logger = get_logger("main")
     start_ts = time.monotonic()
     conversation = [*(history or []), HumanMessage(content=query)]
 
-    print_header(query, enhance, llm_review)
+    print_header(query, enhance, llm_review, midterm)
 
     # Track pipeline stages for progress reporting
     active_stage: str | None = None
@@ -105,6 +106,7 @@ async def run_query(
         history_messages=len(conversation) - 1,
         enhance=enhance,
         llm_review=llm_review,
+        midterm=midterm,
     )
 
     callbacks: list[Any] = []
@@ -118,7 +120,7 @@ async def run_query(
         async for namespace, chunk in alphabee_agent.astream(
             cast(
                 OrchestratorState,
-                {"messages": conversation, "enhance": enhance, "llm_review": llm_review},
+                {"messages": conversation, "enhance": enhance, "llm_review": llm_review, "midterm": midterm},
             ),
             config=cast(RunnableConfig, {"callbacks": callbacks} if callbacks else {}),
             stream_mode="updates",
@@ -282,7 +284,7 @@ async def run_query(
             record = recorder.capture(
                 query=query,
                 symbol=symbol,
-                flags={"enhance": enhance, "llm_review": llm_review},
+                flags={"enhance": enhance, "llm_review": llm_review, "midterm": midterm},
                 payload=report_payload,
                 artifacts=artifacts_list,
                 start_ts=start_ts,
@@ -293,12 +295,13 @@ async def run_query(
         except Exception as exc:
             logger.warning("task_record_capture_failed", error=str(exc))
 
-    print_footer(step, total_time, enhance, llm_review)
+    print_footer(step, total_time, enhance, llm_review, midterm)
     logger.info(
         "query_done",
         total_steps=step,
         total_time=round(total_time, 2),
         enhance=enhance,
         llm_review=llm_review,
+        midterm=midterm,
     )
     return final_answer

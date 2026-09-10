@@ -69,6 +69,7 @@ class OrchestratorState(TypedDict, total=False):
     # ── 控制标志（由 main.py 注入）──────────────────
     enhance: bool  # 启用 LLM 增强层（跨信号模式 + 行业语境化）
     llm_review: bool  # 启用 LLM 审查层（定性证据充分性 / 一致性 / 语境适配）
+    midterm: bool  # 启用中期决策节点（review_thesis 后插入 resolve_midterm_decision，默认关）
     # ── 节点间传递的中间数据 ─────────────────────────
     fact_values: Annotated[dict[str, float], _merge_fact_values]  # 规范化数值事实，由 collect_raw_facts 填充
     financial_facts: FinancialFacts | None

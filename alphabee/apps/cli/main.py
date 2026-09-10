@@ -47,6 +47,7 @@ def main() -> None:
             f"监控框架：{args.monitor_framework} | 标的：{args.symbol}",
             enhance=args.enhance,
             llm_review=args.llm_review,
+            midterm=False,
         )
         result = asyncio.run(
             run_framework_monitor(
@@ -57,7 +58,7 @@ def main() -> None:
         )
         print(color("  💡 最终回答", Color.BOLD, Color.GREEN))
         print(render_monitor_report(result))
-        print_footer(1, time.monotonic() - start_ts, enhance=False, llm_review=False)
+        print_footer(1, time.monotonic() - start_ts, enhance=False, llm_review=False, midterm=False)
         return
 
     # ── Task records CLI ──
@@ -71,6 +72,7 @@ def main() -> None:
                 args.query,
                 enhance=args.enhance,
                 llm_review=args.llm_review,
+                midterm=args.midterm,
             )
         )
         return
@@ -80,5 +82,6 @@ def main() -> None:
             args.query,
             enhance=args.enhance,
             llm_review=args.llm_review,
+            midterm=args.midterm,
         )
     )

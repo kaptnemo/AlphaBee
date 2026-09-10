@@ -47,6 +47,12 @@ def parse_args() -> argparse.Namespace:
         help="启用 LLM 审查层（定性评估证据充分性 / 信号一致性 / 语境合理性）",
     )
     parser.add_argument(
+        "--midterm",
+        action="store_true",
+        default=False,
+        help="启用中期决策节点（review_thesis 后插入 resolve_midterm_decision，默认关闭）",
+    )
+    parser.add_argument(
         "--monitor-framework",
         default=None,
         help="观察框架 Markdown 路径。提供后将进入持续跟踪模式。",
