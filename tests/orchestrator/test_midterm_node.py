@@ -1,0 +1,288 @@
+"""resolve_midterm_decision 节点测试（方案 A + 决策点 6(a)，Phase 1）。"""
+
+from __future__ import annotations
+
+import asyncio
+
+from alphabee.agents.schemas import ConflictAnalysisResult
+from alphabee.core import Artifact, ArtifactRoleGroup, ArtifactType, Run, RunStatus
+from alphabee.midterm.models import (
+    CognitiveState,
+    CompanyStateArtifact,
+    ExpectationGap,
+    StateBelief,
+    VariableScores,
+)
+from alphabee.orchestrator.contracts import (
+    FactCollectionArtifact,
+    InsightArtifact,
+    ThesisArtifact,
+    coerce_midterm_decision,
+)
+from alphabee.orchestrator.nodes import midterm as node
+
+
+def _run(symbol="600519.SH"):
+    return Run(
+        id="run-1",
+        goal="分析贵州茅台",
+        status=RunStatus.RUNNING,
+        context={"symbol": symbol, "query": "分析贵州茅台"},
+    )
+
+
+def _state(symbol="600519.SH", artifacts=None, run=None):
+    return {
+        "run": run if run is not None else _run(symbol),
+        "steps": [],
+        "artifacts": artifacts or [],
+        "issues": [],
+        "decisions": [],
+    }
+
+
+def _insight_artifact(core_view="核心观点：看多", confidence="high", degraded=False, fallback_tier=0):
+    return Artifact(
+        id="a-insight",
+        type=ArtifactType.INSIGHT_ANALYSIS,
+        producer_step="synthesize_insights",
+        value=InsightArtifact(
+            core_view=core_view,
+            confidence=confidence,
+            degraded=degraded,
+            fallback_tier=fallback_tier,
+        ).model_dump(mode="json"),
+    )
+
+
+def _thesis_artifact(overall_judgment="positive", dimensions=None):
+    return Artifact(
+        id="a-thesis",
+        type=ArtifactType.THESIS_ANALYSIS,
+        producer_step="run_thesis",
+        value=ThesisArtifact(
+            thesis={
+                "overall_judgment": overall_judgment,
+                "dimensions": dimensions or {},
+            }
+        ).model_dump(mode="json"),
+    )
+
+
+def _fact_artifact(raw_response="公司经营稳健。营收同比增长。"):
+    return Artifact(
+        id="a-fact",
+        type=ArtifactType.FACT_COLLECTION,
+        producer_step="collect_raw_facts",
+        value=FactCollectionArtifact(
+            agent="FactCollector",
+            query="分析贵州茅台",
+            symbol="600519.SH",
+            raw_response=raw_response,
+        ).model_dump(mode="json"),
+    )
+
+
+def _conflict_artifact():
+    return Artifact(
+        id="a-conflict",
+        type=ArtifactType.CONFLICTS_RESULT,
+        producer_step="explore_conflicts",
+        value=ConflictAnalysisResult.model_validate(
+            {
+                "conflicts": [
+                    {
+                        "id": "c1",
+                        "theme": "盈利增长但现金流恶化",
+                        "description": "利润增长没有被现金流验证。",
+                        "related_dimensions": ["earnings_quality"],
+                        "severity": "high",
+                        "confidence": 0.9,
+                        "hypotheses": [
+                            {
+                                "id": "h1",
+                                "conflict_id": "c1",
+                                "explanation": "收入质量不足",
+                                "predictions": [],
+                                "required_evidence": [],
+                                "score": 0.8,
+                                "status": "verified",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ).model_dump(mode="json"),
+    )
+
+
+def _fake_decision(symbol="600519.SH", thesis=""):
+    return CompanyStateArtifact(
+        symbol=symbol,
+        thesis=thesis,
+        thesis_confidence=0.7,
+        prior_confidence=0.7,
+        state=StateBelief(
+            distribution={"S1": 0.2, "S2": 0.8},
+            argmax_state=CognitiveState.S2_CONFIRM.value,
+            entropy=0.0,
+        ),
+        expectation_gap=ExpectationGap(),
+        variable_scores=VariableScores(),
+        evidence_log=[],
+    )
+
+
+def _patch_decision(monkeypatch):
+    captured = {}
+
+    def fake(symbol, thesis="", window_texts=None, *, include_market=True, prior_confidence=None, model=None):
+        captured["symbol"] = symbol
+        captured["thesis"] = thesis
+        captured["window_texts"] = window_texts
+        captured["include_market"] = include_market
+        captured["prior_confidence"] = prior_confidence
+        return _fake_decision(symbol=symbol, thesis=thesis)
+
+    monkeypatch.setattr(node, "get_decision_with_evidence", fake)
+    return captured
+
+
+def _find_midterm(result):
+    for artifact in result.get("artifacts", []):
+        if artifact.type == ArtifactType.MIDTERM_DECISION:
+            return artifact
+    return None
+
+
+# ── artifact 类型登记 ───────────────────────────────────────────────────────
+
+
+def test_midterm_decision_artifact_type_and_role_group_registered():
+    assert ArtifactType.MIDTERM_DECISION.value == "midterm_decision"
+    from alphabee.core.schemas import _ARTIFACT_TYPE_TO_ROLE_GROUP
+
+    assert _ARTIFACT_TYPE_TO_ROLE_GROUP[ArtifactType.MIDTERM_DECISION] == ArtifactRoleGroup.DECISION
+
+
+def test_coerce_midterm_decision_roundtrips():
+    decision = _fake_decision(thesis="H")
+    coerced = coerce_midterm_decision(decision.model_dump(mode="json"))
+    assert isinstance(coerced, CompanyStateArtifact)
+    assert coerced.symbol == "600519.SH"
+    assert coerce_midterm_decision(None) is None
+    assert coerce_midterm_decision("not-a-dict") is None
+    assert coerce_midterm_decision(decision) is decision
+
+
+# ── 映射（H / prior_confidence / window_texts）──────────────────────────────
+
+
+def test_maps_insight_core_view_and_confidence(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    result = asyncio.run(
+        node.resolve_midterm_decision(
+            _state(
+                artifacts=[
+                    _insight_artifact(core_view="看多核心观点", confidence="high"),
+                    _thesis_artifact(overall_judgment="positive"),
+                ]
+            ),
+            {},
+        )
+    )
+
+    assert captured["thesis"] == "看多核心观点"
+    assert captured["prior_confidence"] == 0.7
+    assert captured["include_market"] is True
+    assert _find_midterm(result) is not None
+
+
+def test_insight_missing_falls_back_to_thesis_overall_judgment(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    result = asyncio.run(
+        node.resolve_midterm_decision(
+            _state(artifacts=[_thesis_artifact(overall_judgment="positive")]),
+            {},
+        )
+    )
+
+    assert "看多" in captured["thesis"]
+    assert captured["prior_confidence"] is None  # thesis 无维度置信度 → 无先验，保守退化
+    assert _find_midterm(result) is not None
+
+
+def test_degraded_insight_downgrades_to_thesis_and_damps_prior(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    result = asyncio.run(
+        node.resolve_midterm_decision(
+            _state(
+                artifacts=[
+                    _insight_artifact(core_view="旧观点", confidence="high", degraded=True, fallback_tier=2),
+                    _thesis_artifact(overall_judgment="negative"),
+                ]
+            ),
+            {},
+        )
+    )
+
+    assert "看空" in captured["thesis"]  # degraded 时忽略 core_view，用 thesis 判断
+    assert captured["prior_confidence"] == 0.7 * 0.7  # high→0.7，tier2 阻尼 ×0.7
+
+
+def test_confidence_string_mapping(monkeypatch):
+    for label, expected in (("low", 0.3), ("medium", 0.5), ("high", 0.7)):
+        captured = _patch_decision(monkeypatch)
+        asyncio.run(
+            node.resolve_midterm_decision(_state(artifacts=[_insight_artifact(confidence=label)]), {})
+        )
+        assert captured["prior_confidence"] == expected
+
+
+def test_window_texts_fact_plus_verified_conflict(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    asyncio.run(
+        node.resolve_midterm_decision(
+            _state(artifacts=[_insight_artifact(), _fact_artifact("原始财报文本"), _conflict_artifact()]),
+            {},
+        )
+    )
+
+    assert captured["window_texts"][0] == "原始财报文本"
+    assert any("盈利增长但现金流恶化" in t and "收入质量不足" in t for t in captured["window_texts"])
+
+
+def test_window_texts_none_when_no_raw_text(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    asyncio.run(node.resolve_midterm_decision(_state(artifacts=[_insight_artifact()]), {}))
+
+    assert captured["window_texts"] is None
+
+
+# ── 降级：失败记 Issue，报告照常 ─────────────────────────────────────────────
+
+
+def test_decision_failure_emits_issue_and_no_artifact(monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("LLM 抽取失败")
+
+    monkeypatch.setattr(node, "get_decision_with_evidence", boom)
+    result = asyncio.run(
+        node.resolve_midterm_decision(_state(artifacts=[_insight_artifact()]), {})
+    )
+
+    assert _find_midterm(result) is None
+    issues = [i for i in result["issues"] if i.category == "midterm_decision_failed"]
+    assert len(issues) == 1
+    assert "LLM 抽取失败" in issues[0].message
+    # 报告路径照常：节点仍返回完成态步骤（有 issue 无 artifact → failed），
+    # 但不向上抛出异常中断主链
+    assert result["steps"][0].status.value == "failed"
+
+
+def test_no_symbol_skips(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    result = asyncio.run(node.resolve_midterm_decision(_state(symbol=None), {}))
+    assert result["steps"][0].status.value == "skipped"
+    assert "artifacts" not in result or result.get("artifacts") == []
+    assert not captured

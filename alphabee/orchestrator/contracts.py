@@ -22,12 +22,14 @@ from alphabee.domain_context.contracts import DriverProfile  # noqa: F401  (re-e
 # 此处再导出保持既有 import 兼容（resolve_industry_context / 测试 / 下游 find_artifact_model）。
 from alphabee.industry.contracts import IndustryContextArtifact  # noqa: F401  (re-export)
 from alphabee.market_regime.models import MarketScore, RegimeSnapshot
+from alphabee.midterm.models import CompanyStateArtifact
 
 # Phase 1 market-regime typed payloads are re-exported here so the orchestrator's
 # artifact contract convention (`find_artifact_model` / coerce helpers) exposes
 # them alongside the per-symbol contracts.
 __all__ = [
     "Artifact",
+    "CompanyStateArtifact",
     "ConflictAnalysisResult",
     "ConflictItem",
     "DriverProfile",
@@ -401,4 +403,18 @@ def coerce_driver_profile(value: Any) -> DriverProfile | None:
         return value
     if isinstance(value, dict):
         return DriverProfile.model_validate(value)
+    return None
+
+
+def coerce_midterm_decision(value: Any) -> CompanyStateArtifact | None:
+    """Coerce a ``midterm_decision`` artifact value into the typed ``CompanyStateArtifact``.
+
+    遵循 ``find_artifact_model`` 的语义：artifact 落库时 ``value`` 是
+    ``CompanyStateArtifact.model_dump(mode="json")`` 的 dict；这里只做 typed 还原，
+    供下游 finalize payload / recorder 消费（Phase 2/3 接线），避免 dead-end artifact。
+    """
+    if value is None or isinstance(value, CompanyStateArtifact):
+        return value
+    if isinstance(value, dict):
+        return CompanyStateArtifact.model_validate(value)
     return None
