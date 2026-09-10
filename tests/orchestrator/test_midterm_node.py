@@ -239,17 +239,27 @@ def test_confidence_string_mapping(monkeypatch):
         assert captured["prior_confidence"] == expected
 
 
-def test_window_texts_fact_plus_verified_conflict(monkeypatch):
+def test_window_texts_only_verified_conflict_no_narrative(monkeypatch):
+    # raw_response 是叙事摘要而非财报/公告/研报原文，不得进入 window_texts；
+    # 只有 spec 明确要求的已验证冲突 explanation 才作为窗口文本。
     captured = _patch_decision(monkeypatch)
     asyncio.run(
         node.resolve_midterm_decision(
-            _state(artifacts=[_insight_artifact(), _fact_artifact("原始财报文本"), _conflict_artifact()]),
+            _state(
+                artifacts=[
+                    _insight_artifact(),
+                    _fact_artifact("叙事摘要：公司经营稳健，营收同比增长"),
+                    _conflict_artifact(),
+                ]
+            ),
             {},
         )
     )
 
-    assert captured["window_texts"][0] == "原始财报文本"
-    assert any("盈利增长但现金流恶化" in t and "收入质量不足" in t for t in captured["window_texts"])
+    assert len(captured["window_texts"]) == 1
+    assert "叙事摘要" not in captured["window_texts"][0]
+    assert "盈利增长但现金流恶化" in captured["window_texts"][0]
+    assert "收入质量不足" in captured["window_texts"][0]
 
 
 def test_window_texts_none_when_no_raw_text(monkeypatch):
@@ -286,3 +296,24 @@ def test_no_symbol_skips(monkeypatch):
     assert result["steps"][0].status.value == "skipped"
     assert "artifacts" not in result or result.get("artifacts") == []
     assert not captured
+
+
+def test_invalid_upstream_artifact_does_not_raise(monkeypatch):
+    # 上游 artifact value 无法通过 InsightArtifact.model_validate 时，
+    # 读取+映射+调用整段被同一 try/except 兜住：记 Issue 正常返回，不向上抛异常。
+    captured = _patch_decision(monkeypatch)
+    bad_insight = Artifact(
+        id="a-bad-insight",
+        type=ArtifactType.INSIGHT_ANALYSIS,
+        producer_step="synthesize_insights",
+        value={"confidence": 12345},  # InsightArtifact.confidence 应为 str，触发 ValidationError
+    )
+    result = asyncio.run(
+        node.resolve_midterm_decision(_state(artifacts=[bad_insight]), {})
+    )
+
+    assert _find_midterm(result) is None
+    assert not captured  # model_validate 在调用决策模型前就失败，不应走到 get_decision_with_evidence
+    issues = [i for i in result["issues"] if i.category == "midterm_decision_failed"]
+    assert len(issues) == 1
+    assert result["steps"][0].status.value == "failed"

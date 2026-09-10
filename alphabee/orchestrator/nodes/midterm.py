@@ -3,7 +3,7 @@
 职责（只映射 + 调用，不做业务计算）：
 
 1. 从主链产物读取 ``symbol`` / ``INSIGHT_ANALYSIS`` / ``THESIS_ANALYSIS`` /
-   ``CONFLICTS_RESULT`` / ``FACT_COLLECTION``，映射为 ``get_decision_with_evidence`` 输入；
+   ``CONFLICTS_RESULT``，映射为 ``get_decision_with_evidence`` 输入；
 2. 产出 ``CompanyStateArtifact`` → ``Artifact(type=MIDTERM_DECISION)`` 存入 artifacts 列表
    （不在 ``OrchestratorState`` 加专用字段）；
 3. 整体 try/except：LLM/网络失败只记 ``Issue(category=midterm_decision_failed)``，
@@ -15,7 +15,8 @@
   ``thesis.overall_judgment`` 构造 H，再缺省空串走 Stage B neutral 退化。
 - ``prior_confidence`` = insight/thesis confidence 显式映射：low/medium/high → 0.3/0.5/0.7；
   数字置信度原样透传（clamp 0-1）；降级洞察额外施加贝叶斯阻尼（fallback_tier 越高越保守）。
-- ``window_texts`` = fact_text + 已验证冲突 explanation；无任何原始财报章节文本时传
+- ``window_texts`` = 已验证冲突 explanation（当前主链不提供财报/公告/研报原文，
+  ``FACT_COLLECTION.raw_response`` 是叙事摘要，不作为窗口文本）；无任何窗口文本时传
   ``None``（合法输入：只跑数值证据）。
 - ``include_market=True``。
 
@@ -65,15 +66,6 @@ def _finalize_step(step: Step, issues: list[Issue], artifacts: list[Artifact]) -
     else:
         status = StepStatus.SUCCEEDED
     return step.model_copy(update={"status": status, "outputs": [a.id for a in artifacts]})
-
-
-def _find_artifact_value(artifacts: list[Artifact], artifact_type: str) -> dict[str, Any] | None:
-    for artifact in reversed(artifacts):
-        if artifact.type != artifact_type:
-            continue
-        if isinstance(artifact.value, dict):
-            return artifact.value
-    return None
 
 
 def _map_prior_confidence(confidence: Any, *, damping: float = 1.0) -> float | None:
@@ -159,15 +151,15 @@ def _conflict_explanations(artifacts: list[Artifact]) -> list[str]:
     return explanations
 
 
-def _window_texts(state: dict[str, Any], artifacts: list[Artifact]) -> list[str] | None:
-    """组装 window_texts：fact_text + 已验证冲突 explanation；均无 → ``None``（只跑数值证据）。"""
-    fact_value = _find_artifact_value(artifacts, ArtifactType.FACT_COLLECTION)
-    fact_text = (fact_value or {}).get("raw_response", "") or ""
-    texts: list[str] = []
-    if fact_text.strip():
-        texts.append(fact_text.strip())
-    texts.extend(_conflict_explanations(artifacts))
-    return texts or None
+def _window_texts(artifacts: list[Artifact]) -> list[str] | None:
+    """组装 window_texts：仅含已验证冲突 explanation。
+
+    原 fact_text 组件被移除：主链的 ``FACT_COLLECTION.raw_response`` 是叙事摘要而非
+    财报/公告/研报原文，塞进窗口会污染 Stage A/B 抽取。当前主链不提供真正原文，
+    故该组件置空；若未来主链能提供原文，再以显式原文字段补回。
+    无任何窗口文本时传 ``None``（合法输入：只跑数值证据）。
+    """
+    return _conflict_explanations(artifacts) or None
 
 
 async def resolve_midterm_decision(
@@ -192,16 +184,19 @@ async def resolve_midterm_decision(
 
     artifacts = state.get("artifacts", [])
     new_issues: list[Issue] = []
-
-    insight = find_artifact_model(artifacts, ArtifactType.INSIGHT_ANALYSIS, InsightArtifact)
-    thesis = find_artifact_model(artifacts, ArtifactType.THESIS_ANALYSIS, ThesisArtifact)
-
-    hypothesis = _resolve_hypothesis(insight, thesis)
-    prior = _prior_confidence(insight, thesis)
-    window_texts = _window_texts(state, artifacts)
-
     new_artifacts: list[Artifact] = []
+
+    # ── 读取上游 artifact + 映射 + 调用决策模型，整段同一 try/except ──
+    # 任何异常（含上游 artifact 无法 model_validate）都只记 Issue 并正常返回，
+    # 保证主链不被中断（报告照常）。
     try:
+        insight = find_artifact_model(artifacts, ArtifactType.INSIGHT_ANALYSIS, InsightArtifact)
+        thesis = find_artifact_model(artifacts, ArtifactType.THESIS_ANALYSIS, ThesisArtifact)
+
+        hypothesis = _resolve_hypothesis(insight, thesis)
+        prior = _prior_confidence(insight, thesis)
+        window_texts = _window_texts(artifacts)
+
         decision = get_decision_with_evidence(
             symbol,
             thesis=hypothesis,
