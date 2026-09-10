@@ -102,6 +102,11 @@ class TaskRecord(BaseModel):
     risk_count: dict[str, int] = Field(default_factory=dict)
     report_raw: dict[str, Any] = Field(default_factory=dict)  # 完整报告 JSON
 
+    # ── 中期决策摘要（决策点 7 纵轴记忆，缺失 MIDTERM_DECISION 时保持空值）──
+    midterm_state: str = ""  # S0–S5 认知状态 argmax（StateBelief.argmax_state）
+    midterm_confidence: float = 0.0  # P(H|Evidence) 后验
+    midterm_evidence_count: int = 0  # evidence_log 长度
+
     # ── 标的上下文 ──
     company_industry: str = ""
     company_lifecycle: str = ""
@@ -126,6 +131,9 @@ class TaskRecord(BaseModel):
             "overall_confidence": self.overall_confidence,
             "overall_judgment": self.overall_judgment,
             "review_status": self.review_overall_status,
+            "midterm_state": self.midterm_state,
+            "midterm_confidence": self.midterm_confidence,
+            "midterm_evidence_count": self.midterm_evidence_count,
             "signal_levels": signal_levels,
             "anomaly_triggered": self.anomaly_triggered_count,
             "anomaly_patterns": self.anomaly_pattern_count,

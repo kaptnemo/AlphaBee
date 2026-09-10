@@ -12,6 +12,7 @@ from typing import Any, cast
 from alphabee.company_track.contracts import CompanyTrackArtifact
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
+    CompanyStateArtifact,
     DerivedFactsArtifact,
     FactCollectionArtifact,
     SignalAnalysisArtifact,
@@ -64,6 +65,7 @@ class TaskRecorder:
         fact_val = find_artifact_model(artifacts or [], "fact_collection", FactCollectionArtifact)
         industry_ctx = thesis_val.industry_context if thesis_val else None
         track_val = find_artifact_model(artifacts or [], "company_track", CompanyTrackArtifact)
+        midterm_val = find_artifact_model(artifacts or [], "midterm_decision", CompanyStateArtifact)
 
         record = TaskRecord(
             query=query,
@@ -93,6 +95,10 @@ class TaskRecorder:
             overall_confidence=report.get("overall_confidence", ""),
             risk_count=report.get("risk_count", {}),
             report_raw=report,
+            # ── 中期决策摘要（决策点 7：纵轴记忆落地，缺失时为空不报错）──
+            midterm_state=midterm_val.state.argmax_state if midterm_val and midterm_val.state else "",
+            midterm_confidence=midterm_val.thesis_confidence if midterm_val else 0.0,
+            midterm_evidence_count=len(midterm_val.evidence_log) if midterm_val else 0,
             # ── 标的上下文 ──
             company_industry=industry_ctx.industry if industry_ctx else "",
             company_lifecycle=industry_ctx.lifecycle_stage if industry_ctx else "",

@@ -40,6 +40,7 @@ from alphabee.orchestrator.collectors import (
     collect_raw_facts,
 )
 from alphabee.orchestrator.contracts import (
+    CompanyStateArtifact,
     SignalAnalysisArtifact,
     ThesisArtifact,
     find_artifact_model,
@@ -262,6 +263,23 @@ async def review_thesis(
 # ── finalize ────────────────────────────────────────────────────────────────
 
 
+def _midterm_decision_summary(artifacts: list[Artifact]) -> dict[str, Any] | None:
+    """从 MIDTERM_DECISION artifact 提取决策摘要（决策点 6(a)：研究归研究、决策归决策）。
+
+    只把决策层产物放进 finalize payload / CLI / recorder，不进 generate_report 报告；
+    缺失时返回 ``None``（下游 recorder / CLI 均需容忍其缺失）。
+    """
+    decision = find_artifact_model(artifacts, ArtifactType.MIDTERM_DECISION, CompanyStateArtifact)
+    if decision is None:
+        return None
+    return {
+        "state": decision.state.argmax_state if decision.state is not None else None,
+        "confidence": decision.thesis_confidence,
+        "evidence_count": len(decision.evidence_log),
+        "position_band": decision.position.position_band if decision.position is not None else None,
+    }
+
+
 def finalize_message(state: OrchestratorState) -> OrchestratorState:
     """Merge all artifacts into a final JSON AIMessage for streaming output."""
     artifacts = state.get("artifacts", [])
@@ -273,9 +291,11 @@ def finalize_message(state: OrchestratorState) -> OrchestratorState:
 
     # finalize_message 的职责是把整条分析链压成一个统一 JSON 响应：
     # 终端流式展示可以直接读取 final_report，而调试/审计端仍能拿到 artifacts / decisions / issues。
+    # 决策点 6(a)：midterm 决策摘要只进 payload（finalize/CLI/recorder），不进报告。
     payload = {
         "run": state["run"].model_dump(mode="json") if state.get("run") else None,
         "final_report": (final_artifact.value if final_artifact is not None else None),
+        "midterm_decision": _midterm_decision_summary(artifacts),
         "artifacts": [a.model_dump(mode="json") for a in artifacts],
         "decisions": [d.model_dump(mode="json") for d in state.get("decisions", [])],
         "issues": [i.model_dump(mode="json") for i in state.get("issues", [])],
