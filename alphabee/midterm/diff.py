@@ -526,7 +526,7 @@ def _delta(prev_val: Any, curr_val: Any) -> float | None:
     """数值差 ``curr − prev``；任一侧缺失 → ``None``（不静默回退 0）。"""
     if prev_val is None or curr_val is None:
         return None
-    return curr_val - prev_val
+    return float(curr_val) - float(prev_val)
 
 
 def _band_direction(band_from: str, band_to: str) -> int:
@@ -732,7 +732,7 @@ def diff(
     anchor_ref = _ref(anchor) if anchor is not None else None
     is_first = prev is None
 
-    if is_first:
+    if prev is None:
         factors = _first_frame_factors(curr.factor_snapshot)
         scores: dict[str, float | None] = {}
     else:

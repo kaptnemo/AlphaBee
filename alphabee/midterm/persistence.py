@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from alphabee.midterm.models import CompanyStateArtifact
 
@@ -49,11 +50,11 @@ def _symbol_from_id(id_: str) -> str:
     return id_.split(":", 1)[0]
 
 
-def _read_rows(path: Path) -> list[dict]:
+def _read_rows(path: Path) -> list[dict[str, Any]]:
     """读回 JSONL 全部行（文件缺失 → ``[]``）；损坏行跳过并保留可读行。"""
     if not path.exists():
         return []
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
