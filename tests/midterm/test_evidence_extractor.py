@@ -1,12 +1,14 @@
-"""evidence_extractor Stage A（客观事实抽取）单测。
+"""evidence_extractor 两阶段抽取（Stage A 事实抽取 + Stage B 方向判定/组装）单测。
 
-覆盖设计 ``MIDTERM_EVIDENCE_EXTRACTION.md`` §4.1/§4.2：
+覆盖设计 ``MIDTERM_EVIDENCE_EXTRACTION.md`` §4.1/§4.2/§4.3：
 
-- 非结构化文本 → FactEvent[]（客观、只问发生了什么）；
+- Stage A：非结构化文本 → FactEvent[]（客观、只问发生了什么）；
 - prompt 强制 quotes/date/kind/数值只抄原文/不相关输出空列表（防幻觉）；
 - 严格 JSON FactEvent[] + Pydantic 校验；
 - LLM 失败 / 坏结构 / 坏 JSON → 降级 []（不中断）；
-- id 由确定性规则回填（§7 事件签名哈希）。
+- id 由确定性规则回填（§7 事件签名哈希）；
+- Stage B：FactEvent + Thesis H → EvidenceJudgment（方向 + 离散强度），thesis 空 / LLM
+  失败退化（数值按符号、定性 neutral），组装 EvidenceEvent（strength→delta 离散映射）。
 """
 
 import json
@@ -15,10 +17,14 @@ from langchain_core.messages import AIMessage
 
 from alphabee.midterm.evidence_extractor import (
     _build_messages,
+    _build_stage_b_messages,
     _fact_id,
     _normalize_texts,
+    assemble_events,
     extract_facts,
+    judge_facts,
 )
+from alphabee.midterm.models import EffectOnThesis, EvidenceJudgment, FactEvent, Strength
 
 
 class FakeModel:
@@ -194,3 +200,139 @@ def test_extract_facts_empty_text_no_llm_call():
     assert extract_facts("", model=m) == []
     assert extract_facts("   ", model=m) == []
     assert m.calls == 0  # 空文本不触发 LLM
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage B：方向判定（judge_facts）
+# ─────────────────────────────────────────────────────────────────────────────
+def _fact(fid="f1", kind="expectation", desc="营收同比增长 10%", numbers=None, quotes=None):
+    return FactEvent(
+        id=fid,
+        date="2026-06-30",
+        kind=kind,
+        description=desc,
+        numbers=numbers if numbers is not None else {},
+        quotes=quotes if quotes is not None else ["营收同比增长 10%"],
+        source_refs=["https://example.com"],
+        source_type="forecast",
+    )
+
+
+def test_stage_b_prompt_requires_reasoning_cite_quotes():
+    joined = "\n".join(str(m.content) for m in _build_stage_b_messages([_fact()], "H: 营收高增长"))
+    assert "reasoning" in joined  # reasoning 字段定义
+    assert "quotes" in joined  # 强制引用原文
+    assert "weak" in joined and "medium" in joined and "strong" in joined  # 离散强度三档
+
+
+def test_judge_facts_with_llm():
+    fact = _fact(numbers={"revenue_yoy": 10.0})
+    jjson = json.dumps(
+        {
+            "judgments": [
+                {
+                    "fact_id": "f1",
+                    "effect_on_thesis": "confirming",
+                    "strength": "medium",
+                    "reasoning": "营收同比增长与 H 一致（引用原文「营收同比增长 10%」）",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+    judgments = judge_facts([fact], thesis="H: 营收高增长", model=FakeModel(jjson))
+    assert len(judgments) == 1
+    assert judgments[0].effect_on_thesis == EffectOnThesis.CONFIRMING
+    assert judgments[0].strength == Strength.MEDIUM
+
+
+def test_judge_facts_thesis_empty_degraded():
+    numeric = _fact(fid="n", numbers={"revenue_yoy": 5.0})
+    qualitative = _fact(fid="q", numbers={}, desc="公司发布新产品")
+    judgments = judge_facts([numeric, qualitative], thesis="")
+    by_id = {j.fact_id: j for j in judgments}
+    assert by_id["n"].effect_on_thesis == EffectOnThesis.CONFIRMING  # 数值正 → confirming
+    assert by_id["q"].effect_on_thesis == EffectOnThesis.NEUTRAL  # 定性 → neutral
+
+
+def test_judge_facts_negative_numeric_degraded():
+    numeric = _fact(fid="n", numbers={"revenue_yoy": -5.0})
+    j = judge_facts([numeric], thesis="")[0]
+    assert j.effect_on_thesis == EffectOnThesis.REFUTING  # 数值负 → refuting
+
+
+def test_judge_facts_llm_failure_degraded():
+    numeric = _fact(fid="n", numbers={"revenue_yoy": 5.0})
+    qualitative = _fact(fid="q", numbers={})
+    judgments = judge_facts([numeric, qualitative], thesis="H", model=FakeModel(exc=RuntimeError("boom")))
+    by_id = {j.fact_id: j for j in judgments}
+    assert by_id["n"].effect_on_thesis == EffectOnThesis.CONFIRMING
+    assert by_id["q"].effect_on_thesis == EffectOnThesis.NEUTRAL
+
+
+def test_judge_facts_rejects_continuous_strength():
+    # LLM 输出 strength="0.42" → Pydantic ValidationError → 整批退化（禁连续值）
+    numeric = _fact(fid="n", numbers={"revenue_yoy": 5.0})
+    bad = json.dumps(
+        {"judgments": [{"fact_id": "n", "effect_on_thesis": "confirming", "strength": "0.42", "reasoning": "r"}]},
+        ensure_ascii=False,
+    )
+    judgments = judge_facts([numeric], thesis="H", model=FakeModel(bad))
+    assert judgments[0].effect_on_thesis == EffectOnThesis.CONFIRMING  # 退化按符号
+    assert judgments[0].strength == Strength.WEAK
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 组装（assemble_events）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_assemble_events_discrete_delta_and_source_refs():
+    facts = [_fact(fid="f1", numbers={"revenue_yoy": 10.0})]
+    judgments = [
+        EvidenceJudgment(
+            fact_id="f1", effect_on_thesis=EffectOnThesis.CONFIRMING, strength=Strength.MEDIUM, reasoning="r"
+        )
+    ]
+    events = assemble_events(facts, judgments)
+    assert len(events) == 1
+    e = events[0]
+    assert e.id == "f1"  # fact_id → id
+    assert e.confidence_delta == 0.3  # medium
+    assert e.effect_on_thesis == "confirming"
+    assert e.source_refs == ["营收同比增长 10%", "https://example.com"]  # quotes + source_refs
+
+
+def test_assemble_events_neutral_zero_delta():
+    facts = [_fact(fid="f1")]
+    judgments = [
+        EvidenceJudgment(fact_id="f1", effect_on_thesis=EffectOnThesis.NEUTRAL, strength=Strength.WEAK, reasoning="r")
+    ]
+    events = assemble_events(facts, judgments)
+    assert events[0].confidence_delta == 0.0  # neutral → bayes no-op
+    assert events[0].effect_on_thesis == "neutral"
+
+
+def test_assemble_events_all_discrete_deltas():
+    facts = [_fact(fid="f1"), _fact(fid="f2"), _fact(fid="f3")]
+    judgments = [
+        EvidenceJudgment(
+            fact_id="f1", effect_on_thesis=EffectOnThesis.CONFIRMING, strength=Strength.WEAK, reasoning="r"
+        ),
+        EvidenceJudgment(
+            fact_id="f2", effect_on_thesis=EffectOnThesis.CONFIRMING, strength=Strength.MEDIUM, reasoning="r"
+        ),
+        EvidenceJudgment(
+            fact_id="f3", effect_on_thesis=EffectOnThesis.REFUTING, strength=Strength.STRONG, reasoning="r"
+        ),
+    ]
+    events = assemble_events(facts, judgments)
+    assert {e.confidence_delta for e in events} == {0.1, 0.3, 0.5}  # 只取离散等级
+
+
+def test_assemble_events_drops_orphan_judgment():
+    facts = [_fact(fid="f1")]
+    judgments = [
+        EvidenceJudgment(
+            fact_id="missing", effect_on_thesis=EffectOnThesis.CONFIRMING, strength=Strength.STRONG, reasoning="r"
+        )
+    ]
+    assert assemble_events(facts, judgments) == []

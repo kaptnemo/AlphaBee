@@ -1,34 +1,43 @@
-"""evidence_extractor Stage A：客观事实抽取（E3-1，设计 MIDTERM_EVIDENCE_EXTRACTION.md §4.1/§4.2）。
+"""evidence_extractor 两阶段抽取（E3，设计 MIDTERM_EVIDENCE_EXTRACTION.md §4）。
 
-两阶段抽取的第一阶段（Stage A）：把非结构化文本（财报/预告/研报/公告/新闻窗口）
-抽取为客观事实 :class:`FactEvent`（只问「发生了什么」，不问「好不好」），供 Stage B
-（相对 thesis 的方向判定）消费。本模块只实现 Stage A。
+- **Stage A**（§4.1/§4.2）：把非结构化文本（财报/预告/研报/公告/新闻窗口）抽取为
+  客观事实 :class:`FactEvent`（只问「发生了什么」，不问「好不好」）。
+- **Stage B**（§4.3）：给定 Thesis H，判定每个事实对 H 的方向与强度
+  （:class:`EvidenceJudgment`），再组装为 :class:`EvidenceEvent`。
 
 LLM 边界（§11）：
 
-- Stage A **LLM 必需**：切分事件、抽取客观事实与原文引用；
-- **失败降级**：LLM 挂掉 / 输出坏结构 / 解析失败 → 返回 ``[]``（该文本跳过，不中断），
-  绝不向上抛异常打断调用方。
+- Stage A / Stage B **LLM 必需**：切分事件、抽取事实与方向判定；
+- **失败降级**：Stage A 失败 → 返回 ``[]``（该文本跳过）；Stage B 失败或 thesis 为空
+  → 数值类按符号定方向、定性一律 neutral（§8/§11 显式标记）；绝不向上抛异常打断调用方。
 
-防幻觉三道闸之「原文引用闸」（§5）在 Stage A 的落地：prompt 强制每个事件附
-``quotes``（逐字原文引用句）支撑 ``description``；数值只抄原文出现的数字、缺失置
-``None``；不相关文本输出空列表不得编造。``id`` 由确定性规则（§7 事件签名哈希）在
-抽取后回填，LLM 不参与哈希计算。
+防幻觉三道闸之「原文引用闸」（§5）：Stage A 强制 ``quotes`` 逐字引用；Stage B 强制
+``reasoning`` 引用事实原文；``confidence_delta`` 只允许离散等级（weak/medium/strong →
+0.1/0.3/0.5，上限 0.7），禁止 LLM 连续值。
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphabee.midterm.models import FactEvent
+from alphabee.midterm.models import (
+    STRENGTH_DELTA,
+    EffectOnThesis,
+    EvidenceEvent,
+    EvidenceJudgment,
+    FactEvent,
+    Strength,
+)
 from alphabee.utils.pipeline import parse_json
 from alphabee.utils.prompts import json_instruction
 
 _COMPONENT = "evidence_extractor.stage_a"
+_COMPONENT_B = "evidence_extractor.stage_b"
 
 
 class FactEventList(BaseModel):
@@ -154,11 +163,11 @@ def _build_messages(text: str) -> list[Any]:
     ]
 
 
-def _build_model() -> Any:
+def _build_model(component: str = _COMPONENT) -> Any:
     """复用已有 LLM 实例（§9）：``create_chat_model`` + json_object 容器约束。"""
     from alphabee.utils.llm import create_structured_model
 
-    return create_structured_model(_COMPONENT)
+    return create_structured_model(component)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -204,3 +213,182 @@ def extract_facts(
 
     facts = [fact for draft in flist.events if (fact := _finalize(draft, symbol, source_type)) is not None]
     return _dedup(facts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage B：方向判定 + 组装（E3-2，设计 §4.3）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class EvidenceJudgmentList(BaseModel):
+    """Stage B LLM 输出契约：方向判定列表（``json_instruction`` 的 few-shot 来源）。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "judgments": [
+                    {
+                        "fact_id": "f1",
+                        "effect_on_thesis": "confirming",
+                        "strength": "medium",
+                        "reasoning": "营收同比增长与 H 的增长假设一致（引用原文「营收同比增长 10%」）",
+                    }
+                ]
+            }
+        }
+    )
+
+    judgments: list[EvidenceJudgment] = Field(default_factory=list)
+
+
+_STAGE_B_SYSTEM_PROMPT = """你是方向判定器（Stage B）。给定 Thesis H（含 invalidation 条件），判定每个事实事件对 H 是证实（confirming）/ 证伪（refuting）/ 无关（neutral）。
+
+铁律（防幻觉）：
+1. effect_on_thesis 只允许 confirming / refuting / neutral；
+2. strength 只允许 weak / medium / strong 三档，禁止输出任何数字；
+3. reasoning 必须引用事实的 quotes（原文引用句），不得脱离原文编造；
+4. 逐条对应输入事实，fact_id 必须与输入事实的 id 一致；
+5. Thesis 为空时：数值类按符号定方向、定性一律 neutral（显式标记）。
+"""
+
+
+def _first_number(fact: FactEvent) -> float | None:
+    """返回事实的第一个非空数值（按键名排序，确定性）；无数值 → None。"""
+    for key in sorted(fact.numbers):
+        value = fact.numbers[key]
+        if value is not None:
+            return value
+    return None
+
+
+def _effect_from_sign(value: float) -> EffectOnThesis:
+    """数值符号 → 方向（§8 thesis 为空退化）：>0 confirming / <0 refuting / ==0 neutral。"""
+    if value > 0.0:
+        return EffectOnThesis.CONFIRMING
+    if value < 0.0:
+        return EffectOnThesis.REFUTING
+    return EffectOnThesis.NEUTRAL
+
+
+def _degrade_single_judgment(fact: FactEvent, reason: str) -> EvidenceJudgment:
+    """单条退化（§8/§11）：数值类按符号定方向、定性 neutral，显式标记。"""
+    value = _first_number(fact)
+    if value is not None:
+        effect = _effect_from_sign(value)
+        reasoning = f"{reason}：数值类按符号定方向（{_fmt_num(value)} → {effect.value}）"
+    else:
+        effect = EffectOnThesis.NEUTRAL
+        reasoning = f"{reason}：定性事实一律 neutral"
+    return EvidenceJudgment(
+        fact_id=fact.id,
+        effect_on_thesis=effect,
+        strength=Strength.WEAK,  # 保守默认（§11）
+        reasoning=reasoning,
+    )
+
+
+def _degrade_judgments(facts: list[FactEvent], reason: str) -> list[EvidenceJudgment]:
+    """整批退化：thesis 为空 / LLM 失败 → 数值按符号、定性 neutral。"""
+    return [_degrade_single_judgment(fact, reason) for fact in facts]
+
+
+def _strength_to_delta(strength: Strength) -> float:
+    """离散等级 → confidence_delta（唯一映射，禁连续值）。"""
+    return STRENGTH_DELTA[strength.value]
+
+
+def _build_stage_b_messages(facts: list[FactEvent], thesis: str) -> list[Any]:
+    """构造 Stage B messages：系统提示 + Thesis + 事实列表 + 输出格式指令。"""
+    facts_json = json.dumps([f.model_dump(mode="json") for f in facts], ensure_ascii=False, indent=2)
+    user = (
+        f"## Thesis H（含 invalidation 条件）\n{thesis}\n\n"
+        f"## 待判定事实\n{facts_json}\n\n{json_instruction(EvidenceJudgmentList)}"
+    )
+    return [SystemMessage(content=_STAGE_B_SYSTEM_PROMPT), HumanMessage(content=user)]
+
+
+def _dedup_events(events: list[EvidenceEvent]) -> list[EvidenceEvent]:
+    """按 id 去重（§7）：同 id 合并 source_refs。"""
+    merged: dict[str, EvidenceEvent] = {}
+    for ev in events:
+        if ev.id in merged:
+            prev = merged[ev.id]
+            refs = sorted(set(prev.source_refs) | set(ev.source_refs))
+            merged[ev.id] = prev.model_copy(update={"source_refs": refs})
+        else:
+            merged[ev.id] = ev
+    return list(merged.values())
+
+
+def judge_facts(
+    facts: list[FactEvent],
+    thesis: str = "",
+    *,
+    model: Any = None,
+) -> list[EvidenceJudgment]:
+    """Stage B 方向判定：FactEvent + Thesis H → EvidenceJudgment[]（LLM 必需，失败降级）。
+
+    - Thesis 非空：调 LLM 判定每条事实对 H 的方向与离散强度；LLM 失败 → 退化
+      （数值按符号、定性 neutral）；
+    - Thesis 为空：直接退化（不调 LLM），数值按符号、定性 neutral（§8 显式标记）。
+
+    Returns:
+        与输入 facts 一一对应的 EvidenceJudgment[]。
+    """
+    facts = list(facts or [])
+    if not facts:
+        return []
+
+    thesis_text = (thesis or "").strip()
+    if not thesis_text:
+        return _degrade_judgments(facts, "thesis 为空")
+
+    llm = model if model is not None else _build_model(_COMPONENT_B)
+    try:
+        raw = llm.invoke(_build_stage_b_messages(facts, thesis_text))
+        parsed = parse_json(_extract_content(raw))
+        if isinstance(parsed, list):
+            parsed = {"judgments": parsed}
+        jlist = EvidenceJudgmentList.model_validate(parsed)
+    except Exception:
+        return _degrade_judgments(facts, "LLM 失败")
+
+    by_fact_id = {j.fact_id: j for j in jlist.judgments}
+    return [by_fact_id.get(fact.id) or _degrade_single_judgment(fact, "LLM 未返回该事实判定") for fact in facts]
+
+
+def assemble_events(
+    facts: list[FactEvent],
+    judgments: list[EvidenceJudgment],
+) -> list[EvidenceEvent]:
+    """把 FactEvent + EvidenceJudgment 组装为 EvidenceEvent[]（§4.3 → §3）。
+
+    - ``id`` 复用 ``FactEvent.id``（事件签名哈希，§7）；
+    - ``strength`` → ``confidence_delta`` 离散映射（weak 0.1 / medium 0.3 / strong 0.5，
+      上限 0.7），neutral → 0.0（bayes no-op）；
+    - ``source_refs`` = ``fact.quotes`` + ``fact.source_refs``（原文引用句 + 来源 URL，§3）。
+
+    Returns:
+        去重后的 EvidenceEvent[]；无对应事实的判定丢弃。
+    """
+    fact_by_id = {f.id: f for f in facts or []}
+    events: list[EvidenceEvent] = []
+    for judgment in judgments or []:
+        fact = fact_by_id.get(judgment.fact_id)
+        if fact is None:
+            continue
+        delta = (
+            _strength_to_delta(judgment.strength) if judgment.effect_on_thesis is not EffectOnThesis.NEUTRAL else 0.0
+        )
+        events.append(
+            EvidenceEvent(
+                id=fact.id,
+                date=fact.date,
+                kind=fact.kind,
+                description=fact.description,
+                effect_on_thesis=judgment.effect_on_thesis,
+                confidence_delta=delta,
+                source_refs=[*fact.quotes, *fact.source_refs],
+            )
+        )
+    return _dedup_events(events)
