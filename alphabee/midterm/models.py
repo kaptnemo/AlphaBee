@@ -402,6 +402,77 @@ class VariableScores(BaseModel):
     r_risk: float | None = None  # 三层风险合成方向分
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 证据抽取（Evidence Extraction）typed contracts（设计 MIDTERM_EVIDENCE_EXTRACTION.md）
+#
+# 两阶段抽取（§4）：Stage A 客观事实（:class:`FactEvent`，可跨 thesis 复用/缓存）
+# → Stage B 相对 thesis 的方向判定（:class:`EvidenceJudgment`，离散等级）
+# → 组装 :class:`EvidenceEvent`（供 ``bayes.update_confidence`` 消费）。
+#
+# ``confidence_delta`` 只允许离散等级（§6，禁止 LLM 自由出连续值）：
+# weak=0.1 / medium=0.3 / strong=0.5，单条上限 0.7（见下方常量）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class Strength(StrEnum):
+    """证据强度离散等级（设计 §6，禁 LLM 连续值）。
+
+    Stage B 只允许输出这三个离散等级，任何连续数值（如 0.42）在构造时即被
+    Pydantic 拒绝，从契约层杜绝「LLM 自由出连续值」。
+    """
+
+    WEAK = "weak"
+    MEDIUM = "medium"
+    STRONG = "strong"
+
+
+class EffectOnThesis(StrEnum):
+    """证据相对 thesis 的方向（Stage B 产出，§4.3）。"""
+
+    CONFIRMING = "confirming"
+    REFUTING = "refuting"
+    NEUTRAL = "neutral"
+
+
+# 离散证据强度等级 → confidence_delta 数值（设计 §6；E1 规则标定与 E3 Stage B
+# 共享同一映射，只读，禁止在调用方各自重新定义导致口径分裂）。
+STRENGTH_LEVELS: tuple[str, ...] = ("weak", "medium", "strong")
+STRENGTH_DELTA: dict[str, float] = {"weak": 0.1, "medium": 0.3, "strong": 0.5}
+MAX_CONFIDENCE_DELTA: float = 0.7  # 单条证据强度上限（§6；连续值一律拒绝）
+
+
+class FactEvent(BaseModel):
+    """Stage A 客观事实事件（无方向判定，可跨 thesis 复用，入库缓存，§4.1）。
+
+    只回答「发生了什么」，不回答「好不好」。``numbers`` 只承载原文可溯源的
+    canonical 数值（原文没有的字段显式置 ``None``，绝不补全）；``quotes`` 为
+    ``description`` 的原文支撑句（防幻觉第一道闸：无引用不出数）。
+    """
+
+    id: str  # 事件签名哈希：date+kind+主体+数值（去重键，§7）
+    date: str  # 事件发生日 YYYY-MM-DD（非抽取日）
+    kind: str  # 受控词表：fundamental / expectation / trend / crowding / thesis / price
+    description: str  # 客观事实陈述（不含方向判断）
+    numbers: dict[str, float | None] = Field(default_factory=dict)  # canonical 数值（如 {"revenue_yoy": 5.2}）
+    quotes: list[str] = Field(default_factory=list)  # 原文引用（description 的支撑句）
+    source_refs: list[str] = Field(default_factory=list)  # 来源 URL / 引用
+    source_type: str = ""  # financial_report / forecast / research_report / announcement / news
+
+
+class EvidenceJudgment(BaseModel):
+    """Stage B 输出：相对 thesis 的方向与强度（→ 组装 :class:`EvidenceEvent`，§4.3）。
+
+    方向（``effect_on_thesis``）与强度（``strength``）分离：强度只允许离散等级
+    weak / medium / strong，禁止 LLM 自由出连续值（§6）。``reasoning`` 必须引用
+    事实的原文（防幻觉），可审计。
+    """
+
+    fact_id: str  # 对应 FactEvent.id
+    effect_on_thesis: EffectOnThesis  # confirming / refuting / neutral
+    strength: Strength  # weak / medium / strong（离散等级，§6；StrEnum 禁连续值）
+    reasoning: str  # 相对 H 的推理（可审计，写入 note/description）
+
+
 class EvidenceEvent(BaseModel):
     """一条证据事件，供 ``bayes.py`` 做 log-odds 更新 P(H|Evidence)。"""
 
