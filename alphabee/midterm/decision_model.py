@@ -326,6 +326,95 @@ def get_decision(
     return evaluate(snapshot, evidence, prior_confidence=prior_confidence, thesis=thesis)
 
 
+def collect_evidence(
+    symbol: str,
+    thesis: str = "",
+    window_texts: str | list[str] | None = None,
+    *,
+    model: Any = None,
+    as_of_date: str = "",
+) -> list[EvidenceEvent]:
+    """收集 EvidenceEvent：数值类规则（纯规则）+ Stage A/B（LLM，失败降级）。
+
+    - 数值类（§6）：``build_numeric_evidence``（forecast/express/revision，纯规则禁 LLM）；
+    - 定性文本（§4）：``extract_facts`` → ``judge_facts`` → ``assemble_events``
+      （Stage A/B 两阶段，LLM 必需但带降级）；
+    - 任一环节失败（网络 / LLM / 解析）→ 该环节 evidence=[]（§8/§11 只降级不中断）。
+
+    Args:
+        symbol: 股票代码。
+        thesis: 核心假设 H（Stage B 方向判定依据；空 → 数值按符号、定性 neutral 退化）。
+        window_texts: 非结构化文本窗口（财报/预告/研报/公告/新闻正文）。
+        model: 可选注入的 LLM 实例（测试用）；缺省复用 ``create_structured_model``。
+        as_of_date: 数值类证据的事件日（YYYY-MM-DD）。
+
+    Returns:
+        去重后的 EvidenceEvent[]；全部失败 → []。
+    """
+    from alphabee.midterm.evidence_extractor import assemble_events, dedupe_events, extract_facts, judge_facts
+
+    events: list[EvidenceEvent] = []
+
+    # 1. 数值类规则（§6 纯规则禁 LLM）
+    try:
+        from alphabee.agents.facts.tools.expectation_fact import get_expectation_fact
+        from alphabee.collectors.consensus.eastmoney import build_consensus
+        from alphabee.midterm.evidence_rules import build_numeric_evidence
+
+        exp_data = get_expectation_fact(symbol)
+        consensus = build_consensus(symbol)
+        events.extend(build_numeric_evidence(exp_data, consensus, symbol=symbol, as_of_date=as_of_date))
+    except Exception:
+        pass  # 数值类获取失败 → 无数值证据（不中断）
+
+    # 2. 定性文本 Stage A/B（LLM 必需，失败降级）
+    if window_texts:
+        try:
+            facts = extract_facts(window_texts, symbol=symbol, model=model)
+            judgments = judge_facts(facts, thesis=thesis, model=model)
+            events.extend(assemble_events(facts, judgments))
+        except Exception:
+            pass  # LLM 失败 → 无定性证据（§11 只降级不中断）
+
+    return dedupe_events(events)
+
+
+def get_decision_with_evidence(
+    symbol: str,
+    thesis: str = "",
+    window_texts: str | list[str] | None = None,
+    *,
+    include_market: bool = True,
+    prior_confidence: float | None = None,
+    model: Any = None,
+) -> CompanyStateArtifact:
+    """便捷入口：先 evidence 抽取（数值规则 + Stage A/B）再 get_decision（§8 两遍）。
+
+    两遍（§8）：
+    1. 收集 EvidenceEvent（数值类纯规则 + 定性 Stage A/B，LLM）；
+    2. ``get_decision(symbol, evidence=evidence)``：evidence 非空 → bayes_posterior，
+       空/None → state_prior 保守版。
+
+    LLM / 网络失败 → ``evidence=[]`` → 模型照常出 state_prior 保守版（只降级不中断，
+    不破坏确定性核心）；抽取的 EvidenceEvent 写入 ``evidence_log``，供 diff 的
+    ``ConfidenceDelta.evidence_ids`` 归因（MIDTERM_STATE_DIFF_DESIGN.md §5）。
+
+    Returns:
+        :class:`CompanyStateArtifact`。
+    """
+    try:
+        evidence = collect_evidence(symbol, thesis=thesis, window_texts=window_texts, model=model)
+    except Exception:
+        evidence = []  # 兜底：抽取全挂 → state_prior 保守版（§8）
+    return get_decision(
+        symbol,
+        evidence=evidence,
+        include_market=include_market,
+        prior_confidence=prior_confidence,
+        thesis=thesis,
+    )
+
+
 if __name__ == "__main__":
     import argparse
     import json

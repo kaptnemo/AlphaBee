@@ -14,7 +14,7 @@
 # 顶层只依赖 models（Pydantic），因此在此顶层导入不会触发 tushare/akshare 初始化副作用。
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
 from alphabee.midterm.classifier import ClassifierResult, classify_state
-from alphabee.midterm.decision_model import evaluate, get_decision
+from alphabee.midterm.decision_model import collect_evidence, evaluate, get_decision, get_decision_with_evidence
 
 # state diff 引擎 + 持久化 + 消费方（D1–D4；数值核心纯规则禁 LLM）
 from alphabee.midterm.diff import DiffVelocity, diff, diff_series
@@ -27,6 +27,17 @@ from alphabee.midterm.diff_consumers import (
     project_journal,
     project_narrative,
 )
+
+# evidence 抽取（E1 数值规则 / E2 adapter / E3 两阶段，设计 MIDTERM_EVIDENCE_EXTRACTION.md）
+from alphabee.midterm.evidence_adapter import adapt_verification
+from alphabee.midterm.evidence_extractor import (
+    FactEventCache,
+    assemble_events,
+    dedupe_events,
+    extract_facts,
+    judge_facts,
+)
+from alphabee.midterm.evidence_rules import build_numeric_evidence
 from alphabee.midterm.factors import (
     build_crowding_factor,
     build_expectation_factor,
@@ -147,11 +158,21 @@ __all__ = [
     "ScenarioProbability",
     "build_position",
     "classify_state",
+    "collect_evidence",
     "compress_scores",
     "evaluate",
     "get_decision",
+    "get_decision_with_evidence",
     "scenario_probability",
     "update_confidence",
+    # evidence 抽取（E1/E2/E3）
+    "FactEventCache",
+    "adapt_verification",
+    "assemble_events",
+    "build_numeric_evidence",
+    "dedupe_events",
+    "extract_facts",
+    "judge_facts",
     # state diff 引擎 + 持久化 + 消费方（D1–D4）
     "DiffVelocity",
     "ExitSignal",

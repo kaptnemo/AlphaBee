@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from alphabee.midterm.decision_model import evaluate, get_decision
+from alphabee.midterm.decision_model import collect_evidence, evaluate, get_decision, get_decision_with_evidence
 from alphabee.midterm.models import (
     AuditSnapshot,
     CrowdingFactor,
@@ -216,6 +216,83 @@ def test_get_decision_calls_snapshot_then_evaluate(monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# E4 便捷入口：get_decision_with_evidence / collect_evidence（monkeypatch 抽取层）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_get_decision_with_evidence_llm_failure_degrades(monkeypatch):
+    """LLM 抽取全挂 → evidence=[] → 模型照常出 state_prior 保守版（§8 只降级不中断）。"""
+    import alphabee.midterm.decision_model as dm
+
+    snap = _snapshot()
+    monkeypatch.setattr("alphabee.midterm.factors.get_factor_snapshot", lambda symbol, include_market=True: snap)
+    monkeypatch.setattr(dm, "collect_evidence", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("LLM down")))
+
+    art = get_decision_with_evidence("600519.SH", thesis="H", window_texts=["文本"])
+    assert art.expected_value is not None
+    assert art.expected_value.probability_source == "state_prior"
+    assert art.evidence_log == []
+    assert art.thesis_confidence == 0.0  # 无证据无先验 → 保守
+
+
+def test_get_decision_with_evidence_enriches_bayes_posterior(monkeypatch):
+    """evidence 非空 → bayes_posterior + evidence_log 留痕。"""
+    import alphabee.midterm.decision_model as dm
+
+    snap = _snapshot()
+    evs = [_ev("confirming", 0.3)]
+    monkeypatch.setattr("alphabee.midterm.factors.get_factor_snapshot", lambda symbol, include_market=True: snap)
+    monkeypatch.setattr(dm, "collect_evidence", lambda *a, **k: evs)
+
+    art = get_decision_with_evidence("600519.SH", thesis="H", window_texts=["文本"], prior_confidence=0.5)
+    assert art.expected_value.probability_source == "bayes_posterior"
+    assert art.evidence_log == evs
+    assert art.thesis_confidence == pytest.approx(0.65)  # 0.5 + confirming 0.3 → log-odds 更新
+
+
+def test_collect_evidence_degrades_when_sources_fail(monkeypatch):
+    """数值类数据源 + 定性 LLM 全失败 → collect_evidence 返回 []（§8/§11 不中断）。"""
+    import alphabee.midterm.evidence_extractor as ex
+
+    def _boom(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(ex, "extract_facts", _boom)  # 定性 Stage A 失败
+    # 数值类阶段内部懒导入 get_expectation_fact 触发 tushare token 写入，在沙箱内
+    # 因 /home 不可写而失败，被 collect_evidence 的 try/except 捕获（不中断）。
+    assert collect_evidence("600519.SH", thesis="H", window_texts=["文本"]) == []
+
+
+def test_evidence_log_feeds_diff_attribution():
+    """evidence_log 留痕 → diff 的 ConfidenceDelta.evidence_ids 归因（打通 §5）。"""
+    from alphabee.midterm.diff import diff
+
+    prev = evaluate(_snapshot(as_of_date="2024-01-01"), None)
+    evs = [
+        EvidenceEvent(
+            id="e1",
+            date="2024-01-05",
+            kind="expectation",
+            description="x",
+            effect_on_thesis="confirming",
+            confidence_delta=0.3,
+        ),
+        EvidenceEvent(
+            id="e2",
+            date="2024-01-05",
+            kind="expectation",
+            description="y",
+            effect_on_thesis="refuting",
+            confidence_delta=0.1,
+        ),
+    ]
+    curr = evaluate(_snapshot(as_of_date="2024-01-05"), evs, prior_confidence=0.5)
+    d = diff(prev, curr)
+    assert d.confidence.evidence_ids == ["e1", "e2"]
+    assert [e.id for e in d.new_evidence] == ["e1", "e2"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # __init__ 导出四引擎关键入口
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -226,11 +303,28 @@ def test_init_exports_engines():
     for name in (
         "evaluate",
         "get_decision",
+        "get_decision_with_evidence",
+        "collect_evidence",
         "compress_scores",
         "classify_state",
         "update_confidence",
         "scenario_probability",
         "build_position",
+    ):
+        assert hasattr(midterm, name), name
+
+
+def test_init_exports_evidence_functions():
+    import alphabee.midterm as midterm
+
+    for name in (
+        "build_numeric_evidence",
+        "adapt_verification",
+        "extract_facts",
+        "judge_facts",
+        "assemble_events",
+        "dedupe_events",
+        "FactEventCache",
     ):
         assert hasattr(midterm, name), name
 
