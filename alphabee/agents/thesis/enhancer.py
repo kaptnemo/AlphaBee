@@ -26,7 +26,6 @@ from typing import Any, cast
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from alphabee.agents.thesis.models import (
     CompanyContext,
@@ -35,7 +34,7 @@ from alphabee.agents.thesis.models import (
     InvestmentThesis,
 )
 from alphabee.agents.thesis.prompts import ENHANCER_SYSTEM_PROMPT, ENHANCER_USER_TEMPLATE
-from alphabee.utils import create_chat_model
+from alphabee.utils import create_structured_model
 from alphabee.utils.pipeline import extract_text, parse_json
 
 logger = structlog.get_logger(__name__)
@@ -50,12 +49,12 @@ class ThesisEnhancer:
     """
 
     def __init__(self) -> None:
-        self._model: ChatOpenAI | None = None
+        self._model: Any | None = None
 
     @property
-    def _llm(self) -> ChatOpenAI:
+    def _llm(self) -> Any:
         if self._model is None:
-            self._model = create_chat_model("agent.thesis.enhancer")
+            self._model = create_structured_model("agent.thesis.enhancer")
         return self._model
 
     # ── Public API ─────────────────────────────────────────────────────

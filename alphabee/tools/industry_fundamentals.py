@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from alphabee.collectors.akshare.helper import AkShareHelper
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.utils import tracked_chat_completion
+from alphabee.utils.pipeline import parse_json
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -427,17 +428,11 @@ async def _generate_industry_summary(
         component="tool.industry_fundamentals.summary",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
+        json_mode=True,
     )
 
     raw = (response.choices[0].message.content or "").strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```", 2)[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.rsplit("```", 1)[0].strip()
-
-    parsed = json.loads(raw)
+    parsed = parse_json(raw)
     return IndustrySummary(
         overview=parsed.get("overview", ""),
         valuation_comment=parsed.get("valuation_comment", ""),

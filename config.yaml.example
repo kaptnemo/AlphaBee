@@ -10,6 +10,8 @@ llm:
   base_url: "${LLM_BASE_URL:https://api.deepseek.com}"
   model: "${LLM_MODEL:deepseek-chat}"
   # proxy_url: "${LLM_PROXY_URL:}"  # 可选：HTTP 代理
+  # 直连调用点绑定 response_format=json_object（端点支持 json_object，不支持 json_schema/strict）
+  structured_json: "${LLM_STRUCTURED_JSON:true}"
 
 web_search:
   tavily:

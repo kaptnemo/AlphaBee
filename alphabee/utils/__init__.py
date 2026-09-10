@@ -1,5 +1,10 @@
 from alphabee import PROJECT_ROOT
-from alphabee.utils.llm import create_async_openai_client, create_chat_model, tracked_chat_completion
+from alphabee.utils.llm import (
+    create_async_openai_client,
+    create_chat_model,
+    create_structured_model,
+    tracked_chat_completion,
+)
 from alphabee.utils.logging_utils import configure_logging, get_logger
 from alphabee.utils.pipeline import extract_text, make_id, parse_json
 from alphabee.utils.prompts import json_instruction
@@ -9,6 +14,7 @@ __all__ = [
     "get_logger",
     "PROJECT_ROOT",
     "create_chat_model",
+    "create_structured_model",
     "create_async_openai_client",
     "tracked_chat_completion",
     "extract_text",

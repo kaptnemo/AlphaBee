@@ -11,7 +11,6 @@ from typing import Any, cast
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from alphabee.agents.thesis.models import (
     CompanyContext,
@@ -21,7 +20,7 @@ from alphabee.agents.thesis.models import (
 )
 from alphabee.agents.thesis.prompts import REVIEWER_SYSTEM_PROMPT, REVIEWER_USER_TEMPLATE
 from alphabee.industry.names import industry_in_group
-from alphabee.utils import create_chat_model
+from alphabee.utils import create_structured_model
 from alphabee.utils.pipeline import extract_text, parse_json
 
 logger = structlog.get_logger(__name__)
@@ -41,12 +40,12 @@ class ThesisReviewer:
     """
 
     def __init__(self) -> None:
-        self._model: ChatOpenAI | None = None
+        self._model: Any | None = None
 
     @property
-    def _llm(self) -> ChatOpenAI:
+    def _llm(self) -> Any:
         if self._model is None:
-            self._model = create_chat_model("agent.thesis.reviewer")
+            self._model = create_structured_model("agent.thesis.reviewer")
         return self._model
 
     # ── Public API ──────────────────────────────────────────────────────────

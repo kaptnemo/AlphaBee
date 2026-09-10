@@ -15,6 +15,7 @@ from alphabee.tools.fundamentals import get_fundamentals
 from alphabee.tools.market_data import get_market_data
 from alphabee.tools.news import get_stock_news_summary
 from alphabee.utils import tracked_chat_completion
+from alphabee.utils.pipeline import parse_json
 from alphabee.utils.storage import get_data_root, normalize_symbol
 
 
@@ -63,16 +64,6 @@ class MonitorExecutionResult(BaseModel):
     report: FrameworkMonitorReport
     snapshot_path: str
     report_path: str
-
-
-def _strip_json_fence(raw: str) -> str:
-    text = raw.strip()
-    if not text.startswith("```"):
-        return text
-    text = text.split("```", 2)[1]
-    if text.startswith("json"):
-        text = text[4:]
-    return text.rsplit("```", 1)[0].strip()
 
 
 def _slugify(value: str) -> str:
@@ -259,9 +250,10 @@ async def _call_monitor_llm(
         component="workflow.framework_monitor",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
+        json_mode=True,
     )
-    raw = _strip_json_fence(response.choices[0].message.content or "")
-    parsed = json.loads(raw)
+    raw = response.choices[0].message.content or ""
+    parsed = parse_json(raw)
     return FrameworkMonitorReport.model_validate(parsed)
 
 

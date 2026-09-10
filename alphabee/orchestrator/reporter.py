@@ -19,7 +19,7 @@ from alphabee.orchestrator.services.payload_builders import (
     build_report_generation_payload,
 )
 from alphabee.orchestrator.state import OrchestratorState
-from alphabee.utils import create_chat_model, json_instruction
+from alphabee.utils import create_structured_model, json_instruction
 from alphabee.utils.pipeline import extract_text, make_id, parse_json
 
 
@@ -265,7 +265,9 @@ async def generate_report(
 
     try:
         # max_tokens 放宽，避免推理型模型把输出预算耗在思考过程、正文被截成空。
-        model = create_chat_model("agent.report", max_tokens=8192)
+        # create_structured_model 绑定 json_object 容器约束：API 层保证输出是合法 JSON
+        # （无散文/栅栏），字段结构仍由 json_instruction + parse_json + Pydantic 校验兜底。
+        model = create_structured_model("agent.report", max_tokens=8192)
         raw_text = ""
         parse_error: Exception | None = None
         for attempt in range(2):

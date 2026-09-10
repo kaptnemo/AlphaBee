@@ -226,9 +226,15 @@ def _extract_example(schema: dict[str, Any]) -> dict[str, Any] | None:
 #   独立的 JSON 提取层：Markdown 栅栏提取 → 原始文本尝试 → 首尾括号
 #   提取 → 平衡括号匹配 → json_repair 修复。详见 alphabee/utils/pipeline.py。
 #
-# 为什么不用 structured output / JSON mode？
-#   目前 DeepAgents 框架不直接支持 per-agent 的 response_format 参数透传。
-#   这是在框架层面的待改进项。届时 json_instruction() 可以简化甚至废弃。
+# 为什么不用 with_structured_output（json_schema / function_calling）？
+#   端点能力（2026-08 冒烟验证，deepseek-v4-pro @ api.deepseek.com）：
+#   json_object ✅ / json_schema(strict) ❌ / 强制 tool_choice ❌（思考模式限制）。
+#   因此直连调用点已通过 utils/llm.py 的 create_structured_model /
+#   tracked_chat_completion(json_mode=True) 绑定 json_object **容器约束**，
+#   本函数继续提供字段级结构文本 + few-shot 示例。两者叠加：
+#   API 保证"输出是 JSON"，prompt 保证"JSON 长什么样"，parse_json + Pydantic 兜底。
+#   deepagents 站点（create_deep_agent 的 response_format 参数）待端点支持
+#   json_schema 后再迁移，届时 json_instruction 可逐步简化。
 #
 def json_instruction(model: type[BaseModel]) -> str:
     """从 Pydantic 模型生成输出格式指令。

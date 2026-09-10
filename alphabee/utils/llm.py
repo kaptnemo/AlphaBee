@@ -232,6 +232,38 @@ def create_chat_model(component: str, **kwargs: Any) -> ChatOpenAI:
     )
 
 
+# ── Structured output support ───────────────────────────────────────────────
+#
+# 端点能力（2026-08 冒烟验证，deepseek-v4-pro @ api.deepseek.com）：
+#   - response_format={"type": "json_object"}      ✅ 可用（要求 prompt 含 "json" 字样）
+#   - response_format={"type": "json_schema"}      ❌ "This response_format type is unavailable"
+#   - 强制 tool_choice 的 function calling 结构化输出 ❌ "Thinking mode does not support this tool_choice"
+#
+# 因此本项目不使用 with_structured_output(json_schema / function_calling)，
+# 只绑定 json_object **容器约束**：API 层保证输出是合法 JSON 对象
+# （无散文前缀/后缀、无 Markdown 栅栏），字段级结构仍由 json_instruction +
+# parse_json + Pydantic 校验 + 既有降级链保证。deepagents 站点
+# （explore_conflicts / verify_hypotheses / synthesize_insights）暂不迁移：
+# create_deep_agent 的 response_format 会走 ProviderStrategy/ToolStrategy，
+# 在本端点均不可用，待端点支持 json_schema 后再迁移。
+
+JSON_OBJECT_RESPONSE_FORMAT: dict[str, str] = {"type": "json_object"}
+
+
+def create_structured_model(component: str, **kwargs: Any) -> Any:
+    """``create_chat_model`` + bind(response_format=json_object) 的直连结构化模型。
+
+    只保证 JSON **容器**，不保证 schema 级字段约束——调用方必须保留
+    ``parse_json`` + Pydantic 校验与既有降级/重试链。prompt 必须包含
+    "json"（任意大小写）字样，否则端点返回 400。
+    当 ``settings.llm.structured_json`` 为 False 时退化为普通模型（旧行为）。
+    """
+    model = create_chat_model(component, **kwargs)
+    if settings.llm.structured_json:
+        return model.bind(response_format=dict(JSON_OBJECT_RESPONSE_FORMAT))
+    return model
+
+
 def create_async_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=_require_llm_api_key(),
@@ -244,11 +276,21 @@ async def tracked_chat_completion(
     component: str,
     messages: Sequence[ChatCompletionMessageParam],
     model: str | None = None,
+    json_mode: bool = False,
     **kwargs: Any,
 ) -> ChatCompletion:
+    """Tracked raw chat completion（带用量日志）。
+
+    Args:
+        json_mode: True 且 ``settings.llm.structured_json`` 开启时注入
+            ``response_format=json_object``（要求 messages 含 "json" 字样）。
+            解析/校验仍由调用方负责。
+    """
     started_at = time.monotonic()
     request_model = model or settings.llm.model
     client = create_async_openai_client()
+    if json_mode and settings.llm.structured_json:
+        kwargs.setdefault("response_format", dict(JSON_OBJECT_RESPONSE_FORMAT))
     try:
         response = await client.chat.completions.create(
             model=request_model,

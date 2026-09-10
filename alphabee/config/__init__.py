@@ -8,6 +8,8 @@ class LLMConfig(BaseModel):
     base_url: str
     model: str
     proxy_url: str | None = None
+    # 结构化输出开关（json_object 容器约束）：端点能力见 utils/llm.py 模块注释。
+    structured_json: bool = Field(default=True, description="直连 LLM 调用点是否绑定 response_format=json_object")
 
 
 class TavilyConfig(BaseModel):

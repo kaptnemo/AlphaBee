@@ -27,7 +27,7 @@ from alphabee.core import (
 )
 from alphabee.harness.prompts import EVALUATOR_NODE_PROMPT
 from alphabee.orchestrator.state import OrchestratorState
-from alphabee.utils import create_chat_model, extract_text, json_instruction, make_id, parse_json
+from alphabee.utils import create_structured_model, extract_text, json_instruction, make_id, parse_json
 
 
 def _make_id(prefix: str) -> str:
@@ -391,7 +391,7 @@ async def _llm_assessment(
         + "\n\n证据映射：\n"
         + json.dumps(evidence_map, ensure_ascii=False, indent=2)
     )
-    model = create_chat_model("harness.evaluator")
+    model = create_structured_model("harness.evaluator")
     response = model.invoke(
         [
             SystemMessage(content=EVALUATOR_NODE_PROMPT),

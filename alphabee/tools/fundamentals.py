@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from alphabee.collectors.tushare.helper import TuShareHelper
 from alphabee.tools.cache import AsyncTTLCache
 from alphabee.utils import tracked_chat_completion
+from alphabee.utils.pipeline import parse_json
 
 # ---------------------------------------------------------------------------
 # Pydantic models — all keyed by period (YYYYMMDD)
@@ -218,17 +219,13 @@ async def _generate_summary(
         component="tool.fundamentals.summary",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
+        json_mode=True,
     )
 
+    # parse_json 自带栅栏剥离/修复，无需手工 strip；json_object 容器约束下
+    # 输出必为 JSON，但仍保留容错（治理修复：不再用严格 json.loads 做单点故障）。
     raw = (response.choices[0].message.content or "").strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```", 2)[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.rsplit("```", 1)[0].strip()
-
-    parsed = json.loads(raw)
+    parsed = parse_json(raw)
     return Summary(
         overview=parsed.get("overview", ""),
         strengths=parsed.get("strengths", []),
