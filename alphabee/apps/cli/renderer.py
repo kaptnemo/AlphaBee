@@ -590,9 +590,12 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
             f"  🗒️  中期决策总结已生成"
             f"  │ 标的 {color(symbol or '—', Color.WHITE)}"
             f"  │ 日期 {as_of or '—'}"
-            f"  │ {line_count} 行（完整内容见日志）"
+            f"  │ {line_count} 行"
             f"{deg_tag}{issue_tag}"
         )
+        if isinstance(text, str) and text:
+            print()
+            print(text)
         print()
 
     # ─────────────────────────────────────────────────────────────────
