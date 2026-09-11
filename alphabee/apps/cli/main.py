@@ -65,7 +65,6 @@ def main() -> None:
     if args.task_stats or args.distill or args.task_history or args.task_record:
         handle_task_cli(args)
         return
-
     if args.chat or not args.query:
         asyncio.run(
             run_chat_session(
