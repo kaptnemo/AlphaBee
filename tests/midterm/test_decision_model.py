@@ -252,14 +252,19 @@ def test_get_decision_with_evidence_enriches_bayes_posterior(monkeypatch):
 
 def test_collect_evidence_degrades_when_sources_fail(monkeypatch):
     """数值类数据源 + 定性 LLM 全失败 → collect_evidence 返回 []（§8/§11 不中断）。"""
+    import alphabee.agents.facts.tools.expectation_fact as expectation_fact
+    import alphabee.collectors.consensus.eastmoney as consensus
     import alphabee.midterm.evidence_extractor as ex
 
     def _boom(*a, **k):
         raise RuntimeError("down")
 
     monkeypatch.setattr(ex, "extract_facts", _boom)  # 定性 Stage A 失败
-    # 数值类阶段内部懒导入 get_expectation_fact 触发 tushare token 写入，在沙箱内
-    # 因 /home 不可写而失败，被 collect_evidence 的 try/except 捕获（不中断）。
+    # 数值类阶段把「数据源不可用」当降级信号：显式让取数失败，使断言不依赖
+    # 沙箱/网络状态（否则联网环境会取到真实证据，测试失效）。
+    monkeypatch.setattr(expectation_fact, "get_expectation_fact", _boom)
+    monkeypatch.setattr(consensus, "build_consensus", _boom)
+
     assert collect_evidence("600519.SH", thesis="H", window_texts=["文本"]) == []
 
 
