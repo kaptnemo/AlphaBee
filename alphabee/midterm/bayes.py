@@ -68,6 +68,11 @@ _STATE_BULL_DIRECTION = {
 _CONFIDENCE_MAGNITUDE = 0.35  # 高确信（confidence→1）时 bull/bear 极化幅度
 _PROB_MIN, _PROB_MAX = 0.02, 0.98  # 情景概率夹紧边界（避免退化到 0/1）
 
+# 改造 B（设计 MIDTERM_INSIGHT_INJECTION_DESIGN.md §4）证据条件化权重：
+# direction = (1-w)×state_dir + w×ev_tilt，证据净方向与状态先验方向各占一半，
+# 使证据能够部分扭转硬编码状态方向（而非只由状态表极化）。
+_EVIDENCE_DIRECTION_WEIGHT = 0.5
+
 # 无证据（state_prior）时的保守先验收缩：把 §5.2 状态锚点向均匀先验 1/3 收缩，
 # 避免「因子→S3→bull 0.55→EV」的状态先验自我引用给激进 EV（S3 bull 0.55 → 0.44）。
 _STATE_PRIOR_SHRINK = 0.5
@@ -132,6 +137,23 @@ def _conservative_prior(bull: float, bear: float) -> tuple[float, float]:
     b = flat + (bull - flat) * _STATE_PRIOR_SHRINK
     be = flat + (bear - flat) * _STATE_PRIOR_SHRINK
     return b, be
+
+
+def _evidence_tilt(events: list[EvidenceEvent] | None) -> float:
+    """净证据方向（改造 B）：``Σ(confirming·d − refuting·d)``，clip 到 ``[-1, 1]``。
+
+    正 = 证据整体确认 thesis（推高 bull），负 = 证据整体反驳（推低 bull）；
+    ``neutral`` 不计。多条证据叠加后 clip 到 ``[-1, 1]``，作为与状态先验方向各占
+    一半的证据方向分量（``_EVIDENCE_DIRECTION_WEIGHT``），使证据能够**部分扭转**
+    硬编码状态方向（§4 改造 B）。
+    """
+    tilt = 0.0
+    for e in events or []:
+        if e.effect_on_thesis == "confirming":
+            tilt += e.confidence_delta
+        elif e.effect_on_thesis == "refuting":
+            tilt -= e.confidence_delta
+    return max(-1.0, min(1.0, tilt))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -200,11 +222,14 @@ def scenario_probability(
     *,
     confidence: float | None = None,
     has_evidence: bool | None = None,
+    events: list[EvidenceEvent] | None = None,
 ) -> ScenarioProbability:
-    """由 State（``StateBelief.argmax_state``）与 Confidence 联合驱动三情景概率。
+    """由 State（``StateBelief.argmax_state``）、Confidence 与证据方向联合驱动三情景概率。
 
-    §5.2 表：S1 低 / S2 快升 / S3 最高 / S4 下降。``confidence`` 升高时按状态多空
-    方向极化 bull/bear（看多态更 bull、看空态更 bear）。
+    §5.2 表：S1 低 / S2 快升 / S3 最高 / S4 下降。``confidence`` 升高时按**证据条件化
+    方向**（改造 B）极化 bull/bear：``direction = (1-w)×state_dir + w×ev_tilt``，
+    其中 ``state_dir`` 为状态硬编码方向（``_STATE_BULL_DIRECTION``），``ev_tilt`` 为
+    证据净方向（``_evidence_tilt``）——证据可部分扭转状态先验方向，而非只由状态表锁定。
 
     概率来源语义（§5.2 Evidence → BeliefUpdate → ScenarioProbability）：
 
@@ -220,6 +245,10 @@ def scenario_probability(
             无证据。
         has_evidence: 是否有证据日志；``None`` 时按 ``confidence is not None`` 推断
             （向后兼容）。显式 ``False`` 时即使给了 ``confidence`` 也走保守先验。
+        events: 证据日志（``EvidenceEvent`` 列表，改造 B）；用于推导证据净方向
+            ``_evidence_tilt``。``None``/空 → ``ev_tilt=0`` → ``direction = 0.5×state_dir``
+            （状态方向减半，确定性、向后兼容；与 decision_model.evaluate 的接线
+            ``events=evidence`` 一致——无证据时即为该退化行为，而非回到纯状态表极化）。
 
     Returns:
         :class:`ScenarioProbability`（三情景概率和≈1 + 概率来源）。
@@ -244,7 +273,10 @@ def scenario_probability(
         confidence = _NEUTRAL_PRIOR
 
     c = 2.0 * confidence - 1.0  # confidence 0-1 → 确信方向强度 [-1,1]
-    direction = _STATE_BULL_DIRECTION[state]
+    state_dir = _STATE_BULL_DIRECTION[state]
+    ev_tilt = _evidence_tilt(events)
+    # 改造 B：证据条件化方向 = 状态先验方向 × (1-w) + 证据净方向 × w（证据可部分扭转方向）
+    direction = (1.0 - _EVIDENCE_DIRECTION_WEIGHT) * state_dir + _EVIDENCE_DIRECTION_WEIGHT * ev_tilt
     p_bull = _clip_prob(b0 + c * _CONFIDENCE_MAGNITUDE * direction)
     p_bear = _clip_prob(be0 - c * _CONFIDENCE_MAGNITUDE * direction)
     p_base = 1.0 - p_bull - p_bear

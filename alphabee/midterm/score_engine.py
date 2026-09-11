@@ -57,6 +57,13 @@ _GOODWILL_SCALE = 1_000_000_000.0  # CNY 商誉饱和点（10 亿 → -1）
 _CASH_NEGATIVE_PENALTY = 0.5  # 单个负现金流（经营或自由）对 F 的惩罚力度
 _BEAT_BONUS = 0.2  # net_profit_yoy 超预告上限的 beat 加分
 
+# 改造 E（设计 MIDTERM_INSIGHT_INJECTION_DESIGN.md §4）结构性洞察 / 语境归一化参数：
+_SEGMENT_DIVERGENCE_THRESHOLD = 15.0  # PERCENT 最快细分增速跑赢整体阈值（>15pp = 结构性亮点）
+_SEGMENT_DIVERGENCE_BONUS = 0.2  # F 方向分正向修正幅度（结构性亮点）
+_E_REVISION_EXEMPT = 0.3  # E 上修阈值（e_revision > 0.3 = 强催化）
+_CROWDING_EXEMPT_HALF = 0.5  # 启动期高换手豁免：拥挤度扣分减半
+_REGIME_LIFT = 0.1  # regime 软约束：E↑ + segment divergence 时市场暴露上下限上浮幅度
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 通用辅助（纯函数）
@@ -114,8 +121,23 @@ def _beat_bonus(net_profit_yoy: float | None, max_change: float | None) -> float
     return 0.0
 
 
+def _segment_divergence(f: FundamentalFactor) -> float | None:
+    """最快细分增速 − 整体营收增速（pp，改造 E）；任一缺失 → ``None``。"""
+    if f.segment_fastest_yoy is None or f.revenue_yoy is None:
+        return None
+    return f.segment_fastest_yoy - f.revenue_yoy
+
+
+def _segment_bonus(f: FundamentalFactor) -> float:
+    """结构性亮点（改造 E）：最快细分显著跑赢整体（divergence > 15pp）→ F 正向修正 +0.2。"""
+    divergence = _segment_divergence(f)
+    if divergence is not None and divergence > _SEGMENT_DIVERGENCE_THRESHOLD:
+        return _SEGMENT_DIVERGENCE_BONUS
+    return 0.0
+
+
 def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | None:
-    """F 方向分：边际改善 + 现金质量惩罚 + 超预期 beat。
+    """F 方向分：边际改善 + 现金质量惩罚 + 超预期 beat + 结构性亮点（改造 E）。
 
     §3.3 口径 ``gross_margin_trend + revenue_yoy + net_profit_yoy`` 的边际方向；
     ``FactorSnapshot`` 是单帧、无 ``gross_margin_trend`` 时序，故用营收/净利/EPS
@@ -123,7 +145,9 @@ def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | No
 
     - 现金质量（profit_without_cash）：经营/自由现金流为负 → 显著惩罚（避免
       net_profit_yoy 高增长掩盖现金流失血）；
-    - 超预期（beat）：net_profit_yoy 超预告上限才加分，in-line 不加分。
+    - 超预期（beat）：net_profit_yoy 超预告上限才加分，in-line 不加分；
+    - 结构性亮点（改造 E）：最快细分增速显著跑赢整体（segment divergence > 15pp）
+      → 正向修正（整体 +17.94% 但高速通信线 +35.44% 的「结构性突变」）。
 
     全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。
     """
@@ -133,7 +157,12 @@ def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | No
     if growth is None:
         return None
 
-    score = growth + _cash_quality_penalty(f) + _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
+    score = (
+        growth
+        + _cash_quality_penalty(f)
+        + _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
+        + _segment_bonus(f)
+    )
     return _saturate(score, 1.0)
 
 
@@ -182,7 +211,12 @@ def _valuation_percentile(v: ValuationFactor) -> float | None:
     return _mean(contribs)
 
 
-def _crowding(c: CrowdingFactor) -> float | None:
+def _crowding(
+    c: CrowdingFactor,
+    *,
+    e_revision: float | None = None,
+    segment_divergence: float | None = None,
+) -> float | None:
     """C 方向分：越拥挤 → 越负。
 
     §3.3 口径 ``holder_count_change + hot_rank + turnover_rate_percentile``：
@@ -192,8 +226,19 @@ def _crowding(c: CrowdingFactor) -> float | None:
     - ``hot_rank``：人气榜排名（1 最热）；排名越低越拥挤 → 越负；
     - ``turnover_rate_percentile``：换手率分位越高越拥挤 → 越负。
 
+    改造 E（语境归一化）：强催化（``e_revision > 0.3`` 上修）或结构性亮点
+    （``segment_divergence > 15pp``）时，换手率分位的**负向扣分**（``crowding_pct<0``，
+    高换手）减半——「催化剂驱动的启动期高换手」≠「高位派发的拥挤」；正向（低换手）
+    不衰减（豁免只作用于拥挤惩罚，不削弱冷门利好）。
+
     全部缺失 → ``None``。
     """
+    exempt = (
+        e_revision is not None and e_revision > _E_REVISION_EXEMPT
+    ) or (
+        segment_divergence is not None and segment_divergence > _SEGMENT_DIVERGENCE_THRESHOLD
+    )
+
     contribs: list[float] = []
     if c.holder_count_change is not None:
         contribs.append(_saturate(c.holder_count_change, _HOLDER_CHANGE_SCALE))
@@ -201,7 +246,10 @@ def _crowding(c: CrowdingFactor) -> float | None:
         # 人气榜 top100：rank=1 最热 → 最负；rank=100 最冷 → 0。
         contribs.append(-_saturate(100.0 - float(c.hot_rank), 100.0))
     if c.turnover_rate_percentile is not None:
-        contribs.append(1.0 - 2.0 * c.turnover_rate_percentile)  # 分位 1 → -1，0 → +1
+        crowding_pct = 1.0 - 2.0 * c.turnover_rate_percentile  # 分位 1 → -1，0 → +1
+        if exempt and crowding_pct < 0.0:
+            crowding_pct *= _CROWDING_EXEMPT_HALF  # 仅对负向（高换手扣分）减半；正向不衰减
+        contribs.append(crowding_pct)
     return _mean(contribs)
 
 
@@ -237,16 +285,49 @@ def _risk(r: RiskFactor) -> float | None:
     return _mean(layers)
 
 
-def _market_summary(m: MarketFactor) -> dict[str, Any]:
+def adjust_market_exposure(
+    market: MarketFactor,
+    *,
+    e_revision: float | None = None,
+    segment_divergence: float | None = None,
+) -> tuple[float | None, float | None]:
+    """市场 regime 软约束（改造 E）：E↑ + segment divergence 同时成立时暴露上下限上浮。
+
+    熊市仍压低暴露（保留原 ``position_low/high``），但当「E 上修（``e_revision > 0.3``）
+    + 结构性亮点（``segment_divergence > 15pp``）」同时成立时，暴露上下限各上浮
+    ``_REGIME_LIFT``（如 [0, 0.2] → [0.1, 0.3]），体现「熊市里的结构性主线」。
+    确定性纯函数：只读输入，不改外部状态。
+    """
+    lift = (
+        e_revision is not None and e_revision > _E_REVISION_EXEMPT
+    ) and (
+        segment_divergence is not None and segment_divergence > _SEGMENT_DIVERGENCE_THRESHOLD
+    )
+    if not lift:
+        return market.position_low, market.position_high
+    low = min(1.0, market.position_low + _REGIME_LIFT) if market.position_low is not None else None
+    high = min(1.0, market.position_high + _REGIME_LIFT) if market.position_high is not None else None
+    return low, high
+
+
+def _market_summary(
+    m: MarketFactor,
+    *,
+    e_revision: float | None = None,
+    segment_divergence: float | None = None,
+) -> dict[str, Any]:
     """M：直接复用 ``market_score`` 摘要（0-100），透传 MarketFactor 关键字段。
 
-    缺失字段以显式 ``None`` 保留（不静默回退 0）；``regime`` 沿用其 ``""`` 缺省语义。
+    改造 E：``position_low`` / ``position_high`` 经 ``adjust_market_exposure`` 软约束
+    （E↑ + segment divergence 时上下限上浮）。缺失字段以显式 ``None`` 保留
+    （不静默回退 0）；``regime`` 沿用其 ``""`` 缺省语义。
     """
+    low, high = adjust_market_exposure(m, e_revision=e_revision, segment_divergence=segment_divergence)
     return {
         "market_score": m.market_score,  # 0-100
         "regime": m.regime,
-        "position_low": m.position_low,
-        "position_high": m.position_high,
+        "position_low": low,
+        "position_high": high,
         "hs300_pe_ttm": m.hs300_pe_ttm,
         "hs300_pb": m.hs300_pb,
         "hs300_close": m.hs300_close,
@@ -277,12 +358,15 @@ def compress_scores(snapshot: FactorSnapshot | None) -> VariableScores:
     if snapshot is None:
         return VariableScores()
 
+    e_revision = _revision(snapshot.expectation)
+    segment_divergence = _segment_divergence(snapshot.fundamental)
+
     return VariableScores(
-        m=_market_summary(snapshot.market),
+        m=_market_summary(snapshot.market, e_revision=e_revision, segment_divergence=segment_divergence),
         f_fundamental_trend=_fundamental_trend(snapshot.fundamental, snapshot.expectation),
-        e_revision=_revision(snapshot.expectation),
+        e_revision=e_revision,
         t_relative_strength=_relative_strength(snapshot.trend),
         v_valuation_percentile=_valuation_percentile(snapshot.valuation),
-        c_crowding=_crowding(snapshot.crowding),
+        c_crowding=_crowding(snapshot.crowding, e_revision=e_revision, segment_divergence=segment_divergence),
         r_risk=_risk(snapshot.risk),
     )

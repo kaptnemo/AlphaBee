@@ -178,6 +178,50 @@ def test_market_exposure_missing_is_none():
     assert art.position.actual_weight is None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# P1B-1 / P1E-1：evaluate 接线（证据条件化情景概率 + regime 软约束暴露上浮）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_evaluate_evidence_tilt_changes_scenario_probability_and_ev():
+    """P1B-1 决策级：强 confirming vs 强 refuting 证据在 evaluate 产物上情景概率/EV 方向不同。"""
+    confirming = [_ev("confirming", 0.5)]
+    refuting = [_ev("refuting", 0.5)]
+    art_conf = evaluate(_snapshot(), confirming, prior_confidence=0.5)
+    art_ref = evaluate(_snapshot(), refuting, prior_confidence=0.5)
+
+    def prob(art: object, scenario: str) -> float:
+        return {s.scenario: s.probability for s in art.expected_value.scenarios}[scenario]
+
+    assert prob(art_conf, "bull") > prob(art_ref, "bull")  # confirming 推高 bull
+    assert prob(art_conf, "bear") < prob(art_ref, "bear")  # confirming 压低 bear
+    assert art_conf.expected_value.ev > art_ref.expected_value.ev  # EV 方向不同
+
+
+def test_evaluate_regime_lift_raises_exposure_and_actual_weight():
+    """P1E-1：E↑ + segment divergence → regime 软约束上浮暴露 → actual_weight 反映上浮。"""
+    base = _snapshot(
+        fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=10.0, eps_growth_yoy=10.0),
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+        market=MarketFactor(market_score=40.0, position_low=0.0, position_high=0.2),
+    )
+    lifted = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=10.0, net_profit_yoy=10.0, eps_growth_yoy=10.0, segment_fastest_yoy=30.0
+        ),
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),
+        market=MarketFactor(market_score=40.0, position_low=0.0, position_high=0.2),
+    )
+    art_base = evaluate(base, None, prior_confidence=0.5)
+    art_lift = evaluate(lifted, None, prior_confidence=0.5)
+    # regime 软约束：E↑ + divergence → 暴露 [0,0.2]→[0.1,0.3] → 中值 0.1→0.2
+    assert art_base.position.portfolio_exposure == pytest.approx(0.1)
+    assert art_lift.position.portfolio_exposure == pytest.approx(0.2)
+    assert art_lift.position.portfolio_exposure > art_base.position.portfolio_exposure
+    assert art_lift.position.actual_weight > art_base.position.actual_weight  # actual_weight 反映上浮
+    assert any("软约束" in r for r in art_lift.position.rationale)
+
+
 def test_uncertain_adds_research_to_next_evidence():
     # 空快照 → 全方向分缺失 → 熵高 uncertain → 研究任务落入 next_evidence_to_watch
     empty = FactorSnapshot(symbol="000001.SZ")

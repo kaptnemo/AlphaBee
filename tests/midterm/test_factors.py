@@ -132,7 +132,8 @@ def test_build_fundamental_factor_maps_nested_tables():
     assert factor.free_cashflow == 1e8  # fina 表首条
     assert factor.debt_to_assets == 45.0
     assert factor.current_ratio == 1.8
-    assert missing == []
+    # 未传 segments → segment 字段显式缺失（改造 E，不静默回退 0）
+    assert missing == ["segment_fastest_yoy", "segment_slowest_yoy"]
 
 
 def test_build_fundamental_factor_missing_is_none_not_zero():
@@ -140,8 +141,54 @@ def test_build_fundamental_factor_missing_is_none_not_zero():
     # 全部 None，绝不回退 0
     for name in ("revenue_yoy", "roe", "operating_cashflow", "goodwill", "debt_to_assets"):
         assert getattr(factor, name) is None
-    assert len(missing) == 11
+    assert len(missing) == 13  # 11 个原有 + segment_fastest_yoy / segment_slowest_yoy（改造 E）
     assert "revenue_yoy" in missing and "operating_cashflow" in missing
+
+
+def test_build_fundamental_factor_segment_extremes():
+    """改造 E：从 segments 提取最快/最慢细分同比增速（list 形态）。"""
+    segments = [
+        SimpleNamespace(revenue_yoy=35.44),
+        SimpleNamespace(revenue_yoy=8.0),
+        SimpleNamespace(revenue_yoy=-2.0),
+    ]
+    factor, missing = build_fundamental_factor(_fin(), segments=segments)
+    assert factor.segment_fastest_yoy == 35.44
+    assert factor.segment_slowest_yoy == -2.0
+    assert "segment_fastest_yoy" not in missing
+    assert "segment_slowest_yoy" not in missing
+
+
+def test_build_fundamental_factor_segment_collection_form():
+    """改造 E：接受 SegmentCollection 形态（含 .segments）。"""
+    segments = SimpleNamespace(segments=[SimpleNamespace(revenue_yoy=35.44), SimpleNamespace(revenue_yoy=2.0)])
+    factor, _ = build_fundamental_factor(_fin(), segments=segments)
+    assert factor.segment_fastest_yoy == 35.44
+    assert factor.segment_slowest_yoy == 2.0
+
+
+def test_build_fundamental_factor_segments_missing_none():
+    factor, missing = build_fundamental_factor(_fin(), segments=None)
+    assert factor.segment_fastest_yoy is None
+    assert factor.segment_slowest_yoy is None
+    assert "segment_fastest_yoy" in missing
+    assert "segment_slowest_yoy" in missing
+
+
+def test_build_fundamental_factor_segment_collection_uses_latest_period():
+    """P1E-2：多报告期 SegmentCollection → 只采用最新一期分项算 max/min。"""
+    col = SimpleNamespace(
+        segments=[
+            SimpleNamespace(report_date="20231231", revenue_yoy=99.0),  # 旧期更快（不应被采用）
+            SimpleNamespace(report_date="20240630", revenue_yoy=35.44),
+            SimpleNamespace(report_date="20240630", revenue_yoy=-2.0),
+        ],
+        latest_period="20240630",
+    )
+    col.latest_segments = lambda: [s for s in col.segments if s.report_date == col.latest_period]
+    factor, _ = build_fundamental_factor(_fin(), segments=col)
+    assert factor.segment_fastest_yoy == 35.44  # 不是旧期的 99.0
+    assert factor.segment_slowest_yoy == -2.0
 
 
 def test_build_expectation_factor_forecast_express_and_consensus():
@@ -340,6 +387,11 @@ def patch_sources(monkeypatch: pytest.MonkeyPatch) -> None:
             _score_result(),
         )
 
+    def _fetch_segments(_s: str) -> Any:
+        return SimpleNamespace(
+            segments=[SimpleNamespace(revenue_yoy=35.44), SimpleNamespace(revenue_yoy=2.0)]
+        )
+
     monkeypatch.setattr(factors_mod, "_get_financial_fact", _fin_fact)
     monkeypatch.setattr(factors_mod, "_get_expectation_fact", _exp_fact)
     monkeypatch.setattr(factors_mod, "_get_market_fact", _mkt_fact)
@@ -348,6 +400,7 @@ def patch_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(factors_mod, "_build_consensus", lambda _c: _consensus())
     monkeypatch.setattr(factors_mod, "_build_crowding", lambda _c: _crowding())
     monkeypatch.setattr(factors_mod, "_collect_market_regime", _regime)
+    monkeypatch.setattr(factors_mod, "_fetch_segments", _fetch_segments)
 
 
 def test_get_factor_snapshot_orchestrates_seven_factors(patch_sources: None):
@@ -367,6 +420,15 @@ def test_get_factor_snapshot_orchestrates_seven_factors(patch_sources: None):
     assert "pledge_ratio" in snap.missing_facts
     assert "audit_opinion" in snap.missing_facts
     assert snap.degraded is False
+
+
+def test_get_factor_snapshot_collects_segment_extremes(patch_sources: None):
+    """改造 E：company_track.segments 采集填充 segment_fastest_yoy / segment_slowest_yoy。"""
+    snap = get_factor_snapshot("300750.SZ")
+    assert snap.fundamental.segment_fastest_yoy == 35.44
+    assert snap.fundamental.segment_slowest_yoy == 2.0
+    assert "segment_fastest_yoy" not in snap.missing_facts
+    assert "segment_slowest_yoy" not in snap.missing_facts
 
 
 def test_get_factor_snapshot_symbol_normalization(patch_sources: None):

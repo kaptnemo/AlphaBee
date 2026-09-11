@@ -52,6 +52,18 @@ _BEAR_BASE = 10.0  # PERCENT bear 基础下行 -10%（即使分位 0）
 _EARN_SCALE = 10.0  # PERCENT E 修订 +1 → 收益 earnings 贡献 +10%
 
 
+def _market_exposure_from_bounds(low: float | None, high: float | None) -> float | None:
+    """把 ``[position_low, position_high]`` 合成单值市场暴露（中值）。
+
+    取中值作为中性暴露（确定性）；仅一侧有值时用该侧；两侧都缺失 → ``None``。
+    """
+    if low is not None and high is not None:
+        return (low + high) / 2.0
+    if low is not None:
+        return low
+    return high
+
+
 def _market_exposure(market: MarketFactor) -> float | None:
     """把 M 的 PositionAdvice（position_low/high）合成单值市场暴露（§7.1）。
 
@@ -59,13 +71,7 @@ def _market_exposure(market: MarketFactor) -> float | None:
     且确定性）；仅一侧有值时用该侧；两侧都缺失 → ``None``（``position.actual_weight``
     随之 ``None``，不静默回退 0）。
     """
-    low = market.position_low
-    high = market.position_high
-    if low is not None and high is not None:
-        return (low + high) / 2.0
-    if low is not None:
-        return low
-    return high
+    return _market_exposure_from_bounds(market.position_low, market.position_high)
 
 
 # 方向分 → 子模型 direction 标签的阈值（与 classifier._UP_T / _DOWN_T 同口径，±0.3）
@@ -263,21 +269,32 @@ def evaluate(
     _writeback_directions(snapshot, scores)
 
     has_evidence = bool(evidence)
-    scenario_probs = scenario_probability(cls.state.argmax_state, confidence=confidence, has_evidence=has_evidence)
+    # 改造 B 接线（P1B-1）：把证据日志传入 scenario_probability，证据净方向（ev_tilt）
+    # 参与情景概率极化（与状态先验方向各占一半），而非只由状态表锁定方向。
+    scenario_probs = scenario_probability(
+        cls.state.argmax_state, confidence=confidence, has_evidence=has_evidence, events=evidence
+    )
     ev = _estimate_expected_value(snapshot, scenario_probs, scores, has_evidence=has_evidence)
+
+    # 改造 E 接线（P1E-1）：market_exposure 取 scores.m 里 regime 软约束上浮后的
+    # position_low/high（E↑ + segment divergence → 上下限上浮），而非 snapshot.market 原始暴露。
+    m_summary = scores.m or {}
+    adj_low = m_summary.get("position_low")
+    adj_high = m_summary.get("position_high")
+    market_exposure = _market_exposure_from_bounds(adj_low, adj_high)
 
     position = build_position(
         cls.state,
         confidence=confidence,
         risk_adjusted_ev=ev.risk_adjusted_ev,
-        market_exposure=_market_exposure(snapshot.market),
+        market_exposure=market_exposure,
         risk_adjustment=scores.r_risk,
         portfolio_adjustment=portfolio_adjustment,
         single_stock_cap=single_stock_cap,
     )
     position.rationale.append(
-        f"市场暴露：PositionAdvice=[{snapshot.market.position_low}, "
-        f"{snapshot.market.position_high}] → 取中值 {_market_exposure(snapshot.market)}"
+        f"市场暴露：PositionAdvice=[{snapshot.market.position_low}, {snapshot.market.position_high}]"
+        f" → regime 软约束后 [{adj_low}, {adj_high}] → 取中值 {market_exposure}"
     )
 
     prior = prior_confidence if prior_confidence is not None else 0.0

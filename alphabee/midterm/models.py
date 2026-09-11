@@ -155,6 +155,10 @@ class FundamentalFactor(BaseModel):
     debt_to_assets: float | None = None  # PERCENT 资产负债率
     current_ratio: float | None = None  # RATIO 流动比率
     goodwill: float | None = None  # CNY 商誉（财务风险来源）
+    segment_fastest_yoy: float | None = None  # PERCENT 最快细分业务同比增速（改造 E，company_track.segments）
+    # 最慢细分同比增速：改造 E 预留字段，当前不参与评分；P2 改造 D（EV 收益 materiality 化）
+    # 将作为「最慢业务拖累项」消费，避免结构性亮点只反映最快而不反映最慢的失真。
+    segment_slowest_yoy: float | None = None  # PERCENT 最慢细分业务同比增速（预留：P2 materiality 拖累项）
     direction: str = "stable"  # improving / stable / deteriorating
     score: float | None = None  # 0-100 方向分（score_engine 输出）
 

@@ -63,6 +63,8 @@ _FUNDAMENTAL_FIELDS: tuple[str, ...] = (
     "debt_to_assets",
     "current_ratio",
     "goodwill",
+    "segment_fastest_yoy",
+    "segment_slowest_yoy",
 )
 
 _EXPECTATION_FIELDS: tuple[str, ...] = (
@@ -255,17 +257,58 @@ def _to_pure_code(ts_code: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_fundamental_factor(fin_data: dict[str, Any] | None) -> tuple[FundamentalFactor, list[str]]:
+def _segment_extremes(segments: Any) -> tuple[float | None, float | None]:
+    """从 company_track 的 segments 提取最快/最慢细分同比增速（改造 E）。
+
+    接受 ``SegmentCollection``（含 ``.segments`` / ``.latest_segments``）或
+    ``list[SegmentSnapshot]`` / ``list[dict]``；逐条取 canonical ``revenue_yoy``，
+    返回 ``(max, min)``；无有效数值时返回 ``(None, None)``（缺失显式 None，不静默回退 0）。
+
+    只取最新报告期（P1E-2）：``SegmentCollection`` 走 ``latest_segments()``（按
+    ``latest_period`` 过滤），避免跨期混算最快/最慢导致的结构性误判。
+    """
+    # 优先只取最新报告期（避免跨期混算 max/min）
+    if hasattr(segments, "latest_segments"):
+        items = segments.latest_segments()
+    else:
+        items = getattr(segments, "segments", None)
+        if items is None and isinstance(segments, (list, tuple)):
+            items = segments
+        # 带 latest_period 但无 latest_segments 方法 → 按 latest_period 过滤
+        elif items is not None and not isinstance(segments, (list, tuple)):
+            latest_period = getattr(segments, "latest_period", "") or ""
+            if latest_period:
+                items = [s for s in items if getattr(s, "report_date", None) == latest_period]
+
+    yoys: list[float] = []
+    for s in items or []:
+        y = s.get("revenue_yoy") if isinstance(s, dict) else getattr(s, "revenue_yoy", None)
+        v = _opt(y)
+        if v is not None:
+            yoys.append(v)
+    if not yoys:
+        return None, None
+    return max(yoys), min(yoys)
+
+
+def build_fundamental_factor(
+    fin_data: dict[str, Any] | None,
+    segments: Any = None,
+) -> tuple[FundamentalFactor, list[str]]:
     """F 因子：从 ``get_financial_fact`` 的多期嵌套结构取最新一期 canonical 字段。
 
     ``get_financial_fact`` 返回 ``{stock_code, ref_dates, income[], balance[],
     cashflow[], fina[]}``，各 record 已是 canonical 字段名（adapter 层完成映射）。
     本 builder 只取 ``fina/balance/cashflow`` 最新一条（offset=0）。
+
+    改造 E：``segments`` 为 company_track 的业务线分项（``SegmentCollection`` 或
+    分项列表），从中提取 ``segment_fastest_yoy`` / ``segment_slowest_yoy``。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
     balance = _first(data.get("balance"))
     cashflow = _first(data.get("cashflow"))
+    fastest, slowest = _segment_extremes(segments)
 
     factor = FundamentalFactor(
         revenue_yoy=_opt(fina.get("revenue_yoy")),
@@ -279,6 +322,8 @@ def build_fundamental_factor(fin_data: dict[str, Any] | None) -> tuple[Fundament
         debt_to_assets=_opt(fina.get("debt_to_assets")),
         current_ratio=_opt(fina.get("current_ratio")),
         goodwill=_opt(balance.get("goodwill")),
+        segment_fastest_yoy=fastest,
+        segment_slowest_yoy=slowest,
     )
     return factor, _missing_fields(factor, _FUNDAMENTAL_FIELDS)
 
@@ -571,9 +616,10 @@ def get_factor_snapshot(symbol: str, *, include_market: bool = True) -> FactorSn
     missing: list[str] = []
     degraded: list[str] = []
 
-    # F —— 财务多期数据
+    # F —— 财务多期数据 + 业务线细分（segment fastest/slowest，改造 E）
     fin_data = _safe_call(_get_financial_fact, [ts_code], degraded, "fundamental")
-    fundamental, f_missing = build_fundamental_factor(fin_data)
+    segments_collection = _safe_call(_fetch_segments, [ts_code], degraded, "segments")
+    fundamental, f_missing = build_fundamental_factor(fin_data, segments=segments_collection)
     snapshot.fundamental = fundamental
     missing.extend(f_missing)
 
@@ -657,6 +703,13 @@ def _get_risk_fact(symbol: str) -> dict[str, Any]:
     from alphabee.agents.facts.tools.risk_fact import get_risk_fact
 
     return get_risk_fact(symbol)
+
+
+def _fetch_segments(symbol: str) -> Any:
+    """采集业务线分项（company_track，改造 E）；惰性导入避免模块级 tushare 副作用。"""
+    from alphabee.company_track.data import fetch_business_segments
+
+    return fetch_business_segments(symbol)
 
 
 def _build_consensus(code: str) -> Any:

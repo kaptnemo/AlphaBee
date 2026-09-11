@@ -18,7 +18,7 @@ from alphabee.midterm.models import (
     TrendFactor,
     ValuationFactor,
 )
-from alphabee.midterm.score_engine import compress_scores
+from alphabee.midterm.score_engine import adjust_market_exposure, compress_scores
 
 
 def _snapshot(**overrides) -> FactorSnapshot:
@@ -179,6 +179,43 @@ def test_fundamental_beat_bonus():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# F —— 结构性亮点（改造 E：segment divergence 正向修正）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_fundamental_segment_divergence_bonus():
+    """最快细分 +35.44% vs 整体 +17.94%（divergence 17.5pp > 15pp）→ F 正向修正 +0.2。"""
+    snap = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=17.94,
+            net_profit_yoy=17.94,
+            eps_growth_yoy=17.94,
+            segment_fastest_yoy=35.44,
+        )
+    )
+    base = _snapshot(
+        fundamental=FundamentalFactor(revenue_yoy=17.94, net_profit_yoy=17.94, eps_growth_yoy=17.94)
+    )
+    f_with = compress_scores(snap).f_fundamental_trend
+    f_base = compress_scores(base).f_fundamental_trend
+    assert f_with - f_base == pytest.approx(0.2)  # _SEGMENT_DIVERGENCE_BONUS
+
+
+def test_fundamental_segment_divergence_below_threshold_no_bonus():
+    """divergence 不超过 15pp → 不加分。"""
+    snap = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=20.0,
+            net_profit_yoy=20.0,
+            eps_growth_yoy=20.0,
+            segment_fastest_yoy=35.0,  # divergence = 15.0（未超过阈值）
+        )
+    )
+    base = _snapshot(fundamental=FundamentalFactor(revenue_yoy=20.0, net_profit_yoy=20.0, eps_growth_yoy=20.0))
+    assert compress_scores(snap).f_fundamental_trend == compress_scores(base).f_fundamental_trend
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # E —— 上修 → 正（核心因子）
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -283,6 +320,53 @@ def test_crowding_missing_is_none():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# C —— 启动期高换手豁免（改造 E：E 上修或 segment divergence 时扣分减半）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_crowding_high_turnover_exempt_with_e_revision():
+    # 高换手率分位扣分在 E 上修（e_revision>0.3）时减半
+    base = _snapshot(crowding=CrowdingFactor(turnover_rate_percentile=0.9))
+    up = _snapshot(
+        crowding=CrowdingFactor(turnover_rate_percentile=0.9),
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+    )
+    c_base = compress_scores(base).c_crowding
+    c_up = compress_scores(up).c_crowding
+    assert c_base < 0  # 高换手拥挤 → 负
+    assert c_up > c_base  # 豁免后负向扣分减半
+    assert c_up == pytest.approx(c_base * 0.5)  # 只含 turnover 分项 → 扣分减半
+
+
+def test_crowding_high_turnover_exempt_with_segment_divergence():
+    # 高换手率分位扣分在 segment divergence>15pp 时减半（结构性亮点豁免）
+    base = _snapshot(crowding=CrowdingFactor(turnover_rate_percentile=0.9))
+    seg = _snapshot(
+        crowding=CrowdingFactor(turnover_rate_percentile=0.9),
+        fundamental=FundamentalFactor(
+            revenue_yoy=10.0, net_profit_yoy=10.0, eps_growth_yoy=10.0, segment_fastest_yoy=30.0
+        ),
+    )
+    c_base = compress_scores(base).c_crowding
+    c_seg = compress_scores(seg).c_crowding
+    assert c_seg > c_base
+    assert c_seg == pytest.approx(c_base * 0.5)
+
+
+def test_crowding_low_turnover_positive_not_attenuated():
+    """P1E-4：低换手（crowding_pct>0，正向）即使豁免也不衰减（豁免只作用于拥挤惩罚）。"""
+    base = _snapshot(crowding=CrowdingFactor(turnover_rate_percentile=0.1))
+    up = _snapshot(
+        crowding=CrowdingFactor(turnover_rate_percentile=0.1),
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+    )
+    c_base = compress_scores(base).c_crowding
+    c_up = compress_scores(up).c_crowding
+    assert c_base > 0  # 低换手 → 正（冷门利好）
+    assert c_up == pytest.approx(c_base)  # 正向贡献不衰减
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # R —— 风险升 → 越负
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -321,6 +405,39 @@ def test_market_summary_passthrough():
     assert m["regime"] == "牛市"
     assert m["position_low"] == 0.5
     assert m["position_high"] == 0.9
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M —— regime 软约束（改造 E：E↑ + segment divergence → 暴露上下限上浮）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_adjust_market_exposure_lift_when_both_conditions():
+    market = MarketFactor(regime="熊市", position_low=0.0, position_high=0.2)
+    low, high = adjust_market_exposure(market, e_revision=0.5, segment_divergence=20.0)
+    assert low == pytest.approx(0.1)  # 0.0 → 0.1（下限上浮）
+    assert high == pytest.approx(0.3)  # 0.2 → 0.3
+
+
+def test_adjust_market_exposure_no_lift_without_both_conditions():
+    market = MarketFactor(regime="熊市", position_low=0.0, position_high=0.2)
+    # 仅 E↑ 或仅 segment divergence 或都缺失 → 不 lift
+    assert adjust_market_exposure(market, e_revision=0.5, segment_divergence=5.0) == (0.0, 0.2)
+    assert adjust_market_exposure(market, e_revision=0.1, segment_divergence=20.0) == (0.0, 0.2)
+    assert adjust_market_exposure(market, e_revision=None, segment_divergence=None) == (0.0, 0.2)
+
+
+def test_compress_scores_market_summary_regime_lift():
+    snap = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=10.0, net_profit_yoy=10.0, eps_growth_yoy=10.0, segment_fastest_yoy=30.0
+        ),
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+        market=MarketFactor(market_score=40.0, regime="熊市", position_low=0.0, position_high=0.2),
+    )
+    m = compress_scores(snap).m
+    assert m["position_low"] == pytest.approx(0.1)
+    assert m["position_high"] == pytest.approx(0.3)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
