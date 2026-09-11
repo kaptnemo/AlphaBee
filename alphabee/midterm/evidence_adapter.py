@@ -142,7 +142,7 @@ def _coerce_items(verification: Any) -> list[dict[str, Any]]:
         verification = [verification]
 
     items: list[dict[str, Any]] = []
-    for item in verification:  # type: ignore[assignment]
+    for item in verification:
         if isinstance(item, dict):
             items.append(item)
         elif hasattr(item, "model_dump"):

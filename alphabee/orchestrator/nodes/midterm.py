@@ -169,7 +169,8 @@ async def resolve_midterm_decision(
     """把主链产物映射为中期决策并落 MIDTERM_DECISION artifact（失败只降级不中断）。"""
     del config
     run = state.get("run")
-    symbol = run.context.get("symbol") if run else state.get("symbol")
+    raw_symbol = run.context.get("symbol") if run else None
+    symbol = str(raw_symbol) if raw_symbol else None
 
     step = Step(
         id="resolve_midterm_decision",
@@ -224,7 +225,6 @@ async def resolve_midterm_decision(
                 related_step=step.id,
             )
         )
-
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
         "steps": [completed_step],
