@@ -48,6 +48,7 @@ def _insight_artifact(
     fallback_tier=0,
     supporting=None,
     counter=None,
+    materiality=None,
 ):
     return Artifact(
         id="a-insight",
@@ -60,6 +61,7 @@ def _insight_artifact(
             fallback_tier=fallback_tier,
             supporting_evidence=supporting or [],
             counter_evidence=counter or [],
+            materiality_rank=materiality or [],
         ).model_dump(mode="json"),
     )
 
@@ -151,12 +153,21 @@ def _patch_decision(monkeypatch):
         captured["window_texts"] = window_texts
         return []  # 数值/定性证据在节点单测中固定为空，只测映射与接线
 
-    def fake_get_decision(symbol, evidence=None, *, include_market=True, prior_confidence=None, thesis=""):
+    def fake_get_decision(
+        symbol,
+        evidence=None,
+        *,
+        include_market=True,
+        prior_confidence=None,
+        thesis="",
+        insight_materiality=None,
+    ):
         captured["symbol"] = symbol
         captured["evidence"] = evidence
         captured["include_market"] = include_market
         captured["prior_confidence"] = prior_confidence
         captured["thesis"] = thesis
+        captured["insight_materiality"] = insight_materiality
         return _fake_decision(symbol=symbol, thesis=thesis)
 
     monkeypatch.setattr(node, "collect_evidence", fake_collect)
@@ -321,6 +332,32 @@ def test_no_insight_evidence_when_insight_missing(monkeypatch):
         node.resolve_midterm_decision(_state(artifacts=[_thesis_artifact(overall_judgment="positive")]), {})
     )
     assert captured["evidence"] == []
+
+
+# ── 改造 D：insight.materiality_rank 传入 get_decision ─────────────────────────
+
+
+def test_materiality_rank_passed_to_get_decision(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    materiality = [
+        {"variable": "商誉减值", "importance": "critical", "reasoning": ""},
+        {"variable": "存货去化与减值", "importance": "critical", "reasoning": ""},
+    ]
+    asyncio.run(
+        node.resolve_midterm_decision(
+            _state(artifacts=[_insight_artifact(materiality=materiality)]),
+            {},
+        )
+    )
+    assert captured["insight_materiality"] == materiality
+
+
+def test_materiality_rank_empty_when_insight_missing(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    asyncio.run(
+        node.resolve_midterm_decision(_state(artifacts=[_thesis_artifact(overall_judgment="positive")]), {})
+    )
+    assert captured["insight_materiality"] == []
 
 
 # ── 降级：失败记 Issue，报告照常 ─────────────────────────────────────────────

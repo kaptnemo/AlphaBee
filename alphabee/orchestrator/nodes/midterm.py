@@ -221,12 +221,17 @@ async def resolve_midterm_decision(
         insight_evidence = adapt_insight_evidence(insight, symbol=symbol, date=as_of_date)
         evidence = dedupe_events([*evidence, *insight_evidence])
 
+        # 改造 D：insight.materiality_rank 作为 EV materiality 修正传入（critical 下行变量
+        # 加深 bear）；insight 缺失时用 []（无修正）。LLM 边界不变：洞察层产出，midterm 只消费。
+        insight_materiality = insight.materiality_rank if insight is not None else []
+
         decision = get_decision(
             symbol,
             evidence=evidence,
             include_market=True,
             prior_confidence=prior,
             thesis=hypothesis,
+            insight_materiality=insight_materiality,
         )
         new_artifacts.append(
             Artifact(

@@ -51,6 +51,22 @@ _BEAR_SCALE = 30.0  # PERCENT 估值分位 1 → bear 估值压缩额外 -30%
 _BEAR_BASE = 10.0  # PERCENT bear 基础下行 -10%（即使分位 0）
 _EARN_SCALE = 10.0  # PERCENT E 修订 +1 → 收益 earnings 贡献 +10%
 
+# 改造 D（设计 MIDTERM_INSIGHT_INJECTION_DESIGN.md §4）EV 收益 materiality 化：
+# materiality_rank 变量名中识别「下行变量」的关键词（子串匹配，显式可维护）。
+# 这些变量的 critical 化会加深 bear 收益——公司特定下行，而非纯估值分位公式。
+_DOWNSIDE_VARS: tuple[str, ...] = (
+    "存货",  # 存货去化与减值
+    "商誉",  # 商誉减值
+    "汇兑",  # 汇兑持续 / 汇兑损益
+    "减值",  # 各类资产减值
+    "应收账款",  # 应收账款坏账
+    "现金流",  # 经营/自由现金流恶化
+    "杠杆",  # 杠杆 / 负债
+    "质押",  # 股权质押风险
+    "毛利率",  # 毛利率下滑
+)
+_MATERIALITY_PENALTY_PER_ITEM = 5.0  # PERCENT 每个 critical 下行变量加深 bear 5%
+
 
 def _market_exposure_from_bounds(low: float | None, high: float | None) -> float | None:
     """把 ``[position_low, position_high]`` 合成单值市场暴露（中值）。
@@ -127,18 +143,42 @@ def _writeback_directions(snapshot: FactorSnapshot, scores: VariableScores) -> N
     _apply(snapshot.risk, scores.r_risk, "risk_declining", "risk_rising", "neutral")
 
 
+def _materiality_penalty(insight_materiality: Any) -> float:
+    """materiality 修正（改造 D）：critical 且命中下行变量 → 每个加深 bear 5%。
+
+    ``insight_materiality`` 为 ``insight.materiality_rank``（``list[{variable,
+    importance, reasoning}]``）；仅 ``importance=="critical"`` 且 ``variable`` 命中
+    ``_DOWNSIDE_VARS`` 关键字的项计入惩罚。缺失/空/非 dict → 0（不编造）。
+    """
+    penalty = 0.0
+    for item in insight_materiality or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("importance") or "").strip().lower() != "critical":
+            continue
+        variable = str(item.get("variable") or "").strip()
+        if any(kw in variable for kw in _DOWNSIDE_VARS):
+            penalty += _MATERIALITY_PENALTY_PER_ITEM
+    return penalty
+
+
 def _estimate_expected_value(
     snapshot: FactorSnapshot,
     scenario_probs: ScenarioProbability,
     scores: VariableScores,
     *,
     has_evidence: bool = True,
+    insight_materiality: Any = None,
 ) -> ExpectedValue:
     """由 ScenarioProbability + 估值分位 + EPS 修订估计 ExpectedValue（§5.2）。
 
     R 分解为 ``earnings_contribution``（E 修订驱动）与 ``valuation_contribution``
     （估值分位驱动，低分位=便宜=上行空间）。估值分位缺失时 R/EV 显式 ``None``
     （不静默回退）；E 修订缺失时 earnings 贡献显式 ``None``，仅估值贡献 R。
+
+    改造 D（EV 收益 materiality 化）：``insight_materiality``（``materiality_rank``）
+    里 critical 的下行变量（``_DOWNSIDE_VARS``）会加深 bear 收益（每个 -5%），
+    使 bear 下行幅度部分来自公司真实下行路径，而非纯估值分位公式。
 
     零证据（``has_evidence=False``）时 EV 显式降级：保守 state_prior 不支撑可信 EV，
     ``ev=None`` 并注明降级原因，不静默给激进 EV。
@@ -177,7 +217,8 @@ def _estimate_expected_value(
         )
 
     bull_val = (1.0 - percentile) * _BULL_SCALE
-    bear_val = -(percentile * _BEAR_SCALE + _BEAR_BASE)
+    base_bear = -(percentile * _BEAR_SCALE + _BEAR_BASE)
+    bear_val = base_bear - _materiality_penalty(insight_materiality)  # 改造 D：critical 下行变量加深 bear
     base_val = 0.0
 
     bull_earn: float | None
@@ -240,6 +281,7 @@ def evaluate(
     thesis: str = "",
     portfolio_adjustment: float = 1.0,
     single_stock_cap: float | None = None,
+    insight_materiality: Any = None,
 ) -> CompanyStateArtifact:
     """串起四引擎，把 FactorSnapshot 决策为 CompanyStateArtifact（§6 三轴 + §9）。
 
@@ -250,6 +292,8 @@ def evaluate(
         thesis: 核心假设 H（文本，透传进 artifact）。
         portfolio_adjustment: 组合层相关性/集中度调整乘数（默认 1.0 无调整）。
         single_stock_cap: 单股上限（RATIO），超限置 ``position.restricted``。
+        insight_materiality: ``insight.materiality_rank``（``list[{variable, importance,
+            reasoning}]``，改造 D）；critical 下行变量会加深 bear 收益。``None`` 无修正。
 
     Returns:
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
@@ -274,7 +318,9 @@ def evaluate(
     scenario_probs = scenario_probability(
         cls.state.argmax_state, confidence=confidence, has_evidence=has_evidence, events=evidence
     )
-    ev = _estimate_expected_value(snapshot, scenario_probs, scores, has_evidence=has_evidence)
+    ev = _estimate_expected_value(
+        snapshot, scenario_probs, scores, has_evidence=has_evidence, insight_materiality=insight_materiality
+    )
 
     # 改造 E 接线（P1E-1）：market_exposure 取 scores.m 里 regime 软约束上浮后的
     # position_low/high（E↑ + segment divergence → 上下限上浮），而非 snapshot.market 原始暴露。
@@ -325,6 +371,7 @@ def get_decision(
     include_market: bool = True,
     prior_confidence: float | None = None,
     thesis: str = "",
+    insight_materiality: Any = None,
 ) -> CompanyStateArtifact:
     """便捷入口：``get_factor_snapshot(symbol)`` 后再 ``evaluate``。
 
@@ -332,7 +379,7 @@ def get_decision(
         symbol: 股票代码（``"600519"`` / ``"600519.SH"`` / ``"300750.SZ"``）。
         evidence: 证据日志；``None``/空表示无证据。
         include_market: 是否采集 M（market_regime，开销较大）。
-        prior_confidence / thesis: 透传 ``evaluate``。
+        prior_confidence / thesis / insight_materiality: 透传 ``evaluate``。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -340,7 +387,13 @@ def get_decision(
     from alphabee.midterm.factors import get_factor_snapshot
 
     snapshot = get_factor_snapshot(symbol, include_market=include_market)
-    return evaluate(snapshot, evidence, prior_confidence=prior_confidence, thesis=thesis)
+    return evaluate(
+        snapshot,
+        evidence,
+        prior_confidence=prior_confidence,
+        thesis=thesis,
+        insight_materiality=insight_materiality,
+    )
 
 
 def collect_evidence(
@@ -404,6 +457,7 @@ def get_decision_with_evidence(
     include_market: bool = True,
     prior_confidence: float | None = None,
     model: Any = None,
+    insight_materiality: Any = None,
 ) -> CompanyStateArtifact:
     """便捷入口：先 evidence 抽取（数值规则 + Stage A/B）再 get_decision（§8 两遍）。
 
@@ -415,6 +469,9 @@ def get_decision_with_evidence(
     LLM / 网络失败 → ``evidence=[]`` → 模型照常出 state_prior 保守版（只降级不中断，
     不破坏确定性核心）；抽取的 EvidenceEvent 写入 ``evidence_log``，供 diff 的
     ``ConfidenceDelta.evidence_ids`` 归因（MIDTERM_STATE_DIFF_DESIGN.md §5）。
+
+    Args:
+        insight_materiality: ``insight.materiality_rank``（改造 D）透传 ``get_decision``。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -429,6 +486,7 @@ def get_decision_with_evidence(
         include_market=include_market,
         prior_confidence=prior_confidence,
         thesis=thesis,
+        insight_materiality=insight_materiality,
     )
 
 

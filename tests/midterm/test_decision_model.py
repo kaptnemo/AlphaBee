@@ -222,6 +222,47 @@ def test_evaluate_regime_lift_raises_exposure_and_actual_weight():
     assert any("软约束" in r for r in art_lift.position.rationale)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 改造 D：EV 收益 materiality 化（critical 下行变量加深 bear）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _bear_return(art: object) -> float:
+    return {s.scenario: s.expected_return for s in art.expected_value.scenarios}["bear"]
+
+
+def test_materiality_penalty_deepens_bear():
+    """改造 D：商誉+存货双 critical 下行变量 → bear 更深（每个 -5%）。"""
+    evs = [_ev("confirming", 0.5)]
+    materiality = [
+        {"variable": "商誉减值", "importance": "critical", "reasoning": ""},
+        {"variable": "存货去化与减值", "importance": "critical", "reasoning": ""},
+    ]
+    art = evaluate(_snapshot(), evs, prior_confidence=0.5, insight_materiality=materiality)
+    base = evaluate(_snapshot(), evs, prior_confidence=0.5)
+    assert _bear_return(art) < _bear_return(base)
+    assert _bear_return(base) - _bear_return(art) == pytest.approx(10.0)  # 两个 critical × 5%
+
+
+def test_materiality_penalty_ignores_non_downside_and_non_critical():
+    """改造 D：非下行变量 / 非 critical 不触发惩罚。"""
+    evs = [_ev("confirming", 0.5)]
+    no_penalty = [
+        {"variable": "市场份额", "importance": "critical", "reasoning": ""},  # 非下行变量
+        {"variable": "商誉减值", "importance": "high", "reasoning": ""},  # 非 critical
+    ]
+    art_np = evaluate(_snapshot(), evs, prior_confidence=0.5, insight_materiality=no_penalty)
+    base = evaluate(_snapshot(), evs, prior_confidence=0.5)
+    assert _bear_return(art_np) == pytest.approx(_bear_return(base))
+
+
+def test_materiality_none_no_penalty():
+    evs = [_ev("confirming", 0.5)]
+    assert _bear_return(evaluate(_snapshot(), evs, prior_confidence=0.5, insight_materiality=None)) == pytest.approx(
+        _bear_return(evaluate(_snapshot(), evs, prior_confidence=0.5))
+    )
+
+
 def test_uncertain_adds_research_to_next_evidence():
     # 空快照 → 全方向分缺失 → 熵高 uncertain → 研究任务落入 next_evidence_to_watch
     empty = FactorSnapshot(symbol="000001.SZ")
