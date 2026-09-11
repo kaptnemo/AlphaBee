@@ -112,9 +112,11 @@ def test_confidence_missing_neutral():
     assert d.stock_weight == pytest.approx(0.175 * 0.5)
 
 
-def test_ev_gate_zeroes_weight():
+def test_ev_below_threshold_reduces_weight():
+    # 改造 C：赔率不足（RiskAdjustedEV < 1.0）→ 减仓（×0.3），而非压 0
     d = build_position(_belief("S3", {"S3": 1.0}), confidence=1.0, risk_adjusted_ev=0.5)
-    assert d.stock_weight == 0.0
+    assert d.stock_weight == pytest.approx(0.175 * 0.3)
+    assert d.stock_weight > 0.0
 
 
 def test_ev_sufficient_no_gate():
@@ -126,6 +128,27 @@ def test_ev_missing_no_gate():
     # EV 缺失 → 不设门槛，仓位不为 0（理由中注明）
     d = build_position(_belief("S3", {"S3": 1.0}), confidence=1.0, risk_adjusted_ev=None)
     assert d.stock_weight > 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 改造 C：EV 软阈值（减仓非清仓 + 低熵高置信确认负面才压 0）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_ev_negative_high_entropy_soft_reduce():
+    # 赔率为负 + 高熵（entropy > _ENTROPY_UNCERTAIN=1.0，不确定）→ 减仓非清仓（×0.3）
+    wide = {"S1": 0.2, "S2": 0.3, "S3": 0.3, "S4": 0.2}
+    d = build_position(_belief("S3", wide, entropy=1.3), confidence=1.0, risk_adjusted_ev=-0.6)
+    # 期望仓位带 = 0.2*0.075 + 0.3*0.125 + 0.3*0.175 + 0.2*0.025 = 0.11
+    expected = 0.2 * 0.075 + 0.3 * 0.125 + 0.3 * 0.175 + 0.2 * 0.025
+    assert d.stock_weight == pytest.approx(expected * 0.3)
+    assert d.stock_weight > 0.0  # 高熵不确定 → 不清仓
+
+
+def test_ev_negative_low_entropy_hard_zero():
+    # 赔率为负 + 低熵（entropy <= _ENTROPY_UNCERTAIN，高置信确认负面）→ 压 0
+    d = build_position(_belief("S3", {"S3": 1.0}), confidence=1.0, risk_adjusted_ev=-0.6)
+    assert d.stock_weight == 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

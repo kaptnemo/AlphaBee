@@ -34,6 +34,10 @@ from alphabee.midterm.models import EvidenceEvent, ScenarioOutcome
 
 _NEUTRAL_PRIOR = 0.5  # 有证据但未提供先验时的 log-odds 起点（中性先验）
 
+# 改造 C（设计 MIDTERM_INSIGHT_INJECTION_DESIGN.md §4）置信度校准参数：
+_CONFIDENCE_CLAMP = (0.05, 0.95)  # 后验夹紧边界：没有证据能让人 100% 确信未证实的 thesis
+_REFUTING_WEIGHT = 1.2  # refuting 的 log-odds 放大倍数（反证比佐证更有信息量，不对称）
+
 # §5.2：State → P_bull / P_bear 基准锚定（confidence=0.5 中性时）
 _STATE_BULL = {
     "S0": 0.33,  # 研究候选（未知）
@@ -94,6 +98,9 @@ def _event_logodds(event: EvidenceEvent) -> float:
 
     ``confidence_delta`` ∈ [0,1) 为证据强度：confirming → LR=(1+d)/(1-d)（>1），
     refuting → LR=(1-d)/(1+d)（<1），neutral → LR=1（不变）。
+
+    改造 C：refuting 放大 ``_REFUTING_WEIGHT``（1.2×）——反证在贝叶斯里比佐证
+    更有信息量（不对称），使「多条 confirming 累积」不再轻易压倒少量 refuting。
     """
     d = abs(event.confidence_delta)
     d = max(0.0, min(0.999, d))
@@ -101,8 +108,14 @@ def _event_logodds(event: EvidenceEvent) -> float:
     if effect == "confirming":
         return math.log((1.0 + d) / (1.0 - d))
     if effect == "refuting":
-        return math.log((1.0 - d) / (1.0 + d))
+        return _REFUTING_WEIGHT * math.log((1.0 - d) / (1.0 + d))
     return 0.0  # neutral / 未知 effect
+
+
+def _clip_confidence(p: float) -> float:
+    """把后验概率夹紧到 ``_CONFIDENCE_CLAMP``（改造 C：防 sigmoid 饱和到 0/1）。"""
+    lo, hi = _CONFIDENCE_CLAMP
+    return max(lo, min(hi, p))
 
 
 def _clip_prob(p: float) -> float:
@@ -136,7 +149,9 @@ def update_confidence(
     - 无证据（``events`` 为空/``None``）→ 返回 ``prior``（未给先验则为 ``None``），
       绝不静默假设 0.5；
     - 有证据：从 ``prior`` 出发（未给先验时用中性先验 0.5 作为 log-odds 起点），
-      逐条累计 ``_event_logodds`` 后 sigmoid 回概率空间。
+      逐条累计 ``_event_logodds`` 后 sigmoid 回概率空间；
+    - 改造 C：refuting 按 ``_REFUTING_WEIGHT``（1.2×）放大 log-odds（反证更有信息量），
+      最终后验夹紧到 ``_CONFIDENCE_CLAMP``（[0.05, 0.95]）防饱和到 0/1。
 
     Args:
         events: 证据日志（confirming/refuting/neutral + confidence_delta）。
@@ -150,7 +165,7 @@ def update_confidence(
     lo = _logit(prior if prior is not None else _NEUTRAL_PRIOR)
     for event in events:
         lo += _event_logodds(event)
-    return _sigmoid(lo)
+    return _clip_confidence(_sigmoid(lo))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

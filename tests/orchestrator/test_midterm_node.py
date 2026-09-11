@@ -41,7 +41,14 @@ def _state(symbol="600519.SH", artifacts=None, run=None):
     }
 
 
-def _insight_artifact(core_view="核心观点：看多", confidence="high", degraded=False, fallback_tier=0):
+def _insight_artifact(
+    core_view="核心观点：看多",
+    confidence="high",
+    degraded=False,
+    fallback_tier=0,
+    supporting=None,
+    counter=None,
+):
     return Artifact(
         id="a-insight",
         type=ArtifactType.INSIGHT_ANALYSIS,
@@ -51,6 +58,8 @@ def _insight_artifact(core_view="核心观点：看多", confidence="high", degr
             confidence=confidence,
             degraded=degraded,
             fallback_tier=fallback_tier,
+            supporting_evidence=supporting or [],
+            counter_evidence=counter or [],
         ).model_dump(mode="json"),
     )
 
@@ -136,15 +145,22 @@ def _fake_decision(symbol="600519.SH", thesis=""):
 def _patch_decision(monkeypatch):
     captured = {}
 
-    def fake(symbol, thesis="", window_texts=None, *, include_market=True, prior_confidence=None, model=None):
+    def fake_collect(symbol, thesis="", window_texts=None, model=None):
         captured["symbol"] = symbol
         captured["thesis"] = thesis
         captured["window_texts"] = window_texts
+        return []  # 数值/定性证据在节点单测中固定为空，只测映射与接线
+
+    def fake_get_decision(symbol, evidence=None, *, include_market=True, prior_confidence=None, thesis=""):
+        captured["symbol"] = symbol
+        captured["evidence"] = evidence
         captured["include_market"] = include_market
         captured["prior_confidence"] = prior_confidence
+        captured["thesis"] = thesis
         return _fake_decision(symbol=symbol, thesis=thesis)
 
-    monkeypatch.setattr(node, "get_decision_with_evidence", fake)
+    monkeypatch.setattr(node, "collect_evidence", fake_collect)
+    monkeypatch.setattr(node, "get_decision", fake_get_decision)
     return captured
 
 
@@ -269,6 +285,44 @@ def test_window_texts_none_when_no_raw_text(monkeypatch):
     assert captured["window_texts"] is None
 
 
+# ── 改造 A：insight 正反证据注入 EvidenceEvent ───────────────────────────────
+
+
+def test_insight_evidence_injected_into_decision(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    asyncio.run(
+        node.resolve_midterm_decision(
+            _state(
+                artifacts=[
+                    _insight_artifact(
+                        supporting=[{"statement": "高速通信线+35.44%", "source": "segment:high_speed_comm", "weight": "strong"}],
+                        counter=[{"statement": "增收不增利", "source": "signal:profit_leverage", "weight": "moderate"}],
+                    ),
+                ]
+            ),
+            {},
+        )
+    )
+
+    events = captured["evidence"]
+    assert events is not None
+    by_desc = {e.description: e for e in events}
+    assert "高速通信线+35.44%" in by_desc
+    assert by_desc["高速通信线+35.44%"].effect_on_thesis == "confirming"
+    assert by_desc["高速通信线+35.44%"].confidence_delta == 0.5  # strong
+    assert "增收不增利" in by_desc
+    assert by_desc["增收不增利"].effect_on_thesis == "refuting"
+    assert by_desc["增收不增利"].confidence_delta == 0.3  # moderate
+
+
+def test_no_insight_evidence_when_insight_missing(monkeypatch):
+    captured = _patch_decision(monkeypatch)
+    asyncio.run(
+        node.resolve_midterm_decision(_state(artifacts=[_thesis_artifact(overall_judgment="positive")]), {})
+    )
+    assert captured["evidence"] == []
+
+
 # ── 降级：失败记 Issue，报告照常 ─────────────────────────────────────────────
 
 
@@ -276,7 +330,7 @@ def test_decision_failure_emits_issue_and_no_artifact(monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("LLM 抽取失败")
 
-    monkeypatch.setattr(node, "get_decision_with_evidence", boom)
+    monkeypatch.setattr(node, "get_decision", boom)
     result = asyncio.run(
         node.resolve_midterm_decision(_state(artifacts=[_insight_artifact()]), {})
     )

@@ -34,7 +34,8 @@ def test_confirming_raises_posterior():
 
 def test_refuting_lowers_posterior():
     post = update_confidence([_ev("refuting", 0.5)], prior=0.5)
-    assert post == pytest.approx(0.25)
+    # 改造 C：refuting 放大 1.2×，比对称（0.25）更低
+    assert post == pytest.approx(0.2111, abs=1e-3)
 
 
 def test_neutral_unchanged():
@@ -65,10 +66,35 @@ def test_no_evidence_no_prior_returns_none():
     assert update_confidence(None, prior=None) is None
 
 
-def test_confirming_refuting_symmetric():
-    # 同样强度的一正一反应回到先验
+def test_refuting_outweighs_equal_confirming():
+    # 改造 C：refuting 放大 1.2×，同样强度的一正一反不再回到先验，而是略低于先验
     post = update_confidence([_ev("confirming", 0.5), _ev("refuting", 0.5)], prior=0.5)
-    assert post == pytest.approx(0.5)
+    assert post < 0.5
+    assert post == pytest.approx(0.4453, abs=1e-3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 改造 C：置信度校准（clamp 防饱和 + refuting 加权）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_confidence_clamped_below_max():
+    # 多条强 confirming → sigmoid 饱和到 1.0 之前被 clamp 到 0.95
+    post = update_confidence([_ev("confirming", 0.9) for _ in range(5)], prior=0.7)
+    assert post == pytest.approx(0.95)
+
+
+def test_confidence_clamped_above_min():
+    # 多条强 refuting → sigmoid 饱和到 0 之前被 clamp 到 0.05
+    post = update_confidence([_ev("refuting", 0.9) for _ in range(5)], prior=0.3)
+    assert post == pytest.approx(0.05)
+
+
+def test_refuting_weighted_stronger_than_confirming():
+    # 同样强度 0.5：refuting 的 log-odds 幅度（1.2×）大于 confirming，反证更有信息量
+    conf = update_confidence([_ev("confirming", 0.5)], prior=0.5)
+    ref = update_confidence([_ev("refuting", 0.5)], prior=0.5)
+    assert (conf - 0.5) < (0.5 - ref)  # 0.25 < 0.2889
 
 
 # ─────────────────────────────────────────────────────────────────────────────

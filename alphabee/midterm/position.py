@@ -67,7 +67,12 @@ _STATES = ("S0", "S1", "S2", "S3", "S4", "S5")
 
 _NEUTRAL_CONFIDENCE = 0.5  # confidence 缺失时的中性力度（无证据 → 不放大也不退缩）
 _RISK_SENSITIVITY = 0.3  # r_risk 每单位方向分对权重的调整幅度（风险升 → 权重降）
-_EV_THRESHOLD = 1.0  # RiskAdjustedEV < 阈值 → 赔率不足 → 压 0（EV/risk < 1 不划算）
+_EV_THRESHOLD = 1.0  # RiskAdjustedEV < 阈值 → 赔率不足（改造 C：软阈值，减仓而非清仓）
+_EV_SOFT_REDUCTION = 0.3  # 赔率不足时的减仓乘数（stock_weight × 0.3，减仓而非压 0）
+_EV_HARD_ZERO = 0.0  # RiskAdjustedEV < 0 才可能硬压 0（且需低熵确认）
+# 熵阈值（nats）：entropy <= 该值 = 低熵（高置信确认负面，可硬压 0）；
+# entropy > 该值 = 不确定（高熵），赔率为负也只减仓不清仓（不确定性降低动作力度）。
+_ENTROPY_UNCERTAIN = 1.0
 
 
 def _clip(value: float, lo: float, hi: float) -> float:
@@ -117,7 +122,9 @@ def build_position(
         confidence: 后验 P(H|E)（0-1，``bayes.update_confidence`` 产物）；``None``
             时用中性力度 0.5。
         risk_adjusted_ev: RiskAdjustedEV（RATIO，``ExpectedValue.risk_adjusted_ev``）；
-            低于阈值时赔率不足 → 压 0；``None`` 时不设赔率门槛（理由中注明）。
+            低于 ``_EV_THRESHOLD`` 时赔率不足 → 减仓（×``_EV_SOFT_REDUCTION``），仅当
+            赔率为负且熵 <= ``_ENTROPY_UNCERTAIN``（低熵=高置信确认负面）时才压 0；
+            ``None`` 时不设赔率门槛（理由中注明）。
         market_exposure: M 的建议暴露（``MarketFactor.position_high`` / PositionAdvice），
             作为 ``portfolio_exposure`` 透传。
         risk_adjustment: r_risk 方向分（[-1,1]，风险升 → 越负）；``None`` 时不调整。
@@ -161,10 +168,22 @@ def build_position(
     # 5. 分层相乘（不求和）——个股层 stock_weight
     stock_weight = base_risk_budget * expected_weight * conf_mult * risk_mult * portfolio_adjustment
 
-    # 6. 赔率门槛：RiskAdjustedEV 不足 → 压 0（§6.2）
+    # 6. 赔率门槛（改造 C：软阈值，减仓而非清仓）——RiskAdjustedEV 不足时
+    #    stock_weight × _EV_SOFT_REDUCTION（减仓）；仅当赔率为负且低熵「高置信确认
+    #    负面」时才硬压 0（高熵/不确定 → 减仓而非清仓，不确定性真正降低动作力度）。
     if risk_adjusted_ev is not None and risk_adjusted_ev < _EV_THRESHOLD:
-        rationale.append(f"RiskAdjustedEV={risk_adjusted_ev} < {_EV_THRESHOLD} → 赔率不足，压 0")
-        stock_weight = 0.0
+        if risk_adjusted_ev < _EV_HARD_ZERO and state.entropy <= _ENTROPY_UNCERTAIN:
+            rationale.append(
+                f"RiskAdjustedEV={risk_adjusted_ev} < {_EV_HARD_ZERO} 且 entropy={state.entropy:.3f} "
+                f"<= {_ENTROPY_UNCERTAIN}（低熵=高置信确认负面）→ 赔率不足且确定，压 0"
+            )
+            stock_weight = 0.0
+        else:
+            rationale.append(
+                f"RiskAdjustedEV={risk_adjusted_ev} < {_EV_THRESHOLD} → 赔率不足，"
+                f"减仓 ×{_EV_SOFT_REDUCTION}（高熵/不确定不清仓）"
+            )
+            stock_weight *= _EV_SOFT_REDUCTION
     elif risk_adjusted_ev is None:
         rationale.append("RiskAdjustedEV 缺失 → 不设赔率门槛")
 

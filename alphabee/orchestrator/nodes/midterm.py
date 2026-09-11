@@ -3,7 +3,7 @@
 职责（只映射 + 调用，不做业务计算）：
 
 1. 从主链产物读取 ``symbol`` / ``INSIGHT_ANALYSIS`` / ``THESIS_ANALYSIS`` /
-   ``CONFLICTS_RESULT``，映射为 ``get_decision_with_evidence`` 输入；
+   ``CONFLICTS_RESULT``，映射为证据日志与 ``get_decision`` 输入；
 2. 产出 ``CompanyStateArtifact`` → ``Artifact(type=MIDTERM_DECISION)`` 存入 artifacts 列表
    （不在 ``OrchestratorState`` 加专用字段）；
 3. 整体 try/except：LLM/网络失败只记 ``Issue(category=midterm_decision_failed)``，
@@ -19,6 +19,9 @@
   ``FACT_COLLECTION.raw_response`` 是叙事摘要，不作为窗口文本）；无任何窗口文本时传
   ``None``（合法输入：只跑数值证据）。
 - ``include_market=True``。
+- 改造 A（洞察力注入）：``insight.supporting_evidence/counter_evidence``（带 weight 的
+  正反证据）经 ``adapt_insight_evidence`` 映射为 ``EvidenceEvent``（纯规则、零 LLM），
+  与 ``collect_evidence`` 结果合并去重后作为独立证据源传入 ``get_decision``。
 
 注意：本模块刻意不 import ``alphabee.orchestrator.collectors`` / ``state`` 的运行时符号，
 而是本地实现 ``_make_id`` / ``_finalize_step`` 等三个小 helper——collectors 会传递性触发
@@ -27,13 +30,16 @@ tushare 的 ``set_token`` 副作用（在无 token 时写 ``~/tk.csv``），本�
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.runnables import RunnableConfig
 
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
-from alphabee.midterm.decision_model import get_decision_with_evidence
+from alphabee.midterm.decision_model import collect_evidence, get_decision
+from alphabee.midterm.evidence_extractor import dedupe_events
+from alphabee.midterm.insight_evidence_adapter import adapt_insight_evidence
 from alphabee.orchestrator.contracts import (
     InsightArtifact,
     ThesisArtifact,
@@ -198,12 +204,29 @@ async def resolve_midterm_decision(
         prior = _prior_confidence(insight, thesis)
         window_texts = _window_texts(artifacts)
 
-        decision = get_decision_with_evidence(
+        # 收集证据：数值类规则 + 定性 Stage A/B（LLM，失败降级 → 无数值/定性证据）
+        try:
+            evidence = collect_evidence(symbol, thesis=hypothesis, window_texts=window_texts)
+        except Exception:
+            evidence = []  # 抽取全挂 → 只保留 insight 证据 + state_prior 保守退化
+
+        # 改造 A：把 insight 的结构化正反证据（supporting/counter_evidence，带 weight）
+        # 作为独立证据源合并进证据日志，不再被边界丢弃。纯规则映射、零 LLM（midterm 只消费）。
+        # 事件日取 run.context 的 as_of_date（真实日期）；无日期时 fallback 今天
+        # （date.today()，有效 YYYY-MM-DD）。id 仍由 statement 唯一（hash(date+kind+subject)），
+        # 去重不受影响。
+        as_of_date = str(run.context.get("as_of_date") or "") if run else ""
+        if not as_of_date:
+            as_of_date = date.today().isoformat()
+        insight_evidence = adapt_insight_evidence(insight, symbol=symbol, date=as_of_date)
+        evidence = dedupe_events([*evidence, *insight_evidence])
+
+        decision = get_decision(
             symbol,
-            thesis=hypothesis,
-            window_texts=window_texts,
+            evidence=evidence,
             include_market=True,
             prior_confidence=prior,
+            thesis=hypothesis,
         )
         new_artifacts.append(
             Artifact(
