@@ -157,6 +157,20 @@ class InsightArtifact(BaseModel):
         return coerce_falsification_conditions(v)
 
 
+class MidtermDecisionSummaryArtifact(BaseModel):
+    """中期决策的确定性可读总结（``midterm_decision_reporter`` 产物）。
+
+    决策点 6(a) 的展示边界：该总结只进日志与 finalize payload 的 artifacts 列表，
+    不进 ``generate_report`` 的报告 payload（研究归研究、决策归决策）。``text`` 是
+    完整渲染结果（不截断），供终端/日志审计；结构化字段便于下游快速取用。
+    """
+
+    symbol: str = ""
+    as_of_date: str = ""
+    text: str = ""
+    degraded: bool = False
+
+
 class ReportArtifact(ReportOutput):
     """Typed final report artifact payload."""
 

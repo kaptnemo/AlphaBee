@@ -26,8 +26,11 @@ STAGE_MAP: dict[str, tuple[str, str, str]] = {
     "run_analysis_engines": ("⚙️ ", "规则引擎计算", Color.CYAN),
     "explore_conflicts": ("🔬", "冲突探索", Color.MAGENTA),
     "verify_hypotheses": ("🧪", "假设验证", Color.MAGENTA),
+    "synthesize_insights": ("💡", "观点综合", Color.BLUE),
     "run_thesis": ("🏛 ", "投资论点生成", Color.BLUE),
     "review_thesis": ("🔍", "论点审查", Color.MAGENTA),
+    "resolve_midterm_decision": ("🎯", "中期决策", Color.GREEN),
+    "midterm_decision_reporter": ("🗒️ ", "中期决策总结", Color.GREEN),
     "generate_report": ("📝", "报告生成", Color.BLUE),
     "review_report": ("🛡️", "报告质量门控", Color.MAGENTA),
     "finalize_message": ("✅", "完成", Color.GREEN),
@@ -420,6 +423,42 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
         print()
 
     # ─────────────────────────────────────────────────────────────────
+    elif node_name == "synthesize_insights":
+        iv = _last_artifact("insight_analysis")
+        if not iv:
+            print(f"  💡 观点未生成{issue_tag}")
+            return
+        core_view = iv.get("core_view", "") if isinstance(iv, dict) else getattr(iv, "core_view", "")
+        tension = iv.get("central_tension", "") if isinstance(iv, dict) else getattr(iv, "central_tension", "")
+        driver = iv.get("main_driver", "") if isinstance(iv, dict) else getattr(iv, "main_driver", "")
+        confidence = iv.get("confidence", "medium") if isinstance(iv, dict) else getattr(iv, "confidence", "medium")
+        degraded = bool(iv.get("degraded", False)) if isinstance(iv, dict) else getattr(iv, "degraded", False)
+        tier = iv.get("fallback_tier", 0) if isinstance(iv, dict) else getattr(iv, "fallback_tier", 0)
+        support = iv.get("supporting_evidence", []) if isinstance(iv, dict) else getattr(iv, "supporting_evidence", [])
+        counter = iv.get("counter_evidence", []) if isinstance(iv, dict) else getattr(iv, "counter_evidence", [])
+        materiality = iv.get("materiality_rank", []) if isinstance(iv, dict) else getattr(iv, "materiality_rank", [])
+        falsify = (
+            iv.get("what_would_change_my_mind", [])
+            if isinstance(iv, dict)
+            else getattr(iv, "what_would_change_my_mind", [])
+        )
+        cc = Color.GREEN if confidence == "high" else Color.YELLOW if confidence == "medium" else Color.RED
+        deg_tag = color(f"  ⚠ 降级 tier={tier}", Color.YELLOW) if degraded else ""
+        print(
+            f"  💡 观点置信度: {color(confidence, Color.BOLD, cc)}"
+            f"  │ 支撑 {color(str(len(support)), Color.GREEN)}  反证 {color(str(len(counter)), Color.YELLOW)}"
+            f"  │ 重要性排序 {len(materiality)}  证伪条件 {len(falsify)}"
+            f"{deg_tag}{issue_tag}"
+        )
+        if core_view:
+            print(f"      {color('核心观点', Color.DIM)}: {core_view[:120]}")
+        if tension:
+            print(f"      {color('核心张力', Color.DIM)}: {tension[:120]}")
+        if driver:
+            print(f"      {color('主要驱动', Color.DIM)}: {driver[:120]}")
+        print()
+
+    # ─────────────────────────────────────────────────────────────────
     elif node_name == "run_thesis":
         av = _last_artifact("thesis_analysis")
         if not av:
@@ -499,6 +538,61 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
             print(f"      {color('[警告]', Color.YELLOW)} {msg}")
         if not blocking_msgs and not warning_msgs:
             print(color("      （未发现审查问题）", Color.DIM))
+        print()
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "resolve_midterm_decision":
+        md = _last_artifact("midterm_decision")
+        if not md:
+            print(f"  🎯 中期决策未产出（已降级，报告照常）{issue_tag}")
+            return
+        state_obj = md.get("state") if isinstance(md, dict) else getattr(md, "state", None)
+        if isinstance(state_obj, dict):
+            argmax = state_obj.get("argmax_state", "")
+            entropy = state_obj.get("entropy")
+        else:
+            argmax = getattr(state_obj, "argmax_state", "") if state_obj is not None else ""
+            entropy = getattr(state_obj, "entropy", None) if state_obj is not None else None
+        conf = md.get("thesis_confidence", 0.0) if isinstance(md, dict) else getattr(md, "thesis_confidence", 0.0)
+        evidence = md.get("evidence_log", []) if isinstance(md, dict) else getattr(md, "evidence_log", [])
+        position = md.get("position") if isinstance(md, dict) else getattr(md, "position", None)
+        if isinstance(position, dict):
+            band = position.get("position_band", "")
+        else:
+            band = getattr(position, "position_band", "") if position is not None else ""
+        degraded = bool(md.get("degraded", False)) if isinstance(md, dict) else getattr(md, "degraded", False)
+        cc = Color.GREEN if conf >= 0.6 else Color.YELLOW if conf >= 0.4 else Color.RED
+        ent_str = f"{entropy:.2f}" if isinstance(entropy, (int, float)) else "—"
+        deg_tag = color("  ⚠ 降级", Color.YELLOW) if degraded else ""
+        print(
+            f"  🎯 认知状态: {color(argmax or '—', Color.BOLD, Color.WHITE)}"
+            f"  │ 置信度 {color(f'{conf:.2f}', cc)}"
+            f"  │ 熵 {ent_str}"
+            f"  │ 仓位 {color(band or '—', Color.CYAN)}"
+            f"  │ 证据 {len(evidence)} 条"
+            f"{deg_tag}{issue_tag}"
+        )
+        print()
+
+    # ─────────────────────────────────────────────────────────────────
+    elif node_name == "midterm_decision_reporter":
+        sm = _last_artifact("midterm_decision_summary")
+        if not sm:
+            print(f"  🗒️  中期决策总结未产出（无决策产物，跳过）{issue_tag}")
+            return
+        symbol = sm.get("symbol", "") if isinstance(sm, dict) else getattr(sm, "symbol", "")
+        as_of = sm.get("as_of_date", "") if isinstance(sm, dict) else getattr(sm, "as_of_date", "")
+        text = sm.get("text", "") if isinstance(sm, dict) else getattr(sm, "text", "")
+        degraded = bool(sm.get("degraded", False)) if isinstance(sm, dict) else getattr(sm, "degraded", False)
+        line_count = len(text.splitlines()) if isinstance(text, str) and text else 0
+        deg_tag = color("  ⚠ 降级", Color.YELLOW) if degraded else ""
+        print(
+            f"  🗒️  中期决策总结已生成"
+            f"  │ 标的 {color(symbol or '—', Color.WHITE)}"
+            f"  │ 日期 {as_of or '—'}"
+            f"  │ {line_count} 行（完整内容见日志）"
+            f"{deg_tag}{issue_tag}"
+        )
         print()
 
     # ─────────────────────────────────────────────────────────────────
@@ -636,6 +730,22 @@ def render_final_report(final_payload: dict[str, Any]) -> None:
             parts.append(color(f"阻塞 {blocked_r}", Color.GRAY))
         if parts:
             print(f"  风险分布: {'  '.join(parts)}")
+
+    # ── 中期决策摘要（决策层产物，只进载荷不进报告；此处供终端消费）──
+    midterm = final_payload.get("midterm_decision")
+    if isinstance(midterm, dict):
+        m_state = midterm.get("state") or "—"
+        m_conf = midterm.get("confidence")
+        m_band = midterm.get("position_band") or "—"
+        m_evidence = midterm.get("evidence_count", 0)
+        m_conf_str = f"{m_conf:.2f}" if isinstance(m_conf, (int, float)) else "—"
+        print(
+            color("  中期决策: ", Color.BOLD, Color.GREEN)
+            + f"状态 {color(str(m_state), Color.BOLD, Color.WHITE)}"
+            + f"  置信度 {m_conf_str}"
+            + f"  仓位 {color(str(m_band), Color.CYAN)}"
+            + f"  证据 {m_evidence} 条"
+        )
     print()
 
     if summary:

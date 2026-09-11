@@ -83,6 +83,7 @@ class ArtifactType(enum.StrEnum):
     COMPANY_TRACK = "company_track"  # 公司赛道（业务线解构 + 对标组基准 peer_*）
     DRIVER_PROFILE = "driver_profile"  # 公司驱动画像（domain_context：playbook + 激活原语）
     MIDTERM_DECISION = "midterm_decision"  # 中期决策：S0–S5 认知状态 + 置信度 + 证据日志（CompanyStateArtifact）
+    MIDTERM_DECISION_SUMMARY = "midterm_decision_summary"  # 中期决策的确定性可读总结（只进日志/载荷，不进报告）
 
 
 # Canonical mapping from the ``ArtifactType`` to a role group.
@@ -107,6 +108,7 @@ _ARTIFACT_TYPE_TO_ROLE_GROUP: dict[ArtifactType | str, ArtifactRoleGroup] = {
     ArtifactType.COMPANY_TRACK: ArtifactRoleGroup.DATA,
     ArtifactType.DRIVER_PROFILE: ArtifactRoleGroup.DATA,
     ArtifactType.MIDTERM_DECISION: ArtifactRoleGroup.DECISION,
+    ArtifactType.MIDTERM_DECISION_SUMMARY: ArtifactRoleGroup.DECISION,
     # Legacy / external types kept for backward compatibility:
     "fundamental_analysis": ArtifactRoleGroup.DATA,
     "market_analysis": ArtifactRoleGroup.DATA,

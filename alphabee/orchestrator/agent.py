@@ -8,9 +8,11 @@ Simplified pipeline:
 5. synthesize_insights     — InsightAgent: synthesize central viewpoint from all upstream
 6. run_thesis             — ThesisEngine + optional LLM enhancement
 7. review_thesis          — ThesisReviewer (deterministic + optional LLM audit)
-8. generate_report        — Single LLM call: structured data → Markdown report
-9. review_report          — Harness-as-library quality gate with optional rewrite
-10. finalize               — Merge all results into JSON AIMessage
+8. resolve_midterm_decision — (midterm flag) build CompanyStateArtifact decision layer
+9. midterm_decision_reporter — render decision summary to log (not into report)
+10. generate_report        — Single LLM call: structured data → Markdown report
+11. review_report          — Harness-as-library quality gate with optional rewrite
+12. finalize               — Merge all results into JSON AIMessage
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.insights import synthesize_insights
 from alphabee.orchestrator.nodes.midterm import resolve_midterm_decision
+from alphabee.orchestrator.nodes.midterm_reporter import report_midterm_decision
 from alphabee.orchestrator.nodes.resolve_company_track import resolve_company_track
 from alphabee.orchestrator.nodes.resolve_driver_profile import resolve_driver_profile
 from alphabee.orchestrator.nodes.resolve_industry_context import resolve_industry_context
@@ -352,6 +355,7 @@ _graph.add_node("synthesize_insights", synthesize_insights)
 _graph.add_node("run_thesis", run_thesis)
 _graph.add_node("review_thesis", review_thesis)
 _graph.add_node("resolve_midterm_decision", resolve_midterm_decision)
+_graph.add_node("midterm_decision_reporter", report_midterm_decision)
 _graph.add_node("generate_report", generate_report)
 _graph.add_node("review_report", review_report)
 _graph.add_node("finalize_message", finalize_message)
@@ -375,7 +379,9 @@ _graph.add_conditional_edges(
         "generate_report": "generate_report",
     },
 )
-_graph.add_edge("resolve_midterm_decision", "generate_report")
+# 决策层产物先经独立 reporter 渲染成可读总结（完整落日志，暂不进报告），再回到主链出报告。
+_graph.add_edge("resolve_midterm_decision", "midterm_decision_reporter")
+_graph.add_edge("midterm_decision_reporter", "generate_report")
 _graph.add_edge("generate_report", "review_report")
 # 整个主流程是单向串联，只有 report quality gate 允许一次受控回环。
 # 这样既能保留“先收集事实 → 再计算 → 再形成论点 → 再出报告”的业务顺序，

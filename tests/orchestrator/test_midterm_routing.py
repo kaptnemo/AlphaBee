@@ -57,13 +57,15 @@ def test_graph_review_thesis_has_both_branches_conditional():
     assert ("generate_report", False) not in outgoing
 
 
-def test_graph_midterm_node_feeds_generate_report():
-    assert ("generate_report", False) in _outgoing("resolve_midterm_decision")
+def test_graph_midterm_node_feeds_reporter_then_generate_report():
+    # 决策层产物先经独立 reporter 渲染总结（不进报告），再由 reporter 接回主链出报告。
+    assert ("midterm_decision_reporter", False) in _outgoing("resolve_midterm_decision")
+    assert ("generate_report", False) in _outgoing("midterm_decision_reporter")
 
 
 def test_graph_flag_off_path_has_no_midterm_node_between():
-    # flag 关时 resolve_midterm_decision 仍注册在图里（惰性节点），但路由不会经过它；
-    # 这里只保证 report 的入边仍来自 review_thesis（条件）或 midterm（可选）。
+    # flag 关时 midterm 节点仍注册在图里（惰性节点），但路由不会经过它；
+    # 这里只保证 report 的入边仍来自 review_thesis（条件）或 midterm reporter（可选）。
     report_in = [(source, cond) for source, target, cond in _edges() if target == "generate_report"]
     assert ("review_thesis", True) in report_in
-    assert ("resolve_midterm_decision", False) in report_in
+    assert ("midterm_decision_reporter", False) in report_in
