@@ -57,6 +57,12 @@ _GOODWILL_SCALE = 1_000_000_000.0  # CNY 商誉饱和点（10 亿 → -1）
 _CASH_NEGATIVE_PENALTY = 0.5  # 单个负现金流（经营或自由）对 F 的惩罚力度
 _BEAT_BONUS = 0.2  # net_profit_yoy 超预告上限的 beat 加分
 
+# 预期差（P0-2）：预告 miss 惩罚——实际净利增速远低于预告下限 → 显著负向。
+# 「预告 +30~40% 但实际 +1.54%」这类预期差是 S0–S5 框架的核心信号，必须在 F 层显式捕获，
+# 而非只奖励 beat 不惩罚 miss（不对称）。
+_MISS_PENALTY = 0.3  # 显著 miss 对 F 的惩罚力度（比 beat 加分 0.2 更重：miss 信息量更大）
+_MISS_GAP_THRESHOLD = 20.0  # PERCENT 实际低于预告下限的幅度阈值（>20pp = 显著 miss）
+
 # 改造 E（设计 MIDTERM_INSIGHT_INJECTION_DESIGN.md §4）结构性洞察 / 语境归一化参数：
 _SEGMENT_DIVERGENCE_THRESHOLD = 15.0  # PERCENT 最快细分增速跑赢整体阈值（>15pp = 结构性亮点）
 _SEGMENT_DIVERGENCE_BONUS = 0.2  # F 方向分正向修正幅度（结构性亮点）
@@ -121,6 +127,20 @@ def _beat_bonus(net_profit_yoy: float | None, max_change: float | None) -> float
     return 0.0
 
 
+def _miss_penalty(net_profit_yoy: float | None, min_change: float | None) -> float:
+    """预告 miss（P0-2 预期差）：实际净利增速远低于预告下限 → 显著负向。
+
+    ``min_change - net_profit_yoy`` 为「低于预告下限」的幅度（pp，正=miss）；
+    超过 ``_MISS_GAP_THRESHOLD``（>20pp）判定为显著 miss，扣 ``-_MISS_PENALTY``。
+    预告下限缺失 / 实际缺失 → 0（不编造预期差）。
+    """
+    if net_profit_yoy is not None and min_change is not None:
+        gap = min_change - net_profit_yoy
+        if gap > _MISS_GAP_THRESHOLD:
+            return -_MISS_PENALTY
+    return 0.0
+
+
 def _segment_divergence(f: FundamentalFactor) -> float | None:
     """最快细分增速 − 整体营收增速（pp，改造 E）；任一缺失 → ``None``。"""
     if f.segment_fastest_yoy is None or f.revenue_yoy is None:
@@ -146,6 +166,8 @@ def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | No
     - 现金质量（profit_without_cash）：经营/自由现金流为负 → 显著惩罚（避免
       net_profit_yoy 高增长掩盖现金流失血）；
     - 超预期（beat）：net_profit_yoy 超预告上限才加分，in-line 不加分；
+    - 预告 miss（P0-2 预期差）：net_profit_yoy 远低于预告下限 → 显著扣分
+      （预告 +30~40% 但实际 +1.54% 的预期差是框架核心信号，不能只奖 beat 不罚 miss）；
     - 结构性亮点（改造 E）：最快细分增速显著跑赢整体（segment divergence > 15pp）
       → 正向修正（整体 +17.94% 但高速通信线 +35.44% 的「结构性突变」）。
 
@@ -161,6 +183,7 @@ def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | No
         growth
         + _cash_quality_penalty(f)
         + _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
+        + _miss_penalty(f.net_profit_yoy, e.profit_forecast_min_change)
         + _segment_bonus(f)
     )
     return _saturate(score, 1.0)
@@ -233,9 +256,7 @@ def _crowding(
 
     全部缺失 → ``None``。
     """
-    exempt = (
-        e_revision is not None and e_revision > _E_REVISION_EXEMPT
-    ) or (
+    exempt = (e_revision is not None and e_revision > _E_REVISION_EXEMPT) or (
         segment_divergence is not None and segment_divergence > _SEGMENT_DIVERGENCE_THRESHOLD
     )
 
@@ -291,16 +312,16 @@ def adjust_market_exposure(
     e_revision: float | None = None,
     segment_divergence: float | None = None,
 ) -> tuple[float | None, float | None]:
-    """市场 regime 软约束（改造 E）：E↑ + segment divergence 同时成立时暴露上下限上浮。
+    """市场 regime 软约束（改造 E + P1 放宽）：E↑ **或** segment divergence 成立时暴露上下限上浮。
 
     熊市仍压低暴露（保留原 ``position_low/high``），但当「E 上修（``e_revision > 0.3``）
-    + 结构性亮点（``segment_divergence > 15pp``）」同时成立时，暴露上下限各上浮
+    **或** 结构性亮点（``segment_divergence > 15pp``）」任一成立时，暴露上下限各上浮
     ``_REGIME_LIFT``（如 [0, 0.2] → [0.1, 0.3]），体现「熊市里的结构性主线」。
+    P1 放宽：从「AND」改为「OR」——结构性亮点（细分增速显著跑赢整体）单独成立即可
+    触发上浮，不必强求同时存在分析师上修（很多结构主线标的 E 修订滞后甚至缺失）。
     确定性纯函数：只读输入，不改外部状态。
     """
-    lift = (
-        e_revision is not None and e_revision > _E_REVISION_EXEMPT
-    ) and (
+    lift = (e_revision is not None and e_revision > _E_REVISION_EXEMPT) or (
         segment_divergence is not None and segment_divergence > _SEGMENT_DIVERGENCE_THRESHOLD
     )
     if not lift:

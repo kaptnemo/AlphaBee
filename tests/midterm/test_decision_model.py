@@ -183,38 +183,40 @@ def test_market_exposure_missing_is_none():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_evaluate_evidence_tilt_changes_scenario_probability_and_ev():
-    """P1B-1 决策级：强 confirming vs 强 refuting 证据在 evaluate 产物上情景概率/EV 方向不同。"""
-    confirming = [_ev("confirming", 0.5)]
-    refuting = [_ev("refuting", 0.5)]
-    art_conf = evaluate(_snapshot(), confirming, prior_confidence=0.5)
-    art_ref = evaluate(_snapshot(), refuting, prior_confidence=0.5)
+def test_evaluate_scenario_direction_is_factor_driven():
+    """修复改造 B sign error：情景方向由因子方向分驱动，evidence 只影响置信度（后验）。
 
-    def prob(art: object, scenario: str) -> float:
-        return {s.scenario: s.probability for s in art.expected_value.scenarios}[scenario]
-
-    assert prob(art_conf, "bull") > prob(art_ref, "bull")  # confirming 推高 bull
-    assert prob(art_conf, "bear") < prob(art_ref, "bear")  # confirming 压低 bear
-    assert art_conf.expected_value.ev > art_ref.expected_value.ev  # EV 方向不同
+    验证：同一快照（同一因子方向分）下，confirming 与 refuting 只改变
+    ``thesis_confidence``（后验），不再由 ``effect_on_thesis`` 直接充当多空方向
+    （旧 ``_evidence_tilt`` 的 sign error 已移除——H 偏空时 confirming=看空会被误判为看多）。
+    """
+    snap = _snapshot()
+    art_conf = evaluate(snap, [_ev("confirming", 0.5)], prior_confidence=0.5)
+    art_ref = evaluate(snap, [_ev("refuting", 0.5)], prior_confidence=0.5)
+    # 证据改变置信度（confirming 推高、refuting 拉低）
+    assert art_conf.thesis_confidence > art_ref.thesis_confidence
+    # 因子方向分一致（同一快照），情景概率来源为 bayes 后验
+    assert art_conf.expected_value.probability_source == "bayes_posterior"
+    assert art_ref.expected_value.probability_source == "bayes_posterior"
 
 
 def test_evaluate_regime_lift_raises_exposure_and_actual_weight():
-    """P1E-1：E↑ + segment divergence → regime 软约束上浮暴露 → actual_weight 反映上浮。"""
+    """P1 放宽（OR）：segment divergence 单独成立即可上浮暴露 → actual_weight 反映上浮。"""
     base = _snapshot(
         fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=10.0, eps_growth_yoy=10.0),
-        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+        expectation=ExpectationFactor(eps_fy1_revision_1m=0.0),  # 无上修 → 不触发
         market=MarketFactor(market_score=40.0, position_low=0.0, position_high=0.2),
     )
     lifted = _snapshot(
         fundamental=FundamentalFactor(
             revenue_yoy=10.0, net_profit_yoy=10.0, eps_growth_yoy=10.0, segment_fastest_yoy=30.0
         ),
-        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),
+        expectation=ExpectationFactor(eps_fy1_revision_1m=0.0),  # 仅 segment divergence 触发
         market=MarketFactor(market_score=40.0, position_low=0.0, position_high=0.2),
     )
     art_base = evaluate(base, None, prior_confidence=0.5)
     art_lift = evaluate(lifted, None, prior_confidence=0.5)
-    # regime 软约束：E↑ + divergence → 暴露 [0,0.2]→[0.1,0.3] → 中值 0.1→0.2
+    # regime 软约束（OR）：segment divergence → 暴露 [0,0.2]→[0.1,0.3] → 中值 0.1→0.2
     assert art_base.position.portfolio_exposure == pytest.approx(0.1)
     assert art_lift.position.portfolio_exposure == pytest.approx(0.2)
     assert art_lift.position.portfolio_exposure > art_base.position.portfolio_exposure

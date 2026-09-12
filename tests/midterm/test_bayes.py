@@ -9,7 +9,6 @@ import pytest
 
 from alphabee.midterm.bayes import (
     ScenarioProbability,
-    _evidence_tilt,
     scenario_probability,
     update_confidence,
 )
@@ -183,63 +182,30 @@ def test_unknown_state_raises():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 改造 B：证据条件化情景概率（_evidence_tilt + scenario_probability(events)）
+# 因子条件化情景概率（scenario_probability(factor_direction)，修正改造 B 证据方向符号错误）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_evidence_tilt_confirming_positive():
-    tilt = _evidence_tilt([_ev("confirming", 0.5), _ev("confirming", 0.3)])
-    assert tilt == pytest.approx(0.8)
-
-
-def test_evidence_tilt_refuting_negative():
-    tilt = _evidence_tilt([_ev("refuting", 0.5), _ev("refuting", 0.3)])
-    assert tilt == pytest.approx(-0.8)
-
-
-def test_evidence_tilt_mixed_net():
-    tilt = _evidence_tilt([_ev("confirming", 0.5), _ev("refuting", 0.3)])
-    assert tilt == pytest.approx(0.2)
-
-
-def test_evidence_tilt_neutral_ignored():
-    tilt = _evidence_tilt([_ev("neutral", 0.5), _ev("confirming", 0.3)])
-    assert tilt == pytest.approx(0.3)
-
-
-def test_evidence_tilt_clipped_to_unit():
-    assert _evidence_tilt([_ev("confirming", 0.5)] * 5) == pytest.approx(1.0)
-    assert _evidence_tilt([_ev("refuting", 0.5)] * 5) == pytest.approx(-1.0)
-
-
-def test_evidence_tilt_empty_zero():
-    assert _evidence_tilt(None) == 0.0
-    assert _evidence_tilt([]) == 0.0
-
-
-def test_s4_strong_confirming_evidence_reduces_bear():
-    # 改造 B 验证基准：S4 状态先验看空（state_dir=-1），但证据强 confirming（ev_tilt→+1）
+def test_s4_bullish_factor_direction_reduces_bear():
+    # S4 状态先验看空（state_dir=-1），但因子方向分看多（factor_dir=+1）
     # → direction=0.5×(-1)+0.5×(+1)=0，bear 不再被状态表锁死到 0.67。
-    sp = scenario_probability(
-        "S4", confidence=1.0, events=[_ev("confirming", 0.5), _ev("confirming", 0.5)]
-    )
+    sp = scenario_probability("S4", confidence=1.0, factor_direction=1.0)
     assert sp.p_bear < 0.5
     assert sp.p_bull > 0.3
 
 
-def test_s4_strong_refuting_evidence_raises_bear():
-    # 反证：S4 + 证据强 refuting（ev_tilt→-1）→ direction=-1，比无证据（direction=-0.5）更看空。
-    refuting = scenario_probability(
-        "S4", confidence=1.0, events=[_ev("refuting", 0.5), _ev("refuting", 0.5)]
-    )
-    neutral = scenario_probability("S4", confidence=1.0, events=None)
-    assert refuting.p_bear > neutral.p_bear
+def test_s4_bearish_factor_direction_raises_bear():
+    # S4 + 因子方向分看空（factor_dir=-1）→ direction=-1，比回退状态方向（-1）等价；
+    # 与无因子方向分（direction=-1）同为最看空，验证因子方向分不会把看空状态「中和」。
+    bearish = scenario_probability("S4", confidence=1.0, factor_direction=-1.0)
+    neutral = scenario_probability("S4", confidence=1.0, factor_direction=None)
+    assert bearish.p_bear == pytest.approx(neutral.p_bear)
 
 
-def test_events_parameter_backward_compatible():
-    # events=None 与不传 events 等价（方向退化回 0.5×state_dir，向后兼容）
+def test_factor_direction_none_falls_back_to_state_dir():
+    # factor_direction=None 与不传等价（方向回退 state_dir，向后兼容）
     assert scenario_probability("S4", confidence=1.0) == scenario_probability(
-        "S4", confidence=1.0, events=None
+        "S4", confidence=1.0, factor_direction=None
     )
 
 

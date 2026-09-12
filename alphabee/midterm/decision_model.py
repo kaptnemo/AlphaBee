@@ -26,6 +26,7 @@ FactorSnapshot
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
@@ -141,6 +142,57 @@ def _writeback_directions(snapshot: FactorSnapshot, scores: VariableScores) -> N
     _apply(snapshot.valuation, scores.v_valuation_percentile, "cheap", "expensive", "fair")
     _apply(snapshot.crowding, scores.c_crowding, "cold", "overheated", "normal")
     _apply(snapshot.risk, scores.r_risk, "risk_declining", "risk_rising", "neutral")
+
+
+def _factor_direction(scores: VariableScores) -> float | None:
+    """因子方向分均值（正=看多，负=看空），供 ``scenario_probability`` 的情景极化方向。
+
+    七个因子方向分由 ``score_engine.compress_scores`` 产出，符号已统一（正=对多头有利），
+    因此可直接聚合为「多空倾向」——F 看多（营收/份额/细分）与 C 看空（拥挤）同时存在时，
+    均值自然反映「好公司但贵/拥挤」的混合倾向，而非证据层 ``effect_on_thesis`` 那种
+    相对 H 的确认/反驳（会因 H 偏空而 sign error）。全部缺失 → ``None``。
+    """
+    vals = [
+        scores.f_fundamental_trend,
+        scores.e_revision,
+        scores.t_relative_strength,
+        scores.v_valuation_percentile,
+        scores.c_crowding,
+        scores.r_risk,
+    ]
+    avail = [v for v in vals if v is not None]
+    if not avail:
+        return None
+    return sum(avail) / len(avail)
+
+
+def _filter_fresh_evidence(
+    evidence: list[EvidenceEvent] | None,
+    as_of_date: str,
+    *,
+    max_age_days: int = 365,
+) -> list[EvidenceEvent]:
+    """过滤过期证据（P2 时效）：``date`` 早于 ``as_of_date - max_age_days`` 的事件丢弃。
+
+    历史业绩预告（如 2024/2025 的 +30~40% 预告）在当期决策中属于「已结算」的旧信息，
+    继续参与贝叶斯置信度更新会虚增 confidence（用旧利好推高后验）。日期无法解析的
+    事件保守保留（不因解析失败丢证据）。
+    """
+    if not evidence or not as_of_date:
+        return list(evidence or [])
+    try:
+        cutoff = date.fromisoformat(as_of_date) - timedelta(days=max_age_days)
+    except ValueError:
+        return list(evidence)  # as_of_date 无法解析 → 不过滤（保守）
+
+    fresh: list[EvidenceEvent] = []
+    for e in evidence:
+        try:
+            if date.fromisoformat(e.date) >= cutoff:
+                fresh.append(e)
+        except ValueError:
+            fresh.append(e)  # 事件日期无法解析 → 保留（保守）
+    return fresh
 
 
 def _materiality_penalty(insight_materiality: Any) -> float:
@@ -299,6 +351,9 @@ def evaluate(
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
         variable_scores、factor_snapshot、expected_value、position 等，无 dead-end。
     """
+    # P2 时效：过滤超过 1 年的旧证据（历史业绩预告已结算，不虚增当期置信度）
+    evidence = _filter_fresh_evidence(evidence, snapshot.as_of_date)
+
     scores = compress_scores(snapshot)
     cls = classify_state(scores)
 
@@ -313,10 +368,14 @@ def evaluate(
     _writeback_directions(snapshot, scores)
 
     has_evidence = bool(evidence)
-    # 改造 B 接线（P1B-1）：把证据日志传入 scenario_probability，证据净方向（ev_tilt）
-    # 参与情景概率极化（与状态先验方向各占一半），而非只由状态表锁定方向。
+    # 情景概率方向用「因子方向分」（score_engine 正确符号化），而非证据层的
+    # effect_on_thesis（相对于 H 的确认/反驳，H 偏空时 confirming=看空会 sign error）。
+    # 证据继续只通过 update_confidence 影响置信度（后验），不直接充当多空方向。
     scenario_probs = scenario_probability(
-        cls.state.argmax_state, confidence=confidence, has_evidence=has_evidence, events=evidence
+        cls.state.argmax_state,
+        confidence=confidence,
+        has_evidence=has_evidence,
+        factor_direction=_factor_direction(scores),
     )
     ev = _estimate_expected_value(
         snapshot, scenario_probs, scores, has_evidence=has_evidence, insight_materiality=insight_materiality

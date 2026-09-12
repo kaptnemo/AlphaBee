@@ -193,9 +193,7 @@ def test_fundamental_segment_divergence_bonus():
             segment_fastest_yoy=35.44,
         )
     )
-    base = _snapshot(
-        fundamental=FundamentalFactor(revenue_yoy=17.94, net_profit_yoy=17.94, eps_growth_yoy=17.94)
-    )
+    base = _snapshot(fundamental=FundamentalFactor(revenue_yoy=17.94, net_profit_yoy=17.94, eps_growth_yoy=17.94))
     f_with = compress_scores(snap).f_fundamental_trend
     f_base = compress_scores(base).f_fundamental_trend
     assert f_with - f_base == pytest.approx(0.2)  # _SEGMENT_DIVERGENCE_BONUS
@@ -419,12 +417,24 @@ def test_adjust_market_exposure_lift_when_both_conditions():
     assert high == pytest.approx(0.3)  # 0.2 → 0.3
 
 
-def test_adjust_market_exposure_no_lift_without_both_conditions():
+def test_adjust_market_exposure_lift_when_either_condition():
+    """P1 放宽：E↑ **或** segment divergence 任一成立即可上浮（原为 AND）。"""
     market = MarketFactor(regime="熊市", position_low=0.0, position_high=0.2)
-    # 仅 E↑ 或仅 segment divergence 或都缺失 → 不 lift
-    assert adjust_market_exposure(market, e_revision=0.5, segment_divergence=5.0) == (0.0, 0.2)
-    assert adjust_market_exposure(market, e_revision=0.1, segment_divergence=20.0) == (0.0, 0.2)
+    # 仅 E↑ → lift
+    low, high = adjust_market_exposure(market, e_revision=0.5, segment_divergence=5.0)
+    assert low == pytest.approx(0.1)
+    assert high == pytest.approx(0.3)
+    # 仅 segment divergence → lift
+    low, high = adjust_market_exposure(market, e_revision=0.1, segment_divergence=20.0)
+    assert low == pytest.approx(0.1)
+    assert high == pytest.approx(0.3)
+
+
+def test_adjust_market_exposure_no_lift_when_neither_condition():
+    market = MarketFactor(regime="熊市", position_low=0.0, position_high=0.2)
+    # 都缺失 / 都不达标 → 不 lift
     assert adjust_market_exposure(market, e_revision=None, segment_divergence=None) == (0.0, 0.2)
+    assert adjust_market_exposure(market, e_revision=0.1, segment_divergence=5.0) == (0.0, 0.2)
 
 
 def test_compress_scores_market_summary_regime_lift():
