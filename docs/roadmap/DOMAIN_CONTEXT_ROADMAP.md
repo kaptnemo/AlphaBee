@@ -857,6 +857,108 @@ H3（折中派）：中短期（1-2年）面板周期主导利润，但AI硬件�
 
 ---
 
+## 设计稿：覆盖扩展与兜底洞察升级（待拍板）
+
+> 动机：线上大部分标的落在 `generic_fundamental`（兜底）且 `primary_drivers` 为空，
+> CLI 显示「驱动: —」。这不是路由 bug，而是 **P0 最小集造成的覆盖缺口**：
+> 专用 playbook 只有 hog_cycle / mining_services 两个，覆盖两个极窄赛道；
+> 兜底框架本身又没有驱动变量。本节设计如何在不破坏确定性内核的前提下扩覆盖、补洞察。
+
+### 现状诊断（四缺）
+
+| 缺 | 现状 | 后果 |
+|---|---|---|
+| 缺覆盖 | 专用 playbook 仅 2 个 | 白酒/新能源/医药/半导体/金融/家电…全部 fallback |
+| 缺驱动 | `generic_fundamental` 的 primary/secondary_drivers 为空 | fallback 即「驱动: —」，兜底 = 无洞察 |
+| 缺维度 | 兜底三原语是「通用制造业三件套」（成本/产能/营运资本） | 对品牌消费（批价/动销/渠道库存）、金融（净息差/不良）、科技成长（渗透率/迭代）、医药（管线/集采）无解释力 |
+| 缺信号 | 路由只吃 track_label/industry/sub_industry/business_model 四个身份信号，行业名双向子串匹配 | ①特殊标的（分部收入驱动、跨界）匹配不上；②`农林牧渔` 会误配渔业/种植业到 hog_cycle（L1 太宽）；③score 恒 1.0、top-1 决胜，无「适用程度」与多框架叠加 |
+
+### 设计目标与不变式
+
+1. **任意 A 股标的都能拿到有内容的驱动画像**——最坏情况（兜底）也有驱动变量与核心问题，不再出现「驱动: —」。
+2. **特殊标的可多框架并列**——分部收入结构驱动（比亚迪=汽车+电池）、跨界转型（京东方）不硬塞进单一框架。
+3. **保持确定性内核 + YAML 数据驱动 + 可单测**；LLM 只做可选复核，不进路由主线。
+4. **artifact 契约向后兼容**：`DriverProfile` 结构不变，下游 `payload_builders` / InsightAgent 零改动自动获益（`primary_drivers` 字段已存在，只是此前兜底时为空）。
+
+### 分层设计
+
+```text
+L1 专用 playbook（现有层，继续扩）   锂电 / 光伏 / 半导体 / 创新药 / 白酒 / 银行 / 汽车…
+L2 经济原型 playbook（新增兜底层）   按「盈利由什么驱动」划分，8 个原型 + 申万行业映射
+L3 generic_fundamental（真·最后兜底） 补通用驱动变量 + 按 business_model archetype 微调
+L4 路由增强（原 P2 提前）             新信号 + 新 match 字段 + 软评分/多框架并列
+L5 过渡态（原 P1 不变）               narrative_transition + FrameworkCompetition
+```
+
+**L2 经济原型层是本次设计的核心增量**：兜底不再「空」，而是退回一层更粗但仍有真实
+驱动变量的框架。原型按「盈利由什么变量驱动」划分，而非按申万行业——这是「行业词典」与
+「静态行业知识库」的区别：原型只给**题眼变量与核心问题**（一页 YAML），不给分析文本。
+
+| 原型 playbook | 覆盖（申万示例） | primitives | 驱动变量示例 |
+|---|---|---|---|
+| `brand_consumer` | 白酒/食品饮料/家电/化妆品/免税 | brand_pricing + channel_inventory + working_capital_stress | 批价、动销、渠道库存、吨价 |
+| `tech_growth` | 半导体/软件/AI 硬件/通信 | technology_adoption + demand_cycle + capacity_cycle | 渗透率、国产化率、在手订单、稼动率 |
+| `new_energy_manufacturing` | 锂电/光伏/风电 | capacity_cycle + cost_curve + technology_adoption + subsidy_policy | 装机、单 Wh 毛利、碳酸锂/硅料价格 |
+| `commodity_resource` | 有色/煤炭/油气/钢铁 | commodity_cycle + reserve_grade + cost_curve | 商品价格、吨现金成本、储量品位 |
+| `order_driven` | 工程/装备/军工（矿服走专用层） | project_delivery + working_capital_stress + capacity_cycle | 在手订单、交付节奏、回款账期 |
+| `financial_credit` | 银行/券商/保险（可再拆） | credit_asset_quality + interest_spread | 净息差、不良、拨备、信用扩张 |
+| `healthcare_pipeline` | 创新药/器械（CXO 走 order_driven） | pipeline_development + subsidy_policy | 管线里程碑、集采、放量爬坡 |
+| `model_cycle` | 汽车/消费电子 | model_cycle + cost_curve + capacity_cycle | 新车周期、销量、单车盈利 |
+
+**L3 generic_fundamental 补驱动**：primary_drivers 填通用题眼（收入增速、毛利率趋势、
+经营现金流/净利润、ROE 趋势），并按 business_model archetype 微调口径（brand→量价拆分、
+odm→大客户集中度+稼动率、integrator→订单+回款）——真正「什么都匹配不上」时才到这一层。
+
+**L4 路由增强（原 P2 的 score/ranking 提前）**：
+
+- `RouterInput` 增：`sw_code`（精确前缀匹配 L1/L2/L3，消灭「农林牧渔」误配）、
+  `segments`（top 分部名+占比，来自 COMPANY_TRACK，捕获「工业富联式」跨界标的）、
+  财务结构信号（毛利率/研发费率/资产结构，来自 fact_values，不重复取数）、`lifecycle_stage`。
+- `PlaybookSchema` 增：`match_sw_codes` / `match_segments` / `match_financial_structures`
+  （声明式阈值，如 inventory_ratio > 0.25 → 加权）。
+- 输出从 top-1 变**主框架 + 并列候选**：`ActivatedContext.score` 真实化（不再恒 1.0），
+  高分为主线、中分为替代解释；「主业框架 + 第二曲线框架」并列时进 `key_conflicts`。
+
+### 新增 primitive 清单（第一批）
+
+`brand_pricing` / `channel_inventory` / `technology_adoption` / `demand_cycle` /
+`subsidy_policy` / `pipeline_development` / `credit_asset_quality` / `interest_spread` /
+`model_cycle` / `reserve_grade`（后三个 + `feed_cost` / `epidemic_risk` 为正文 Layer 1 已列）。
+
+### 落地顺序（每步独立可测、向后兼容）
+
+- **Phase A（纯 YAML，零代码风险）**：新增 primitive + 8 个原型 playbook +
+  generic_fundamental 补驱动 + golden 测试扩展。下游零改动，`primary_drivers` 自动流入
+  渲染与 InsightAgent，立即消灭「驱动: —」。
+- **Phase B**：schema 增 match 字段（先改 schema 再写 YAML，注意 `extra="forbid"`）+
+  router 吃新信号（sw_code / segments / 财务结构）。
+- **Phase C**：软评分 + 多框架并列（score/trend 真实化，`why_selected` 结构化）。
+- **Phase D**：LLM 复核钩子 + 过渡态（原 P1）。
+
+### Golden 用例（扩展后）
+
+| 标的 | 期望 | fallback |
+|---|---|---|
+| 贵州茅台 | brand_consumer；驱动=批价/动销/渠道库存 | False |
+| 宁德时代 | ev_battery（专用层）；驱动=装机量/单 Wh 毛利/碳酸锂价 | False |
+| 隆基绿能 | pv_chain（专用层）；驱动=硅料/组件价/技术迭代 | False |
+| 招商银行 | financial_credit；驱动=净息差/不良/拨备 | False |
+| 恒瑞医药 | healthcare_pipeline；驱动=管线/集采/放量 | False |
+| 比亚迪 | auto + battery 多框架并列（分部收入驱动） | False |
+| 牧原/金诚信 | hog_cycle / mining_services 回归不变 | False |
+| 无法识别行业 | generic_fundamental（驱动非空，不出现「—」） | True |
+
+### 待拍板决策
+
+1. L2 原型清单：8 个是否合适？金融是否拆银行/保险/券商三个专用 playbook？
+2. 申万映射用 L1/L2/L3 哪一级为主 + 是否引入 `sw_code` 前缀匹配（建议：是，消除宽 L1 误配）。
+3. 专用层 vs 原型层冲突时的优先级（建议：专用层优先，原型层仅在专用层未命中时参与计分）。
+4. generic_fundamental 是否按 business_model archetype 分化驱动变量（建议：是，成本低收益明显）。
+5. 多框架并列的输出形状：`DriverProfile` 加 `candidate_playbooks`（ranked）字段，还是只落在
+   `why_selected` / `key_conflicts`？（建议：加字段，下游 report 需要可消费的形状。）
+
+---
+
 ## 推荐落地顺序（重排：先最小闭环，再过渡态，最后事件覆盖）
 
 ### P0（最小闭环，最快见效，风险最低）——已收紧为 5 步（详见「Review 记录」）
