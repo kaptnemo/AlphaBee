@@ -5,10 +5,35 @@
 
 from __future__ import annotations
 
+import atexit
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
 import pytest
 
-from alphabee.midterm.decision_model import collect_evidence, evaluate, get_decision, get_decision_with_evidence
-from alphabee.midterm.models import (
+# collect_evidence / collect_evidence_split 在测试内 import 数据源模块时会传递性触发
+# tushare ``set_token`` 副作用（无 token 写 ``$HOME/tk.csv``）；workspace-write 沙箱下
+# 需在 import 前把 HOME 重定向到 workspace 内临时目录（与 test_midterm_payload.py 同模式）。
+_TMP_HOME = Path(tempfile.mkdtemp(prefix="midterm_dm_home_"))
+os.environ["HOME"] = str(_TMP_HOME)
+
+
+def _cleanup_tmp_home() -> None:
+    shutil.rmtree(_TMP_HOME, ignore_errors=True)
+
+
+atexit.register(_cleanup_tmp_home)
+
+from alphabee.midterm.decision_model import (  # noqa: E402
+    collect_evidence,
+    collect_evidence_split,
+    evaluate,
+    get_decision,
+    get_decision_with_evidence,
+)
+from alphabee.midterm.models import (  # noqa: E402
     AuditSnapshot,
     CrowdingFactor,
     EvidenceEvent,
@@ -355,6 +380,53 @@ def test_collect_evidence_degrades_when_sources_fail(monkeypatch):
     assert collect_evidence("600519.SH", thesis="H", window_texts=["文本"]) == []
 
 
+def test_collect_evidence_split_separates_channels(monkeypatch):
+    """A2：数值/定性分通道返回；通道失败只清空该通道，不影响另一通道。"""
+    import alphabee.agents.facts.tools.expectation_fact as expectation_fact
+    import alphabee.collectors.consensus.eastmoney as consensus
+    import alphabee.midterm.evidence_extractor as ex
+
+    def _boom(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(ex, "extract_facts", _boom)  # 定性失败
+    monkeypatch.setattr(expectation_fact, "get_expectation_fact", _boom)  # 数值取数失败
+    monkeypatch.setattr(consensus, "build_consensus", _boom)
+
+    numeric, qualitative = collect_evidence_split("600519.SH", thesis="H", window_texts=["文本"])
+    assert numeric == []
+    assert qualitative == []
+
+
+def test_collect_evidence_merges_split_channels(monkeypatch):
+    """A2 向后兼容：collect_evidence 仍合并两通道并去重（原语义不变）。"""
+    import alphabee.midterm.decision_model as dm
+
+    n = [
+        EvidenceEvent(
+            id="n1",
+            date="2024-01-01",
+            kind="expectation",
+            description="n",
+            effect_on_thesis="confirming",
+            confidence_delta=0.3,
+        )
+    ]
+    q = [
+        EvidenceEvent(
+            id="q1",
+            date="2024-01-02",
+            kind="fundamental",
+            description="q",
+            effect_on_thesis="refuting",
+            confidence_delta=0.1,
+        )
+    ]
+    monkeypatch.setattr(dm, "collect_evidence_split", lambda *a, **k: (n, q))
+
+    assert collect_evidence("600519.SH", thesis="H", window_texts=["文本"]) == [*n, *q]
+
+
 def test_evidence_log_feeds_diff_attribution():
     """evidence_log 留痕 → diff 的 ConfidenceDelta.evidence_ids 归因（打通 §5）。"""
     from alphabee.midterm.diff import diff
@@ -397,6 +469,7 @@ def test_init_exports_engines():
         "get_decision",
         "get_decision_with_evidence",
         "collect_evidence",
+        "collect_evidence_split",
         "compress_scores",
         "classify_state",
         "update_confidence",

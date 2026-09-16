@@ -9,6 +9,7 @@ from alphabee.core import Artifact, ArtifactRoleGroup, ArtifactType, Run, RunSta
 from alphabee.midterm.models import (
     CognitiveState,
     CompanyStateArtifact,
+    EvidenceEvent,
     ExpectationGap,
     StateBelief,
     VariableScores,
@@ -144,14 +145,25 @@ def _fake_decision(symbol="600519.SH", thesis=""):
     )
 
 
+def _ev(description, effect="confirming", delta=0.3, kind="expectation"):
+    return EvidenceEvent(
+        id=f"id-{description}",
+        date="2025-01-01",
+        kind=kind,
+        description=description,
+        effect_on_thesis=effect,
+        confidence_delta=delta,
+    )
+
+
 def _patch_decision(monkeypatch):
     captured = {}
 
-    def fake_collect(symbol, thesis="", window_texts=None, model=None):
+    def fake_collect_split(symbol, thesis="", window_texts=None, model=None):
         captured["symbol"] = symbol
         captured["thesis"] = thesis
         captured["window_texts"] = window_texts
-        return []  # 数值/定性证据在节点单测中固定为空，只测映射与接线
+        return [], []  # 数值/定性证据在节点单测中固定为空，只测映射与接线
 
     def fake_get_decision(
         symbol,
@@ -170,7 +182,7 @@ def _patch_decision(monkeypatch):
         captured["insight_materiality"] = insight_materiality
         return _fake_decision(symbol=symbol, thesis=thesis)
 
-    monkeypatch.setattr(node, "collect_evidence", fake_collect)
+    monkeypatch.setattr(node, "collect_evidence_split", fake_collect_split)
     monkeypatch.setattr(node, "get_decision", fake_get_decision)
     return captured
 
@@ -241,7 +253,7 @@ def test_insight_missing_falls_back_to_thesis_overall_judgment(monkeypatch):
 
 def test_degraded_insight_downgrades_to_thesis_and_damps_prior(monkeypatch):
     captured = _patch_decision(monkeypatch)
-    result = asyncio.run(
+    asyncio.run(
         node.resolve_midterm_decision(
             _state(
                 artifacts=[
@@ -260,9 +272,7 @@ def test_degraded_insight_downgrades_to_thesis_and_damps_prior(monkeypatch):
 def test_confidence_string_mapping(monkeypatch):
     for label, expected in (("low", 0.3), ("medium", 0.5), ("high", 0.7)):
         captured = _patch_decision(monkeypatch)
-        asyncio.run(
-            node.resolve_midterm_decision(_state(artifacts=[_insight_artifact(confidence=label)]), {})
-        )
+        asyncio.run(node.resolve_midterm_decision(_state(artifacts=[_insight_artifact(confidence=label)]), {}))
         assert captured["prior_confidence"] == expected
 
 
@@ -306,7 +316,9 @@ def test_insight_evidence_injected_into_decision(monkeypatch):
             _state(
                 artifacts=[
                     _insight_artifact(
-                        supporting=[{"statement": "高速通信线+35.44%", "source": "segment:high_speed_comm", "weight": "strong"}],
+                        supporting=[
+                            {"statement": "高速通信线+35.44%", "source": "segment:high_speed_comm", "weight": "strong"}
+                        ],
                         counter=[{"statement": "增收不增利", "source": "signal:profit_leverage", "weight": "moderate"}],
                     ),
                 ]
@@ -328,10 +340,100 @@ def test_insight_evidence_injected_into_decision(monkeypatch):
 
 def test_no_insight_evidence_when_insight_missing(monkeypatch):
     captured = _patch_decision(monkeypatch)
-    asyncio.run(
-        node.resolve_midterm_decision(_state(artifacts=[_thesis_artifact(overall_judgment="positive")]), {})
-    )
+    asyncio.run(node.resolve_midterm_decision(_state(artifacts=[_thesis_artifact(overall_judgment="positive")]), {}))
     assert captured["evidence"] == []
+
+
+# ── 改造 A2：先验-似然同源解耦（insight 证据与 Stage B 证据二选一入账）──────────
+
+
+def test_stage_b_evidence_displaces_insight_evidence(monkeypatch):
+    """Stage B 定性证据存在 → insight 证据整体丢弃（二选一，选 Stage B）。"""
+    captured = _patch_decision(monkeypatch)
+
+    def fake_split(symbol, thesis="", window_texts=None, model=None):
+        return [], [_ev("事实判定证据", effect="confirming", delta=0.3, kind="fundamental")]
+
+    monkeypatch.setattr(node, "collect_evidence_split", fake_split)
+    asyncio.run(
+        node.resolve_midterm_decision(
+            _state(
+                artifacts=[
+                    _insight_artifact(
+                        supporting=[{"statement": "高速通信线+35.44%", "source": "s", "weight": "strong"}],
+                    ),
+                ]
+            ),
+            {},
+        )
+    )
+
+    by_desc = {e.description: e for e in captured["evidence"]}
+    assert "事实判定证据" in by_desc
+    assert "高速通信线+35.44%" not in by_desc  # 同源 insight 证据被丢弃
+
+
+def test_insight_evidence_fallback_when_stage_b_empty(monkeypatch):
+    """Stage B 为空 → insight 证据兜底入账（结构性洞察作为唯一 LLM 证据通道）。"""
+    captured = _patch_decision(monkeypatch)
+    asyncio.run(
+        node.resolve_midterm_decision(
+            _state(
+                artifacts=[
+                    _insight_artifact(
+                        supporting=[{"statement": "高速通信线+35.44%", "source": "s", "weight": "strong"}],
+                    ),
+                ]
+            ),
+            {},
+        )
+    )
+
+    by_desc = {e.description: e for e in captured["evidence"]}
+    assert "高速通信线+35.44%" in by_desc  # 兜底保留
+
+
+def test_numeric_evidence_always_included_with_stage_b(monkeypatch):
+    """数值规则证据与 LLM 观点无关：Stage B 存在时与 Stage B 一起恒入账。"""
+    captured = _patch_decision(monkeypatch)
+
+    def fake_split(symbol, thesis="", window_texts=None, model=None):
+        return (
+            [_ev("业绩快报 beat", effect="confirming", delta=0.5, kind="expectation")],
+            [_ev("事实判定证据", effect="refuting", delta=0.3, kind="fundamental")],
+        )
+
+    monkeypatch.setattr(node, "collect_evidence_split", fake_split)
+    asyncio.run(
+        node.resolve_midterm_decision(
+            _state(
+                artifacts=[
+                    _insight_artifact(
+                        supporting=[{"statement": "高速通信线+35.44%", "source": "s", "weight": "strong"}],
+                    ),
+                ]
+            ),
+            {},
+        )
+    )
+
+    by_desc = {e.description: e for e in captured["evidence"]}
+    assert "业绩快报 beat" in by_desc
+    assert "事实判定证据" in by_desc
+    assert "高速通信线+35.44%" not in by_desc
+
+
+def test_decouple_evidence_pure_policy():
+    """_decouple_evidence 纯策略：Stage B 存在 → 弃 insight；Stage B 为空 → insight 兜底。"""
+    n = [_ev("n", kind="expectation")]
+    q = [_ev("q", kind="fundamental")]
+    i = [_ev("i", kind="thesis")]
+
+    out = node._decouple_evidence(n, q, i)
+    assert {e.description for e in out} == {"n", "q"}
+
+    out = node._decouple_evidence(n, [], i)
+    assert {e.description for e in out} == {"n", "i"}
 
 
 # ── 改造 D：insight.materiality_rank 传入 get_decision ─────────────────────────
@@ -354,9 +456,7 @@ def test_materiality_rank_passed_to_get_decision(monkeypatch):
 
 def test_materiality_rank_empty_when_insight_missing(monkeypatch):
     captured = _patch_decision(monkeypatch)
-    asyncio.run(
-        node.resolve_midterm_decision(_state(artifacts=[_thesis_artifact(overall_judgment="positive")]), {})
-    )
+    asyncio.run(node.resolve_midterm_decision(_state(artifacts=[_thesis_artifact(overall_judgment="positive")]), {}))
     assert captured["insight_materiality"] == []
 
 
@@ -368,9 +468,7 @@ def test_decision_failure_emits_issue_and_no_artifact(monkeypatch):
         raise RuntimeError("LLM 抽取失败")
 
     monkeypatch.setattr(node, "get_decision", boom)
-    result = asyncio.run(
-        node.resolve_midterm_decision(_state(artifacts=[_insight_artifact()]), {})
-    )
+    result = asyncio.run(node.resolve_midterm_decision(_state(artifacts=[_insight_artifact()]), {}))
 
     assert _find_midterm(result) is None
     issues = [i for i in result["issues"] if i.category == "midterm_decision_failed"]
@@ -399,9 +497,7 @@ def test_invalid_upstream_artifact_does_not_raise(monkeypatch):
         producer_step="synthesize_insights",
         value={"confidence": 12345},  # InsightArtifact.confidence 应为 str，触发 ValidationError
     )
-    result = asyncio.run(
-        node.resolve_midterm_decision(_state(artifacts=[bad_insight]), {})
-    )
+    result = asyncio.run(node.resolve_midterm_decision(_state(artifacts=[bad_insight]), {}))
 
     assert _find_midterm(result) is None
     assert not captured  # model_validate 在调用决策模型前就失败，不应走到 get_decision_with_evidence

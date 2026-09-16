@@ -19,9 +19,13 @@
   ``FACT_COLLECTION.raw_response`` 是叙事摘要，不作为窗口文本）；无任何窗口文本时传
   ``None``（合法输入：只跑数值证据）。
 - ``include_market=True``。
-- 改造 A（洞察力注入）：``insight.supporting_evidence/counter_evidence``（带 weight 的
-  正反证据）经 ``adapt_insight_evidence`` 映射为 ``EvidenceEvent``（纯规则、零 LLM），
-  与 ``collect_evidence`` 结果合并去重后作为独立证据源传入 ``get_decision``。
+- 改造 A（洞察力注入）+ A2（先验-似然同源解耦）：``insight.supporting_evidence/
+  counter_evidence``（带 weight 的正反证据）经 ``adapt_insight_evidence`` 映射为
+  ``EvidenceEvent``（纯规则、零 LLM）。但 insight 证据与其派生的先验
+  （``insight.confidence`` → ``prior_confidence``）同源——同一个 LLM 观点既当先验
+  又当似然会双重计数，故与 Stage B 定性证据**二选一入账**：Stage B 存在时弃
+  insight 证据（Stage B 是独立于 insight 的事实方向判定，更贴近客观事实）；
+  Stage B 为空时 insight 证据兜底保留。数值规则证据与 LLM 观点无关，恒入账。
 
 注意：本模块刻意不 import ``alphabee.orchestrator.collectors`` / ``state`` 的运行时符号，
 而是本地实现 ``_make_id`` / ``_finalize_step`` 等三个小 helper——collectors 会传递性触发
@@ -37,7 +41,7 @@ from langchain_core.runnables import RunnableConfig
 
 from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
-from alphabee.midterm.decision_model import collect_evidence, get_decision
+from alphabee.midterm.decision_model import collect_evidence_split, get_decision
 from alphabee.midterm.evidence_extractor import dedupe_events
 from alphabee.midterm.insight_evidence_adapter import adapt_insight_evidence
 from alphabee.orchestrator.contracts import (
@@ -105,7 +109,7 @@ def _thesis_overall_judgment(thesis: ThesisArtifact | None) -> str:
 def _judgment_to_hypothesis(judgment: str) -> str:
     """把确定性整体判断翻译成可判方向的中文假设 H（决策点 2 降级路径）。
 
-    空/中性走空串：``collect_evidence`` 的 Stage B 按符号判定、定性 neutral 退化。
+    空/中性走空串：``collect_evidence_split`` 的 Stage B 按符号判定、定性 neutral 退化。
     """
     if not judgment:
         return ""
@@ -157,6 +161,27 @@ def _conflict_explanations(artifacts: list[Artifact]) -> list[str]:
     return explanations
 
 
+def _decouple_evidence(
+    numeric_evidence: list[Any],
+    qualitative_evidence: list[Any],
+    insight_evidence: list[Any],
+) -> list[Any]:
+    """A2 先验-似然同源解耦：insight 证据与 Stage B 定性证据二选一入账。
+
+    insight 证据与其派生的先验（``insight.confidence`` → ``prior_confidence``）
+    同源：同一个 LLM 观点既当先验又当似然会双重计数。Stage B 是独立于 insight
+    的事实方向判定（对 window_texts 原文事实的判定），更贴近客观事实，故：
+
+    - Stage B 定性证据存在 → insight 证据整体丢弃（二选一，选 Stage B）；
+    - Stage B 为空 → insight 证据兜底保留（结构性洞察作为唯一 LLM 证据通道；
+      此时与先验仍有残余同源，属有界妥协，已在 docstring 记录）；
+    - 数值规则证据与 LLM 观点无关，恒入账。
+    """
+    if qualitative_evidence:
+        return dedupe_events([*numeric_evidence, *qualitative_evidence])
+    return dedupe_events([*numeric_evidence, *qualitative_evidence, *insight_evidence])
+
+
 def _window_texts(artifacts: list[Artifact]) -> list[str] | None:
     """组装 window_texts：仅含已验证冲突 explanation。
 
@@ -204,22 +229,25 @@ async def resolve_midterm_decision(
         prior = _prior_confidence(insight, thesis)
         window_texts = _window_texts(artifacts)
 
-        # 收集证据：数值类规则 + 定性 Stage A/B（LLM，失败降级 → 无数值/定性证据）
+        # 收集证据（分通道）：数值类规则 + 定性 Stage A/B（LLM，失败降级 → 该通道空）
         try:
-            evidence = collect_evidence(symbol, thesis=hypothesis, window_texts=window_texts)
+            numeric_evidence, qualitative_evidence = collect_evidence_split(
+                symbol, thesis=hypothesis, window_texts=window_texts
+            )
         except Exception:
-            evidence = []  # 抽取全挂 → 只保留 insight 证据 + state_prior 保守退化
+            numeric_evidence, qualitative_evidence = [], []  # 抽取全挂 → 只保留 insight 证据兜底
 
-        # 改造 A：把 insight 的结构化正反证据（supporting/counter_evidence，带 weight）
-        # 作为独立证据源合并进证据日志，不再被边界丢弃。纯规则映射、零 LLM（midterm 只消费）。
-        # 事件日取 run.context 的 as_of_date（真实日期）；无日期时 fallback 今天
-        # （date.today()，有效 YYYY-MM-DD）。id 仍由 statement 唯一（hash(date+kind+subject)），
-        # 去重不受影响。
+        # 改造 A + A2：insight 的结构化正反证据（supporting/counter_evidence，带 weight）
+        # 纯规则映射、零 LLM（midterm 只消费）；经 _decouple_evidence 与 Stage B 定性
+        # 证据二选一入账，避免「insight LLM 观点既当先验（prior_confidence）又当似然」
+        # 双重计数。事件日取 run.context 的 as_of_date（真实日期）；无日期时 fallback
+        # 今天（date.today()，有效 YYYY-MM-DD）。id 仍由 statement 唯一
+        # （hash(date+kind+subject)），去重不受影响。
         as_of_date = str(run.context.get("as_of_date") or "") if run else ""
         if not as_of_date:
             as_of_date = date.today().isoformat()
         insight_evidence = adapt_insight_evidence(insight, symbol=symbol, date=as_of_date)
-        evidence = dedupe_events([*evidence, *insight_evidence])
+        evidence = _decouple_evidence(numeric_evidence, qualitative_evidence, insight_evidence)
 
         # 改造 D：insight.materiality_rank 作为 EV materiality 修正传入（critical 下行变量
         # 加深 bear）；insight 缺失时用 []（无修正）。LLM 边界不变：洞察层产出，midterm 只消费。

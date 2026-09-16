@@ -455,35 +455,28 @@ def get_decision(
     )
 
 
-def collect_evidence(
+def collect_evidence_split(
     symbol: str,
     thesis: str = "",
     window_texts: str | list[str] | None = None,
     *,
     model: Any = None,
     as_of_date: str = "",
-) -> list[EvidenceEvent]:
-    """收集 EvidenceEvent：数值类规则（纯规则）+ Stage A/B（LLM，失败降级）。
+) -> tuple[list[EvidenceEvent], list[EvidenceEvent]]:
+    """收集 EvidenceEvent，分通道返回 ``(numeric_evidence, qualitative_evidence)``。
 
     - 数值类（§6）：``build_numeric_evidence``（forecast/express/revision，纯规则禁 LLM）；
-    - 定性文本（§4）：``extract_facts`` → ``judge_facts`` → ``assemble_events``
-      （Stage A/B 两阶段，LLM 必需但带降级）；
-    - 任一环节失败（网络 / LLM / 解析）→ 该环节 evidence=[]（§8/§11 只降级不中断）。
+    - 定性文本（§4）：Stage A/B（LLM，失败降级）；
+    - 任一环节失败（网络 / LLM / 解析）→ 该通道 ``[]``（§8/§11 只降级不中断）。
 
-    Args:
-        symbol: 股票代码。
-        thesis: 核心假设 H（Stage B 方向判定依据；空 → 数值按符号、定性 neutral 退化）。
-        window_texts: 非结构化文本窗口（财报/预告/研报/公告/新闻正文）。
-        model: 可选注入的 LLM 实例（测试用）；缺省复用 ``create_structured_model``。
-        as_of_date: 数值类证据的事件日（YYYY-MM-DD）。
-
-    Returns:
-        去重后的 EvidenceEvent[]；全部失败 → []。
+    分通道动机（A2 先验-似然同源解耦）：调用方（``resolve_midterm_decision``）
+    需要区分 LLM 判断通道（Stage B 定性）与数据规则通道（数值），以便与
+    insight 证据二选一入账——避免同一个 LLM 观点既当先验又当似然双重计数。
+    ``collect_evidence`` 保持合并返回（向后兼容）。
     """
-    from alphabee.midterm.evidence_extractor import assemble_events, dedupe_events, extract_facts, judge_facts
+    from alphabee.midterm.evidence_extractor import dedupe_events
 
-    events: list[EvidenceEvent] = []
-
+    numeric: list[EvidenceEvent] = []
     # 1. 数值类规则（§6 纯规则禁 LLM）
     try:
         from alphabee.agents.facts.tools.expectation_fact import get_expectation_fact
@@ -492,20 +485,45 @@ def collect_evidence(
 
         exp_data = get_expectation_fact(symbol)
         consensus = build_consensus(symbol)
-        events.extend(build_numeric_evidence(exp_data, consensus, symbol=symbol, as_of_date=as_of_date))
+        numeric.extend(build_numeric_evidence(exp_data, consensus, symbol=symbol, as_of_date=as_of_date))
     except Exception:
         pass  # 数值类获取失败 → 无数值证据（不中断）
 
     # 2. 定性文本 Stage A/B（LLM 必需，失败降级）
+    qualitative: list[EvidenceEvent] = []
     if window_texts:
         try:
+            from alphabee.midterm.evidence_extractor import assemble_events, extract_facts, judge_facts
+
             facts = extract_facts(window_texts, symbol=symbol, model=model)
             judgments = judge_facts(facts, thesis=thesis, model=model)
-            events.extend(assemble_events(facts, judgments))
+            qualitative.extend(assemble_events(facts, judgments))
         except Exception:
             pass  # LLM 失败 → 无定性证据（§11 只降级不中断）
 
-    return dedupe_events(events)
+    return dedupe_events(numeric), dedupe_events(qualitative)
+
+
+def collect_evidence(
+    symbol: str,
+    thesis: str = "",
+    window_texts: str | list[str] | None = None,
+    *,
+    model: Any = None,
+    as_of_date: str = "",
+) -> list[EvidenceEvent]:
+    """收集 EvidenceEvent（合并通道）：数值类规则（纯规则）+ Stage A/B（LLM，失败降级）。
+
+    ``collect_evidence_split`` 的合并便捷入口（向后兼容）。需要区分 LLM 判断
+    通道与数据规则通道（A2 同源解耦）的调用方请直接用 ``collect_evidence_split``。
+
+    Returns:
+        去重后的 EvidenceEvent[]；全部失败 → []。
+    """
+    from alphabee.midterm.evidence_extractor import dedupe_events
+
+    numeric, qualitative = collect_evidence_split(symbol, thesis, window_texts, model=model, as_of_date=as_of_date)
+    return dedupe_events([*numeric, *qualitative])
 
 
 def get_decision_with_evidence(

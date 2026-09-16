@@ -14,7 +14,13 @@
 # 顶层只依赖 models（Pydantic），因此在此顶层导入不会触发 tushare/akshare 初始化副作用。
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
 from alphabee.midterm.classifier import ClassifierResult, classify_state
-from alphabee.midterm.decision_model import collect_evidence, evaluate, get_decision, get_decision_with_evidence
+from alphabee.midterm.decision_model import (
+    collect_evidence,
+    collect_evidence_split,
+    evaluate,
+    get_decision,
+    get_decision_with_evidence,
+)
 
 # state diff 引擎 + 持久化 + 消费方（D1–D4；数值核心纯规则禁 LLM）
 from alphabee.midterm.diff import DiffVelocity, diff, diff_series
@@ -159,6 +165,7 @@ __all__ = [
     "build_position",
     "classify_state",
     "collect_evidence",
+    "collect_evidence_split",
     "compress_scores",
     "evaluate",
     "get_decision",
