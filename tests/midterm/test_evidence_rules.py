@@ -178,16 +178,48 @@ def test_revision_zero_and_missing_no_event():
     assert build_numeric_evidence(None, {}) == []
 
 
-def test_revision_all_three_fields():
+def test_revision_compressed_to_strongest_per_fiscal_year():
+    # A1 相关证据压缩：fy1 的 1m/3m 窗口重叠 → 只保留 |幅度| 最大的一条（8.0）；
+    # fy2 属另一预测年度，独立保留一条（-2.0）。
     cons = {
         "eps_fy1_revision_1m": 4.0,
         "eps_fy1_revision_3m": 8.0,
         "eps_fy2_revision_1m": -2.0,
     }
     events = build_numeric_evidence(None, cons)
-    assert len(events) == 3
-    deltas = {e.confidence_delta for e in events}
-    assert deltas <= DISCRETE_DELTAS
+    assert len(events) == 2
+    fy1 = next(e for e in events if "FY1" in e.description)
+    fy2 = next(e for e in events if "FY2" in e.description)
+    assert "近3月" in fy1.description  # fy1 组内最强来自 3m 窗口
+    assert fy1.effect_on_thesis == "confirming"
+    assert fy1.confidence_delta == 0.3  # |8| → medium
+    assert fy2.effect_on_thesis == "refuting"
+    assert fy2.confidence_delta == 0.1  # |−2| → weak
+    assert {e.confidence_delta for e in events} <= DISCRETE_DELTAS
+
+
+def test_revision_opposite_signs_keep_strongest():
+    # A1：同组方向冲突（1m=+4 / 3m=−9）→ 按 |幅度| 决定（−9 胜出），不按字段数多数表决
+    events = build_numeric_evidence(None, {"eps_fy1_revision_1m": 4.0, "eps_fy1_revision_3m": -9.0})
+    assert len(events) == 1
+    assert events[0].effect_on_thesis == "refuting"
+    assert events[0].confidence_delta == 0.3  # |−9| → medium
+
+
+def test_duplicate_express_same_period_single_event():
+    # A1：同一报告期多条快报记录 → 取首条，只产一条证据（不重复累加 log-odds）
+    events = build_numeric_evidence(_exp(express=[_ex(np_yoy=18.0), _ex(ann="20240401", np_yoy=25.0)]))
+    assert len(events) == 1
+    assert events[0].date == "2024-03-20"  # 首条记录（_norm_date → ISO）
+    assert events[0].confidence_delta == 0.5  # |18| > 15 → strong
+
+
+def test_duplicate_forecast_same_period_single_event():
+    # A1：同一报告期多条预告记录 → 取首条，只产一条证据
+    events = build_numeric_evidence(_exp(forecast=[_fc(), _fc(ann="20240401", lo=20.0, hi=25.0)]))
+    assert len(events) == 1
+    assert events[0].date == "2024-01-30"  # 首条记录（_norm_date → ISO）
+    assert events[0].confidence_delta == 0.3  # 首条 midpoint 12.5 → medium
 
 
 # ─────────────────────────────────────────────────────────────────────────────

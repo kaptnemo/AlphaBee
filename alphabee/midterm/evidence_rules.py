@@ -19,6 +19,9 @@
 - 数值必须来自结构化字段（canonical），缺失/冲突置 ``None``，绝不静默回退为 0 或编造；
 - ``confidence_delta`` 只允许 weak=0.1 / medium=0.3 / strong=0.5 三个离散值（上限 0.7）；
 - 事件签名去重 ``id=hash(date+kind+主体+数值)``（§7），多来源合并 source_refs、同主题只算一次。
+- **相关证据压缩（A1）**：同一报告期（period）至多一条数值证据（express 覆盖 forecast、
+  各自期内取首条）；revision 的 1m/3m 窗口高度重叠（同一批分析师修正动量），
+  同一预测年度只保留 |幅度| 最大的一条——避免同源相关证据重复累加 log-odds 虚增置信度。
 """
 
 from __future__ import annotations
@@ -47,11 +50,12 @@ _REVISION_MEDIUM_MAX = 10.0  # 3–10% → medium；>10% → strong
 # 数值类证据统一受控 kind（§3：fundamental / expectation / trend / crowding / thesis / price）
 _KIND = "expectation"
 
-# revision 幅度字段（consensus canonical，§6「revision_1m 幅度」）
-_REVISION_FIELDS: tuple[str, ...] = (
-    "eps_fy1_revision_1m",
-    "eps_fy1_revision_3m",
-    "eps_fy2_revision_1m",
+# revision 字段按预测年度分组（A1 相关证据压缩）：1m/3m 窗口高度重叠
+# （同一批分析师修正动量），同一预测年度只保留 |幅度| 最大的一条；fy1 / fy2
+# 分属不同预测年度，各自保留一条。顺序即组内 tie-break 优先级。
+_REVISION_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("eps_fy1_revision_1m", "eps_fy1_revision_3m"),
+    ("eps_fy2_revision_1m",),
 )
 
 _REVISION_LABELS: dict[str, str] = {
@@ -265,7 +269,9 @@ def _express_evidence(
     events: list[EvidenceEvent] = []
     covered: set[str] = set()
 
-    for rec in express_records or []:
+    # A1 相关证据压缩：同一报告期多条快报记录 → 取首条（与 forecast 侧
+    # ``_index_by_period`` 同口径），保证每个 period 至多一条 beat/miss 证据。
+    for rec in _index_by_period(express_records).values():
         period = str(rec.get("period") or "").strip()
         actual = _to_float(rec.get("express_net_profit_yoy"))
         if actual is None:
@@ -322,7 +328,9 @@ def _forecast_evidence(
 ) -> list[EvidenceEvent]:
     """业绩预告（无对应快报）→ 预告方向证据（符号定方向，幅度用预告同比）。"""
     events: list[EvidenceEvent] = []
-    for rec in forecast_records or []:
+    # A1 相关证据压缩：同一报告期多条预告记录 → 取首条，保证每个 period
+    # 至多一条预告证据（重复快照不重复累加 log-odds）。
+    for rec in _index_by_period(forecast_records).values():
         period = str(rec.get("period") or "").strip()
         if period in covered_periods:
             continue  # 已有快报实际值 → beat/miss 已覆盖，同主题不重复计
@@ -354,23 +362,35 @@ def _revision_evidence(
     symbol: str,
     as_of_date: str,
 ) -> list[EvidenceEvent]:
-    """分析师盈利预测修正 → 方向证据（方向=符号，幅度离散标定 §6）。"""
+    """分析师盈利预测修正 → 方向证据（方向=符号，幅度离散标定 §6）。
+
+    A1 相关证据压缩：按预测年度分组，组内只保留 |幅度| 最大的一条
+    （最强证据）——1m/3m 窗口重叠，同源修正动量不重复累加 log-odds；
+    同组方向冲突时按幅度决定（信息量最大者胜），不按字段数多数表决。
+    """
     events: list[EvidenceEvent] = []
-    for field in _REVISION_FIELDS:
-        v = _to_float(values.get(field))
-        if v is None:
-            continue  # 防幻觉：无修正数值，不产事件
-        effect = _effect_from_sign(v)
+    for fields in _REVISION_GROUPS:
+        best_field: str | None = None
+        best_value: float | None = None
+        for field in fields:
+            v = _to_float(values.get(field))
+            if v is None:
+                continue
+            if best_value is None or abs(v) > abs(best_value):
+                best_field, best_value = field, v
+        if best_field is None or best_value is None:
+            continue  # 全缺失：不产事件（防幻觉）
+        effect = _effect_from_sign(best_value)
         if effect is EffectOnThesis.NEUTRAL:
             continue
         events.append(
             _make_event(
                 date=as_of_date,
-                subject=f"{symbol}:revision:{field}",
-                value=v,
-                description=_revision_description(field, v),
+                subject=f"{symbol}:revision:{best_field}",
+                value=best_value,
+                description=_revision_description(best_field, best_value),
                 effect=effect,
-                strength=_calibrate_revision(v),
+                strength=_calibrate_revision(best_value),
                 source_refs=[_revision_source(symbol)],
             )
         )
