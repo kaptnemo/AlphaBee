@@ -47,7 +47,7 @@ from alphabee.orchestrator.contracts import (
     ThesisArtifact,
     find_artifact_model,
 )
-from alphabee.orchestrator.gates import review_report, route_after_report_review
+from alphabee.orchestrator.gates import review_report
 from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.insights import synthesize_insights
@@ -382,18 +382,22 @@ _graph.add_conditional_edges(
 # 决策层产物先经独立 reporter 渲染成可读总结（完整落日志，暂不进报告），再回到主链出报告。
 _graph.add_edge("resolve_midterm_decision", "midterm_decision_reporter")
 _graph.add_edge("midterm_decision_reporter", "generate_report")
-_graph.add_edge("generate_report", "review_report")
+
+# 暂时不启用 report quality gate 回环
+# _graph.add_edge("generate_report", "review_report")
 # 整个主流程是单向串联，只有 report quality gate 允许一次受控回环。
 # 这样既能保留“先收集事实 → 再计算 → 再形成论点 → 再出报告”的业务顺序，
 # 又能在最终交付前对报告结构做一次纠偏。
-_graph.add_conditional_edges(
-    "review_report",
-    route_after_report_review,
-    {
-        "generate_report": "generate_report",
-        "finalize_message": "finalize_message",
-    },
-)
+# _graph.add_conditional_edges(
+#     "review_report",
+#     route_after_report_review,
+#     {
+#         "generate_report": "generate_report",
+#         "finalize_message": "finalize_message",
+#     },
+# )
+
+_graph.add_edge("generate_report", "finalize_message")
 _graph.add_edge("finalize_message", END)
 
 alphabee_agent = _graph.compile(store=InMemoryStore())
