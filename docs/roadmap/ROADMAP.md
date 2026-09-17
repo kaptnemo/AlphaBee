@@ -34,7 +34,7 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | Phase 3 Claim-Evidence Graph | ⬜ | 未实现；`gates.py` 已有 `evidence_coverage / grounding_score` 检查，但上游 Decision 普遍未填 `based_on / evidence_refs` |
 | Phase 4 ExpectationFitAgent | ⬜ | 未实现 |
 | Phase 5 报告备忘录化 | 🟡 | 报告已重构为“观点驱动”（`REPORT_GENERATOR_PROMPT`：insight 主线 + 12 章节 + 三情景 + 可证伪条件），LLM 空输出有确定性降级报告（`reporter.py` `build_deterministic_report`）；“系统问题”段仍在 CLI 暴露 |
-| 偏离控制框架（DEVIATION_CONTROL_FRAMEWORK） | 🟡 | 设计见 `docs/design/DEVIATION_CONTROL_FRAMEWORK.md`。**已提交**：F0 偏离分类法 + 跨 run 偏离账本（`261070b`/`fb3bced`）、F1 节点契约 + 6 个后置检测器（`49d027f`）、F1c 假设登记簿生产者 + 报告 gate 消费者（`15213cb`）、F1 结转与 F1c 认证更正（`458f975`/`42a8526`）。**已提交**：F2 恢复阶梯协议化 + 降级传导阻尼 + `DeviationSettings` 五段配置（`2186eb9` 8 路径）与其收尾 `insights.py` 降级写入统一 + 开关登记（`9573d09` 2 路径），经第三方独立认证（提交树 8/8 + 2/2 与认证值逐字相符）。**进行中**：F3 放大标注 + 加权边审计（`INSIGHT_CONFIDENCE_WEIGHTS` 显式化并收口 medium=0.92 + `audit_amplification` + Decision 发射点 + category 登记 + R2-8 切换）。**未开始**：F4 宏观环自动调度、F5 度量层 + per-symbol 画像 |
+| 偏离控制框架（DEVIATION_CONTROL_FRAMEWORK） | 🟡 | 设计见 `docs/design/DEVIATION_CONTROL_FRAMEWORK.md`。**已提交**：F0 偏离分类法 + 跨 run 偏离账本（`261070b`/`fb3bced`）、F1 节点契约 + 6 个后置检测器（`49d027f`）、F1c 假设登记簿生产者 + 报告 gate 消费者（`15213cb`）、F1 结转与 F1c 认证更正（`458f975`/`42a8526`）。**已提交**：F2 恢复阶梯协议化 + 降级传导阻尼 + `DeviationSettings` 五段配置（`2186eb9` 8 路径）与其收尾 `insights.py` 降级写入统一 + 开关登记（`9573d09` 2 路径），经第三方独立认证（提交树 8/8 + 2/2 与认证值逐字相符）。**已提交**：F3 放大标注 + 加权边审计（`681a216` 12 路径：`INSIGHT_CONFIDENCE_WEIGHTS` 显式化并收口 medium=0.92 + `audit_amplification` + `review_thesis` 发射点 + category 登记 + R2-8 切换）与其结转文案（`893b3b8` 2 路径，登记实际发射点并更正 `attach_amplification_audit` 文案）。**已提交**：F4 宏观环自动调度（`d65164f` 7 路径 2581 行：`alphabee/tracking/` 触发判定纯函数 + 一次性 reconcile 调度 + CLI + §9.4 红线 `require_human_confirm` 恒 `False` + §9.2 逐条反证强制入账），经第三方独立认证（提交树 7/7 与冻结锚逐字相符，verdict=pass 零 findings）。**未开始**：F5 度量层 + per-symbol 画像 |
 
 “当前关键问题”中的 #2（anomaly/conflict 进入 thesis）、#3（Report Generator 被限制为格式化器）、#4（Reviewer 维度覆盖落后）、#7（冲突状态边界）已解决：
 - `nodes/thesis.py` 全量传入 anomaly/conflict/verification/context，`engine.py` 已显式消费（0.2）。
@@ -49,6 +49,19 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | 日期 | 变更 | 依据 | 影响与回归面 |
 |---|---|---|---|
 | 2026-09-17 | `insight → thesis` 加权边的 medium 档乘数 **0.95 → 0.92**（同时提为模块常量 `alphabee/agents/thesis/engine.py::INSIGHT_CONFIDENCE_WEIGHTS`） | §14.4-A 与契约文案 `node_contracts.py:370` 两处早已登记 0.92，代码 0.95 为离群值 | medium 档 insight 对维度 confidence 的乘数略降（high/low 不变）；`min(factor, 0.85)` 的 F2 降级阻尼与"一档封顶"不受影响；受影响的既有断言见 `tests/orchestrator/test_degradation_damping.py` 与 F3 主测试的常量一致性用例 |
+
+> **F4 行为变更复核（2026-09-18）**：F4 期**未引入任何新的权重/阈值默认值** —— `DeviationSettings` 至今没有 `tracking` 段，`tracking/triggers.py::thresholds_from_settings()` 是**运行时** fail-open 读取（段缺失/异常 → `None` → 全部回落 midterm 既有默认；tv 档**不传参**给 `monitor_triggers`，用其自身默认常量），故本期无需新增登记行。将来若给 `deviation.tracking` 段写入默认值，须回到本表登记。
+
+### 偏离控制框架顺延项登记
+
+> 依据 `docs/design/DEVIATION_CONTROL_FRAMEWORK.md` §8.2／§14.8：设计有要求而 v1 未实现的点必须**具名登记**（写明「当前不可达／未实现」的依据与将来的收口条件），不得静默略过。
+
+| 期 | 顺延项 | 当前未实现／不可达的依据 | 收口条件 |
+|---|---|---|---|
+| F3 | `review_report` 侧的加权边审计发射点 | F3 的实际发射点唯一 = `review_thesis`（已在 `orchestrator/node_contracts.py` 的 `requirement` 内显式登记「设计面 auditor vs 实现面实际发射点」）；`review_report` 侧为零接线的具名顺延 | 报告层接入放大审计时补齐 |
+| F4 | **F4-L1 残余**：反证强制入账的「某侧只被**部分**引用」情形 | 已按**逐条**判定落地（`tracking/scheduler.py:321-339`：未被任何归因引用的每条证据各自补一条显式记账，`forced_sides` 同侧去重），并以 `test_partial_coverage_is_accounted_per_event` 钉住（变异非真空：退回旧「按侧 `any(...)` 守卫」该用例即报红）；但该情形在真实 midterm 路径上**当下不可达** —— `midterm/diff.py` 把 `new_evidence` 的全部 id 写进同一条归因 | midterm 改为按条归因后，该情形自动成为端到端可达路径（本模块无需改动，钉子已在位） |
+| F4 | **F4-L2**：`exit_conditions` 求值器（§9.3） | v1 不新增第二份判定，只复用 midterm `diff_consumers.check_exit` 的既有投影；`exit_conditions_met` 触发经 `MANUAL` 类别上报（payload 自报 `source`） | midterm 暴露 exit_conditions 求值器后接入 |
+| F4 | **F4-L3**：触发类型映射的代理标签 + 常驻循环 | `FINANCIAL_REPORT`/`ANNOUNCEMENT` 走 `*_proxy` 探测（payload 自报 `source`，不冒充确定来源）；`--loop` 是 §14.5-A 的**具名非目标**，CLI 显式拒绝（exit 2），不是待办缺陷 | 真实数据源接入后替换 proxy 探测；常驻循环另立一期 |
 
 ---
 
