@@ -191,24 +191,88 @@ def _verif(hypothesis_id: str, status: str):
     )
 
 
-def test_producer_ids_are_non_containing_by_construction():
-    """★ R3-3 判定（t21 前置检查）：生产端 id 由 ``_make_id`` 生成，形态为
-    ``<prefix>-<uuid4().hex[:12]>`` —— **定长 12 位十六进制**。同前缀 id 等长 ⇒ 任一 id
-    都不可能是另一个 id 的子串 ⇒ ``_node_payloads_referencing`` 的"序列化文本包含"匹配在
-    生产形态下**不可触发子串碰撞**（R3-3 记为"生产形态下不可触发"关闭）。
+def test_assumption_ids_are_passed_through_from_llm_hypotheses():
+    """★ R3-3 **立论更正**（t33）：假设 id 的真实来源是 ``HypothesisItem.id``——**LLM 自由字符串**，
+    而**不是** ``_make_id``。
 
-    本用例以真实生成器采样钉住该形态，防将来改成短 id / 递增 id 后静默回归。
+    **旧版用例（``test_producer_ids_are_non_containing_by_construction``）的前提是错的**：它采样
+    ``_make_id("hypothesis")`` 得到 ``hypothesis-<uuid4().hex[:12]>`` 定长形态，据此断言"同前缀等长
+    ⇒ 子串碰撞由构造保证不可触发"。但真实生产路径**从不调用该工厂**：
+    ``conflicts.build_provisional_assumptions`` 与 ``verification.build_assumption_registry`` 都是
+    ``AssumptionEntry(id=hypothesis.id)`` **直接透传 LLM 产出**（``agents/schemas.py`` 注入给 agent 的
+    示例 JSON 就是 ``"id": "h1"``；``HypothesisItem.id: str`` 无 uuid 生成、无格式校验）。
+    故 ``h1`` / ``h10`` 这类互为子串的短 id **真实可能出现**，旧结论"构造上不可触发"**不成立**。
+
+    **更正后的真实口径**：碰撞风险由**消费端**消除 —— ``detectors._id_occurs`` 用词边界（独立 token）
+    匹配，与 id 形态**无关**（t30 落地；探测器层由 ``test_referencing_match_is_word_bounded`` 钉住，
+    真实登记簿产物层由 ``test_real_short_ids_do_not_cross_match_on_registry_path`` 钉住）。
+    ``_make_id`` 仍是**本产物自身 id**（artifact id）的生成器，但**不能**用来论证假设 id 的形态。
     """
     import re
 
-    from alphabee.orchestrator.collectors import _make_id
+    from alphabee.orchestrator.nodes import conflicts as conflicts_node
+    from alphabee.orchestrator.nodes import verification as verification_node
 
-    ids = [_make_id("hypothesis") for _ in range(200)]
-    assert all(re.fullmatch(r"hypothesis-[0-9a-f]{12}", value) for value in ids)
-    assert len(set(ids)) == len(ids), "id 必须唯一"
-    for index, first in enumerate(ids):
-        for second in ids[index + 1 :]:
-            assert first not in second and second not in first, f"id 互为子串：{first} / {second}"
+    conflicts_result = _conflicts([("h1", "甲假设"), ("h10", "乙假设")])
+    hypotheses = list(conflicts_result.conflicts[0].hypotheses)
+
+    provisional = conflicts_node.build_provisional_assumptions(conflicts_result, "explore_conflicts")
+    settled = verification_node.build_assumption_registry(conflicts_result, hypotheses, {}, "verify_hypotheses")
+    assert provisional is not None and settled is not None
+
+    # ① 假设 id 逐字透传自 LLM 产出（故意用互为子串的 h1 / h10 —— 这是真实可能的形态）
+    for artifact in (provisional, settled):
+        assert [entry["id"] for entry in artifact.value["entries"]] == ["h1", "h10"]
+
+    # ② ``_make_id`` 在生产路径里只生成**产物自身** id（artifact id），不生成假设 id
+    assert re.fullmatch(r"artifact-[0-9a-f]{12}", provisional.id)
+    assert re.fullmatch(r"artifact-[0-9a-f]{12}", settled.id)
+
+
+def test_real_short_ids_do_not_cross_match_on_registry_path():
+    """★ R3-3 真实形态（LLM 短 id）在**真实登记簿产物**上的正反例。
+
+    登记簿由真实生产者产出：``h1`` 被判 invalidated、``h10`` 仍 active（二者互为子串）。
+    - 载荷引用 ``h10`` → **不得**报 D4（旧版"包含匹配"会因 ``h1 ⊂ h10`` 误报 → 过报 D4）；
+    - 载荷引用 ``h1`` → **必须**报 D4（真实引用不得漏报）。
+    """
+    from alphabee.orchestrator.detectors import NodeContext, assumption_still_valid
+    from alphabee.orchestrator.nodes import conflicts as conflicts_node
+    from alphabee.orchestrator.nodes import verification as verification_node
+
+    conflicts_result = _conflicts([("h1", "甲假设"), ("h10", "乙假设")])
+    hypotheses = list(conflicts_result.conflicts[0].hypotheses)
+    early = conflicts_node.build_provisional_assumptions(conflicts_result, "explore_conflicts")
+    late = verification_node.build_assumption_registry(
+        conflicts_result, hypotheses, {"h1": _verif("h1", "rejected")}, "verify_hypotheses"
+    )
+    assert early is not None and late is not None
+    assert {entry["id"]: entry["status"] for entry in late.value["entries"]} == {
+        "h1": "invalidated",
+        "h10": "active",
+    }
+
+    def _ctx(referenced: str) -> NodeContext:
+        return NodeContext(
+            node_id="run_thesis",
+            step=None,
+            new_artifacts=[
+                Artifact(
+                    id="artifact-ref",
+                    type=ArtifactType.THESIS_ANALYSIS,
+                    producer_step="run_thesis",
+                    value={"based_on": [referenced]},
+                )
+            ],
+            view={"artifacts": [early, late]},
+        )
+
+    not_referencing = assumption_still_valid(_ctx("h10"))
+    assert not_referencing.passed is True, "h10 是 h1 的超串，不得因包含匹配误报 D4"
+
+    referencing = assumption_still_valid(_ctx("h1"))
+    assert referencing.passed is False, "真实引用 h1 必须报 D4"
+    assert referencing.deviation_class is not None and referencing.deviation_class.value == "d4_state"
 
 
 def test_produced_entries_have_non_empty_statement():
