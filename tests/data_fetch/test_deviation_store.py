@@ -115,6 +115,16 @@ def test_deviation_event_table_registered_on_shared_base():
     assert "deviation_events" in Base.metadata.tables
 
 
+def test_deviation_ledger_is_reexported_from_data_fetch_package():
+    """包装层公共 API：`from alphabee.data_fetch import DeviationEvent, record_event` 必须可用。"""
+    import alphabee.data_fetch as data_fetch_package
+
+    assert data_fetch_package.DeviationEvent is DeviationEvent
+    for name in ("record_event", "mark_resolved", "list_events", "summarize_symbol", "purge_before"):
+        assert name in data_fetch_package.__all__
+        assert getattr(data_fetch_package, name) is getattr(store_mod, name)
+
+
 def test_deviation_event_columns_match_contract():
     assert set(DeviationEvent.__table__.columns.keys()) == set(_EVENT_COLUMNS)
 
