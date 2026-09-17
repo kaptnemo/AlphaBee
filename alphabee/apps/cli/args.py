@@ -90,6 +90,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="查看指定 task_id 的完整运行记录",
     )
+    parser.add_argument(
+        "--deviations",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="RUN_ID",
+        help="打印偏离账本时间线（只读视图，不运行流水线）；省略 RUN_ID 时取最近一次 run",
+    )
     return parser.parse_args()
 
 

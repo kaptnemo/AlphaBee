@@ -1,10 +1,11 @@
 """SQLAlchemy ORM models for data fetch failure tracking.
 
-Four tables:
+Five tables:
 - ``data_fetch_events``  — raw failure events (append-only)
 - ``data_fetch_issues``   — deduplicated, aggregated issue tickets
 - ``data_fix_tasks``      — actionable fix tasks for agents
 - ``deviation_events``    — 偏离账本（deviation-control framework §5.2）
+- ``deviation_metrics``   — 每 run 偏离指标（deviation-control framework §11.1，F5）
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -209,4 +211,40 @@ class DeviationEvent(Base):
             f"<DeviationEvent id={self.event_id} class={self.deviation_class} "
             f"category={self.category} count={self.occurrence_count} "
             f"resolved={self.resolved}>"
+        )
+
+
+class DeviationMetric(Base):
+    """每 run 偏离指标行（deviation-control framework §11.1 / §14.5-B，F5）。
+
+    与 ``DeviationEvent`` 共享同一 ``Base`` / ``init_db()`` / ``DATA_FETCH_DB_PATH``，
+    独立表名 ``deviation_metrics``：**只新增表**，既有表结构一字不动（回滚 = drop 本表，
+    或把 ``deviation.ledger.enabled`` 关掉 ⇒ 零写入）。
+
+    身份是 ``run_id``（唯一）：run 尾部的度量 sink 重放时按 ``run_id`` **upsert**，
+    不会为同一 run 堆出多行（与账本的指纹去重同一思路，但度量是"每 run 一行"而非累计计数）。
+
+    八列数值口径见 ``alphabee/orchestrator/services/telemetry.py`` 的模块 docstring；
+    ``None`` = 分母缺失（§14.5-B：缺失分母不得静默回退 0）。
+    """
+
+    __tablename__ = "deviation_metrics"
+
+    metric_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    detection_rate: Mapped[float | None] = mapped_column(Float)
+    mean_detection_latency: Mapped[float | None] = mapped_column(Float)
+    recovery_rate: Mapped[float | None] = mapped_column(Float)
+    recovery_half_life: Mapped[float | None] = mapped_column(Float)
+    amplification_overturn_rate: Mapped[float | None] = mapped_column(Float)
+    on_track_curve: Mapped[list[float] | None] = mapped_column(JSON)
+    budget_consumption: Mapped[float | None] = mapped_column(Float)
+    silent_degradation_rate: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<DeviationMetric run={self.run_id} detection_rate={self.detection_rate} "
+            f"recovery_rate={self.recovery_rate}>"
         )

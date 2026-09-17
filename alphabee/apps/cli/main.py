@@ -22,6 +22,21 @@ from alphabee.utils import configure_logging
 from alphabee.workflow import render_monitor_report, run_framework_monitor
 
 
+def print_deviations_view(run_id: str | None) -> None:
+    """打印偏离账本时间线（F5，§14.5-B / §15 验收 1 的只读视图）。
+
+    * ``run_id`` 为 ``None``/空 → 取账本中最近一次 run（``latest_run_id``）；仍无 → 渲染确定性空视图；
+    * **只读**：不改编排、不触发 run、不写库；§14.8 PR8 的回滚方式就是"不调用即可"；
+    * import 推迟到本函数内：只有真的要看偏离视图时才拉起 ``data_fetch``/SQLAlchemy 链，
+      避免给普通查询/对话路径增加 import 成本。
+    """
+    from alphabee.orchestrator.services.telemetry import latest_run_id, render_deviation_timeline
+
+    print()
+    print(render_deviation_timeline(run_id or latest_run_id() or ""))
+    print()
+
+
 def main() -> None:
     args = parse_args()
     if args.monitor_framework and not args.symbol:
@@ -59,6 +74,11 @@ def main() -> None:
         print(color("  💡 最终回答", Color.BOLD, Color.GREEN))
         print(render_monitor_report(result))
         print_footer(1, time.monotonic() - start_ts, enhance=False, llm_review=False, midterm=False)
+        return
+
+    # ── 偏离账本时间线（只读视图，F5）──
+    if args.deviations is not None:
+        print_deviations_view(args.deviations)
         return
 
     # ── Task records CLI ──
