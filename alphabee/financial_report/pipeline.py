@@ -228,11 +228,14 @@ def download_report_pdf(
             raise RuntimeError(f"Failed to download report PDF by encoded_url: {encoded_url}")
         return Path(output["path"])
 
-    # pdf_url 直链下载
+    # pdf_url 直链下载（巨潮 static 需带 UA/Referer，否则返回 403）
     assert pdf_url is not None
     if not pdf_url.lower().startswith(("http://", "https://")):
         raise ValueError(f"Unsupported PDF URL scheme: {pdf_url}")
-    with requests.get(pdf_url, stream=True, timeout=timeout) as response:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if "cninfo.com.cn" in pdf_url:
+        headers["Referer"] = "https://www.cninfo.com.cn/"
+    with requests.get(pdf_url, headers=headers, stream=True, timeout=timeout) as response:
         response.raise_for_status()
         content = response.content
     if not content.startswith(b"%PDF-"):

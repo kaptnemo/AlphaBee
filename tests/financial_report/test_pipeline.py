@@ -146,6 +146,8 @@ def test_download_report_pdf_from_url(tmp_path, monkeypatch):
         def __exit__(self, *exc):
             return False
 
+    sent_headers: list[dict[str, str]] = []
+
     class FakeRequests:
         def __init__(self, *args, **kwargs):
             pass
@@ -156,14 +158,54 @@ def test_download_report_pdf_from_url(tmp_path, monkeypatch):
         def __exit__(self, *exc):
             return False
 
-        def get(self, url, stream=True, timeout=60):
+        def get(self, url, stream=True, timeout=60, headers=None):
             assert url.startswith("http")
+            sent_headers.append(dict(headers or {}))
             return FakeResponse()
 
     monkeypatch.setattr(pipeline.requests, "get", FakeRequests().get)
     path = pipeline.download_report_pdf(pdf_url="https://example.com/报告.pdf", dest_dir=tmp_path / "out")
     assert path.name == "报告.pdf"
     assert path.read_bytes() == b"%PDF-1.4 from url"
+    # ★ T37 钉住采纳后的直链请求头：统一带 UA；**非巨潮**不带 Referer
+    assert sent_headers == [{"User-Agent": "Mozilla/5.0"}]
+
+
+def test_download_report_pdf_from_cninfo_url_sends_referer(tmp_path, monkeypatch):
+    """★ T37 钉住：巨潮 static 直链必须带 `Referer`（否则 403）—— 采纳的外部改动由此获得测试保障。
+
+    对照组（非巨潮 URL）**只带 UA、不带 Referer**，避免把"所有站点都加 Referer"这类误改放进来。
+    """
+    sent_headers: list[dict[str, str]] = []
+
+    class FakeResponse:
+        content = b"%PDF-1.4 cninfo"
+
+        def raise_for_status(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_get(url, stream=True, timeout=60, headers=None):
+        assert url.startswith("http")
+        sent_headers.append(dict(headers or {}))
+        return FakeResponse()
+
+    monkeypatch.setattr(pipeline.requests, "get", fake_get)
+    cninfo_url = "https://static.cninfo.com.cn/finalpage/2026-09-18/1234567890.PDF"
+    path = pipeline.download_report_pdf(pdf_url=cninfo_url, dest_dir=tmp_path / "out")
+    assert path.read_bytes() == b"%PDF-1.4 cninfo"
+    assert sent_headers[-1]["User-Agent"] == "Mozilla/5.0"
+    assert sent_headers[-1]["Referer"] == "https://www.cninfo.com.cn/"
+
+    sent_headers.clear()
+    other = pipeline.download_report_pdf(pdf_url="https://example.com/x.pdf", dest_dir=tmp_path / "out2")
+    assert other.name == "x.pdf"
+    assert sent_headers[-1] == {"User-Agent": "Mozilla/5.0"}  # 非巨潮：无 Referer
 
 
 # ── 全链路 ─────────────────────────────────────────────────────────────────
