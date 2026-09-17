@@ -361,6 +361,19 @@ def get_contract(node_id: str | None) -> NodeContract | None:
 
 
 # ── 放大审计覆盖表（§8.1；F3 实装，本表是 CI 可执行投影） ─────────────────────
+#
+# **两个面必须分开读（F3-1 结转，t64 登记）**：
+#
+# * ``auditor`` —— **设计面**（§8.1 表「审计要求」列指定的节点）。取值受 F1 已认证测试
+#   ``tests/orchestrator/test_node_contracts.py::_EXPECTED_AUDITORS`` 钉住，**不得改动**；
+# * ``requirement`` 里标注的 **实际发射点** —— **实现面**（哪个节点真正产出
+#   ``Decision(maker="amplification_audit")``）。F3 把§8.1 **四条边**的审计分支统一实现在
+#   ``reviewer.audit_amplification``，并由 ``review_thesis`` 节点发射 Decision。
+#
+# 因此对 ``anomaly->fact_values->signal`` 与 ``insight->report`` 两条边：``auditor`` 写的是
+# ``review_report``，而其 ``review_report`` 侧**零接线**（该节点不产出 audit Decision）——
+# 已在对应条目的 ``requirement`` 中**逐条显式登记**为**具名顺延项**（F4/F5 结转），
+# 避免下游读者或 F5 的 per-node 画像误以为这两条边由 ``review_report`` 审计。
 
 AMPLIFICATION_AUDIT: dict[str, AmplificationAuditBinding] = {
     "insight->thesis": AmplificationAuditBinding(
@@ -375,7 +388,11 @@ AMPLIFICATION_AUDIT: dict[str, AmplificationAuditBinding] = {
         auditor="review_report",
         check="anomaly_projection_trace",
         weight="异常投影触发 signal 规则；投影必须记 source=anomaly_engine",
-        requirement="投影时记录 source=anomaly_engine，review 抽查伪异常率",
+        requirement=(
+            "投影时记录 source=anomaly_engine，review 抽查伪异常率"
+            "（F3-1 登记：**实际发射点 = review_thesis** —— F3 经该节点的 audit_amplification "
+            "分支统一审计并发射 Decision；`review_report` 侧为**具名顺延项（零接线）**，F4/F5 结转）"
+        ),
     ),
     "verified_conflict->dimension_score": AmplificationAuditBinding(
         edge="verified_conflict->dimension_score",
@@ -389,7 +406,12 @@ AMPLIFICATION_AUDIT: dict[str, AmplificationAuditBinding] = {
         auditor="review_report",
         check="core_view_direction_consistency",
         weight="core_view 主导全文表达（无显式系数，α 由观点强度决定）",
-        requirement="report gate 已有 cross_source_consistency，补主线 vs thesis 判断方向一致性检查",
+        requirement=(
+            "report gate 已有 cross_source_consistency，补主线 vs thesis 判断方向一致性检查"
+            "（F3-1 登记：**实际发射点 = review_thesis** —— F3 经该节点的 audit_amplification "
+            "分支做主线方向代理判读并发射 Decision，报告产物此时尚未生成；"
+            "`review_report` 侧为**具名顺延项（零接线）**，F4/F5 结转）"
+        ),
     ),
 }
 

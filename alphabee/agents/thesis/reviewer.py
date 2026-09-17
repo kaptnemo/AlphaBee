@@ -945,10 +945,18 @@ def attach_amplification_audit(
 ) -> AmplificationAudit | None:
     """把 §8 审计结论挂到已构造好的 ``review.amplification_audit``（append-only 字段）。
 
-    使用场景：调用方的 ``review()`` 实现**不接受** ``amplification=`` 关键字（既有窄签名测试替身 /
-    旧实现），由 ``review_thesis`` 节点在拿到 review 之后补挂，语义与 ``review()`` 挂钩路径一致。
+    **定位：库级 API，不是生产发射点（F3-2 结转，t64）。** 生产路径**唯一** =
+    ``review_thesis`` 节点经 :meth:`ThesisReviewer.review` 的 ``amplification=`` 参数**一次成文**：
+    t61 起该关键字由节点**硬传**（开关关闭时传 ``None``），签名不匹配会立刻 ``TypeError`` ——
+    早期那套"探测签名、不支持则回退到本函数补挂"的路径**已删除**，不得再引入。本函数因此
+    不再承担任何生产分支，保留它只有两个用途：
 
-    * ``context is None`` → **严格 no-op**（返回 ``None``，不改 ``review`` 任何字段）；
+    1. **等价性钉住**：``test_hook_path_and_attach_path_produce_identical_audits`` 用它产出与
+       ``review()`` 挂钩路径**逐字段相同**的结论，防止两条路径口径漂移；
+    2. **调用方自行补挂**：不走 ``review_thesis`` 节点的库使用者，拿到 ``ThesisReview`` 后可显式
+       把审计挂上去，无需重新实现判读逻辑。
+
+    * ``context is None``（或空 context）→ **严格 no-op**（返回 ``None``，不改 ``review`` 任何字段）；
     * 审计自身异常 → fail-open（见 :func:`_audit_with_context`）。
 
     :returns: 挂上的审计结论（或 ``None``）。
