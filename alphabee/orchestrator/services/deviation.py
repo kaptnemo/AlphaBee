@@ -115,6 +115,14 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "midterm_decision_failed": DeviationClass.D5_CONTROL,
     "midterm_decision_report_failed": DeviationClass.D5_CONTROL,
     "failure": DeviationClass.D5_CONTROL,
+    # ── F1b：后置检测器产出的稳定 category（§6.2；与检测器自身上报的 class 同源）
+    "derived_facts_empty": DeviationClass.D1_DATA,
+    "report_input_missing": DeviationClass.D1_DATA,
+    "artifact_schema_invalid": DeviationClass.D2_STRUCTURE,
+    "insight_missing": DeviationClass.D2_STRUCTURE,
+    "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
+    # 现网（F1b）：报告结论可能依赖已证伪假设（gates.py 的 §6.3 检查）
+    "assumption_based_claim": DeviationClass.D3_ARGUMENT,
 }
 
 #: 未知 category 的保守回退：归为结构偏离（§14.1-B）。宁可少分类，不猜测语义。

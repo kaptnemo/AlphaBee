@@ -61,6 +61,7 @@ from alphabee.orchestrator.nodes.thesis import run_thesis
 from alphabee.orchestrator.nodes.verification import verify_hypotheses
 from alphabee.orchestrator.reporter import generate_report
 from alphabee.orchestrator.services.company_context import build_company_context
+from alphabee.orchestrator.services.detection import with_deviation_detection
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import make_id
 
@@ -354,16 +355,18 @@ _graph.add_node("collect_raw_facts", collect_raw_facts)
 _graph.add_node("resolve_industry_context", resolve_industry_context)
 _graph.add_node("resolve_company_track", resolve_company_track)
 _graph.add_node("resolve_driver_profile", resolve_driver_profile)
-_graph.add_node("run_analysis_engines", run_analysis_engines)
-_graph.add_node("explore_conflicts", explore_conflicts)
-_graph.add_node("verify_hypotheses", verify_hypotheses)
-_graph.add_node("synthesize_insights", synthesize_insights)
-_graph.add_node("run_thesis", run_thesis)
-_graph.add_node("review_thesis", review_thesis)
+# 契约声明的出口检测器在**注册处**包装（§14.2-C）：零侵入节点函数体、可全局开关
+# （`deviation.detection.enabled`，F2 落配置前由 fail-open 读取默认开启）。
+_graph.add_node("run_analysis_engines", with_deviation_detection("run_analysis_engines", run_analysis_engines))
+_graph.add_node("explore_conflicts", with_deviation_detection("explore_conflicts", explore_conflicts))
+_graph.add_node("verify_hypotheses", with_deviation_detection("verify_hypotheses", verify_hypotheses))
+_graph.add_node("synthesize_insights", with_deviation_detection("synthesize_insights", synthesize_insights))
+_graph.add_node("run_thesis", with_deviation_detection("run_thesis", run_thesis))
+_graph.add_node("review_thesis", with_deviation_detection("review_thesis", review_thesis))
 _graph.add_node("resolve_midterm_decision", resolve_midterm_decision)
 _graph.add_node("midterm_decision_reporter", report_midterm_decision)
-_graph.add_node("generate_report", generate_report)
-_graph.add_node("review_report", review_report)
+_graph.add_node("generate_report", with_deviation_detection("generate_report", generate_report))
+_graph.add_node("review_report", with_deviation_detection("review_report", review_report))
 _graph.add_node("record_deviations", record_deviations)
 _graph.add_node("finalize_message", finalize_message)
 

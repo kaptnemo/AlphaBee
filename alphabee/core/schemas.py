@@ -84,6 +84,10 @@ class ArtifactType(enum.StrEnum):
     DRIVER_PROFILE = "driver_profile"  # 公司驱动画像（domain_context：playbook + 激活原语）
     MIDTERM_DECISION = "midterm_decision"  # 中期决策：S0–S5 认知状态 + 置信度 + 证据日志（CompanyStateArtifact）
     MIDTERM_DECISION_SUMMARY = "midterm_decision_summary"  # 中期决策的确定性可读总结（只进日志/载荷，不进报告）
+    # 假设登记簿（偏离控制框架 §6.3 / §14.2-D）：本 run 内被显式登记的假设及其生命周期状态
+    # （active / invalidated / confirmed）。生产者：conflicts / verification；只读消费者：
+    # synthesize_insights / run_thesis / gates。F0 之后**只新增成员**，既有成员值不变。
+    ASSUMPTION_REGISTRY = "assumption_registry"
 
 
 # Canonical mapping from the ``ArtifactType`` to a role group.
@@ -109,6 +113,7 @@ _ARTIFACT_TYPE_TO_ROLE_GROUP: dict[ArtifactType | str, ArtifactRoleGroup] = {
     ArtifactType.DRIVER_PROFILE: ArtifactRoleGroup.DATA,
     ArtifactType.MIDTERM_DECISION: ArtifactRoleGroup.DECISION,
     ArtifactType.MIDTERM_DECISION_SUMMARY: ArtifactRoleGroup.DECISION,
+    ArtifactType.ASSUMPTION_REGISTRY: ArtifactRoleGroup.DATA,
     # Legacy / external types kept for backward compatibility:
     "fundamental_analysis": ArtifactRoleGroup.DATA,
     "market_analysis": ArtifactRoleGroup.DATA,

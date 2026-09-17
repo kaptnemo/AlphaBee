@@ -171,6 +171,55 @@ class MidtermDecisionSummaryArtifact(BaseModel):
     degraded: bool = False
 
 
+#: 假设生命周期状态（§6.3）：``active`` 生效中 / ``invalidated`` 已被证伪 / ``confirmed`` 已被证实。
+ASSUMPTION_STATUS_ACTIVE = "active"
+ASSUMPTION_STATUS_INVALIDATED = "invalidated"
+ASSUMPTION_STATUS_CONFIRMED = "confirmed"
+ASSUMPTION_STATUSES: tuple[str, ...] = (
+    ASSUMPTION_STATUS_ACTIVE,
+    ASSUMPTION_STATUS_INVALIDATED,
+    ASSUMPTION_STATUS_CONFIRMED,
+)
+
+
+class AssumptionEntry(BaseModel):
+    """假设登记簿条目（§6.3）：把"研究前提"显式化，才有检查它何时失效的抓手。
+
+    D4（状态偏离）的根因是"假设没被登记，就无从检查它失效"。本结构是最小落地：
+    ``conflicts`` / ``verification`` 在产假设时登记（``active``），后续节点（尤其
+    ``synthesize_insights`` / ``run_thesis``）消费前检查——已 ``invalidated`` 的假设
+    不得再作为论证前提，除非显式引用反驳证据；报告 gate 另做 D3 检查。
+
+    字段全部带默认值，且**只 append**：历史 JSON（无新字段）可直接校验通过。
+    """
+
+    id: str
+    statement: str = ""  # 如"应收增长源于军工结算周期而非恶化"
+    status: str = ASSUMPTION_STATUS_ACTIVE  # active | invalidated | confirmed
+    source_artifact: str = ""  # 从哪个 artifact 提出
+    invalidated_by: str = ""  # 被哪个 evidence/issue 证伪
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: Any) -> Any:
+        """把状态归一化到小写已知值；未知值一律保守回退 ``active``（不因脏数据误判失效）。"""
+        if value is None:
+            return ASSUMPTION_STATUS_ACTIVE
+        normalized = str(value).strip().lower()
+        return normalized if normalized in ASSUMPTION_STATUSES else ASSUMPTION_STATUS_ACTIVE
+
+
+class AssumptionRegistryArtifact(BaseModel):
+    """假设登记簿 artifact 载荷（``ArtifactType.ASSUMPTION_REGISTRY``）。"""
+
+    entries: list[AssumptionEntry] = Field(default_factory=list)
+
+    @property
+    def invalidated(self) -> list[AssumptionEntry]:
+        """已证伪的假设条目（只读视图；顺序保持登记顺序）。"""
+        return [entry for entry in self.entries if entry.status == ASSUMPTION_STATUS_INVALIDATED]
+
+
 class ReportArtifact(ReportOutput):
     """Typed final report artifact payload."""
 

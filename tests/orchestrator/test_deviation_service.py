@@ -73,6 +73,13 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "midterm_decision_failed": DeviationClass.D5_CONTROL,
     "midterm_decision_report_failed": DeviationClass.D5_CONTROL,
     "failure": DeviationClass.D5_CONTROL,
+    # ── F1b：后置检测器与报告 gate 的稳定 category（§6.2 / §6.3）
+    "derived_facts_empty": DeviationClass.D1_DATA,
+    "report_input_missing": DeviationClass.D1_DATA,
+    "artifact_schema_invalid": DeviationClass.D2_STRUCTURE,
+    "insight_missing": DeviationClass.D2_STRUCTURE,
+    "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
+    "assumption_based_claim": DeviationClass.D3_ARGUMENT,
 }
 
 # 确实未登记的 category（只允许走 D2 保守兜底）：历史/外部来源或尚未命名的类目。
@@ -216,27 +223,57 @@ def test_class_by_category_matches_documented_table():
 
 
 def _issue_producer_categories() -> dict[str, list[str]]:
-    """扫描 ``alphabee/`` 里所有 ``Issue(category="...")`` 生产点 → {category: [位置]}。
+    """扫描 ``alphabee/`` 里**三种** category 声明形态 → ``{category: [位置]}``。
 
-    只认函数/类名为 ``Issue`` 的调用（排除 ``IssueRecord`` / ``ReportIssuePayload`` /
-    ``DeviationEvent`` / web_search_guard 的 ``_ScanRule`` 等其它同名关键字）。
+        采集面（F0 review 后加固；此前只认形态①，装饰器声明的 category 会被漏掉）：
+
+        1. ``Issue(category="...")`` —— 直接构造 issue 的节点/gate；
+        2. ``@detector(name, category)`` —— **F1b 检测器的真实声明机制**，``category`` 是
+           **第二个位置参数**，不经 ``Issue(...)``，故必须单独采集；
+        3. ``record_deviation(..., category="...")`` —— 统一上报入口。
+
+        只认函数/类名为 ``Issue`` / ``record_deviation`` 的调用（排除 ``IssueRecord`` /
+        ``ReportIssuePayload`` / ``DeviationEvent`` / web_search_guard 的 ``_ScanRule`` 等其它同名关键字）。
+
+    **F0 自包含约束（重要）**：本文件属 F0 认证集（锚 ``fb3bced``），**禁止 import 任何 F1 模块
+        （如 ``orchestrator.detectors``）** —— 否则在 ``fb3bced`` 上重跑 F0 认证会因模块不存在而失败、
+        破坏双锚点记账。因此这里只做**纯源码 AST 扫描**（形态①/②/③），
+        「注册表 category 必须已登记」的**运行时**断言落在 ``tests/orchestrator/test_detectors.py``。
     """
     found: dict[str, list[str]] = {}
+
+    def _record(category: object, path: Path, lineno: int) -> None:
+        if isinstance(category, str):
+            found.setdefault(category, []).append(f"{path.relative_to(_REPO_ROOT)}:{lineno}")
+
+    def _decorator_category(node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """形态②：``@detector("name", "category")`` 的第二个位置参数。"""
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            func = decorator.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name != "detector" or len(decorator.args) < 2:
+                continue
+            second = decorator.args[1]
+            if isinstance(second, ast.Constant):
+                _record(second.value, path, decorator.lineno)
+
     for path in sorted((_REPO_ROOT / "alphabee").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _decorator_category(node)
+                continue
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name != "Issue":
+            if name not in {"Issue", "record_deviation"}:
                 continue
             for keyword in node.keywords:
                 if keyword.arg == "category" and isinstance(keyword.value, ast.Constant):
-                    if isinstance(keyword.value.value, str):
-                        found.setdefault(keyword.value.value, []).append(
-                            f"{path.relative_to(_REPO_ROOT)}:{node.lineno}"
-                        )
+                    _record(keyword.value.value, path, node.lineno)
     return found
 
 
