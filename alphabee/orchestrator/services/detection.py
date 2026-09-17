@@ -42,6 +42,13 @@ _DEFAULT_DETECTION_ENABLED = True
 def detection_switches() -> bool:
     """读取检测开关（§14.6 ``deviation.detection.enabled``），容忍配置缺失。
 
+    **R2-6 口径定稿（择"改文档口径"侧，保持裸 ``bool``）**：与
+    :func:`alphabee.orchestrator.nodes.record_deviations.ledger_switches` 返回
+    ``tuple[bool, bool]`` 的差异是**刻意**的——账本侧 §14.6 定义了**两个**开关
+    （``enabled`` + ``fingerprint_normalize``），检测侧只有**一个**；为对称而包成元组会迫使
+    所有调用点解包，属无收益复杂度。两者真正共有的契约是三条：运行时逐层 ``getattr``、
+    缺失/异常 → 默认 ``True``、**模块级不读配置**。
+
     运行时读取 ``get_settings().deviation.detection``；配置段/字段不存在或读取异常 →
     ``True``（fail-open，与 §14.6 默认一致）。``DeviationSettings`` 由 F2 落地，
     因此这里必须容忍 ``AttributeError`` 而不是假定字段存在。
@@ -116,6 +123,7 @@ def _detect(node_id: str, state: dict[str, Any] | None, update: Any) -> Any:
             node_id=node_id,
             step=_last_step(update),
             new_artifacts=list(update.get("artifacts") or []),
+            new_decisions=list(update.get("decisions") or []),
             view=_merge_state_view(state, update),
         )
         issues = run_detectors(contract, ctx)

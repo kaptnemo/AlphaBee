@@ -27,11 +27,21 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from alphabee.core.schemas import Artifact, ArtifactType, DeviationClass, Issue, IssueScope, IssueSeverity, Step
+from alphabee.core.schemas import (
+    Artifact,
+    ArtifactType,
+    Decision,
+    DeviationClass,
+    Issue,
+    IssueScope,
+    IssueSeverity,
+    Step,
+)
 from alphabee.orchestrator.contracts import (
     AnomalyReportArtifact,
     AssumptionRegistryArtifact,
@@ -78,6 +88,10 @@ class NodeContext:
     node_id: str
     step: Step | None
     new_artifacts: list[Artifact] = field(default_factory=list)
+    #: 本节点**本次新增**的 Decision（§14.2-B「被本节点引用」的第 ② 类载荷）。
+    #: 判定只看 ``evidence_refs`` / ``based_on`` 里是否出现假设 id。
+    #: 类型标注为真实模型（t36，依 t31 finding T31-4）：与 ``new_artifacts: list[Artifact]`` 对称。
+    new_decisions: list[Decision] = field(default_factory=list)
     view: dict[str, Any] = field(default_factory=dict)
 
 
@@ -297,14 +311,18 @@ def evidence_refs_present(ctx: NodeContext) -> DetectionResult:
     * **差异**：本节点**之外**的节点产出的 verdict 也会被计入；
     * **方向：过报（误归属）** —— 「别的节点产的无证据 verdict」会在**本节点**被判 D3，
       且 ``Issue.detected_at_step`` 记为**检测节点**；
-    * **根因**：``Decision`` 无节点关联字段，且 ``NodeContext``（§14.2-C）只提供 ``new_artifacts``
-      ⇒ 现接口**无法**区分"本次新增"的 decision；
-    * **处置**：本轮**只披露、不改行为**（改动会连带影响 :func:`assumption_still_valid` 的
-      Decision 侧口径，属 R2-4 已裁定的"后续期"范围）。
-    * **F3 后必须复核**：``run_thesis`` 亦声明了本检测器，而 F3 将引入 ``amplification_audit``
-      生产者 ⇒ 跨节点误归属届时**成活**并污染 F5 的 per-node 画像。正解是给 ``NodeContext``
-      增补 ``new_decisions``（包装器取 ``list(update.get("decisions") or [])``，与 ``new_artifacts``
-      同模式），届时本检测器与 ``assumption_still_valid`` 应一并切换。
+    * **根因（t36 口径更正，依 t31 finding T31-2）**：``Decision`` 无节点关联字段；而 ``NodeContext``
+      现**已**提供 ``new_decisions``（t30 增补，包装器取 ``list(update.get("decisions") or [])``，
+      与 ``new_artifacts`` 同模式）⇒ 剩余根因是"**本检测器尚未切换**"，**不再是接口缺失**
+      （旧表述曾称根因为"``NodeContext`` 只提供 ``new_artifacts``"，与同文件现状自相矛盾，已删）。
+    * **处置**：本轮**只披露、不改行为**（切换会连带影响 :func:`assumption_still_valid` 的
+      Decision 侧口径与既有钉住用例，属独立变更集）。
+    * **F3 门验收项（已登记，t36 登记、由 F3 门承接）**：F3 将引入 ``amplification_audit`` 生产者
+      ⇒ 跨节点误归属届时**成活**并污染 F5 的 per-node 画像。故 **F3 门必须完成**：
+      ① 本检测器改用 ``ctx.new_decisions``（与 :func:`assumption_still_valid` 一并切换）；
+      ② ``test_evidence_refs_present_known_limitation_cross_node_overreport`` 由"刻意断言过报"
+        **翻转**为断言**不报**（该用例现仍钉住当前行为，见其 docstring）；
+      ③ 复核 ``run_thesis`` 亦声明本检测器这一事实。
     """
     name = "evidence_refs_present"
     decisions = ctx.view.get("decisions") or []
@@ -361,19 +379,74 @@ def downstream_inputs_present(ctx: NodeContext) -> DetectionResult:
 # ── 检测器 6：assumption_still_valid（§6.2，D4） ────────────────────────────
 
 
+def _id_occurs(blob: str, assumption_id: str) -> bool:
+    """假设 id 是否作为**独立 token** 出现在载荷中（词边界匹配，§14.2-B「被本节点引用」）。
+
+    边界类**不含下划线**（``(?<![0-9A-Za-z])`` / ``(?![0-9A-Za-z])``，T31-6 修复）：
+
+    * 必须**捕获**：裸 token、JSON 值（``"h1"``）、CJK 相邻（``基于h1推断``）、下划线分隔
+      （``x_h1`` / ``h1_x`` / ``h1_notes`` —— 复合键与提示词文本的常见形态）；
+    * 必须**排除**：字母数字相邻的子串碰撞（``h10`` / ``abch1`` / ``h1x``）。
+
+    初版（t30）曾把 ``_`` 计入边界类，使 ``x_h1`` / ``h1_x`` 这类真实引用形态**漏报** —— 相对
+    改造前的子串匹配构成**窄漏报回归**（漏报让已证伪假设静默通过，方向比过报更危险）。去掉 ``_``
+    后真实捕获面**不小于**改造前，同时保住碰撞排除；两个方向都有边界矩阵用例钉住。
+
+    **残余权衡（如实披露，不掩盖）**：若两个 id 仅以 ``_`` 相连的后缀相异（如 ``h1`` 与 ``h1_a``
+    并存），引用 ``h1_a`` 时仍会命中 ``h1``（过报方向）。这是"序列化文本包含判定"的固有极限，
+    由 F3 已登记的结构化匹配（改用 ``ctx.new_decisions`` + 结构化字段比对）收敛。
+    """
+    return re.search(rf"(?<![0-9A-Za-z]){re.escape(assumption_id)}(?![0-9A-Za-z])", blob) is not None
+
+
+def _ref_text(value: Any) -> str:
+    """把 ``Decision`` 的引用载荷规整为可扫描文本。
+
+    ``based_on`` 是 ``list[str]``；``evidence_refs`` 是 ``list[EvidenceRef]``（**引用 id 在
+    ``ref_id`` 字段**，不是裸字符串）。此处显式取 ``ref_id``，不依赖 pydantic ``repr`` 的
+    引号形态——否则序列化口径一变就会静默漏报。
+    """
+    if isinstance(value, (list, tuple)):
+        return " ".join(_ref_text(item) for item in value)
+    ref_id = getattr(value, "ref_id", None)
+    if isinstance(ref_id, str):
+        return ref_id
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
 def _node_payloads_referencing(ctx: NodeContext, assumption_ids: set[str]) -> set[str]:
     """本节点**本次新增载荷**中出现的假设 id（§14.2-B「被本节点引用」）。
 
-    扫描面 = ``ctx.new_artifacts``；**排除 ``ASSUMPTION_REGISTRY`` 自身载荷**（其天然含全部
-    假设 id，不排除会自命中、把"登记"误判成"引用"）。判定 = 序列化后 **id 包含判定**，
-    不解析语义、不做模糊匹配（假设 id 为 uuid 形态，误命中可忽略）。
+    扫描面（captain 裁决的 R2-4 定义，两类载荷都要算）：
+
+    ① 本节点新增 **artifact** 载荷（``ctx.new_artifacts``）——**排除 ``ASSUMPTION_REGISTRY``
+       自身载荷**（其天然含全部假设 id，不排除会自命中、把"登记"误判成"引用"）；
+    ② 本节点本次新增 **``Decision``** 的引用字段（``evidence_refs`` / ``based_on``）。
+
+    判定 = 序列化后 **id 作为独立 token 出现**（``_id_occurs`` 词边界匹配，t33 口径对齐）。
+    不解析语义、不做模糊匹配。
+
+    **关于 id 形态（R3-3 立论更正，t33）**：假设 id 的真实来源是 ``HypothesisItem.id`` ——
+    **LLM 自由字符串**（``agents/schemas.py`` 注入给 agent 的示例 JSON 就是 ``"id": "h1"``），
+    ``conflicts.build_provisional_assumptions`` / ``verification.build_assumption_registry``
+    都是 ``AssumptionEntry(id=hypothesis.id)`` 直接透传，**从不调用 ``_make_id``**。
+    故 ``h1`` / ``h10`` 这类互为子串的短 id **真实可能出现**，旧结论"生产形态下子串碰撞
+    由构造保证不可触发"**不成立**；碰撞由本函数的**词边界**匹配在消费端消除，与 id 形态无关。
     """
     referenced: set[str] = set()
+
+    def _scan(blob: str) -> None:
+        referenced.update(aid for aid in assumption_ids if aid and _id_occurs(blob, aid))
+
     for artifact in ctx.new_artifacts:
         if getattr(artifact, "type", None) == ArtifactType.ASSUMPTION_REGISTRY:
             continue
-        blob = json.dumps(getattr(artifact, "value", None), ensure_ascii=False, default=str)
-        referenced.update(aid for aid in assumption_ids if aid and aid in blob)
+        _scan(json.dumps(getattr(artifact, "value", None), ensure_ascii=False, default=str))
+
+    for decision in ctx.new_decisions:
+        for field_name in ("evidence_refs", "based_on"):
+            _scan(_ref_text(getattr(decision, field_name, None)))
+
     return referenced
 
 

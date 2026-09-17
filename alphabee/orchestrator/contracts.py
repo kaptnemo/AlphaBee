@@ -191,6 +191,12 @@ class AssumptionEntry(BaseModel):
     不得再作为论证前提，除非显式引用反驳证据；报告 gate 另做 D3 检查。
 
     字段全部带默认值，且**只 append**：历史 JSON（无新字段）可直接校验通过。
+
+    **R2-5 口径定稿（择"改文档口径"侧）**：§6.3 的示例把 ``statement`` 写成必填，但
+    §14.0 约定 1 是硬契约——"只 append 字段、全部带默认值、旧 JSON 可反序列化"；二者冲突
+    时以 §14.0 为准。故 ``statement`` 保留 ``""`` 默认：它由生产者（F1c 的 conflicts /
+    verification）按 ``hypothesis.explanation`` 填充，F1 阶段无生产者时空值是合法中间态。
+    **不要**为贴齐 §6.3 改成必填（会破坏旧 artifact 反序列化）。
     """
 
     id: str

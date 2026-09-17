@@ -657,7 +657,10 @@ def _validate_retry_budgets(
         if binding is None:
             violations.append(f"max_retries>0 但 state 无对应计数器：{node_id}")
             continue
-        # §14.2-A 断言 2：契约上限必须**等于** state 的 ``max_*_rounds``，而非仅"不超过"。
+        # R2-7 口径定稿：§14.2-A 断言 2 原文即"`max_retries > 0` 的节点只允许 …，且**上限等于**
+        # `OrchestratorState` 里的 `max_*_rounds`"——**双向相等是文档要求、非实现加强**；
+        # §15.7 亦写"与 state 计数器不一致 → 测试失败"。单向 `>` 会漏掉"state 上限被调大
+        # 而契约不同步"（违反 §7.2 规则 4），该缺口由 captain 提出的变异测试设计发现。
         # 双向核对是刻意的：若 state 上限被（人为或回归）调大而契约不同步，实际回环次数会
         # 超过契约声明的授权范围——这正是"未登记回环预算"（§7.2 规则 4），必须报红。
         declared, allowed = contracts[node_id].max_retries, binding.max_value

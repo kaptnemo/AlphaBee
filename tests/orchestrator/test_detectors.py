@@ -151,7 +151,7 @@ def test_insight_artifacts_present_detects_missing_and_empty():
 
 
 def _decision(maker: str, *, based_on=None, evidence_refs=None):
-    from alphabee.core.schemas import Decision
+    from alphabee.core.schemas import Decision, EvidenceRef
 
     return Decision(
         id=f"decision-{maker}",
@@ -159,7 +159,12 @@ def _decision(maker: str, *, based_on=None, evidence_refs=None):
         rationale="r",
         confidence=0.8,
         based_on=list(based_on or []),
-        evidence_refs=list(evidence_refs or []),
+        # 注意：``evidence_refs`` 的模型类型是 ``list[EvidenceRef]``，**不接受裸字符串**；
+        # 本助手把传入的 id 字符串转成 ``EvidenceRef(ref_id=..., ref_type="decision")``。
+        evidence_refs=[
+            ref if isinstance(ref, EvidenceRef) else EvidenceRef(ref_id=str(ref), ref_type="decision")
+            for ref in (evidence_refs or [])
+        ],
     )
 
 
@@ -452,8 +457,9 @@ def test_evidence_refs_present_known_limitation_cross_node_overreport():
     产出的无证据 verdict 在**本节点**报 D3（过报 / 误归属，``detected_at_step`` 记为检测节点）。
 
     本用例**刻意断言当前（有缺陷的）行为**，使该限制被显式钉住而非静默漂移；
-    修复路径见 ``evidence_refs_present`` docstring「F3 后必须复核」：给 ``NodeContext`` 增补
-    ``new_decisions``（与 ``new_artifacts`` 同模式）后，本用例应改为断言 **不报**。
+    修复路径见 ``evidence_refs_present`` docstring 的「F3 门验收项（t36 登记）」：
+    ``NodeContext.new_decisions`` **已由 t30 增补**（不再是待办事项），剩余工作是**把本检测器切换
+    到该字段**（与 ``assumption_still_valid`` 一并）；切换后本用例应改为断言 **不报**。
     """
     other_node_verdict = _decision("thesis_reviewer")  # 无 based_on / evidence_refs
     ctx = _ctx(node_id="synthesize_insights", view={"decisions": [other_node_verdict]})
@@ -527,8 +533,8 @@ def test_every_registered_detector_category_is_registered_in_classification():
 def test_registered_categories_are_visible_to_source_scan():
     """注册表视图与源码 AST 扫描必须互相印证（防"声明了但没注册"或扫描面脱节）。
 
-    扫描面由 F0 测试的 ``_issue_producer_categories`` 提供；此处**不复制**其实现，
-    改为直接断言两者的交集覆盖了全部注册 category。
+    **本用例自建 AST 扫描**（**不** import F0 测试模块 —— 那会引入跨期耦合、破坏 F0 自包含性），
+    并与注册表公开视图 ``DETECTOR_CATEGORIES`` 断言**集合相等**（而非仅交集非空）。
     """
     import ast
     from pathlib import Path
@@ -575,3 +581,112 @@ def test_f0_test_file_stays_self_contained():
                 f"line {node.lineno}: import {alias.name}" for alias in node.names if alias.name in f1_modules
             )
     assert not offenders, f"F0 测试文件引入了 F1 模块依赖（破坏 F0 自包含）：{offenders}"
+
+
+# ── F1 结转：R2-4 第 ② 类载荷（Decision）+ 词边界匹配加固 ────────────────────
+
+
+def _ctx_with_decisions(decisions, *, new_artifacts=None, view=None) -> det.NodeContext:
+    """直接构造 NodeContext（含第 ② 类载荷 new_decisions）。"""
+    return det.NodeContext(
+        node_id="run_thesis",
+        step=None,
+        new_artifacts=list(new_artifacts or []),
+        new_decisions=list(decisions or []),
+        view=dict(view or {}),
+    )
+
+
+def _invalidated_registry(assumption_id: str = "h1") -> list:
+    return [_registry_artifact([AssumptionEntry(id=assumption_id, statement="甲", status="invalidated")])]
+
+
+def test_assumption_still_valid_detects_decision_reference():
+    """★ R2-4 第 ② 类载荷：本节点新增 ``Decision`` 的 ``based_on`` 引用 invalidated 假设 → D4。"""
+    ctx = _ctx_with_decisions(
+        [_decision("thesis_reviewer", based_on=["h1"])],
+        view={"artifacts": _invalidated_registry("h1")},
+    )
+    result = det.assumption_still_valid(ctx)
+    assert result.passed is False
+    assert result.deviation_class == DeviationClass.D4_STATE
+
+
+def test_assumption_still_valid_detects_decision_evidence_refs_reference():
+    """★ 同上，走 ``evidence_refs`` 字段（引用 id 在 ``EvidenceRef.ref_id``，第 ② 类并行入口）。
+
+    该字段是**结构化对象**而非裸字符串，故两条构造路径都要钉住：① 结构化对象原样透传；
+    ② 测试助手 ``_decision(evidence_refs=["h1"])`` 的字符串→``EvidenceRef`` 转换分支
+    （真实生产者也可能先拿到 id 字符串）。二者都必须能触发 D4。
+    """
+    from alphabee.core.schemas import Decision, EvidenceRef
+
+    structured = Decision(
+        id="decision-evidence-1",
+        maker="thesis_reviewer",
+        rationale="r",
+        confidence=0.8,
+        evidence_refs=[EvidenceRef(ref_id="h1", ref_type="artifact")],
+    )
+    via_helper = _decision("thesis_reviewer", evidence_refs=["h1"])
+
+    for decision in (structured, via_helper):
+        ctx = _ctx_with_decisions([decision], view={"artifacts": _invalidated_registry("h1")})
+        assert det.assumption_still_valid(ctx).passed is False, f"{type(decision).__name__} 路径未触发"
+
+
+def test_assumption_still_valid_noop_when_decision_references_other_id():
+    """② 类载荷反例：``Decision`` 引用**别的** id → 不报（节点未依赖该已证伪假设）。"""
+    ctx = _ctx_with_decisions(
+        [_decision("thesis_reviewer", based_on=["h9"])],
+        view={"artifacts": _invalidated_registry("h1")},
+    )
+    assert det.assumption_still_valid(ctx).passed is True
+
+
+def test_assumption_still_valid_noop_when_no_decision_payload():
+    """③ 无 Decision 载荷、也无 artifact 引用 → 不报。"""
+    ctx = _ctx_with_decisions([], view={"artifacts": _invalidated_registry("h1")})
+    assert det.assumption_still_valid(ctx).passed is True
+
+
+def test_referencing_match_is_word_bounded():
+    """★ 词边界加固：假设 id 为 ``h1``、载荷只出现 ``h10`` → **不得**判为引用（子串碰撞消除）。
+
+    生产 id 为**LLM 自由字符串**（`HypothesisItem.id`，常见 ``h1``/``h10`` 形态），此加固使
+    判定与 id 形态无关。完整边界矩阵见 ``test_id_occurs_boundary_matrix``。
+    """
+    ctx = _ctx_with_decisions(
+        [_decision("thesis_reviewer", based_on=["h10"])],
+        new_artifacts=[_referencing_artifact("h10")],
+        view={"artifacts": _invalidated_registry("h1")},
+    )
+    assert det.assumption_still_valid(ctx).passed is True
+
+
+@pytest.mark.parametrize(
+    ("blob", "expected"),
+    [
+        # ── 必须捕获：真实引用形态（漏报方向更危险 —— 已证伪假设会静默通过）──
+        ("h1", True),
+        ('"h1"', True),
+        ('{"based_on": ["h1"]}', True),
+        ("基于h1推断", True),
+        ("x_h1", True),  # ← T31-6：复合键 / 下划线分隔，初版边界类含 "_" 时会漏报
+        ("h1_x", True),  # ← 同上
+        ("h1_notes", True),  # ← 同上
+        # ── 必须排除：字母数字相邻的子串碰撞（过报方向）──
+        ("h10", False),
+        ("abch1", False),
+        ("h1x", False),
+    ],
+)
+def test_id_occurs_boundary_matrix(blob: str, expected: bool):
+    """★ T31-6 边界矩阵：``_id_occurs("h1", blob)`` 在两个方向上都被钉住。
+
+    矩阵由 t31 的 reviewer 压测设计、captain 落地。**注意**：本矩阵刻意断言 ``h1_notes`` 为
+    命中——这是把 ``_`` 移出边界类后的**有意取舍**（捕获面不小于改造前）。其残余（id 对
+    ``h1`` vs ``h1_a`` 在下划线分隔下互相命中）已在 ``_id_occurs`` docstring 披露，归 F3 的
+    结构化匹配收敛。
+    """
+    assert det._id_occurs(blob, "h1") is expected, f"blob={blob!r} 期望 {expected}"
