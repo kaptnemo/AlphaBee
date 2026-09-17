@@ -34,7 +34,7 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | Phase 3 Claim-Evidence Graph | ⬜ | 未实现；`gates.py` 已有 `evidence_coverage / grounding_score` 检查，但上游 Decision 普遍未填 `based_on / evidence_refs` |
 | Phase 4 ExpectationFitAgent | ⬜ | 未实现 |
 | Phase 5 报告备忘录化 | 🟡 | 报告已重构为“观点驱动”（`REPORT_GENERATOR_PROMPT`：insight 主线 + 12 章节 + 三情景 + 可证伪条件），LLM 空输出有确定性降级报告（`reporter.py` `build_deterministic_report`）；“系统问题”段仍在 CLI 暴露 |
-| 偏离控制框架（DEVIATION_CONTROL_FRAMEWORK） | 🟡 | 设计见 `docs/design/DEVIATION_CONTROL_FRAMEWORK.md`。**已提交**：F0 偏离分类法 + 跨 run 偏离账本（`261070b`/`fb3bced`）、F1 节点契约 + 6 个后置检测器（`49d027f`）、F1c 假设登记簿生产者 + 报告 gate 消费者（`15213cb`）、F1 结转与 F1c 认证更正（`458f975`/`42a8526`）。**已提交**：F2 恢复阶梯协议化 + 降级传导阻尼 + `DeviationSettings` 五段配置（`2186eb9` 8 路径）与其收尾 `insights.py` 降级写入统一 + 开关登记（`9573d09` 2 路径），经第三方独立认证（提交树 8/8 + 2/2 与认证值逐字相符）。**已提交**：F3 放大标注 + 加权边审计（`681a216` 12 路径：`INSIGHT_CONFIDENCE_WEIGHTS` 显式化并收口 medium=0.92 + `audit_amplification` + `review_thesis` 发射点 + category 登记 + R2-8 切换）与其结转文案（`893b3b8` 2 路径，登记实际发射点并更正 `attach_amplification_audit` 文案）。**已提交**：F4 宏观环自动调度（`d65164f` 7 路径 2581 行：`alphabee/tracking/` 触发判定纯函数 + 一次性 reconcile 调度 + CLI + §9.4 红线 `require_human_confirm` 恒 `False` + §9.2 逐条反证强制入账），经第三方独立认证（提交树 7/7 与冻结锚逐字相符，verdict=pass 零 findings）。**未开始**：F5 度量层 + per-symbol 画像 |
+| 偏离控制框架（DEVIATION_CONTROL_FRAMEWORK） | ✅ | 设计见 `docs/design/DEVIATION_CONTROL_FRAMEWORK.md`。**已提交**：F0 偏离分类法 + 跨 run 偏离账本（`261070b`/`fb3bced`）、F1 节点契约 + 6 个后置检测器（`49d027f`）、F1c 假设登记簿生产者 + 报告 gate 消费者（`15213cb`）、F1 结转与 F1c 认证更正（`458f975`/`42a8526`）。**已提交**：F2 恢复阶梯协议化 + 降级传导阻尼 + `DeviationSettings` 五段配置（`2186eb9` 8 路径）与其收尾 `insights.py` 降级写入统一 + 开关登记（`9573d09` 2 路径），经第三方独立认证（提交树 8/8 + 2/2 与认证值逐字相符）。**已提交**：F3 放大标注 + 加权边审计（`681a216` 12 路径：`INSIGHT_CONFIDENCE_WEIGHTS` 显式化并收口 medium=0.92 + `audit_amplification` + `review_thesis` 发射点 + category 登记 + R2-8 切换）与其结转文案（`893b3b8` 2 路径，登记实际发射点并更正 `attach_amplification_audit` 文案）。**已提交**：F4 宏观环自动调度（`d65164f` 7 路径 2581 行：`alphabee/tracking/` 触发判定纯函数 + 一次性 reconcile 调度 + CLI + §9.4 红线 `require_human_confirm` 恒 `False` + §9.2 逐条反证强制入账），经第三方独立认证（提交树 7/7 与冻结锚逐字相符，verdict=pass 零 findings）。**已提交**：F5 度量层（`e9fe18c` 6 路径：`orchestrator/services/telemetry.py` 的 §11.1 八项指标 + run 尾部 sink 接线 + `deviation_metrics` 表 + CLI `--deviations` 只读时间线视图）与其结转（`13d1b0d` 4 路径：落地 §14.6 的 `budget.d_max`，使 §11.1「预算消耗」在生产路径可算）。**F0–F5 六期全部完成**：上述每个提交均经第三方独立认证（提交树与认证树逐字相符：F0 10/10、F1 11/11、F1c 4/4、F2 8/8 + 2/2、F3 12/12 + 2/2、F4 7/7、F5 6/6、F5 结转 4/4），且每期先 review（verdict=pass）后提交。§15 验收 6「状态行同步」已履行；设计有要求而 v1 未落地的点全部具名登记于下方「偏离控制框架顺延项登记」 |
 
 “当前关键问题”中的 #2（anomaly/conflict 进入 thesis）、#3（Report Generator 被限制为格式化器）、#4（Reviewer 维度覆盖落后）、#7（冲突状态边界）已解决：
 - `nodes/thesis.py` 全量传入 anomaly/conflict/verification/context，`engine.py` 已显式消费（0.2）。
@@ -49,6 +49,9 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | 日期 | 变更 | 依据 | 影响与回归面 |
 |---|---|---|---|
 | 2026-09-17 | `insight → thesis` 加权边的 medium 档乘数 **0.95 → 0.92**（同时提为模块常量 `alphabee/agents/thesis/engine.py::INSIGHT_CONFIDENCE_WEIGHTS`） | §14.4-A 与契约文案 `node_contracts.py:370` 两处早已登记 0.92，代码 0.95 为离群值 | medium 档 insight 对维度 confidence 的乘数略降（high/low 不变）；`min(factor, 0.85)` 的 F2 降级阻尼与"一档封顶"不受影响；受影响的既有断言见 `tests/orchestrator/test_degradation_damping.py` 与 F3 主测试的常量一致性用例 |
+| 2026-09-18 | `deviation.budget.d_max` 由**不存在**变为默认 `{analysis: 60, tracking: 20}`（类型 `dict[str,int] \| int \| None`） | §14.6 / §10.2 明文规定该键，而 F2 期 `DeviationBudgetSettings` 从未落地它 ⇒ §11.1「预算消耗 = `D_cum / D_max`」在生产路径**恒 `None`**（F2「配置 vs §14.6」偏差，F5 期发现） | **只读指标面**：`budget_consumption` 由恒 `None` 变为可算（analysis `10/60 = 0.1667`、tracking `10/20 = 0.5`、`run.context["d_max"]` 仍优先）；**无执行语义**（`on_exceed` 未接线，见顺延项 F5-D3）；缺失/非正/不可解析/未知 `task_kind` 仍为 `None`（绝不回退 0）；缺 `deviation` 段的 `config.yaml` 仍可 import（默认值保证，有专测 + 变异 N2 坐实）；`tests/orchestrator/test_telemetry.py` 收集数 65 → 82，全量门禁 607 passed |
+
+> **F5 行为变更复核（2026-09-18）**：除上表新增行外，F5 期未引入其它权重/阈值默认值 —— `_budget_limit`（= 工单里写的 `_resolve_d_max`，**F5 既有命名**，`git show e9fe18c:alphabee/orchestrator/services/telemetry.py:365`）只做读取，无写路径；CLI `--deviations` 是只读视图（§14.8 PR8：回滚方式 = 不调用即可）。`config.yaml.example` 与代码默认值经**全段叶子程序化比对**（15 个叶子 0 不一致），且旧 example（无 `d_max`）仍可构造并回落默认。
 
 > **F4 行为变更复核（2026-09-18）**：F4 期**未引入任何新的权重/阈值默认值** —— `DeviationSettings` 至今没有 `tracking` 段，`tracking/triggers.py::thresholds_from_settings()` 是**运行时** fail-open 读取（段缺失/异常 → `None` → 全部回落 midterm 既有默认；tv 档**不传参**给 `monitor_triggers`，用其自身默认常量），故本期无需新增登记行。将来若给 `deviation.tracking` 段写入默认值，须回到本表登记。
 
@@ -62,6 +65,31 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | F4 | **F4-L1 残余**：反证强制入账的「某侧只被**部分**引用」情形 | 已按**逐条**判定落地（`tracking/scheduler.py:321-339`：未被任何归因引用的每条证据各自补一条显式记账，`forced_sides` 同侧去重），并以 `test_partial_coverage_is_accounted_per_event` 钉住（变异非真空：退回旧「按侧 `any(...)` 守卫」该用例即报红）；但该情形在真实 midterm 路径上**当下不可达** —— `midterm/diff.py` 把 `new_evidence` 的全部 id 写进同一条归因 | midterm 改为按条归因后，该情形自动成为端到端可达路径（本模块无需改动，钉子已在位） |
 | F4 | **F4-L2**：`exit_conditions` 求值器（§9.3） | v1 不新增第二份判定，只复用 midterm `diff_consumers.check_exit` 的既有投影；`exit_conditions_met` 触发经 `MANUAL` 类别上报（payload 自报 `source`） | midterm 暴露 exit_conditions 求值器后接入 |
 | F4 | **F4-L3**：触发类型映射的代理标签 + 常驻循环 | `FINANCIAL_REPORT`/`ANNOUNCEMENT` 走 `*_proxy` 探测（payload 自报 `source`，不冒充确定来源）；`--loop` 是 §14.5-A 的**具名非目标**，CLI 显式拒绝（exit 2），不是待办缺陷 | 真实数据源接入后替换 proxy 探测；常驻循环另立一期 |
+| F5 | **F5-D1** `recovery_half_life` 的 **resolved 端** | 现口径 = 「本 run 末位已执行节点序 − 检测端节点序」的**中位数**（模块 docstring 显式披露，用例钉 `{14,6,5} → 6.0`）—— 因为它测的是「检测 → run 末端」而非真正的「检测 → 解决」；根因：§14.1-C 的账本 17 列**已冻结、无 `resolved_at_step` 列**，而 `resolved` 本就是写入时快照 | 需要真语义时给账本加 `resolved_at_step`（须改 `deviation_store.py` 与 §14.1-C），属后续期 |
+| F5 | **F5-D2** `budget_consumption` 的 `D_max` 无配置来源（**已关闭**） | 曾因 §14.6 的 `budget.d_max` 未落地而恒 `None`（F2「配置 vs §14.6」偏差） | **已由 `13d1b0d` 关闭**（生产路径 analysis `0.1667` / tracking `0.5` / 未知 `task_kind` `None`） |
+| F5 | **F5-D3** §14.6 的 `budget.on_exceed`（`degrade \| escalate \| abort`） | 全仓 `grep on_exceed` **零命中** ⇒ 未实现；但**并非遗漏**：预算超限行为已由 **F2 的 `cost_exposure_threshold` 直接升级（T5）+ 阶梯裁决**承接，当前**没有 `D_cum > D_max` 的独立执行点**；按「不新增未接线字段」登记 | 出现"需要按 scope 选择超限动作"的真实需求时，接在 `_budget_limit` 的同一解析点上 |
+| F5 | **F5-L1** per-symbol 画像**反哺** `resolve_industry_context` / `resolve_company_track` | §13 的 F5 描述提到该反哺，但 §14.8 PR8 明确 F5 是「只读、可独立合并、回滚 = 不调用即可」⇒ 反哺属**行为变更**，本期不做 | 另立一期，并带 config 开关（沿用"新行为由开关控制"纪律） |
+| F5 | **F5-L2** §11.2 跨 run 指标（指纹复发率 / 降级率趋势） | 本期只做 §11.1 的**单 run** 指标；跨 run 聚合需要趋势口径与窗口定义 | 需要"系统性缺陷 vs 偶发漂移"判据时实现 |
+| F5 | **F5-L3** §11.3 离线回放验证 | 用历史 run 落盘数据回放、比较"步数 H + 偏离指标集"对 run success 的预测力 —— 属**研究性**工作，非本期工程范围 | 指标数据积累后另立研究项 |
+| F5 | **F5-D4** CLI 端到端**未在测试内真跑** | `apps/cli/__init__` → `main` → orchestrator 会拉起 `tushare.set_token`（写 `$HOME/tk.csv`、HOME 只读时 OSError）⇒ 测试改用「按文件路径加载 `args.py` 真跑 3 种 argv」+「`main()` 分派 AST 钉住」；复审侧另以**真跑 `main()` + 四入口哨兵**（`run_query`/`run_chat_session`/`run_framework_monitor`/`handle_task_cli` 全换一调即炸）验证**只读且真实可达** | 把 CLI 拉起链的副作用解耦（惰性 token 初始化）后，可恢复"测试内真跑 CLI" |
+| 卫生 | `tests/midterm/test_factors.py`、`tests/midterm/test_insight_evidence_adapter.py` **既存未格式化** | 固定版 ruff 0.15.0 `format --check` 实测二者 would-reformat；**非本框架改动、未被触碰**，但它们是"**将来任何触碰它们的提交都会被 pre-commit 改写**"的同类陷阱（与 F5-1 同型） | 下次因其他原因动到这两个文件时顺带格式化（**勿**为它单独开提交、勿顺手格式化以免污染白名单） |
+
+> **F4 测试侧双钉登记与归因更正（2026-09-18，reviewer 在 R15 后明确要求补落 docs）**：`tests/tracking/test_scheduler.py`（已随 `d65164f` 入库）含**两组等价钉住** —— 实现者「安全红线」段 `:660-767` 共 6 条 + captain 在 t72 补钉 `:773-847` 共 4 条。经 reviewer 逐条判定：**仅 `:806` 与 `:700`（gate 变异）为纯等价重复（low）**；`:821` 的 16 键**字面量**列表、`:773` 的 `PositionDecision` 另一形态、`:787` 的伪造 dict 变体 + `DSH_APPROVED` 环境变量为**增量**；`:714` 全域 AST 扫描为⑥段独有 ⇒ 两组**互补**，并集严格优于任一单组。结论：**low、可接受、不去重**（去重须再动已入库文件并移动锚点，成本高于收益）。**归因更正**：「首次把 F4-G2/P3 钉进仓库测试」的功劳在**实现者的⑥段**，captain t72 的实际增量为上述四项 —— t72 的任务记录已终态不可改写，故以此处为准。
+
+### 偏离控制框架工程实践登记（本会话以真实事故固化的提交门纪律）
+
+> 下列规则在 F0–F5 的实施中各被违反过至少一次并造成真实损失（返工、锚点失效、弱证据），故具名登记，供后续期次直接沿用。
+
+| # | 规则 | 触发它的事故 |
+|---|---|---|
+| 1 | **基线必须是提交号**（如 `d65164f`），不得用 `HEAD`/工作区描述；证据块须含「锚定提交号 + 现提交号 + 生成命令原文 + 逐路径 SAME/CHANGED 计数」 | 多次出现"锚点在工作区漂移后失效" |
+| 2 | **清单必须命令枚举**（`git show --name-only --pretty=format: <commit> \| awk 'NF'`），禁止手写清单 | 手写清单导致路径误计数 |
+| 3 | **冻结协议**：review 前 `chmod 444`；提交前 `chmod 644`、提交后**立刻复冻 444** | 444 会让 pre-commit 的 `end-of-file-fixer` 抛 `PermissionError`；未冻结则 reviewer 无法认证（F4-B1） |
+| 4 | **提交门标准动作**：`git add` 只用显式路径（禁 `-A/-u`）→ **暂存后、提交前**逐条核对 `git show :<path> \| sha256sum` == 认证值 → 提交 → `git show HEAD:<path>` 复算 + 路径枚举 + docs/外部改动命中数检查 → **复冻** | 把"钩子改写导致认证树 ≠ 提交树"提前到**提交前**拦截 |
+| 5 | **门禁双跑**：`ruff check` **与** `ruff format --check`，后者用 **pre-commit 缓存内的固定版二进制**，且**只对 inScope 文件**判绿 | F5-1：只跑 `ruff check` 漏掉 format 漂移 ⇒ pre-commit 会改写已认证文件 |
+| 6 | **认证基线保留区 `tmp/certified/**` 禁止清理**（各期的"复审前"与"提交态"两份都要留） | 基线副本被 tmp 清理后，reviewer 只能退回"无法逐字节对差"的弱证据 |
+| 7 | **计数三口径同写**：顶层函数 / `test_*` / pytest **收集数**（`parametrize` 会让三者不相等） | 同一文件先后被报成 65 与 69，实为口径混淆 |
+| 8 | **角色分离**：实现者不得审自己的实现；实现类工单若被派给复审方，须立刻 `reassign_task` 改派；**终态门不可改写，结论由新的门承接** | t57 自审落库不能作为 review 门；t75 判 needs_revision 后由 t83 承接 |
 
 ---
 
