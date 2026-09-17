@@ -1,9 +1,10 @@
 """SQLAlchemy ORM models for data fetch failure tracking.
 
-Three tables:
+Four tables:
 - ``data_fetch_events``  — raw failure events (append-only)
 - ``data_fetch_issues``   — deduplicated, aggregated issue tickets
 - ``data_fix_tasks``      — actionable fix tasks for agents
+- ``deviation_events``    — 偏离账本（deviation-control framework §5.2）
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -168,3 +170,43 @@ class DataFixTask(Base):
 
     def __repr__(self) -> str:
         return f"<DataFixTask id={self.task_id} issue={self.issue_id} status={self.status.value}>"
+
+
+class DeviationEvent(Base):
+    """偏离账本行（deviation-control framework §5.2 / §14.1-C）。
+
+    与 ``DataFetchEvent`` 共享同一 ``Base`` / ``init_db()`` / ``DATA_FETCH_DB_PATH``，
+    独立表名 ``deviation_events``：新增表只 ``create_all``，不改既有表结构，
+    回滚只需 drop 本表。
+
+    身份是 ``fingerprint``（§5.2 指纹去重）：同一偏离（分类 + 类目 + 归一化 message +
+    symbol + 检测节点）在后续 run 复发时**不新增行**，而是 ``occurrence_count += 1``
+    并刷新 ``last_seen_at``，从而支持"复发率"统计。
+    """
+
+    __tablename__ = "deviation_events"
+
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    symbol: Mapped[str | None] = mapped_column(String(32), index=True)
+    step_id: Mapped[str | None] = mapped_column(String(64))  # 产生地（related_step）
+    detected_at_step: Mapped[str | None] = mapped_column(String(64))  # §6 检测器所在节点
+    deviation_class: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    message: Mapped[str | None] = mapped_column(Text)
+    recovery_action: Mapped[str | None] = mapped_column(String(64))
+    recovery_cost: Mapped[int | None] = mapped_column(Integer)
+    amplified_by: Mapped[list[str] | None] = mapped_column(JSON)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<DeviationEvent id={self.event_id} class={self.deviation_class} "
+            f"category={self.category} count={self.occurrence_count} "
+            f"resolved={self.resolved}>"
+        )

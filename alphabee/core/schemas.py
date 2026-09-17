@@ -151,6 +151,21 @@ class IssueScope(enum.StrEnum):
     EVALUATION = "evaluation"
 
 
+class DeviationClass(enum.StrEnum):
+    """Deviation taxonomy D1–D5 (deviation-control framework §4).
+
+    Normalized classification carried by :class:`Issue`. Legacy issues have
+    ``deviation_class=None`` and are lazily mapped from ``category`` by
+    ``alphabee.orchestrator.services.deviation.resolve_deviation_class``.
+    """
+
+    D1_DATA = "d1_data"  # 数据偏离（缺字段 / 陈旧 / 跨源打架）
+    D2_STRUCTURE = "d2_structure"  # 结构偏离（parse / schema / 降级）
+    D3_ARGUMENT = "d3_argument"  # 论证偏离（无证据结论 / 论点冲突 / 证据链断裂）
+    D4_STATE = "d4_state"  # 状态偏离（假设失效 / 上下文截断 / 重复调查）
+    D5_CONTROL = "d5_control"  # 控制偏离（回环打满 / 预算耗尽）
+
+
 class Run(BaseModel):
     """A complete execution unit for one user goal or autonomous task."""
 
@@ -373,6 +388,29 @@ class Issue(BaseModel):
     scope: IssueScope = Field(
         default=IssueScope.REPORT,
         description="Pipeline stage that produced this issue (planning/data/report/review/evaluation).",
+    )
+    deviation_class: DeviationClass | None = Field(
+        default=None,
+        description=(
+            "Normalized deviation classification (deviation-control framework §4); "
+            "None means it is lazily resolved from ``category``."
+        ),
+    )
+    detected_at_step: str | None = Field(
+        default=None,
+        description="Node id whose post-condition detector detected the deviation (≠ related_step origin).",
+    )
+    recovery_action: str | None = Field(
+        default=None,
+        description="Recovery action identifier, e.g. rerun_round=1 / degraded_tier=2 / escalated.",
+    )
+    recovery_cost: int | None = Field(
+        default=None,
+        description="Recovery cost: rerun rounds / degraded tiers; 0=unrecovered; None=not attempted.",
+    )
+    amplified_by: list[str] = Field(
+        default_factory=list,
+        description="Downstream amplification edges that propagated this deviation (§8 edge keys).",
     )
 
 

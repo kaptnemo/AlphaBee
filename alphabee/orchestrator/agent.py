@@ -53,6 +53,7 @@ from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.insights import synthesize_insights
 from alphabee.orchestrator.nodes.midterm import resolve_midterm_decision
 from alphabee.orchestrator.nodes.midterm_reporter import report_midterm_decision
+from alphabee.orchestrator.nodes.record_deviations import record_deviations
 from alphabee.orchestrator.nodes.resolve_company_track import resolve_company_track
 from alphabee.orchestrator.nodes.resolve_driver_profile import resolve_driver_profile
 from alphabee.orchestrator.nodes.resolve_industry_context import resolve_industry_context
@@ -295,6 +296,11 @@ def finalize_message(state: OrchestratorState) -> OrchestratorState:
     # finalize_message 的职责是把整条分析链压成一个统一 JSON 响应：
     # 终端流式展示可以直接读取 final_report，而调试/审计端仍能拿到 artifacts / decisions / issues。
     # 决策点 6(a)：midterm 决策摘要只进 payload（finalize/CLI/recorder），不进报告。
+    # 偏离控制框架（F0）追加：issues 的 model_dump 恒带 deviation_class / detected_at_step /
+    # recovery_action / recovery_cost / amplified_by 5 个追加字段（append-only 契约，§14.0 约定 1），
+    # 因此 issues 的全字段哈希必然与实施前不同 —— 属 schema 追加而非行为变更；
+    # 开关验证（doc §15.9 第 9 条）比对 artifacts / final_report / decisions 全量 +
+    # issues 的行为相关投影（id/category/severity/message/related_step）。
     payload = {
         "run": state["run"].model_dump(mode="json") if state.get("run") else None,
         "final_report": (final_artifact.value if final_artifact is not None else None),
@@ -358,6 +364,7 @@ _graph.add_node("resolve_midterm_decision", resolve_midterm_decision)
 _graph.add_node("midterm_decision_reporter", report_midterm_decision)
 _graph.add_node("generate_report", generate_report)
 _graph.add_node("review_report", review_report)
+_graph.add_node("record_deviations", record_deviations)
 _graph.add_node("finalize_message", finalize_message)
 
 _graph.add_edge(START, "collect_raw_facts")
@@ -397,7 +404,13 @@ _graph.add_edge("midterm_decision_reporter", "generate_report")
 #     },
 # )
 
-_graph.add_edge("generate_report", "finalize_message")
+# 偏离账本 sink（F0b / §14.1-D）：finalize_message 之前落账，两条入边保证可达性——
+# generate_report（当前默认路径）与 review_report（report gate 回环启用后的路径）。
+# 该节点只消费 state["issues"]，不依赖上游 artifact，因此对"无 midterm / 无 review_report"
+# 的路径同样成立；关闭开关走 deviation.ledger.enabled=false（节点内部读配置，fail-open）。
+_graph.add_edge("generate_report", "record_deviations")
+_graph.add_edge("review_report", "record_deviations")
+_graph.add_edge("record_deviations", "finalize_message")
 _graph.add_edge("finalize_message", END)
 
 alphabee_agent = _graph.compile(store=InMemoryStore())
