@@ -9,8 +9,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field, is_dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # 仅类型检查期引用：运行时由 reviewer 定义该类，此处不 import 以免形成环
+    from alphabee.agents.thesis.reviewer import AmplificationAudit
 
 # ── 档位与评分映射 ──────────────────────────────────────────────────────
 
@@ -362,6 +365,32 @@ class EnhancedThesis:
 # ── Thesis Review models ────────────────────────────────────────────────────
 
 
+#: ``AmplificationAudit`` 的字段契约（§14.4-B）；序列化时按此白名单取值，
+#: 使 ``models`` 无需在运行时 import ``reviewer``（避免循环 import）。
+_AMPLIFICATION_AUDIT_FIELDS: tuple[str, ...] = (
+    "edge",
+    "upstream_artifact",
+    "weight",
+    "direction_consistent",
+    "rationale",
+)
+
+
+def amplification_audit_to_dict(audit: Any) -> dict[str, Any] | None:
+    """把 §8 放大审计结论序列化为可进 artifact 的 dict（``None`` → ``None``）。
+
+    兼容三种输入：dataclass（``reviewer.AmplificationAudit``）、mapping、
+    以及任何带同名属性的对象。**不依赖运行时 import**，故旧 payload / 新旧代码混跑都不受影响。
+    """
+    if audit is None:
+        return None
+    if is_dataclass(audit) and not isinstance(audit, type):
+        return asdict(audit)
+    if isinstance(audit, dict):
+        return dict(audit)
+    return {name: getattr(audit, name, None) for name in _AMPLIFICATION_AUDIT_FIELDS}
+
+
 @dataclass
 class DimensionVerdict:
     """Single-dimension review verdict from ``ThesisReviewer``."""
@@ -399,6 +428,13 @@ class ThesisReview:
     warning_issues: list[str] = field(default_factory=list)
     llm_review_applied: bool = False
 
+    # §8 放大审计结论（F3 / §14.4-B 的载体字段）。**append-only**：带默认值，故
+    # - 旧 payload（``to_dict()`` 之前的形态，无此键）仍可反序列化/构造；
+    # - 审计关闭或无可用边时为 ``None``，与 F3 之前的行为逐字段一致。
+    # 类型注释里的 ``AmplificationAudit`` 由 ``agents/thesis/reviewer.py`` 定义（§14.4-B 指定归属），
+    # 此处只在 TYPE_CHECKING 下引用，避免 models ⇄ reviewer 的运行时 import 环。
+    amplification_audit: AmplificationAudit | None = None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
@@ -408,6 +444,7 @@ class ThesisReview:
             "llm_review_applied": self.llm_review_applied,
             "blocking_issues": self.blocking_issues,
             "warning_issues": self.warning_issues,
+            "amplification_audit": amplification_audit_to_dict(self.amplification_audit),
             "dimension_verdicts": {
                 dim_id: {
                     "dimension_id": v.dimension_id,

@@ -80,6 +80,8 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "insight_missing": DeviationClass.D2_STRUCTURE,
     "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
+    # ── F3：§8.1 加权边审计的方向不一致上报（review_thesis 节点）
+    "amplification_direction_conflict": DeviationClass.D3_ARGUMENT,
 }
 
 # 确实未登记的 category（只允许走 D2 保守兜底）：历史/外部来源或尚未命名的类目。

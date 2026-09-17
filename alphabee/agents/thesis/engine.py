@@ -55,6 +55,17 @@ _POSITIVE_ANOMALY_PATTERNS = {"efficiency_gain"}
 # 见 alphabee/industry/industry_names.yaml groups.financial
 _PROJECT_BASED_KEYWORDS = ("项目", "验收", "军工", "工程", "软件", "集成", "to_b")
 
+#: §8.1 第 1 行 `insight -> thesis` **WEIGHTED** 边的显式权重（§8.2 规则 1：权重值必须显式，
+#: 不得埋在 prompt 里）：insight 自身 ``confidence`` 档位 → 维度 confidence 的乘数。
+#:
+#: 三处口径一致，由 ``tests/agents/thesis/test_amplification_audit.py`` 钉住：
+#: ① 本常量；② 契约文案 ``node_contracts.AMPLIFICATION_AUDIT["insight->thesis"].weight``；
+#: ③ 设计文档 §14.4-A（``docs/design/DEVIATION_CONTROL_FRAMEWORK.md``）。
+#:
+#: ``medium`` 由历史内联值 0.95 **收口为 0.92**（F3；§8.2 规则 3 的 ROADMAP 登记已完成），
+#: 档位缺省（不在表内）同样取 ``medium`` 档 —— 不得另留一个魔数默认值。
+INSIGHT_CONFIDENCE_WEIGHTS: dict[str, float] = {"high": 1.0, "medium": 0.92, "low": 0.85}
+
 
 class ThesisEngine:
     """将 SignalEngine 评估结果聚合为 InvestmentThesis。
@@ -692,11 +703,14 @@ class ThesisEngine:
             dim.counter_evidence = self._dedupe_preserve_order(dim.counter_evidence)
 
         # ── Temper confidence when insight itself is low ──
-        # F2（§7.2 规则 2）：先按 insight 自身档位降温（历史行为 high→1.0 / medium→0.95 / low→0.85），
-        # 再在 insight 被标记为**降级产出**时叠加一档阻尼（×0.85，且**一档封顶**）。
+        # F2（§7.2 规则 2）：先按 insight 自身档位降温（F3 起用显式常量
+        # `INSIGHT_CONFIDENCE_WEIGHTS`：high→1.0 / medium→0.92 / low→0.85；F3 之前 medium 为
+        # 内联值 0.95），再在 insight 被标记为**降级产出**时叠加一档阻尼（×0.85，且**一档封顶**）。
         from alphabee.orchestrator.services.degradation import DAMPING_FACTOR, degraded_inputs
 
-        factor = {"high": 1.0, "medium": 0.95, "low": 0.85}.get(insight_confidence, 0.95)
+        # §8.1 第 1 行 `insight -> thesis` 的加权乘法（α>1 的 WEIGHTED 边，由 F3 的
+        # `audit_amplification` 在 review_thesis 侧审计）：权重取自模块常量，缺省取 medium 档。
+        factor = INSIGHT_CONFIDENCE_WEIGHTS.get(insight_confidence, INSIGHT_CONFIDENCE_WEIGHTS["medium"])
         # 关键：阻尼的触发条件是"消费了降级产物"，而不是"档位较低"（后者已由上面的系数表表达）。
         # 两者若混用，`high` 档也会被误降一档（该缺陷由 F2 单测抓出）。
         if degraded_inputs([_InsightDegradedProbe(insight)]):

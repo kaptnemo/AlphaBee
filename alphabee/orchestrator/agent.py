@@ -18,6 +18,7 @@ Simplified pipeline:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,8 @@ from alphabee.core import (
     Artifact,
     ArtifactType,
     Decision,
+    DeviationClass,
+    EvidenceRef,
     Issue,
     IssueSeverity,
     Step,
@@ -43,10 +46,12 @@ from alphabee.orchestrator.collectors import (
 )
 from alphabee.orchestrator.contracts import (
     CompanyStateArtifact,
+    InsightArtifact,
     SignalAnalysisArtifact,
     ThesisArtifact,
     find_artifact_model,
 )
+from alphabee.orchestrator.detectors import scope_for_node
 from alphabee.orchestrator.gates import review_report
 from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
@@ -62,12 +67,46 @@ from alphabee.orchestrator.nodes.verification import verify_hypotheses
 from alphabee.orchestrator.reporter import generate_report
 from alphabee.orchestrator.services.company_context import build_company_context
 from alphabee.orchestrator.services.detection import with_deviation_detection
+from alphabee.orchestrator.services.deviation import record_deviation
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import make_id
+
+logger = logging.getLogger(__name__)
 
 
 def _make_id(prefix: str) -> str:
     return make_id(prefix)
+
+
+# ── §8 放大审计（F3）：开关与接线 ────────────────────────────────────────────
+
+#: §14.6 默认值：放大审计默认开启（fail-open，与 ``DeviationAmplificationSettings`` 默认一致）。
+_DEFAULT_AMPLIFICATION_AUDIT_ENABLED = True
+#: ``overturn_severity`` 缺省值（§14.6 ``deviation.amplification.overturn_severity``）。
+_DEFAULT_OVERTURN_SEVERITY = "high"
+
+
+def _amplification_settings() -> tuple[bool, IssueSeverity]:
+    """运行时读取 §8 放大审计开关：``(audit_enabled, overturn_severity)``，容忍配置缺失。
+
+    与 :func:`~alphabee.orchestrator.services.detection.detection_switches` 同构的三条契约：
+    运行时逐层 ``getattr``、缺失/异常 → 默认 ``(True, high)``、**模块级不读配置**。
+    """
+    try:
+        from alphabee.config import get_settings
+
+        amplification = getattr(getattr(get_settings(), "deviation", None), "amplification", None)
+        if amplification is None:
+            return _DEFAULT_AMPLIFICATION_AUDIT_ENABLED, IssueSeverity.HIGH
+        enabled = bool(getattr(amplification, "audit_enabled", _DEFAULT_AMPLIFICATION_AUDIT_ENABLED))
+        raw_severity = (
+            str(getattr(amplification, "overturn_severity", _DEFAULT_OVERTURN_SEVERITY) or "").strip().lower()
+        )
+        severity = IssueSeverity(raw_severity) if raw_severity in set(IssueSeverity) else IssueSeverity.HIGH
+        return enabled, severity
+    except Exception as exc:  # noqa: BLE001 - 配置不可用绝不打断 run
+        logger.warning("deviation amplification settings unavailable (fail-open, default on): %s", exc)
+        return _DEFAULT_AMPLIFICATION_AUDIT_ENABLED, IssueSeverity.HIGH
 
 
 # ── review_thesis node ──────────────────────────────────────────────────────
@@ -83,7 +122,10 @@ async def review_thesis(
     and produces Decisions and Issues for each dimension verdict.
     """
     from alphabee.agents.thesis.registry import load_dimension_defs
-    from alphabee.agents.thesis.reviewer import ThesisReviewer
+    from alphabee.agents.thesis.reviewer import (
+        AmplificationContext,
+        ThesisReviewer,
+    )
 
     load_dimension_defs()
 
@@ -137,12 +179,29 @@ async def review_thesis(
     # ── Run reviewer ──
     reviewer = ThesisReviewer()
     use_llm = state.get("llm_review", False)
+
+    # ── §8 放大审计（F3）：组装审计输入并挂钩 review() ──
+    # §8.2 规则 2：WEIGHTED 边的下游必须有一个 review 节点检查方向一致性，检查结果写
+    # Decision(maker="amplification_audit")。这里就是那个 review 节点（review_thesis）：
+    # 审计结论由 reviewer 挂到 review.amplification_audit，本节点只负责转成 Decision/偏离。
+    audit_enabled, overturn_severity = _amplification_settings()
+    amplification_ctx = None
+    if audit_enabled:
+        insight_val = find_artifact_model(artifacts, ArtifactType.INSIGHT_ANALYSIS, InsightArtifact)
+        conflicts_val = find_artifact_model(artifacts, ArtifactType.CONFLICTS_RESULT, ConflictAnalysisResult)
+        amplification_ctx = AmplificationContext(insight=insight_val, signals=signal_val, conflicts=conflicts_val)
+
+    # **硬传** ``amplification=``（t61 定稿）：开关关闭时为 ``None``，review() 对 None 严格 no-op。
+    # 早期为兼容两个窄签名测试替身曾加过能力探测 shim，已删除 —— 探测会让"签名变化的实现方"
+    # **静默降级**到补挂路径，把真正的接口不匹配藏在暗处；现在接口不匹配会立刻 TypeError（显式失败）。
     review = reviewer.review(
         thesis=thesis,
         signal_results=signal_results,
         company_context=company_ctx,
         use_llm=use_llm,
+        amplification=amplification_ctx,
     )
+    amplification_audit = review.amplification_audit
 
     # ── Produce Decisions per dimension ──
     # 维度 verdict 会沉淀为 Decision，便于最终报告和质量 gate 回溯：
@@ -178,6 +237,59 @@ async def review_thesis(
                 based_on=review_evidence_ids,
             )
         )
+
+    # ── Produce the amplification-audit Decision（§8.2 规则 2 / §14.4-B 落点 ①） ──
+    # 无论"一致 / 不一致"都落一条 Decision：它是"该 WEIGHTED 边确实被审计过"的可回溯证据；
+    # 方向不一致时**另加**一条 D3 偏离（落点 ②）。Decision 必须带 based_on + evidence_refs，
+    # 否则本节点自己的 `evidence_refs_present` 检测器会立刻判 D3（verdict_without_evidence）。
+    if amplification_audit is not None:
+        audit_evidence_ids = [
+            artifact_id
+            for artifact_id in (
+                _find_artifact_id(artifacts, ArtifactType.THESIS_ANALYSIS),
+                _find_artifact_id(artifacts, ArtifactType.INSIGHT_ANALYSIS),
+                _find_artifact_id(artifacts, ArtifactType.SIGNAL_ANALYSIS),
+                _find_artifact_id(artifacts, ArtifactType.CONFLICTS_RESULT),
+            )
+            if artifact_id
+        ]
+        new_decisions.append(
+            Decision(
+                id=_make_id("decision"),
+                maker="amplification_audit",
+                rationale=f"[放大审计|{amplification_audit.edge}] {amplification_audit.rationale}",
+                confidence=0.85 if amplification_audit.direction_consistent else 0.3,
+                based_on=audit_evidence_ids,
+                evidence_refs=[
+                    EvidenceRef(ref_id=artifact_id, ref_type="artifact") for artifact_id in audit_evidence_ids
+                ],
+            )
+        )
+
+        # ── 落点 ②：方向不一致 → D3 偏离（category 已在 services/deviation.py 登记） ──
+        if not amplification_audit.direction_consistent:
+            new_issues.append(
+                record_deviation(
+                    DeviationClass.D3_ARGUMENT,
+                    overturn_severity,
+                    message=(
+                        f"[放大方向不一致] 加权边'{amplification_audit.edge}'的下游加权方向与"
+                        f"信号/冲突证据方向相反：{amplification_audit.rationale}"
+                    ),
+                    # 检测端 = 本节点；产生端 = run_thesis（加权乘法发生地）⇒ 检测时延 = 1 个节点。
+                    detected_at_step=step.id,
+                    related_step="run_thesis",
+                    related_artifact=_find_artifact_id(artifacts, ArtifactType.THESIS_ANALYSIS),
+                    category="amplification_direction_conflict",
+                    scope=scope_for_node(step.id),
+                    # 不填 recovery_action：本节点只**检测**到方向冲突，未执行任何恢复动作
+                    # （§10.1 口径：``recovery_action`` 非空且非 keep ⇒ 视作已恢复、敞口归零）。
+                    # 留空即"未尝试恢复"，故 ``amplified_by`` 的放大因子 1+n 会真实进入代价敞口
+                    # （high → 10×2=20；若某节点把 overturn_severity 配成 critical → 30×2=60 > 阈值
+                    # → 触发 F2 的"critical 越档直升级"）——这条链路由 F3 测试钉住。
+                    amplified_by=[amplification_audit.edge],
+                )
+            )
 
     # ── Produce Issues ──
     # 审查问题按严重度拆成 blocking / warning，

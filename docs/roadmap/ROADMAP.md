@@ -34,12 +34,21 @@ AlphaBee 当前已经具备较完整的“事实采集 → 衍生指标 → 风�
 | Phase 3 Claim-Evidence Graph | ⬜ | 未实现；`gates.py` 已有 `evidence_coverage / grounding_score` 检查，但上游 Decision 普遍未填 `based_on / evidence_refs` |
 | Phase 4 ExpectationFitAgent | ⬜ | 未实现 |
 | Phase 5 报告备忘录化 | 🟡 | 报告已重构为“观点驱动”（`REPORT_GENERATOR_PROMPT`：insight 主线 + 12 章节 + 三情景 + 可证伪条件），LLM 空输出有确定性降级报告（`reporter.py` `build_deterministic_report`）；“系统问题”段仍在 CLI 暴露 |
+| 偏离控制框架（DEVIATION_CONTROL_FRAMEWORK） | 🟡 | 设计见 `docs/design/DEVIATION_CONTROL_FRAMEWORK.md`。**已提交**：F0 偏离分类法 + 跨 run 偏离账本（`261070b`/`fb3bced`）、F1 节点契约 + 6 个后置检测器（`49d027f`）、F1c 假设登记簿生产者 + 报告 gate 消费者（`15213cb`）、F1 结转与 F1c 认证更正（`458f975`/`42a8526`）。**已提交**：F2 恢复阶梯协议化 + 降级传导阻尼 + `DeviationSettings` 五段配置（`2186eb9` 8 路径）与其收尾 `insights.py` 降级写入统一 + 开关登记（`9573d09` 2 路径），经第三方独立认证（提交树 8/8 + 2/2 与认证值逐字相符）。**进行中**：F3 放大标注 + 加权边审计（`INSIGHT_CONFIDENCE_WEIGHTS` 显式化并收口 medium=0.92 + `audit_amplification` + Decision 发射点 + category 登记 + R2-8 切换）。**未开始**：F4 宏观环自动调度、F5 度量层 + per-symbol 画像 |
 
 “当前关键问题”中的 #2（anomaly/conflict 进入 thesis）、#3（Report Generator 被限制为格式化器）、#4（Reviewer 维度覆盖落后）、#7（冲突状态边界）已解决：
 - `nodes/thesis.py` 全量传入 anomaly/conflict/verification/context，`engine.py` 已显式消费（0.2）。
 - `prompts.py` 的 `REPORT_GENERATOR_PROMPT` 已改为“有观点、有论证、可证伪”的忠实裁决模式，不再要求“只做格式化”。
 - `agents/thesis/reviewer.py` 的 `ThesisReviewer` 遍历全部 8 个维度生成 `dimension_verdicts`，审查逻辑已随 `dimensions/` 目录（8 个 YAML）同步扩展。
 - `explore_conflicts` / `verify_hypotheses` / `review_thesis` 已按 provisional / settled 分层（0.5）。
+
+### 行为变更登记
+
+> 依据 `docs/design/DEVIATION_CONTROL_FRAMEWORK.md` §8.2 规则 3：「权重调整属于行为变更，必须在 ROADMAP 登记」。
+
+| 日期 | 变更 | 依据 | 影响与回归面 |
+|---|---|---|---|
+| 2026-09-17 | `insight → thesis` 加权边的 medium 档乘数 **0.95 → 0.92**（同时提为模块常量 `alphabee/agents/thesis/engine.py::INSIGHT_CONFIDENCE_WEIGHTS`） | §14.4-A 与契约文案 `node_contracts.py:370` 两处早已登记 0.92，代码 0.95 为离群值 | medium 档 insight 对维度 confidence 的乘数略降（high/low 不变）；`min(factor, 0.85)` 的 F2 降级阻尼与"一档封顶"不受影响；受影响的既有断言见 `tests/orchestrator/test_degradation_damping.py` 与 F3 主测试的常量一致性用例 |
 
 ---
 

@@ -179,7 +179,10 @@ def test_review_thesis_decisions_have_based_on(monkeypatch):
     ]
 
     class FakeReviewer:
-        def review(self, thesis, signal_results, company_context, use_llm=False):
+        # t61：`review_thesis` 节点**硬传** `amplification=`（F3 的 §8 放大审计输入，可能为 None）。
+        # 替身必须接受该关键字，否则节点会因签名不匹配抛 TypeError —— 早期这里靠节点侧的
+        # 能力探测 shim 规避，shim 已删除，改由替身声明 `**kwargs` 承接。
+        def review(self, thesis, signal_results, company_context, use_llm=False, **kwargs):
             return ThesisReview(
                 symbol=thesis.symbol,
                 period=thesis.period,

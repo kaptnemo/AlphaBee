@@ -154,11 +154,12 @@ _REPORT_SECTIONS: tuple[str, ...] = ("thesis", "insight", "anomaly", "conflict_a
 
 #: 必须带证据引用的**结论性** Decision maker（§6.2：维度 verdict 对应的 Decision 必须带
 #: ``based_on`` / ``evidence_refs``）。用**闭合集合**而非子串猜测，避免把普通中间结论误判成 D3。
-#: 前瞻项：``amplification_audit`` 的生产者随 F3（§14.4）落地，当前无 `maker=` 字面量。
+#: ``amplification_audit`` 的**生产者已随 F3（§14.4）落地**（``review_thesis`` 节点，带
+#: ``based_on`` + ``evidence_refs``），不再是"前瞻登记项"。
 VERDICT_MAKERS: frozenset[str] = frozenset(
     {
         "thesis_reviewer",  # 逐维度 verdict（agent.py 已带 based_on=review_evidence_ids）
-        "amplification_audit",  # F3：加权方向一致性审计结论（前瞻登记项）
+        "amplification_audit",  # F3：加权方向一致性审计结论（review_thesis 节点发射）
     }
 )
 
@@ -305,29 +306,29 @@ def insight_artifacts_present(ctx: NodeContext) -> DetectionResult:
 def evidence_refs_present(ctx: NodeContext) -> DetectionResult:
     """结论性 Decision 必须带 ``basis``/``evidence_refs``（ROADMAP P0 项的检测器化）。
 
-    **已知限制（显式非目标）**：§14.2-B 要求检查「**本节点新增** Decision」，而本实现的扫描面是
-    ``ctx.view["decisions"]`` —— **视图级**（本 run 的全量合并视图，仅按 ``maker`` 过滤）。差异与方向：
+    **扫描面 = ``ctx.new_decisions``（本节点本次新增，F3 切换完成）**：与 §14.2-B 的
+    「**本节点新增** Decision」逐字一致，不再对**别的节点**产出的 verdict 误归属。
 
-    * **差异**：本节点**之外**的节点产出的 verdict 也会被计入；
-    * **方向：过报（误归属）** —— 「别的节点产的无证据 verdict」会在**本节点**被判 D3，
-      且 ``Issue.detected_at_step`` 记为**检测节点**；
-    * **根因（t36 口径更正，依 t31 finding T31-2）**：``Decision`` 无节点关联字段；而 ``NodeContext``
-      现**已**提供 ``new_decisions``（t30 增补，包装器取 ``list(update.get("decisions") or [])``，
-      与 ``new_artifacts`` 同模式）⇒ 剩余根因是"**本检测器尚未切换**"，**不再是接口缺失**
-      （旧表述曾称根因为"``NodeContext`` 只提供 ``new_artifacts``"，与同文件现状自相矛盾，已删）。
-    * **处置**：本轮**只披露、不改行为**（切换会连带影响 :func:`assumption_still_valid` 的
-      Decision 侧口径与既有钉住用例，属独立变更集）。
-    * **F3 门验收项（已登记，t36 登记、由 F3 门承接）**：F3 将引入 ``amplification_audit`` 生产者
-      ⇒ 跨节点误归属届时**成活**并污染 F5 的 per-node 画像。故 **F3 门必须完成**：
-      ① 本检测器改用 ``ctx.new_decisions``（与 :func:`assumption_still_valid` 一并切换）；
-      ② ``test_evidence_refs_present_known_limitation_cross_node_overreport`` 由"刻意断言过报"
-        **翻转**为断言**不报**（该用例现仍钉住当前行为，见其 docstring）；
-      ③ 复核 ``run_thesis`` 亦声明本检测器这一事实。
+    切换史（保留可追溯性，不做"无痕改写"）：
+
+    * t30 给 ``NodeContext`` 增补 ``new_decisions``（包装器取 ``list(update.get("decisions") or [])``，
+      与 ``new_artifacts`` 同模式），但本检测器**当时未切换**，扫描面仍是视图级
+      ``ctx.view["decisions"]`` ⇒ 对本节点之外的 verdict 构成**过报（误归属）**：
+      ``Issue.detected_at_step`` 会记在检测节点上，污染 F5 的 per-node 画像；
+    * t36 把该差异登记为「F3 门验收项」；F3 完成切换，三项一次闭环：
+      ① 扫描面改为 ``ctx.new_decisions``；② 钉住用例
+      ``test_evidence_refs_present_known_limitation_cross_node_overreport`` 由"刻意断言过报"
+      **翻转为断言不报**；③ 复核 ``run_thesis`` 契约确已声明本检测器
+      （``NODE_CONTRACTS["run_thesis"].detectors`` 含本名）⇒ 其出口 verdict 仍被检查，无漏检空洞。
+    * **方向权衡（如实披露）**：切换后"别的节点产的无证据 verdict"不再于本节点被判 D3——
+      那本就不是本检测器的职责（每个声明它的节点自检**自己的**产出），产出侧自检 + 全仓
+      ``maker=`` 归类守卫共同覆盖该面，不构成新的静默漏报面。
     """
     name = "evidence_refs_present"
-    decisions = ctx.view.get("decisions") or []
     verdicts = [
-        decision for decision in decisions if (getattr(decision, "maker", "") or "").strip().lower() in VERDICT_MAKERS
+        decision
+        for decision in ctx.new_decisions
+        if (getattr(decision, "maker", "") or "").strip().lower() in VERDICT_MAKERS
     ]
     if not verdicts:
         return _passed(name)
@@ -459,10 +460,10 @@ def assumption_still_valid(ctx: NodeContext) -> DetectionResult:
 
     **"被本节点引用"（§14.2-B）**：只有"登记簿存在 **且** 其中 ``invalidated`` 假设的 id 出现在
     **本节点本次新增载荷**中"才算状态偏离 —— 节点不依赖该假设时不得报 D4（§16 反模式：误报）。
-    判定见 :func:`_node_payloads_referencing`。
-    **已知限制（显式非目标）**：本节点新增 ``Decision`` 的 ``evidence_refs``/``based_on`` **未纳入**
-    扫描面 —— ``Decision`` 无节点关联字段、包装器亦不提供"本次新增 decisions"，故方向取
-    **保守（少报而非误报）**；后续期如需支持，须给 ``NodeContext`` 增补 ``new_decisions``。
+    判定见 :func:`_node_payloads_referencing`（两类载荷：本节点新增 artifact + 本节点新增
+    ``Decision`` 的 ``evidence_refs`` / ``based_on``；后者随 t30 增补的 ``NodeContext.new_decisions``
+    一并落地）。**旧文案曾写"Decision 侧未纳入扫描面、属保守少报"——该表述已与实现不符，F3 由
+    t60 更正**：Decision 侧**已在**扫描面内。
 
     **生产者顺延至 F1c**（见模块 docstring"期次说明"）：F1 期间本检测器无输入，但并非死代码——
     ``test_assumption_still_valid_triggers_on_invalidated_entry`` 用"构造含注册表的 state → 触发 D4"

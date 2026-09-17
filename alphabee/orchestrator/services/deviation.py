@@ -123,6 +123,8 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
     # 现网（F1b）：报告结论可能依赖已证伪假设（gates.py 的 §6.3 检查）
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
+    # ── F3：§8 加权边审计（audit_amplification 的方向不一致上报）
+    "amplification_direction_conflict": DeviationClass.D3_ARGUMENT,
 }
 
 #: 未知 category 的保守回退：归为结构偏离（§14.1-B）。宁可少分类，不猜测语义。

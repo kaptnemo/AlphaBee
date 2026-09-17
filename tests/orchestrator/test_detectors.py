@@ -45,12 +45,14 @@ def _ctx(
     node_id: str = "run_analysis_engines",
     *,
     new_artifacts: list[Artifact] | None = None,
+    new_decisions: list | None = None,
     view: dict | None = None,
 ) -> NodeContext:
     return NodeContext(
         node_id=node_id,
         step=_step(node_id),
         new_artifacts=list(new_artifacts or []),
+        new_decisions=list(new_decisions or []),
         view=dict(view or {}),
     )
 
@@ -169,15 +171,17 @@ def _decision(maker: str, *, based_on=None, evidence_refs=None):
 
 
 def test_evidence_refs_present_passes_when_verdicts_have_evidence():
+    """正例：**本节点新增**的 verdict 带 ``based_on`` → 不报（F3 起扫描 ``ctx.new_decisions``）。"""
     ctx = _ctx(
         node_id="run_thesis",
-        view={"decisions": [_decision("thesis_reviewer", based_on=["artifact-1"])]},
+        new_decisions=[_decision("thesis_reviewer", based_on=["artifact-1"])],
     )
     assert det.evidence_refs_present(ctx).passed is True
 
 
 def test_evidence_refs_present_detects_verdict_without_evidence():
-    ctx = _ctx(node_id="run_thesis", view={"decisions": [_decision("thesis_reviewer")]})
+    """反例（F3 明确保留的正例面）：**本节点新增**的无证据 verdict 仍必须报 D3。"""
+    ctx = _ctx(node_id="run_thesis", new_decisions=[_decision("thesis_reviewer")])
     result = det.evidence_refs_present(ctx)
     assert result.passed is False
     assert result.deviation_class is DeviationClass.D3_ARGUMENT
@@ -188,7 +192,7 @@ def test_evidence_refs_present_ignores_non_verdict_decisions():
     """普通中间结论（假设已排除、市场分）不是维度 verdict，不得误报 D3。"""
     ctx = _ctx(
         node_id="run_thesis",
-        view={"decisions": [_decision("conflict_verifier"), _decision("market_score_engine")]},
+        new_decisions=[_decision("conflict_verifier"), _decision("market_score_engine")],
     )
     assert det.evidence_refs_present(ctx).passed is True
 
@@ -453,19 +457,30 @@ def test_every_repo_maker_literal_is_classified():
 
 
 def test_evidence_refs_present_known_limitation_cross_node_overreport():
-    """★ 钉住已知限制（R2-8）：扫描面是**视图级** ``ctx.view["decisions"]``，故会对**别的节点**
-    产出的无证据 verdict 在**本节点**报 D3（过报 / 误归属，``detected_at_step`` 记为检测节点）。
+    """★ R2-8 关闭（F3 翻转）：扫描面改为 ``ctx.new_decisions`` ⇒ **别的节点**产出的无证据 verdict
+    不再在**本节点**被判 D3（跨节点误归属 / 过报已消除）。
 
-    本用例**刻意断言当前（有缺陷的）行为**，使该限制被显式钉住而非静默漂移；
-    修复路径见 ``evidence_refs_present`` docstring 的「F3 门验收项（t36 登记）」：
-    ``NodeContext.new_decisions`` **已由 t30 增补**（不再是待办事项），剩余工作是**把本检测器切换
-    到该字段**（与 ``assumption_still_valid`` 一并）；切换后本用例应改为断言 **不报**。
+    历史：本用例曾**刻意断言过报**以钉住视图级扫描的缺陷（``ctx.view["decisions"]``）；t36 把它
+    登记为「F3 门验收项」；F3（本改动）把检测器切到 ``new_decisions``，本用例随之**翻转为断言不报**。
+
+    两个方向都被钉住，缺一不可：
+    * 本用例（反例面）：视图里有、**本节点新增里没有** → 不报（不误归属）；
+    * ``test_evidence_refs_present_detects_verdict_without_evidence``（正例面）：本节点新增里没有
+      证据的 verdict → 仍报 D3（不漏报）。
     """
     other_node_verdict = _decision("thesis_reviewer")  # 无 based_on / evidence_refs
     ctx = _ctx(node_id="synthesize_insights", view={"decisions": [other_node_verdict]})
     result = det.evidence_refs_present(ctx)
-    assert result.passed is False
-    assert result.deviation_class == DeviationClass.D3_ARGUMENT
+    assert result.passed is True, "视图级 Decision 不得再被判成本节点的 D3（F3 已切换扫描面）"
+
+
+def test_evidence_refs_present_ignores_view_when_new_decisions_empty():
+    """★ 变异证据（证明上面的"不报"不是真空：把同一条 Decision 放进 ``new_decisions`` 就立刻报 D3）。"""
+    verdict = _decision("thesis_reviewer")  # 无 based_on / evidence_refs
+    nothing_new = _ctx(node_id="synthesize_insights", view={"decisions": [verdict]})
+    mine = _ctx(node_id="synthesize_insights", new_decisions=[verdict], view={"decisions": [verdict]})
+    assert det.evidence_refs_present(nothing_new).passed is True
+    assert det.evidence_refs_present(mine).passed is False
 
 
 def test_maker_guard_is_not_vacuous():
@@ -675,6 +690,7 @@ def test_referencing_match_is_word_bounded():
         ("x_h1", True),  # ← T31-6：复合键 / 下划线分隔，初版边界类含 "_" 时会漏报
         ("h1_x", True),  # ← 同上
         ("h1_notes", True),  # ← 同上
+        ("h1_a", True),  # ← T35-2：残余过报面（id `h1` 命中 `h1_a`）显式钉住，见下 docstring
         # ── 必须排除：字母数字相邻的子串碰撞（过报方向）──
         ("h10", False),
         ("abch1", False),
@@ -682,11 +698,12 @@ def test_referencing_match_is_word_bounded():
     ],
 )
 def test_id_occurs_boundary_matrix(blob: str, expected: bool):
-    """★ T31-6 边界矩阵：``_id_occurs("h1", blob)`` 在两个方向上都被钉住。
+    """★ T31-6 边界矩阵 + T35-2 残余项：``_id_occurs("h1", blob)`` 在两个方向上都被钉住。
 
-    矩阵由 t31 的 reviewer 压测设计、captain 落地。**注意**：本矩阵刻意断言 ``h1_notes`` 为
-    命中——这是把 ``_`` 移出边界类后的**有意取舍**（捕获面不小于改造前）。其残余（id 对
-    ``h1`` vs ``h1_a`` 在下划线分隔下互相命中）已在 ``_id_occurs`` docstring 披露，归 F3 的
-    结构化匹配收敛。
+    矩阵由 t31 的 reviewer 压测设计、captain 落地。**注意**：本矩阵刻意断言 ``h1_notes`` 与
+    ``h1_a`` 为命中——这是把 ``_`` 移出边界类后的**有意取舍**（捕获面不小于改造前）。其残余
+    （id 对 ``h1`` vs ``h1_a`` 在下划线相连时分不开）已在 ``_id_occurs`` docstring 披露：
+    它是"序列化文本包含判定"的固有极限，F3（t60）已把 ``evidence_refs_present`` 切到结构化
+    扫描面（``ctx.new_decisions``），而本函数仍服务 ``assumption_still_valid`` 的文本面。
     """
     assert det._id_occurs(blob, "h1") is expected, f"blob={blob!r} 期望 {expected}"
