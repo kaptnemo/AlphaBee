@@ -51,13 +51,24 @@ class DeviationDetectionSettings(BaseModel):
 
 
 class DeviationBudgetSettings(BaseModel):
-    """§10 偏离预算：严重度权重 + 代价敞口阈值（供 recovery 的直接升级分支使用）。"""
+    """§10 偏离预算：严重度权重 + 代价敞口阈值 + 每任务类型的 ``D_max``（§10.2 / §14.6）。"""
 
     severity_weight: dict[str, int] = Field(
         default_factory=lambda: {"low": 1, "medium": 3, "high": 10, "critical": 30},
         description="§10.1 代价敞口用的严重度权重",
     )
     cost_exposure_threshold: int = Field(default=30, description="代价敞口超过该值 → 直接升级（T5）")
+    d_max: dict[str, int] | int | None = Field(
+        default_factory=lambda: {"analysis": 60, "tracking": 20},
+        description=(
+            "§14.6 / §10.2 每任务类型的偏离预算 D_max —— §11.1「预算消耗 = D_cum / D_max」的分母。"
+            "按 run.context['task_kind'] 取键，缺省 'analysis'。**必须带默认值**：本模块有模块级 "
+            "``settings = get_settings()``，缺 ``deviation`` 段的 config.yaml 不得在 import 期抛错。"
+            "类型放宽为 dict | int | None：标量（整段预算）与缺失（None）都被接受（避免配置畸形在 "
+            "import 期抛错）；解析仍按 telemetry._budget_limit 的既有顺序，缺失/非正/不可解析一律 "
+            "None（不回退 0，见 §14.5-B）。"
+        ),
+    )
 
 
 class DeviationLedgerSettings(BaseModel):

@@ -559,6 +559,109 @@ def test_budget_limit_from_settings_scalar(monkeypatch):
     assert telemetry.compute_deviation_metrics(state, []).budget_consumption == 0.2
 
 
+# ── ⑥ F5-D2（t78）：§14.6 的 d_max 落进配置模型 ⇒ 生产路径不再恒 None ───────
+
+
+def test_budget_settings_default_d_max_matches_section_14_6():
+    """§14.6 缺省 ``d_max = {"analysis": 60, "tracking": 20}``；既有两字段默认值一字不改（F2 语义）。"""
+    from alphabee.config import DeviationBudgetSettings
+
+    settings = DeviationBudgetSettings()
+    assert settings.d_max == {"analysis": 60, "tracking": 20}
+    assert settings.severity_weight == {"low": 1, "medium": 3, "high": 10, "critical": 30}
+    assert settings.cost_exposure_threshold == 30
+
+
+@pytest.mark.parametrize("value", [45, None])
+def test_budget_settings_tolerates_scalar_and_none_d_max(value):
+    """类型放宽（``dict | int | None``）：标量与 None 都被接受，避免配置畸形在 import 期抛错。"""
+    from alphabee.config import DeviationBudgetSettings
+
+    assert DeviationBudgetSettings(d_max=value).d_max == value
+
+
+def test_deviation_settings_constructs_without_deviation_section():
+    """import 期安全：整段 ``deviation`` 缺失时也能取到带默认值的 ``DeviationSettings``。"""
+    from alphabee.config import DeviationSettings
+
+    deviation = DeviationSettings()
+    assert deviation.budget.d_max == {"analysis": 60, "tracking": 20}
+    assert deviation.ledger.enabled is True  # 既有五段语义不变
+
+
+def _default_config_settings():
+    """**真实默认配置**（不替换 ``d_max`` 数值）：直接用 ``DeviationSettings()`` 的缺省值。"""
+    from alphabee.config import DeviationSettings
+
+    class _Settings:
+        deviation = DeviationSettings()
+
+    return _Settings()
+
+
+def test_budget_consumption_non_none_under_default_config(monkeypatch):
+    """★ 本任务核心目标：默认配置下生产路径给出非 None 值 = D_cum / 60 = 0.1667（此前恒 None）。"""
+    monkeypatch.setattr(config_mod, "get_settings", _default_config_settings)
+    state = _state(issues=(_issue(),))  # high → 10 × 1 × 1 = 10
+    assert telemetry.compute_deviation_metrics(state, []).budget_consumption == 0.1667
+
+
+def test_budget_consumption_uses_tracking_budget_under_default_config(monkeypatch):
+    """默认配置按 ``task_kind`` 取键：tracking → 10 / 20 = 0.5。"""
+    monkeypatch.setattr(config_mod, "get_settings", _default_config_settings)
+    state = _state(issues=(_issue(),), context={telemetry.TASK_KIND_CONTEXT_KEY: "tracking"})
+    assert telemetry.compute_deviation_metrics(state, []).budget_consumption == 0.5
+
+
+@pytest.mark.parametrize("task_kind", [None, "", "   "])
+def test_budget_limit_falls_back_to_analysis_key(monkeypatch, task_kind):
+    """``task_kind`` 缺失 / 空串 / 全空白 ⇒ 回落 §14.6 的缺省键 ``analysis``（三种写法等价）。"""
+    monkeypatch.setattr(config_mod, "get_settings", _default_config_settings)
+    context = {} if task_kind is None else {telemetry.TASK_KIND_CONTEXT_KEY: task_kind}
+    state = _state(issues=(_issue(),), context=context)
+    assert telemetry.compute_deviation_metrics(state, []).budget_consumption == 0.1667
+
+
+def test_budget_consumption_none_for_unknown_task_kind(monkeypatch):
+    """未知任务类型没有配置预算 ⇒ ``None``（不暗中复用 analysis —— 没有配置就没有分母）。"""
+    monkeypatch.setattr(config_mod, "get_settings", _default_config_settings)
+    state = _state(issues=(_issue(),), context={telemetry.TASK_KIND_CONTEXT_KEY: "unknown_kind"})
+    assert telemetry.compute_deviation_metrics(state, []).budget_consumption is None
+
+
+@pytest.mark.parametrize("bad", [None, {}, object(), [], "not-a-number", {"analysis": "n/a"}])
+def test_budget_consumption_none_when_d_max_malformed(monkeypatch, bad):
+    """``d_max`` 缺失 / 空映射 / 类型异常 ⇒ ``None``（双侧用例的 None 侧，**绝不静默回退 0**）。"""
+
+    class _Budget:
+        d_max = bad
+
+    class _Deviation:
+        budget = _Budget()
+
+    class _Settings:
+        deviation = _Deviation()
+
+    monkeypatch.setattr(config_mod, "get_settings", lambda: _Settings())
+    state = _state(issues=(_issue(),))
+    assert telemetry.compute_deviation_metrics(state, []).budget_consumption is None
+
+
+def test_example_config_d_max_matches_model_defaults():
+    """``config.yaml.example`` 的 ``deviation.budget.d_max`` 与 §14.6 / 模型缺省值**同源**（防漂移）。"""
+    import yaml
+
+    from alphabee.config import DeviationBudgetSettings, DeviationSettings
+
+    example = yaml.safe_load((REPO_ROOT / "config.yaml.example").read_text(encoding="utf-8"))
+    configured = example["deviation"]["budget"]["d_max"]
+    assert configured == {"analysis": 60, "tracking": 20}
+    assert configured == DeviationBudgetSettings().d_max
+    # 示例配置必须能被模型**接受**（键名打错会在此暴露，而不是在用户 import 期）
+    deviation = DeviationSettings(**example["deviation"])
+    assert deviation.budget.d_max == configured
+
+
 # ── 合成账本整体口径 ───────────────────────────────────────────────────────
 
 

@@ -37,6 +37,8 @@
                         ``run.context["d_max"]``（run 级显式预算）或
                         ``settings.deviation.budget.d_max``（标量，或按 ``run.context["task_kind"]``
                         取键的映射，缺省 ``"analysis"``）解析。``D_max`` 缺失或非正 → ``None``。
+                        F5-D2（t78）：§14.6 的缺省映射 ``{"analysis": 60, "tracking": 20}`` 已落进
+                        ``DeviationBudgetSettings``（带默认值）⇒ **默认配置下本项不再恒为 None**。
 ``silent_degradation_rate``  §11.1 静默劣化率：（兜底发现的、且分类 ∈ {D1, D2} 的账本行）÷ 全部行
                         （越接近 0 越好）；全部行 0 → ``None``。
 ======================  ================================================================
@@ -363,7 +365,13 @@ def _on_track_curve(state: Any, events: Sequence[Any]) -> list[float]:
 
 
 def _budget_limit(state: Any) -> float | None:
-    """``D_max``：``run.context["d_max"]`` 优先，其次 ``settings.deviation.budget.d_max``；缺失 → ``None``。"""
+    """``D_max``：``run.context["d_max"]``（run 级显式预算）优先，其次
+    ``settings.deviation.budget.d_max``（§14.6：映射按 ``run.context["task_kind"]`` 取键、缺省
+    ``"analysis"``；也接受标量）；**缺失 / 非正 / 不可解析 → ``None``**（不回退 0，§14.5-B）。
+
+    F5-D2（t78）：§14.6 的 ``d_max`` 已落进 ``DeviationBudgetSettings``（缺省
+    ``{"analysis": 60, "tracking": 20}``）⇒ **默认配置下本函数即返回 60**（此前字段缺失 ⇒ 生产路径恒 None）。
+    """
     explicit = _as_float(_run_context(state, D_MAX_CONTEXT_KEY))
     if explicit is not None:
         return explicit
@@ -372,8 +380,11 @@ def _budget_limit(state: Any) -> float | None:
     budget = getattr(deviation, "budget", None)
     configured = getattr(budget, "d_max", None)
     if isinstance(configured, Mapping):
-        task_kind = _run_context(state, TASK_KIND_CONTEXT_KEY) or DEFAULT_TASK_KIND
-        return _as_float(configured.get(str(task_kind)))
+        # 键解析放宽：``task_kind`` 缺失 / 空串 / 全空白 → 回落 §14.6 的缺省键 ``"analysis"``；
+        # 非 str 也先 ``str()`` 归一。未知键**不**暗中复用 ``analysis``：没有配置就没有预算（→ None）。
+        task_kind = _run_context(state, TASK_KIND_CONTEXT_KEY)
+        key = str(task_kind).strip() if task_kind is not None else ""
+        return _as_float(configured.get(key or DEFAULT_TASK_KIND))
     return _as_float(configured)
 
 

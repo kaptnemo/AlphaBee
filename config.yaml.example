@@ -48,6 +48,10 @@ deviation:
       high: 10
       critical: 30
     cost_exposure_threshold: 30   # 代价敞口 **超过**该值 ⇒ 直跳 Tier 5（越过中间档）
+    d_max:                   # §14.6 / §10.2 每任务类型的偏离预算 D_max = §11.1「预算消耗 = D_cum / D_max」的分母
+      analysis: 60           # 分析场景（run.context 无 task_kind 时的缺省键）
+      tracking: 20           # 宏观环跟踪场景（run.context['task_kind'] = 'tracking'）
+                             # 缺失/非正/不可解析 ⇒ budget_consumption 为 None（绝不回退 0，§14.5-B）
 
   ledger:                    # §5.2 跨 run 偏离账本（fail-open：写失败只 warning，绝不打断 run）
     enabled: true            # 账本写入总开关：关闭 ⇒ 只记 Step、不落库
