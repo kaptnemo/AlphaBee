@@ -7,10 +7,49 @@ from langchain_core.runnables import RunnableConfig
 
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
-from alphabee.orchestrator.contracts import ConflictAnalysisArtifact
+from alphabee.orchestrator.contracts import (
+    ASSUMPTION_STATUS_ACTIVE,
+    AssumptionEntry,
+    AssumptionRegistryArtifact,
+    ConflictAnalysisArtifact,
+)
+from alphabee.orchestrator.services import detection
 from alphabee.orchestrator.services.payload_builders import generate_explore_conflicts_prompt
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import parse_json
+
+
+def build_provisional_assumptions(conflicts_result: object, step_id: str) -> Artifact | None:
+    """探索阶段的**初步**假设登记（§6.3 / §14.2-D）：把待验证假设登记为 active。
+
+    与 verification.build_assumption_registry 的分工：本函数在探索阶段登记候选假设（active）；
+    结算阶段重建登记簿并更新为 invalidated / confirmed / active，两者用同一假设 id 一一对应。
+    开关关闭或没有假设 → None（严格 no-op）。
+    """
+    if not detection.detection_switches():
+        return None
+
+    conflicts = getattr(conflicts_result, "conflicts", None) or []
+    entries = [
+        AssumptionEntry(
+            id=hypothesis.id,
+            statement=getattr(hypothesis, "explanation", "") or "",
+            status=ASSUMPTION_STATUS_ACTIVE,
+            source_artifact=ArtifactType.CONFLICTS_RESULT,
+        )
+        for conflict in conflicts
+        for hypothesis in (getattr(conflict, "hypotheses", None) or [])
+    ]
+    if not entries:
+        return None
+
+    registry = AssumptionRegistryArtifact(entries=entries)
+    return Artifact(
+        id=_make_id("artifact"),
+        type=ArtifactType.ASSUMPTION_REGISTRY,
+        producer_step=step_id,
+        value=registry.model_dump(mode="json"),
+    )
 
 
 async def explore_conflicts(
@@ -120,6 +159,11 @@ async def explore_conflicts(
                 value=conflicts_result.model_dump(mode="json"),
             )
         )
+    # 假设登记簿（探索阶段登记候选假设为 active，§6.3）；开关关闭时为 None（严格 no-op）。
+    provisional = build_provisional_assumptions(conflicts_result, step.id)
+    if provisional is not None:
+        new_artifacts.append(provisional)
+
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
         "steps": [completed_step],

@@ -26,6 +26,8 @@ from alphabee.core import (
     StepStatus,
 )
 from alphabee.harness.prompts import EVALUATOR_NODE_PROMPT
+from alphabee.orchestrator.contracts import AssumptionRegistryArtifact, find_artifact_model
+from alphabee.orchestrator.services import detection
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils import create_structured_model, extract_text, json_instruction, make_id, parse_json
 
@@ -67,6 +69,41 @@ def _truncate(value: str, limit: int = 200) -> str:
 
 def _base_issues(state: OrchestratorState) -> list[Issue]:
     return [issue for issue in state.get("issues", []) if issue.category != "report_rewrite_needed"]
+
+
+def build_invalidated_assumption_issues(state: OrchestratorState, step_id: str) -> list[Issue]:
+    """报告 gate 的「依赖已证伪假设」检查（§6.3 / §13 F1）。
+
+    **严格 no-op 语义（C2）**：开关关闭、登记簿 artifact 不存在、或登记簿存在但无 invalidated
+    假设 → 返回空列表（不产 issue、不改 gate 判定与返回值）；只有「登记簿确实存在且含已证伪
+    假设」才产出一条 D3 提示（非阻塞：不进 blocking_issues、不触发重写）。
+    """
+    if not detection.detection_switches():
+        return []
+    artifacts = list(state.get("artifacts", []))
+    if not any(artifact.type == ArtifactType.ASSUMPTION_REGISTRY for artifact in artifacts):
+        return []
+    registry = find_artifact_model(artifacts, ArtifactType.ASSUMPTION_REGISTRY, AssumptionRegistryArtifact)
+    if registry is None:
+        return []
+    invalidated = registry.invalidated
+    if not invalidated:
+        return []
+    statements = "；".join(entry.statement or entry.id for entry in invalidated[:3])
+    return [
+        Issue(
+            id=_make_id("issue"),
+            severity=IssueSeverity.MEDIUM,
+            category="assumption_based_claim",
+            message=(
+                f"报告结论可能依赖 {len(invalidated)} 条已被证伪的假设：{statements}"
+                "（不得作为论证前提，除非显式引用反驳证据）"
+            ),
+            related_step=step_id,
+            scope=IssueScope.REPORT,
+            owner_node="review_report",
+        )
+    ]
 
 
 def _load_report_output(state: OrchestratorState) -> ReportOutput | None:
@@ -494,6 +531,10 @@ async def review_report(
                 owner_node="review_report",
             )
         )
+
+    # 假设生命周期检查（§6.3 / C2）：登记簿缺失或开关关闭时严格 no-op（返回空列表）。
+    # 只作 D3 提示，**不进 blocking_issues**，因此不会改变 gate 判定与返回值。
+    updated_issues.extend(build_invalidated_assumption_issues(state, step.id))
 
     if not rewrite_needed:
         updated_issues.extend(

@@ -25,9 +25,15 @@ from alphabee.orchestrator.collectors import (
     _make_id,
 )
 from alphabee.orchestrator.contracts import (
+    ASSUMPTION_STATUS_ACTIVE,
+    ASSUMPTION_STATUS_CONFIRMED,
+    ASSUMPTION_STATUS_INVALIDATED,
+    AssumptionEntry,
+    AssumptionRegistryArtifact,
     VerificationArtifact,
     find_artifact_model,
 )
+from alphabee.orchestrator.services import detection
 from alphabee.orchestrator.services.payload_builders import build_verify_context
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import parse_json
@@ -254,6 +260,14 @@ async def verify_hypotheses(
             )
             break
 
+    # ── 假设登记簿（§6.3 / §14.2-D）：结算层是假设生命周期的权威来源 ──
+    # rejected → invalidated（前提被证伪，下游不得再当论证前提）；verified/partial → confirmed；
+    # unknown → active。条目 id 与探索阶段（conflicts.build_provisional_assumptions）一一对应。
+    # 受 `deviation.detection.enabled` 开关控制：关闭时不产 artifact，行为与实施前逐字段一致。
+    assumption_artifact = build_assumption_registry(conflicts_result, all_hypotheses, result_by_hid, step.id)
+    if assumption_artifact is not None:
+        new_artifacts.append(assumption_artifact)
+
     completed_step = _finalize_step(step, new_issues, new_artifacts)
     return {
         "steps": [completed_step],
@@ -261,3 +275,47 @@ async def verify_hypotheses(
         "artifacts": new_artifacts,
         "decisions": new_decisions,
     }
+
+
+#: 验证结算状态 → 假设生命周期状态（§6.3）。
+_ASSUMPTION_STATUS_BY_VERIFICATION: dict[str, str] = {
+    "rejected": ASSUMPTION_STATUS_INVALIDATED,
+    "verified": ASSUMPTION_STATUS_CONFIRMED,
+    "partial": ASSUMPTION_STATUS_CONFIRMED,
+    "unknown": ASSUMPTION_STATUS_ACTIVE,
+}
+
+
+def build_assumption_registry(
+    conflicts_result: ConflictAnalysisResult,
+    hypotheses: list[Any],
+    result_by_hid: dict[str, VerificationResultItem],
+    step_id: str,
+) -> Artifact | None:
+    """构造假设登记簿 artifact（§6.3）；开关关闭或假设为空 → None（严格 no-op）。"""
+    if not detection.detection_switches() or not hypotheses:
+        return None
+
+    entries: list[AssumptionEntry] = []
+    for hypothesis in hypotheses:
+        result = result_by_hid.get(hypothesis.id)
+        status = _ASSUMPTION_STATUS_BY_VERIFICATION.get(getattr(result, "status", "") or "", ASSUMPTION_STATUS_ACTIVE)
+        entries.append(
+            AssumptionEntry(
+                id=hypothesis.id,
+                statement=getattr(hypothesis, "explanation", "") or "",
+                status=status,
+                source_artifact=ArtifactType.CONFLICTS_RESULT,
+                invalidated_by=(getattr(result, "summary", "") or "")
+                if status == ASSUMPTION_STATUS_INVALIDATED
+                else "",
+            )
+        )
+
+    registry = AssumptionRegistryArtifact(entries=entries)
+    return Artifact(
+        id=_make_id("artifact"),
+        type=ArtifactType.ASSUMPTION_REGISTRY,
+        producer_step=step_id,
+        value=registry.model_dump(mode="json"),
+    )
