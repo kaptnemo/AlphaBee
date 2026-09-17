@@ -692,8 +692,15 @@ class ThesisEngine:
             dim.counter_evidence = self._dedupe_preserve_order(dim.counter_evidence)
 
         # ── Temper confidence when insight itself is low ──
-        confidence_factor = {"high": 1.0, "medium": 0.95, "low": 0.85}
-        factor = confidence_factor.get(insight_confidence, 0.95)
+        # F2（§7.2 规则 2）：先按 insight 自身档位降温（历史行为 high→1.0 / medium→0.95 / low→0.85），
+        # 再在 insight 被标记为**降级产出**时叠加一档阻尼（×0.85，且**一档封顶**）。
+        from alphabee.orchestrator.services.degradation import DAMPING_FACTOR, degraded_inputs
+
+        factor = {"high": 1.0, "medium": 0.95, "low": 0.85}.get(insight_confidence, 0.95)
+        # 关键：阻尼的触发条件是"消费了降级产物"，而不是"档位较低"（后者已由上面的系数表表达）。
+        # 两者若混用，`high` 档也会被误降一档（该缺陷由 F2 单测抓出）。
+        if degraded_inputs([_InsightDegradedProbe(insight)]):
+            factor = min(factor, DAMPING_FACTOR)
         if factor < 1.0:
             for dim in dimensions.values():
                 dim.confidence = round(max(0.0, dim.confidence * factor), 3)
@@ -774,3 +781,19 @@ class ThesisEngine:
             seen.add(value)
             result.append(value)
         return result
+
+
+class _InsightDegradedProbe:
+    """把 insight 的 dict 负载适配成 :func:`degradation.degraded_inputs` 可识别的形态。
+
+    ``degraded_inputs`` 只读 ``artifact.value`` 里的 ``degraded`` / ``fallback_tier``；
+    insight 在 engine 里以 dict 传入（尚未包成 Artifact），故这里做一个最小只读适配，
+    避免 engine 依赖 Artifact 构造、也避免复制一份"什么算降级"的判断逻辑。
+    """
+
+    __slots__ = ("value", "id", "type")
+
+    def __init__(self, insight: dict[str, Any]) -> None:
+        self.value = insight
+        self.id = "insight"
+        self.type = "insight_analysis"

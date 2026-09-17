@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,7 @@ from alphabee.core import (
     Artifact,
     ArtifactType,
     Decision,
+    DeviationClass,
     EvaluateMetrics,
     EvaluationAssessment,
     EvaluationReport,
@@ -27,9 +29,20 @@ from alphabee.core import (
 )
 from alphabee.harness.prompts import EVALUATOR_NODE_PROMPT
 from alphabee.orchestrator.contracts import AssumptionRegistryArtifact, find_artifact_model
+from alphabee.orchestrator.node_contracts import get_contract
+from alphabee.orchestrator.recovery import (
+    BUDGET_EXHAUSTED_ISSUE_CATEGORY,
+    RERUN_BUDGET_CHECK_CATEGORY,
+    RecoveryDecision,
+    RecoveryTier,
+    choose_recovery,
+    recovery_switches,
+)
 from alphabee.orchestrator.services import detection
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils import create_structured_model, extract_text, json_instruction, make_id, parse_json
+
+logger = logging.getLogger(__name__)
 
 
 def _make_id(prefix: str) -> str:
@@ -511,7 +524,23 @@ async def review_report(
     # 这避免因为轻微措辞问题反复重写，保持编排层对重试次数的可控性。
     rewrite_needed = not assessment.passed and bool(assessment.blocking_issues)
     rewrite_reason = "；".join(assessment.blocking_issues[:3]) if rewrite_needed else None
-    retries_remaining = rewrite_needed and review_round < state.get("max_report_review_rounds", 2)
+    # F2-3：本轮的“是否回环”由 choose_recovery 统一裁决（唯一判据，与 route_after_report_review 共用）。
+    # t51（F2-4）口径：gate 消费的是**本次 gate 运行结束后的总轮次**（= 自增后写回 state 的
+    # ``report_review_round``，也正是 route 读到的值、以及 pre-F2 gate 判据的左操作数），
+    # 因此 gate 与 route 对"还能不能再跑一轮"**必然同判**（k=1 边界曾因两侧快照不同而分歧）。
+    rerun_decision = _report_rerun_decision(
+        state,
+        used_rerun_rounds=max(review_round, int(state.get("report_review_round", 0))),
+        rewrite_needed=rewrite_needed,
+    )
+    # 单一谓词：它同时决定 ① 是否落 D5 预算偏离 ② RunStatus 是否 PARTIAL。
+    # t51（F2-4）：此前 RunStatus 只看 ``action``，而 D5 只看 ``issue_category`` ⇒ k=1 边界出现
+    # "route 不回环、run 却不标 PARTIAL"的基线回归；现在两者共用下面这一个布尔值。
+    budget_exhausted = rewrite_needed and rerun_decision.issue_category == BUDGET_EXHAUSTED_ISSUE_CATEGORY
+    # 回滚/fail-open 路径（基线谓词）**不产生** D5（零新增行为，见 _baseline_rerun_decision），
+    # 但 pre-F2 在"要重写却没回环"时**本来就**会把 run 标为 PARTIAL ⇒ 这里用与基线同源的
+    # 判据补上，保证 `deviation.recovery.enabled=false` 真的是纯回滚（回环能力保留 + 无新记录）。
+    partial_run = budget_exhausted or (rewrite_needed and not rerun_decision.action.startswith("rerun"))
     updated_issues: list[Issue] = []
 
     # P0-④ 证据链前置校验（非阻塞）：若本轮到 gate 时所有 Decision 都缺
@@ -535,6 +564,33 @@ async def review_report(
     # 假设生命周期检查（§6.3 / C2）：登记簿缺失或开关关闭时严格 no-op（返回空列表）。
     # 只作 D3 提示，**不进 blocking_issues**，因此不会改变 gate 判定与返回值。
     updated_issues.extend(build_invalidated_assumption_issues(state, step.id))
+
+    # F2-2 的**生产者**：回环预算耗尽（D5 控制偏离）必须有机器可判的落库物。
+    # - 触发条件：本轮确实要重写（rewrite_needed）但裁决器已拒绝回环（预算耗尽 → escalate）；
+    # - category 来自 RecoveryDecision.issue_category（机读），**不是**从 reason 文案里抠词；
+    # - recovery_cost 直接取 decision.cost（§14.3-A：可直接写 Issue.recovery_cost）；
+    # - 只在本轮落一条，且此时图必然收口（不回环）⇒ 不会与下一轮的 _base_issues 互相影响。
+    if budget_exhausted:
+        updated_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.HIGH,
+                category=BUDGET_EXHAUSTED_ISSUE_CATEGORY,
+                message=(
+                    f"报告重写预算耗尽（report_review_round={review_round} >= "
+                    f"max_report_review_rounds={state.get('max_report_review_rounds', 2)}），"
+                    f"按恢复阶梯升级（Tier {int(rerun_decision.tier)}）而不再回环：{rerun_decision.reason}"
+                ),
+                related_step=step.id,
+                related_artifact=report_artifact.id,
+                scope=IssueScope.REVIEW,
+                owner_node="review_report",
+                deviation_class=DeviationClass.D5_CONTROL,
+                detected_at_step="review_report",
+                recovery_action=rerun_decision.action,
+                recovery_cost=rerun_decision.cost,
+            )
+        )
 
     if not rewrite_needed:
         updated_issues.extend(
@@ -572,7 +628,10 @@ async def review_report(
     if next_run is not None:
         if assessment.passed:
             next_run = next_run.model_copy(update={"status": RunStatus.SUCCEEDED, "ended_at": datetime.now()})
-        elif not retries_remaining:
+        elif partial_run:
+            # t51（F2-4/F2-5）：还要重写但本轮无回环 ⇒ 交付"部分完成"。
+            # pre-F2 的等价写法是 ``not (rewrite_needed and written < limit)``；本分支与它同判，
+            # 且与 route 的最终路由结果同源（route 不回环 ⟺ 这里置 PARTIAL）。
             next_run = next_run.model_copy(update={"status": RunStatus.PARTIAL, "ended_at": datetime.now()})
 
     return {
@@ -588,12 +647,116 @@ async def review_report(
     }
 
 
+def _report_rerun_decision(
+    state: OrchestratorState, *, used_rerun_rounds: int, rewrite_needed: bool
+) -> RecoveryDecision:
+    """report gate 的"是否回环"裁决（F2-3 / §14.3-A）：交给 :func:`choose_recovery` 统一裁决。
+
+    :param used_rerun_rounds: **本次裁决结束后的总轮次**（= 自增后写回 ``report_review_round`` 的值；
+        gate 传 ``review_round``，route 传它读到的 ``state["report_review_round"]``）——两处**同值同源**，
+        故 gate 与 route 必然同判（t51/F2-4：此前 gate 传自增前值，k=1 边界与 route 分歧）。
+    :param rewrite_needed: 本轮是否确实需要重写（route 传 state 里的 ``report_rewrite_needed``，
+        gate 传自己算出的 ``rewrite_needed``）。仅用于开关关闭时的**基线谓词**。
+
+    **为什么放在这里**：route 函数（条件边）只能返回节点名、**不能写 state**，因此"唯一裁决点"
+    落在这个**能写 state**、又持有同一快照的一层：:func:`review_report` 与
+    :func:`route_after_report_review` 共用本函数，不存在第二个判据。
+
+    **行为等价（与 pre-F2 内联判据逐字对齐）**：
+
+    .. code-block:: python
+
+       rewrite_needed and used < state["max_report_review_rounds"]
+
+    预算未耗尽 → **Tier 4（回环）**；耗尽 → **Tier 5（escalate，不回环 + 落 D5 预算偏离）**。
+    上限取 ``state["max_report_review_rounds"]``（缺失时由 :func:`choose_recovery` 回落到契约
+    ``max_retries``）。
+
+    **回滚口径（F2-5）**：关 ``deviation.recovery.enabled``（§14.8 PR5）或裁决/配置异常时，
+    直接按**同一条基线谓词**返回 Tier4/Tier5 —— 即"关闭开关 == 回到 pre-F2 行为"，
+    **不是**"一律不回环"。这样才能真正回滚：pre-F2 在预算尚存时是允许回环的。
+    """
+    try:
+        limit = int(state.get("max_report_review_rounds", 2))
+        used = max(int(used_rerun_rounds), 0)
+        # 回滚 / fail-open 路径：与基线谓词同判（F2-5）。放在最前面，
+        # 保证"配置不可用"时引擎仍按 pre-F2 语义工作。
+        if not recovery_switches():
+            return _baseline_rerun_decision(used, limit, rewrite_needed, "recovery 开关关闭 → 基线谓词")
+        contract = get_contract("generate_report")
+        if contract is None:
+            return _baseline_rerun_decision(used, limit, rewrite_needed, "generate_report 契约缺失 → 基线谓词")
+        # 只读视图：仅覆盖计数器键（不改 state；§14.0 只读约束）。
+        counter_view = {"report_review_round": used, "max_report_review_rounds": limit}
+        # 触发偏离：回环裁决问的是"还能不能再跑一轮"（纯预算问题）。ladder 的第 1 条分支是
+        # "无 issue → T0"，故必须带一条**不命中可修补/可降级/骨架类目**的偏离，才能落到
+        # "可重试"分支。哨兵常量见 recovery.RERUN_BUDGET_CHECK_CATEGORY（不落库、不登记分类表）。
+        budget_probe = Issue(
+            id="report-rerun-budget-probe",
+            severity=IssueSeverity.HIGH,
+            category=RERUN_BUDGET_CHECK_CATEGORY,
+            message="report gate 请求一次定向重写：本次回环预算检查",
+            related_step="review_report",
+        )
+        return choose_recovery("generate_report", [budget_probe], contract=contract, state=counter_view)
+    except Exception as exc:  # noqa: BLE001 - 裁决异常绝不打断 run（fail-open 到**基线**判据）
+        logger.warning("report rerun arbitration failed (fail-open to baseline): %s", exc)
+        return _baseline_rerun_decision(
+            max(int(used_rerun_rounds), 0),
+            int(state.get("max_report_review_rounds", 2)),
+            rewrite_needed,
+            "裁决异常 → 基线谓词",
+        )
+
+
+def _baseline_rerun_decision(used: int, limit: int, rewrite_needed: bool, reason: str) -> RecoveryDecision:
+    """pre-F2 基线谓词的 RecoveryDecision 投影（回滚与 fail-open 共用，F2-5）。
+
+    基线谓词：``rewrite_needed and used < limit`` ⇒ 回环（Tier 4）；否则 escalate（Tier 5）。
+
+    **显式契约（t55 定稿，captain 裁定方案 (B)「纯回滚」）**：
+    ``deviation.recovery.enabled=false`` 必须**逐格等于 pre-F2 行为** ——
+    ① 回环能力**保留**（预算尚存时照样 Tier 4）；② ``RunStatus`` 与 pre-F2 一致
+    （"要重写却没回环" ⇒ ``PARTIAL``）；③ **不新增** D5 ``budget_exhausted`` 记录
+    （本路径的 escalate 刻意**不带** ``issue_category``）。
+
+    **裁定理由**：D5 的**生产者本身是 F2 新增物**（F2-2）；关掉 F2 的开关却新增记录，
+    恰恰不构成"回滚"。§14.8 PR5「残留 issue 无害」应读作"回滚后账本里**既有**的残留记录
+    无需清理"，而非"回滚必须新增记录"。
+
+    **被否决的备选（(A) 回滚仍落 D5）及其代价，留档避免反向重排**：好处是可避免
+    "run 标 PARTIAL 而账本零记录"的观感矛盾；否决原因是它使回滚路径**不再等于** pre-F2，
+    且该矛盾在 pre-F2 本来就存在（基线语义如此），不属于回滚引入的问题。
+    若将来改判为 (A)，必须**四处同改**：本 docstring、§14.8 PR5 行、
+    ``DeviationRecoverySettings`` docstring、以及两条开关关闭 pinning 用例（见
+    ``test_gate_baseline_path_adds_no_deviation_record_when_recovery_switch_off``）。
+    """
+    if rewrite_needed and used < limit:
+        return RecoveryDecision(RecoveryTier.TIER_4_RERUN, f"rerun_round={used + 1}", 4, f"基线谓词：{reason}")
+    if rewrite_needed:
+        return RecoveryDecision(
+            RecoveryTier.TIER_5_ESCALATE,
+            "escalated",
+            5,
+            f"基线谓词：回环预算耗尽（{used} >= {limit}）｜{reason}",
+        )
+    return RecoveryDecision(RecoveryTier.TIER_5_ESCALATE, "escalated", 5, f"基线谓词：无需重写｜{reason}")
+
+
 def route_after_report_review(state: OrchestratorState) -> str:
     # report review 是图里唯一允许回环的节点：
     # 若 gate 认为当前报告还能通过一次定向修补改善，就回到 generate_report；
     # 否则直接结束，避免无限重写。
-    if state.get("report_rewrite_needed") and state.get("report_review_round", 0) < state.get(
-        "max_report_review_rounds", 2
-    ):
+    #
+    # F2-3：该判据是"基于契约阶梯 + 轮次预算的恢复裁决"，不再内联手写 —— 由
+    # _report_rerun_decision → choose_recovery 统一裁决（行为等价，见该函数 docstring）。
+    # t51（F2-4）：route 传的是自己读到的 ``report_review_round``（gate 写回后的总轮次），
+    # 与 gate 侧传入的同值 ⇒ 两侧对"还能不能再跑一轮"必然同判。
+    rewrite_needed = bool(state.get("report_rewrite_needed"))
+    if rewrite_needed and _report_rerun_decision(
+        state,
+        used_rerun_rounds=int(state.get("report_review_round", 0)),
+        rewrite_needed=rewrite_needed,
+    ).action.startswith("rerun"):
         return "generate_report"
     return "finalize_message"
