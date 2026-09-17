@@ -22,6 +22,7 @@ from langchain_core.runnables import RunnableConfig
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _extract_final_text, _finalize_step, _make_id
 from alphabee.orchestrator.contracts import InsightArtifact
+from alphabee.orchestrator.services.degradation import apply_degradation
 from alphabee.orchestrator.services.payload_builders import build_insight_context
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils.pipeline import parse_json
@@ -34,29 +35,40 @@ def _insight_artifact(
     tier: int,
     reason: str,
 ) -> Artifact:
-    """Build the INSIGHT_ANALYSIS artifact from an InsightOutput, with degradation metadata."""
+    """Build the INSIGHT_ANALYSIS artifact from an InsightOutput, with degradation metadata.
+
+    降级元数据统一经 :func:`apply_degradation` 写入（§14.3-A 的唯一写入点，消除字段名漂移）。
+
+    **口径说明（刻意保留更宽的旧分档）**：本节点 §7.2 之外的**更早**分档是 ``tier >= 1``
+    （Tier 1 = ``lenient_parse`` 宽松救援也算降级产物，见模块 docstring 与
+    ``docs/design/INSIGHT_DEGRADATION_DESIGN.md``），而 §7.2 规则 1 只要求
+    "Tier≥2 必须带 degraded=true" —— 那是**下界要求**，不禁止更低档标降级。
+    故此处显式传 ``threshold=1`` 保持行为等价（迁移不得静默收紧分档语义）。
+    """
+    base_payload = InsightArtifact(
+        core_view=output.core_view,
+        central_tension=output.central_tension,
+        main_driver=output.main_driver,
+        supporting_evidence=[e.model_dump(mode="json") for e in output.supporting_evidence],
+        counter_evidence=[e.model_dump(mode="json") for e in output.counter_evidence],
+        materiality_rank=[m.model_dump(mode="json") for m in output.materiality_rank],
+        cross_signal_patterns=[p.model_dump(mode="json") for p in output.cross_signal_patterns],
+        business_model_context=output.business_model_context,
+        base_case=output.base_case,
+        bull_case=output.bull_case,
+        bear_case=output.bear_case,
+        what_would_change_my_mind=list(output.what_would_change_my_mind),
+        confidence=output.confidence,
+    ).model_dump(mode="json")
+    # 统一写入点负责 degraded / degradation_reason（两字段名同时写，防漂移）；
+    # fallback_tier 是"档位本身"的记录，与降级标记无关，故由本节点补上。
+    degraded_payload = apply_degradation(base_payload, tier, reason, threshold=1)
+    degraded_payload["fallback_tier"] = tier
     return Artifact(
         id=_make_id("artifact"),
         type=ArtifactType.INSIGHT_ANALYSIS,
         producer_step=step_id,
-        value=InsightArtifact(
-            core_view=output.core_view,
-            central_tension=output.central_tension,
-            main_driver=output.main_driver,
-            supporting_evidence=[e.model_dump(mode="json") for e in output.supporting_evidence],
-            counter_evidence=[e.model_dump(mode="json") for e in output.counter_evidence],
-            materiality_rank=[m.model_dump(mode="json") for m in output.materiality_rank],
-            cross_signal_patterns=[p.model_dump(mode="json") for p in output.cross_signal_patterns],
-            business_model_context=output.business_model_context,
-            base_case=output.base_case,
-            bull_case=output.bull_case,
-            bear_case=output.bear_case,
-            what_would_change_my_mind=list(output.what_would_change_my_mind),
-            confidence=output.confidence,
-            degraded=tier >= 1,
-            fallback_tier=tier,
-            degradation_reason=reason,
-        ).model_dump(mode="json"),
+        value=degraded_payload,
     )
 
 

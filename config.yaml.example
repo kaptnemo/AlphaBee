@@ -31,3 +31,32 @@ tushare:
 
 data:
   root_dir: "${DATA_ROOT:data}"
+
+# 偏离控制框架（docs/design/DEVIATION_CONTROL_FRAMEWORK.md §14.6）
+# 五段全部带默认值 ⇒ 本段可以整段省略（缺段时各读取点 fail-open 取内置默认，import 期不读配置）。
+# 此处显式列出便于运维调整与回滚；数值与 alphabee.config.DeviationSettings() 的默认值逐项一致
+# （由测试程序化比对，防"文档写一套、代码是另一套"的漂移）。
+deviation:
+  detection:                 # §6 即时检测（F1：with_deviation_detection 包装器读这里）
+    enabled: true            # 检测器总开关：关闭 ⇒ 整层 no-op（回滚用，不影响业务节点行为）
+    llm_detectors: false     # v1 恒 false（§16 反模式：不做 LLM 检测器）
+
+  budget:                    # §10 偏离预算：恢复阶梯的直接升级判据
+    severity_weight:         # §10.1 代价敞口权重（severity → 权重）
+      low: 1
+      medium: 3
+      high: 10
+      critical: 30
+    cost_exposure_threshold: 30   # 代价敞口 **超过**该值 ⇒ 直跳 Tier 5（越过中间档）
+
+  ledger:                    # §5.2 跨 run 偏离账本（fail-open：写失败只 warning，绝不打断 run）
+    enabled: true            # 账本写入总开关：关闭 ⇒ 只记 Step、不落库
+    fingerprint_normalize: true  # 指纹是否先归一化数字/路径（降重时报同一偏离）
+    retention_days: 365      # 账本保留天数（purge_before 用）
+
+  amplification:             # §8 放大审计（F3 使用）
+    audit_enabled: true      # 是否执行 audit_amplification（关闭 ⇒ 不做加权边方向一致性审计）
+    overturn_severity: high  # 方向不一致时的上报严重度
+
+  recovery:                  # §7 恢复阶梯协议化（F2 使用）
+    enabled: true            # 是否启用统一阶梯裁决；**关闭 ⇒ 回落 pre-F2 基线判据**（§14.8 回滚方式）
