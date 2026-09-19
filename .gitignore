@@ -18,6 +18,7 @@ tmp/
 conversation_history/
 reports/
 reports_bak/
+reports_full/
 
 # env files
 .env

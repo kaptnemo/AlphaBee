@@ -42,7 +42,8 @@
 - 获取链接：``get_report_links``（财报走巨潮、研报走东方财富，仅产出 URL 不落地）
 - 下载：``data/eastmoney_reports/<file>.pdf``（或调用方指定路径）
 - OCR：``outputs/pdf_ocr/tasks/<task_id>/<file>.cleaned.md``（+ manifest）
-- 解析：``reports/<报告名>/``（章节目录树 + 全文副本 + `.report_manifest.json`）
+- 解析：``reports/<报告名>/``（章节目录树 + `.report_manifest.json`），
+  完整全文副本单独写到同构的 ``reports_full/<报告名>/<报告名>.md``
 - 问答：基于报告目录构建受限 deep agent（``create_report_fetch_agent``）检索回答
 """
 
@@ -291,7 +292,8 @@ def parse_to_report_folder(
     """把清洗后的 Markdown 按章节解析成报告文件夹结构。
 
     复用 :func:`alphabee.financial_report.report_parser.write_markdown_report_folder`：
-    章节切分 + 页眉页脚 ngram 去重（提供 page_count 时）+ 目录树生成 + 全文副本。
+    章节切分 + 页眉页脚 ngram 去重（提供 page_count 时）+ 目录树生成；完整全文副本
+    写到与 ``reports`` 同构的 ``reports_full`` 下，不混入章节树。
 
     提供 ``company_name`` 时输出新嵌套结构
     ``<save_dir>/<公司名>(<代码>)/财报/<报告期+类型>/``，否则输出旧平铺结构

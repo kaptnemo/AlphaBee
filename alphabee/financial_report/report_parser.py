@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import sys
 from collections import Counter
 from datetime import UTC, datetime
@@ -227,6 +228,16 @@ def reports_root(save_dir: str | Path | None = None) -> Path:
     return Path(save_dir).expanduser().resolve() if save_dir else Path(__file__).resolve().parents[2] / "reports"
 
 
+def reports_full_root(save_dir: str | Path | None = None) -> Path:
+    """全文副本根目录：与 :func:`reports_root` 平级的 ``reports_full``。
+
+    章节树保留在 ``reports/``，完整全文副本单独落在 ``reports_full/``，且目录
+    层级与 ``reports/`` 完全一致（便于按报告路径直接定位全文）。这样整篇全文
+    不会混进章节目录树，避免干扰按文件结构的检索。
+    """
+    return reports_root(save_dir).parent / "reports_full"
+
+
 def write_markdown_report_folder(
     markdown_text: str,
     report_name: str,
@@ -245,20 +256,25 @@ def write_markdown_report_folder(
       （提供 ``page_count`` 时启用去重；否则仅按标题切分）；
     - 文件夹结构由 :func:`parse_sections_to_folder_structure` 生成（父章节为目录、
       叶子章节为 ``.md`` 文件）；
-    - 报告目录下同时保留完整全文副本 ``<报告期>.md``。
+    - 完整全文副本 ``<报告期>.md`` **不落在章节目录树内**，而是写到与 ``reports``
+      平级的 ``reports_full`` 下，且相对路径与 ``reports`` 一致
+      （见 :func:`reports_full_root`），避免整篇全文混入章节树干扰按文件结构的检索。
 
     目录结构分两种：
 
     - **新嵌套结构**（提供 ``company_name`` 时）::
 
           <save_dir>/<公司中文名>(<6位代码>)/财报/<报告期+类型>/
+          <reports_full>/<公司中文名>(<6位代码>)/财报/<报告期+类型>/<报告期+类型>.md
 
-      例：``reports/宁德时代(300750)/财报/2026年半年度报告/``。第三层只保留
-      报告期+类型（自动去掉报告名里冗余的「公司名：」前缀）。
+      例：章节树 ``reports/宁德时代(300750)/财报/2026年半年度报告/``，
+      全文副本 ``reports_full/宁德时代(300750)/财报/2026年半年度报告/2026年半年度报告.md``。
+      第三层只保留报告期+类型（自动去掉报告名里冗余的「公司名：」前缀）。
 
     - **旧平铺结构**（未提供 ``company_name``，向后兼容）::
 
           <save_dir>/<报告名>/
+          <reports_full>/<报告名>/<报告名>.md
 
     Args:
         markdown_text: 清洗后的 Markdown 全文（OCR loader 的输出或任意 md）。
@@ -293,14 +309,15 @@ def write_markdown_report_folder(
         leaf = report_name
         target = root / report_name
 
+    # 全文副本目录与章节树同构：相对路径一致，只是根换成 reports_full
+    full_target = reports_full_root(save_dir) / target.relative_to(root)
+
     if target.exists():
         if not overwrite:
             raise FileExistsError(
                 f"Report directory already exists: {target}（overwrite=False）。"
                 "请换一个 report_name 或使用 overwrite=True 覆盖。"
             )
-        import shutil
-
         shutil.rmtree(target, ignore_errors=True)
     target.mkdir(parents=True, exist_ok=True)
 
@@ -317,13 +334,13 @@ def write_markdown_report_folder(
         sections = _split_markdown_by_sections(md_text, file_name=report_name, file_type="md")
 
     parse_sections_to_folder_structure(sections, target)
-    # 保留完整全文副本，便于整体阅读/其它工具直接读文件
-    (target / f"{leaf}.md").write_text(md_text, encoding="utf-8")
+    # 完整全文副本单独落到 reports_full（与 reports 同构），不混入章节树
+    if overwrite:
+        shutil.rmtree(full_target, ignore_errors=True)
+    full_target.mkdir(parents=True, exist_ok=True)
+    (full_target / f"{leaf}.md").write_text(md_text, encoding="utf-8")
 
     file_count = sum(1 for p in target.rglob("*") if p.is_file())
-    if file_count == 0:
-        # 没有任何章节（如空文档），至少保留全文副本，保证目录可用
-        file_count = 1
 
     # 写入报告元数据（与 OCR manifest 配套，供 publish/list 等工具读取）
     (target / ".report_manifest.json").write_text(
@@ -336,6 +353,7 @@ def write_markdown_report_folder(
                 "report_period": leaf,
                 "section_count": len(sections),
                 "file_count": file_count,
+                "full_text_path": str(full_target / f"{leaf}.md"),
                 "page_count": page_count,
                 "created_at": datetime.now(UTC).isoformat(),
             },

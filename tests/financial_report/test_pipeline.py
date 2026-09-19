@@ -26,16 +26,21 @@ SAMPLE_MARKDOWN = """# 示例公司：2026年一季报
 
 
 def test_write_markdown_report_folder_structure(tmp_path):
+    save_dir = tmp_path / "reports"
     report_dir = write_markdown_report_folder(
         SAMPLE_MARKDOWN,
         "示例公司：2026年一季报",
         page_count=4,
-        save_dir=tmp_path,
+        save_dir=save_dir,
     )
-    assert report_dir == tmp_path / "示例公司：2026年一季报"
+    assert report_dir == save_dir / "示例公司：2026年一季报"
     # 章节目录 + 叶子文件（保留中文编号前缀，与既有 reports/ 约定一致）
     assert (report_dir / "一、主要财务数据").is_dir()
     assert (report_dir / "一、主要财务数据" / "二、股东信息.md").exists()
+    # 全文副本写到与 reports 平级的 reports_full，层级一致，不混入章节树
+    full_text = tmp_path / "reports_full" / "示例公司：2026年一季报" / "示例公司：2026年一季报.md"
+    assert full_text.is_file()
+    assert not (report_dir / "示例公司：2026年一季报.md").exists()
     # 元数据
     manifest = report_dir / ".report_manifest.json"
     assert manifest.is_file()
@@ -44,14 +49,16 @@ def test_write_markdown_report_folder_structure(tmp_path):
     meta = json.loads(manifest.read_text(encoding="utf-8"))
     assert meta["report_name"] == "示例公司：2026年一季报"
     assert meta["section_count"] >= 1
+    assert meta["full_text_path"] == str(full_text)
 
 
 def test_write_markdown_report_folder_overwrite_guard(tmp_path):
-    write_markdown_report_folder(SAMPLE_MARKDOWN, "重复报告", save_dir=tmp_path)
+    save_dir = tmp_path / "reports"
+    write_markdown_report_folder(SAMPLE_MARKDOWN, "重复报告", save_dir=save_dir)
     with pytest.raises(FileExistsError):
-        write_markdown_report_folder(SAMPLE_MARKDOWN, "重复报告", save_dir=tmp_path, overwrite=False)
+        write_markdown_report_folder(SAMPLE_MARKDOWN, "重复报告", save_dir=save_dir, overwrite=False)
     # overwrite=True 时覆盖重建
-    report_dir = write_markdown_report_folder(SAMPLE_MARKDOWN, "重复报告", save_dir=tmp_path, overwrite=True)
+    report_dir = write_markdown_report_folder(SAMPLE_MARKDOWN, "重复报告", save_dir=save_dir, overwrite=True)
     assert report_dir.is_dir()
 
 
@@ -66,22 +73,27 @@ def test_sanitize_report_name_rejects_path_traversal(tmp_path):
 
 
 def test_write_markdown_report_folder_nested_structure(tmp_path):
+    save_dir = tmp_path / "reports"
     md = "# 示例公司：2026年一季报\n## 一、主要财务数据\n营业收入 1000 万元。"
     report_dir = write_markdown_report_folder(
         md,
         "示例公司：2026年一季报",
         company_name="示例公司",
         company_code="000001",
-        save_dir=tmp_path,
+        save_dir=save_dir,
     )
     # 新嵌套结构：<公司>(<代码>)/财报/<报告期+类型>/
-    assert report_dir == tmp_path / "示例公司(000001)" / "财报" / "2026年一季报"
+    assert report_dir == save_dir / "示例公司(000001)" / "财报" / "2026年一季报"
     assert (report_dir / "一、主要财务数据.md").exists()
+    # 全文副本在 reports_full 下保持同一相对层级
+    full_text = tmp_path / "reports_full" / "示例公司(000001)" / "财报" / "2026年一季报" / "2026年一季报.md"
+    assert full_text.is_file()
     manifest = json.loads((report_dir / ".report_manifest.json").read_text(encoding="utf-8"))
     assert manifest["company_name"] == "示例公司"
     assert manifest["company_code"] == "000001"
     assert manifest["category"] == "财报"
     assert manifest["report_period"] == "2026年一季报"
+    assert manifest["full_text_path"] == str(full_text)
 
 
 def test_write_markdown_report_folder_code_normalization(tmp_path):
@@ -90,9 +102,9 @@ def test_write_markdown_report_folder_code_normalization(tmp_path):
         "宁德时代：2026年半年度报告",
         company_name="宁德时代",
         company_code="300750.SZ",  # 带交易所后缀，应归一化为 6 位代码
-        save_dir=tmp_path,
+        save_dir=tmp_path / "reports",
     )
-    assert report_dir == tmp_path / "宁德时代(300750)" / "财报" / "2026年半年度报告"
+    assert report_dir == tmp_path / "reports" / "宁德时代(300750)" / "财报" / "2026年半年度报告"
 
 
 def test_write_markdown_report_folder_flat_without_company(tmp_path):
@@ -100,9 +112,10 @@ def test_write_markdown_report_folder_flat_without_company(tmp_path):
     report_dir = write_markdown_report_folder(
         "# 标题\n## 一、数据\nx",
         "宁德时代：2026年半年度报告",
-        save_dir=tmp_path,
+        save_dir=tmp_path / "reports",
     )
-    assert report_dir == tmp_path / "宁德时代：2026年半年度报告"
+    assert report_dir == tmp_path / "reports" / "宁德时代：2026年半年度报告"
+    assert (tmp_path / "reports_full" / "宁德时代：2026年半年度报告" / "宁德时代：2026年半年度报告.md").is_file()
     manifest = json.loads((report_dir / ".report_manifest.json").read_text(encoding="utf-8"))
     assert manifest["company_name"] == ""
     assert manifest["company_code"] == ""
@@ -248,6 +261,8 @@ async def test_run_report_pipeline_full_chain(sample_pdf, tmp_path, monkeypatch)
     report_dir = Path(r["report_dir"])
     assert report_dir == tmp_path / "reports" / "示例公司：2026年一季报"
     assert (report_dir / "一、主要财务数据").is_dir()
+    # 全文副本落到平级的 reports_full
+    assert (tmp_path / "reports_full" / "示例公司：2026年一季报" / "示例公司：2026年一季报.md").is_file()
     assert r["answer"] == "营业收入 1000 万元，同比增长 12.5%。"
     assert len(r["steps"]) == 3  # download / ocr / parse（question 单独步骤不入 steps）
 

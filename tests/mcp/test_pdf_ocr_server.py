@@ -129,10 +129,10 @@ def test_publish_report_sections_writes_folder(sample_pdf, pdf_ocr_root, fake_oc
     result = pos.publish_report_sections(
         markdown_path=md_result.markdown_path,
         report_name="示例公司：2026年一季报",
-        save_dir=str(tmp_path),
+        save_dir=str(tmp_path / "reports"),
     )
     assert result.report_name == "示例公司：2026年一季报"
-    report_dir = tmp_path / "示例公司：2026年一季报"
+    report_dir = tmp_path / "reports" / "示例公司：2026年一季报"
     assert result.report_dir == str(report_dir)
     assert report_dir.is_dir()
     assert result.section_count >= 1
@@ -145,8 +145,9 @@ def test_publish_report_sections_writes_folder(sample_pdf, pdf_ocr_root, fake_oc
     manifest = json.loads((report_dir / ".report_manifest.json").read_text(encoding="utf-8"))
     assert manifest["report_name"] == "示例公司：2026年一季报"
     assert manifest["section_count"] >= 1
-    # 完整全文副本保留
-    assert (report_dir / "示例公司：2026年一季报.md").exists()
+    # 完整全文副本落到平级的 reports_full（与 reports 同构，不混入章节树）
+    assert (tmp_path / "reports_full" / "示例公司：2026年一季报" / "示例公司：2026年一季报.md").exists()
+    assert not (report_dir / "示例公司：2026年一季报.md").exists()
 
 
 def test_publish_report_sections_overwrite_guard(sample_pdf, pdf_ocr_root, fake_ocr_pipeline, tmp_path):

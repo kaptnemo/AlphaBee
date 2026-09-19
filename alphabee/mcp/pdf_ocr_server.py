@@ -746,7 +746,8 @@ def publish_report_sections(
             提供时启用页眉页脚 ngram 去重。
 
     目录结构：每个章节（按标题层级）生成对应目录/文件，与 ``report_parser`` 一致；
-    同时在报告目录下保留完整 ``<报告期>.md`` 全文副本。
+    完整全文副本单独写到与 ``<save_dir>`` 平级的 ``reports_full`` 下，层级与报告目录一致，
+    不混入章节树（避免干扰按文件结构的检索）。
     """
     md_path = Path(markdown_path).expanduser().resolve()
     if not md_path.is_file():
@@ -765,7 +766,7 @@ def publish_report_sections(
         save_dir=save_dir or REPORT_DIR,
         overwrite=overwrite,
     )
-    # 章节目录树中的文件数（含全文副本；不含目录本身）
+    # 章节目录树中的文件数（不含全文副本/目录本身；全文副本在 reports_full 下）
     file_count = sum(1 for p in report_dir.rglob("*") if p.is_file())
     section_count = 0
     manifest_path = report_dir / ".report_manifest.json"
