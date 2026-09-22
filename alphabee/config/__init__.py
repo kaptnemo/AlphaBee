@@ -118,6 +118,43 @@ class DeviationSettings(BaseModel):
     recovery: DeviationRecoverySettings = Field(default_factory=DeviationRecoverySettings)
 
 
+class ReportWindowSettings(BaseModel):
+    """§15.1-F 财报原文窗口（研究连续体 P1 / W3）：本地已解析财报 → 证据抽取窗口的预算与开关。
+
+    **默认 ``enabled=True`` 会改变 run 的可观测面**（仅当本地存在该标的已解析财报时窗口
+    内容才变化；无报告时新增一条 D1 ``report_window_unavailable`` issue）⇒ 属行为变更，
+    **行为变更登记见 ``docs/roadmap/ROADMAP.md``「行为变更登记」P1 行**（已落笔）。
+    回滚方式：``enabled: false`` —— 该开关**同时**门控窗口内容与 D1 记账，即
+    ``_window_texts()`` 逐字回到旧实现 ``_conflict_explanations(artifacts) or None`` 且不读盘。
+
+    **可复算口径（对拍用例不 stub ``select_report_window``，直接跑真实代码路径）**：
+
+    * 开关透传 + 内容逐字等价（用例内置反 stub 哨兵：``select_report_window`` 一旦被真正
+      走到就会触发 ``reports_root`` 的 ``AssertionError``）::
+
+          poetry run env HOME=/data/freedom/AlphaBee/tmp/pytest_home \
+              pytest tests/orchestrator/test_report_window.py -k switch_off -q
+          # 期望：1 passed（test_switch_off_window_texts_equal_legacy_and_no_side_effects）
+
+    * 开关关闭时**不读配置**（``enabled=False`` 短路位于任何读配置/读盘之前）::
+
+          poetry run env HOME=/data/freedom/AlphaBee/tmp/pytest_home \
+              pytest tests/orchestrator/test_report_window.py -k disabled_selection_reads_nothing -q
+          # 期望：1 passed
+
+    若把该对拍用例**改回 stub ``select_report_window``**，则 M5 型变异（开关未透传进窗口
+    选择，即"开关只门控 D1 记账、不门控窗口内容"）不被杀死 ⇒ 上述两处期望值即判据。
+    """
+
+    enabled: bool = Field(default=True, description="窗口总开关（false ⇒ 完全回到现状：只喂冲突解释）")
+    max_chars: int = Field(default=12_000, description="窗口字符预算（约 8k token 量级）")
+    max_sections: int = Field(default=12, description="窗口章节数预算")
+    reports_root: str | None = Field(
+        default=None,
+        description="报告根目录；null ⇒ report_parser.reports_root() 默认（<PROJECT_ROOT>/reports）",
+    )
+
+
 class Settings(BaseModel):
     llm: LLMConfig
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
@@ -125,6 +162,8 @@ class Settings(BaseModel):
     data: DataConfig = Field(default_factory=DataConfig)
     # 偏离控制框架（F2 起真实可用；此前各读取点 fail-open 取默认值）
     deviation: DeviationSettings = Field(default_factory=DeviationSettings)
+    # 研究连续体 P1（W3）：财报原文窗口（缺段 ⇒ 取上列默认值）
+    report_window: ReportWindowSettings = Field(default_factory=ReportWindowSettings)
 
 
 def get_settings() -> Settings:

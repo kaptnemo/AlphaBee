@@ -44,6 +44,9 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "peer_group_benchmarks_missing": DeviationClass.D1_DATA,
     "industry_context_missing": DeviationClass.D1_DATA,
     "industry_benchmarks_missing": DeviationClass.D1_DATA,
+    # P1（W3）新增：本地财报原文窗口的两种未达（§15.1-C/E）
+    "report_window_unavailable": DeviationClass.D1_DATA,
+    "report_window_truncated": DeviationClass.D1_DATA,
     # D2
     "parse_error": DeviationClass.D2_STRUCTURE,
     "schema": DeviationClass.D2_STRUCTURE,

@@ -125,6 +125,9 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8 加权边审计（audit_amplification 的方向不一致上报）
     "amplification_direction_conflict": DeviationClass.D3_ARGUMENT,
+    # ── 研究连续体 P1（W3）：财报原文窗口不可用 / 被组份额截断（midterm 节点显式记账，§15.1-C）
+    "report_window_unavailable": DeviationClass.D1_DATA,
+    "report_window_truncated": DeviationClass.D1_DATA,
 }
 
 #: 未知 category 的保守回退：归为结构偏离（§14.1-B）。宁可少分类，不猜测语义。

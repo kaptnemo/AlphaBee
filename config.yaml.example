@@ -32,6 +32,18 @@ tushare:
 data:
   root_dir: "${DATA_ROOT:data}"
 
+# 研究连续体 P1（W3）：财报原文窗口（docs/design/RESEARCH_CONTINUUM_DESIGN.md §15.1-F）
+# 从**本地已解析**的财报（reports/ + reports_full/）中选出叙事章节（管理层讨论 / 主营业务 /
+# 风险），喂给 midterm 的证据抽取；纯规则、无网络、无 LLM，取不到时只记 D1 issue 不中断 run。
+# 本段带默认值 ⇒ 整段省略即取内置默认；`enabled: false` 是回滚开关（完全回到"只喂冲突解释"）。
+# **行为变更登记**：`enabled: true` 改变了 run 的可观测面（新增 D1 窗口 issue / 窗口内容变化），
+# 按 §15.1-F 须登记进 docs/roadmap/ROADMAP.md「行为变更登记」。
+report_window:
+  enabled: true          # false ⇒ 完全回到现状（只喂已验证冲突解释，不新增任何 issue）
+  max_chars: 12000       # 窗口字符预算（约 8k token 量级）
+  max_sections: 12       # 窗口章节数预算（超出即标记 truncated）
+  reports_root: null     # null ⇒ report_parser.reports_root() 默认（<PROJECT_ROOT>/reports）
+
 # 偏离控制框架（docs/design/DEVIATION_CONTROL_FRAMEWORK.md §14.6）
 # 五段全部带默认值 ⇒ 本段可以整段省略（缺段时各读取点 fail-open 取内置默认，import 期不读配置）。
 # 此处显式列出便于运维调整与回滚；数值与 alphabee.config.DeviationSettings() 的默认值逐项一致

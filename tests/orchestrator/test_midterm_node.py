@@ -276,9 +276,25 @@ def test_confidence_string_mapping(monkeypatch):
         assert captured["prior_confidence"] == expected
 
 
+def _patch_no_local_report_window(monkeypatch):
+    """把本地财报原文窗口强制为「无窗口」，使窗口相关用例**不依赖本机 `reports/` 状态**。
+
+    P1（W3）把 `services.report_window` 接进了 `_window_texts`：若本机恰好存在该标的的
+    已解析报告，窗口就不再为空，下面两条用例的期望值会随环境漂移（与 industry 的日期
+    时间炸弹同类）。这里把 `select_report_window` 换成确定性空窗口，锁住被测语义。
+    """
+    from alphabee.orchestrator.services.report_window import ReportWindow
+
+    def fake_select(symbol, **kwargs):
+        return ReportWindow(symbol=symbol, reason="no_local_report")
+
+    monkeypatch.setattr(node, "select_report_window", fake_select)
+
+
 def test_window_texts_only_verified_conflict_no_narrative(monkeypatch):
     # raw_response 是叙事摘要而非财报/公告/研报原文，不得进入 window_texts；
     # 只有 spec 明确要求的已验证冲突 explanation 才作为窗口文本。
+    _patch_no_local_report_window(monkeypatch)
     captured = _patch_decision(monkeypatch)
     asyncio.run(
         node.resolve_midterm_decision(
@@ -300,6 +316,7 @@ def test_window_texts_only_verified_conflict_no_narrative(monkeypatch):
 
 
 def test_window_texts_none_when_no_raw_text(monkeypatch):
+    _patch_no_local_report_window(monkeypatch)
     captured = _patch_decision(monkeypatch)
     asyncio.run(node.resolve_midterm_decision(_state(artifacts=[_insight_artifact()]), {}))
 

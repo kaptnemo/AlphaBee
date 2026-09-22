@@ -15,9 +15,13 @@
   ``thesis.overall_judgment`` 构造 H，再缺省空串走 Stage B neutral 退化。
 - ``prior_confidence`` = insight/thesis confidence 显式映射：low/medium/high → 0.3/0.5/0.7；
   数字置信度原样透传（clamp 0-1）；降级洞察额外施加贝叶斯阻尼（fallback_tier 越高越保守）。
-- ``window_texts`` = 已验证冲突 explanation（当前主链不提供财报/公告/研报原文，
-  ``FACT_COLLECTION.raw_response`` 是叙事摘要，不作为窗口文本）；无任何窗口文本时传
-  ``None``（合法输入：只跑数值证据）。
+- ``window_texts`` = **本地已解析财报的叙事章节原文**（P1 / W3：``services/report_window``
+  按章节白名单 + 字符预算从 ``reports/`` + ``reports_full/`` 选出，纯规则、无网络、无 LLM）
+  ＋ 已验证冲突 explanation（原文在前、冲突解释在后）；无任何窗口文本时传 ``None``
+  （合法输入：只跑数值证据）。**"没有窗口"不再静默**：``report_window_unavailable`` /
+  ``report_window_truncated`` 各记一条 D1 issue 进 run 的 issues。
+  （P1 之前本项只有已验证冲突 explanation；``FACT_COLLECTION.raw_response`` 是叙事摘要，
+  始终不作为窗口文本。）
 - ``include_market=True``。
 - 改造 A（洞察力注入）+ A2（先验-似然同源解耦）：``insight.supporting_evidence/
   counter_evidence``（带 weight 的正反证据）经 ``adapt_insight_evidence`` 映射为
@@ -40,7 +44,16 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.runnables import RunnableConfig
 
 from alphabee.agents.schemas import ConflictAnalysisResult
-from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
+from alphabee.core import (
+    Artifact,
+    ArtifactType,
+    DeviationClass,
+    Issue,
+    IssueScope,
+    IssueSeverity,
+    Step,
+    StepStatus,
+)
 from alphabee.midterm.decision_model import collect_evidence_split, get_decision
 from alphabee.midterm.evidence_extractor import dedupe_events
 from alphabee.midterm.insight_evidence_adapter import adapt_insight_evidence
@@ -48,6 +61,12 @@ from alphabee.orchestrator.contracts import (
     InsightArtifact,
     ThesisArtifact,
     find_artifact_model,
+)
+from alphabee.orchestrator.services.deviation import record_deviation
+from alphabee.orchestrator.services.report_window import (
+    ReportWindow,
+    report_window_enabled,
+    select_report_window,
 )
 from alphabee.utils.pipeline import make_id
 
@@ -182,15 +201,34 @@ def _decouple_evidence(
     return dedupe_events([*numeric_evidence, *qualitative_evidence, *insight_evidence])
 
 
-def _window_texts(artifacts: list[Artifact]) -> list[str] | None:
-    """组装 window_texts：仅含已验证冲突 explanation。
+def _window_texts(
+    artifacts: list[Artifact], *, symbol: str | None, as_of_date: str
+) -> tuple[list[str] | None, ReportWindow]:
+    """组装 window_texts：**本地财报原文窗口** + 已验证冲突 explanation。
 
-    原 fact_text 组件被移除：主链的 ``FACT_COLLECTION.raw_response`` 是叙事摘要而非
-    财报/公告/研报原文，塞进窗口会污染 Stage A/B 抽取。当前主链不提供真正原文，
-    故该组件置空；若未来主链能提供原文，再以显式原文字段补回。
-    无任何窗口文本时传 ``None``（合法输入：只跑数值证据）。
+    P1（W3）把 ``services/report_window`` 选出的叙事章节接进窗口——原文在前、已验证冲突
+    解释在后（冲突解释是本链既有通道，语义上属于"已验证的结论"，放在原文之后）。
+    ``FACT_COLLECTION.raw_response`` 是叙事摘要而非财报/公告/研报原文，始终不进窗口。
+
+    窗口选择自身 fail-open（无本地报告/无命中章节 → 带 ``reason`` 的空窗口），
+    无任何窗口文本时仍返回 ``None``（``collect_evidence_split`` 的合法输入：只跑数值证据）。
+    返回的 :class:`ReportWindow` 供调用方做**显式记账**（"没有窗口"不再静默）。
+
+    **开关真正门控窗口选择**（§15.1-F 回滚契约）：``enabled=report_window_enabled()``
+    在此处读取并透传，故 ``report_window.enabled=false`` 时 ``select_report_window``
+    在读配置/读盘**之前**即返回 ``reason="disabled"`` 的空窗口 ⇒ 本函数返回值与旧实现
+    ``_conflict_explanations(artifacts) or None`` **逐字相同且不读盘**。
+    这不是"仅 issue 记账受开关控制"——窗口内容本身同样受控。
+
+    Args:
+        artifacts: 主链产物（取已验证冲突 explanation）。
+        symbol: 标的；``None``/空 → 不看本地报告（窗口为空）。
+        as_of_date: 截止日期 ``YYYY-MM-DD``（不晚于该日期的报告才进窗口）。
     """
-    return _conflict_explanations(artifacts) or None
+    window = select_report_window(symbol or "", as_of=as_of_date or None, enabled=report_window_enabled())
+    texts = [section.text for section in window.sections if section.text.strip()]
+    texts.extend(_conflict_explanations(artifacts))
+    return (texts or None), window
 
 
 async def resolve_midterm_decision(
@@ -218,6 +256,12 @@ async def resolve_midterm_decision(
     new_issues: list[Issue] = []
     new_artifacts: list[Artifact] = []
 
+    # 事件日 / 窗口截止日：run.context 的 as_of_date（真实日期）；缺省今天（有效 YYYY-MM-DD）。
+    # 在 try 之前算，保证「窗口选择」与「insight 证据」用同一个日期口径。
+    as_of_date = str(run.context.get("as_of_date") or "") if run else ""
+    if not as_of_date:
+        as_of_date = date.today().isoformat()
+
     # ── 读取上游 artifact + 映射 + 调用决策模型，整段同一 try/except ──
     # 任何异常（含上游 artifact 无法 model_validate）都只记 Issue 并正常返回，
     # 保证主链不被中断（报告照常）。
@@ -227,9 +271,43 @@ async def resolve_midterm_decision(
 
         hypothesis = _resolve_hypothesis(insight, thesis)
         prior = _prior_confidence(insight, thesis)
-        window_texts = _window_texts(artifacts)
+
+        # P1（W3）：窗口必须在 collect_evidence_split 之前算好（原文 + 已验证冲突解释）。
+        window_texts, window = _window_texts(artifacts, symbol=symbol, as_of_date=as_of_date)
+        # 「没有窗口」这件事**显式可见**（不再静默）：开关打开时才记账——关掉开关即零新行为。
+        if report_window_enabled():
+            if not window.sections and window.reason:
+                # 文案必须与**真实证据通道**一致（F4）：窗口不可用 ≠ 没有定性证据 ——
+                # 已验证冲突 explanation 是独立于原文窗口的既有定性通道，其非空时
+                # Stage A/B 照常运行，故不能断言"仅数值类证据"。
+                qualitative_note = (
+                    "本次仅数值类证据参与方向判定。" if window_texts is None else "本次定性判定仅依赖已验证冲突解释。"
+                )
+                new_issues.append(
+                    record_deviation(
+                        DeviationClass.D1_DATA,
+                        IssueSeverity.MEDIUM,
+                        f"财报原文窗口不可用（{window.reason}）；{qualitative_note}",
+                        detected_at_step=step.id,
+                        category="report_window_unavailable",
+                        scope=IssueScope.DATA,
+                        recovery_action="numeric_only",
+                    )
+                )
+            elif window.truncated:
+                new_issues.append(
+                    record_deviation(
+                        DeviationClass.D1_DATA,
+                        IssueSeverity.LOW,
+                        f"财报原文窗口被组份额截断（{window.chars} 字符）。",
+                        detected_at_step=step.id,
+                        category="report_window_truncated",
+                        scope=IssueScope.DATA,
+                    )
+                )
 
         # 收集证据（分通道）：数值类规则 + 定性 Stage A/B（LLM，失败降级 → 该通道空）
+        # 注：本节点不传 ``as_of_date``（保持 P1 之前的既有调用方式，不动数值类证据的日期口径）。
         try:
             numeric_evidence, qualitative_evidence = collect_evidence_split(
                 symbol, thesis=hypothesis, window_texts=window_texts
@@ -240,12 +318,8 @@ async def resolve_midterm_decision(
         # 改造 A + A2：insight 的结构化正反证据（supporting/counter_evidence，带 weight）
         # 纯规则映射、零 LLM（midterm 只消费）；经 _decouple_evidence 与 Stage B 定性
         # 证据二选一入账，避免「insight LLM 观点既当先验（prior_confidence）又当似然」
-        # 双重计数。事件日取 run.context 的 as_of_date（真实日期）；无日期时 fallback
-        # 今天（date.today()，有效 YYYY-MM-DD）。id 仍由 statement 唯一
+        # 双重计数。事件日取上面算好的 as_of_date；id 仍由 statement 唯一
         # （hash(date+kind+subject)），去重不受影响。
-        as_of_date = str(run.context.get("as_of_date") or "") if run else ""
-        if not as_of_date:
-            as_of_date = date.today().isoformat()
         insight_evidence = adapt_insight_evidence(insight, symbol=symbol, date=as_of_date)
         evidence = _decouple_evidence(numeric_evidence, qualitative_evidence, insight_evidence)
 
