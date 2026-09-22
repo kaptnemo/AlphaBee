@@ -11,12 +11,12 @@ from alphabee.industry.persistence import (
 )
 
 
-def _artifact(as_of_date="2026-08-15", stale_after=None, **overrides) -> IndustryContextArtifact:
+def _artifact(as_of_date=None, stale_after=None, **overrides) -> IndustryContextArtifact:
     kwargs = dict(
         industry="白酒",
         classification_standard="sw_l1",
         industry_code="801120.SI",
-        as_of_date=as_of_date,
+        as_of_date=as_of_date or date.today().isoformat(),
         valuation_benchmarks={"industry_pe_ttm": 25.0},
         financial_benchmarks={"industry_avg_roe": 0.15},
         growth_benchmarks={"industry_revenue_yoy": 12.3},
