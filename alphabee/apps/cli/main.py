@@ -176,16 +176,23 @@ def _kind_label(value: Any) -> str:
 
 
 def _format_alert_frame(report: Any, index: int) -> list[str]:
-    """一帧 ``TrackingReport`` → 渲染行（``as_of`` / 状态 / 触发 / 退出信号 / 行动类输出，§15.2-C）。"""
-    # P4（D3-C2）会新增 ``TrackingReport.research_status`` 派生状态字；此处 getattr 前向兼容：
-    # 字段存在即显示（P4 落地后自动生效），否则回落既有 ``state``（认知状态 argmax），**不伪造**派生视图。
-    status = str(getattr(report, "research_status", "") or report.state or "—")
+    """一帧 ``TrackingReport`` → 渲染行（``as_of`` / 研究状态 / 认知状态 / 触发 / 退出信号 / 行动类输出）。
+
+    * ``状态`` = P4（D3-C2）的 ``research_status`` **派生状态字**（纯投影，见 ``tracking/status.py``）；
+      旧帧或降级/异常帧该字段为 ``""`` ⇒ 回落既有 ``state``（认知状态 argmax），**不伪造**派生视图。
+    * 两者同时存在时额外并列 ``认知状态=Sx``：派生视图回答"要不要重新研究"，认知状态回答"当前在
+      S0–S5 哪一档"，信息不互相替代（渲染层只做展示：不触发 run、不写库、不改编排）。
+    """
+    derived = str(getattr(report, "research_status", "") or "")
+    cognitive = str(getattr(report, "state", "") or "")
+    status = derived or cognitive or "—"
+    cognitive_suffix = f"  认知状态={cognitive}" if derived and cognitive else ""
     kinds = [_kind_label(trigger.kind) for trigger in report.triggers]
     suffix = f"[{', '.join(kinds)}]" if kinds else ""
     degraded = "  降级=是" if getattr(report, "degraded", False) else ""
     lines = [
         f"[{index:02d}] {report.symbol or '—'}  as_of={report.as_of or '—'}  状态={status}"
-        f"  触发={len(kinds)}{suffix}  退出信号={len(report.exit_reasons)}"
+        f"{cognitive_suffix}  触发={len(kinds)}{suffix}  退出信号={len(report.exit_reasons)}"
         f"  行动类={len(report.blocked_actions)}{degraded}"
     ]
     for trigger in report.triggers:

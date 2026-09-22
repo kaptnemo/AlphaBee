@@ -55,6 +55,7 @@ from alphabee.midterm.models import (
     FactorSnapshot,
 )
 from alphabee.tracking.ledger import record_tracking_deviations
+from alphabee.tracking.status import research_status
 from alphabee.tracking.triggers import (
     Trigger,
     TriggerKind,
@@ -142,6 +143,9 @@ class TrackingReport(BaseModel):
     degraded: bool = False
     degraded_reason: str = ""
     skipped_reason: str = ""  # 本帧未差分的原因（如 as_of 未推进）
+    # 研究连续体 P4（D3-C2）：研究生命周期**派生视图**状态字（"" = 未计算：降级/异常路径不猜）。
+    # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
+    research_status: str = ""
     # 研究连续体 P3（D1-A2）：本帧写入偏离账本的条数（0 = 无偏离，或写入失败/未持久化）。
     # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
     deviations_recorded: int = 0
@@ -661,6 +665,16 @@ def run_once(
                 payload={"source": "human_confirm_gate", "allowed_tiers": list(ACTION_CLASS_GATE_TIERS)},
             ),
         ]
+
+    # ── 研究连续体 P4（D3-C2）：研究生命周期派生视图（§15.4-B）──
+    # 纯投影：三个真源都是本报告已算好的既有产物（退出信号 / 监控触发 / 触发列表），
+    # 不读 config、不新增阈值、无 IO。放在 `_write_alerts` **之前** ⇒ 落盘的告警帧自带状态字。
+    report.research_status = research_status(
+        exit_reasons=report.exit_reasons,
+        monitor_reasons=report.monitor_reasons,
+        triggers=report.triggers,
+        stale=any(trigger.kind == TriggerKind.STALE_EXPIRED for trigger in report.triggers),
+    ).value
 
     report.alerts_path = _write_alerts(report, alert_dir) if write_alerts else ""
     # ── 研究连续体 P3（D1-A2）：本帧偏离写入既有账本（§15.3-B）──
