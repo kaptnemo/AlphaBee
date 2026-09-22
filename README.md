@@ -46,7 +46,7 @@ poetry run python main.py --help
 poetry run python main.py "帮我分析一下宁德时代"
 ```
 
-### 常用命令
+### 终端交互，常用命令
 
 ```bash
 # 单次分析 / 多轮对话
@@ -63,6 +63,18 @@ poetry run python main.py --monitor-framework monitor_framework.md --symbol 3007
 poetry run python main.py --task-stats
 poetry run python main.py --distill            # LLM 规则蒸馏建议
 poetry run python main.py --task-history 600519.SH
+```
+
+### 启动 web 界面流式问答交互
+
+```bash
+# 终端 1：后端
+poetry run uvicorn alphabee.apps.web.server:app --host 0.0.0.0 --port 8010
+```
+
+```bash
+# 终端 2：前端
+cd web && npm install && npm run dev   # http://localhost:3000
 ```
 
 ## 文档
