@@ -372,6 +372,18 @@ def enforce_attribution_accounting(
 # ── 确定性内核：一帧 reconcile ──────────────────────────────────────────────
 
 
+def _versions_data_dir(state_dir: str | Path | None) -> str | Path | None:
+    """thesis 版本目录派生（RC-5 收口）：``state_dir`` 非 None ⇒ ``Path(state_dir)/"thesis_versions"``。
+
+    缺省（``state_dir=None``）⇒ 返回 ``None``：versions 侧回落
+    :data:`~alphabee.midterm.versions.DEFAULT_VERSION_DIR`（``data/midterm/thesis_versions``），
+    路径与行为**逐字不变**。子目录名取缺省目录同名段 ``thesis_versions``：
+    帧文件为 ``<state_dir>/<symbol>.jsonl``（``midterm.persistence`` 同布局），版本文件落在子目录内，
+    避免与帧文件同名冲突（§15.5 / ROADMAP 顺延项 RC-5）。
+    """
+    return Path(state_dir) / "thesis_versions" if state_dir is not None else None
+
+
 def _reconcile_frame(
     symbol: str,
     *,
@@ -445,12 +457,15 @@ def _reconcile_frame(
         # （`persist=False` 的只读预演**不写版本文件**）。注意与 P3 的位置差异：P3 的账本写入按 §15.3-B
         # 放在 `run_once` 上层（副作用留在内核之外），P5 按 §15.5-B 放在内核内 —— 两处各按各自规格片段
         # 执行，不"顺手对齐"。登记本身 fail-open（`register_thesis_if_changed` 内建异常边界）。
+        # RC-5：data_dir 由 state_dir 派生（`_versions_data_dir`）——显式 --state-dir ⇒ 版本随帧落位
+        # （`<state_dir>/thesis_versions`）；缺省（state_dir=None）⇒ data_dir=None ⇒ 缺省目录逐字不变。
         try:
             version, thesis_version_reason = versions.register_thesis_if_changed(
                 symbol,
                 as_of=as_of,
                 thesis=str(getattr(curr, "thesis", "") or ""),
                 invalidation=[str(condition.condition) for condition in (getattr(curr, "exit_conditions", None) or [])],
+                data_dir=_versions_data_dir(state_dir),
             )
             thesis_version = int(version.version) if version is not None else 0
         except Exception as exc:  # noqa: BLE001 - 版本登记绝不打断帧（fail-open；双保险）
@@ -498,7 +513,8 @@ def reconcile(
         snapshot_provider: 快照来源（缺省 ``get_factor_snapshot``；注入以便离线测试）。
         evidence_provider: 证据来源（缺省 ``collect_evidence``）。
         thresholds: 触发阈值（缺省读 config，fail-open 到 midterm 常量）。
-        state_dir: 帧持久化目录（缺省 ``data/midterm/state``）。
+        state_dir: 帧持久化目录（缺省 ``data/midterm/state``）；thesis 版本目录 = ``<state_dir>/thesis_versions``
+            （``state_dir=None`` 时版本回落缺省 ``data/midterm/thesis_versions``，逐字不变；RC-5）。
         persist: 是否落盘（``False`` 用于只读预演/测试）。
 
     Returns:

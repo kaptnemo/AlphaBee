@@ -31,6 +31,7 @@ from alphabee.midterm.versions import (
     _version_id,
     _version_path,
     append_version,
+    default_version_dir,
     latest_version,
     load_versions,
     register_thesis_if_changed,
@@ -116,6 +117,21 @@ def test_default_version_dir_and_path_and_id():
     assert DEFAULT_VERSION_DIR.parts[-2:] == ("midterm", "thesis_versions")
     assert _version_path(SYMBOL).name == f"{SYMBOL}.jsonl"
     assert _version_id(ThesisVersion(version=2, as_of_date=D2, thesis="t")) == f"{D2}#2"
+
+
+def test_data_dir_none_resolves_to_verbatim_default_path(monkeypatch):
+    """回归（RC-5 收口）：``data_dir=None`` ⇒ ``data/midterm/thesis_versions`` **逐字不变**。
+
+    把 autouse fixture 重定向的模块属性恢复到**源码字面量**（模拟未重定向的缺省态），
+    断言 ``_version_path`` 落点 == ``data/midterm/thesis_versions/<symbol>.jsonl``。
+    只算路径、**不写盘**（本用例不得触碰真实 ``data/``）。
+    """
+    literal = _default_dir_literal()
+    monkeypatch.setattr(versions, "DEFAULT_VERSION_DIR", literal)
+
+    assert default_version_dir() == literal
+    assert _version_path(SYMBOL, data_dir=None) == literal / f"{SYMBOL}.jsonl"
+    assert _version_path(SYMBOL, data_dir=None).as_posix() == f"data/midterm/thesis_versions/{SYMBOL}.jsonl"
 
 
 # ── ② 首版登记 / 未变不追加 / 反漂移（本门核心） ─────────────────────────────
@@ -291,7 +307,10 @@ def test_reconcile_frame_registers_version_on_persist(tmp_path):
 
     assert persisted is not None
     assert artifact.thesis
-    registered = load_versions(SYMBOL)
+    # RC-5：版本随 state_dir 落位（<state_dir>/thesis_versions），不回落默认目录
+    versions_dir = tmp_path / "state" / "thesis_versions"
+    assert (versions_dir / f"{SYMBOL}.jsonl").exists()
+    registered = load_versions(SYMBOL, data_dir=versions_dir)
     assert len(registered) == 1
     assert registered[0].thesis == artifact.thesis
     assert registered[0].version == 1
@@ -302,7 +321,8 @@ def test_run_once_reports_thesis_version_fields(tmp_path):
 
     assert report.thesis_version == 1
     assert report.thesis_version_reason == APPEND_REASON_FIRST
-    assert load_versions(SYMBOL)[0].thesis == report.thesis
+    versions_dir = tmp_path / "state" / "thesis_versions"
+    assert load_versions(SYMBOL, data_dir=versions_dir)[0].thesis == report.thesis
 
 
 def test_persist_false_writes_no_version_file(tmp_path):
@@ -319,20 +339,23 @@ def test_persist_false_writes_no_version_file(tmp_path):
     assert report.thesis_version_reason == ""
     assert load_versions(SYMBOL) == []
     assert not _version_file().exists()
+    # RC-5：派生目录同样不写（persist 开关门控一切落盘）
+    assert not (tmp_path / "state" / "thesis_versions" / f"{SYMBOL}.jsonl").exists()
 
 
 def test_second_frame_with_changed_thesis_registers_version_two(tmp_path):
     """端到端：第二帧 thesis 变了 ⇒ ``thesis_version=2`` 且 reason=changed，首版买入理由不变。"""
     run_once(SYMBOL, as_of=D1, state_dir=tmp_path / "state", alert_dir=tmp_path / "alerts", **_providers(D1))
-    first = load_versions(SYMBOL)
+    versions_dir = tmp_path / "state" / "thesis_versions"
+    first = load_versions(SYMBOL, data_dir=versions_dir)
     assert first and first[0].version == 1
 
     # 直接驱动版本注册（simulate 第二帧的 thesis 变化）：
-    second, reason = register_thesis_if_changed(SYMBOL, as_of=D2, thesis="需求证伪：库存恶化")
+    second, reason = register_thesis_if_changed(SYMBOL, as_of=D2, thesis="需求证伪：库存恶化", data_dir=versions_dir)
 
     assert reason == APPEND_REASON_CHANGED
     assert second is not None and second.version == 2
-    assert load_versions(SYMBOL)[0].buy_rationale == first[0].buy_rationale
+    assert load_versions(SYMBOL, data_dir=versions_dir)[0].buy_rationale == first[0].buy_rationale
 
 
 def test_version_registration_failure_does_not_break_the_frame(tmp_path, monkeypatch):

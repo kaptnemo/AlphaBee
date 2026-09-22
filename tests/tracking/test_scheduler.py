@@ -13,6 +13,8 @@ import json
 
 import pytest
 
+from alphabee.midterm import persistence as midterm_persistence
+from alphabee.midterm import versions as midterm_versions
 from alphabee.midterm.models import (
     ArtifactRef,
     ChangeAttribution,
@@ -252,6 +254,41 @@ def test_same_day_rerun_is_idempotent_on_disk(tmp_path):
     reconcile(SYMBOL, as_of=D1, state_dir=state_dir, persist=True, **_providers(D1))
     rows = (state_dir / f"{SYMBOL}.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert len(rows) == 1
+
+
+def test_reconcile_writes_thesis_versions_under_state_dir(tmp_path, monkeypatch):
+    """RC-5 收口：版本目录随 ``state_dir`` 落位（``<state_dir>/thesis_versions``），**不回落模块默认目录**。
+
+    判别力自证（纪律 9）：把 ``_reconcile_frame`` 里的 ``data_dir`` 透传删掉（改回不传）⇒ 本用例**必红**
+    （版本落入 monkeypatch 的哨兵默认目录，``<state_dir>/thesis_versions`` 下无文件）。
+    """
+    sentinel_default = tmp_path / "sentinel_default_versions"
+    monkeypatch.setattr(midterm_versions, "DEFAULT_VERSION_DIR", sentinel_default)
+    state_dir = tmp_path / "state"
+
+    reconcile(SYMBOL, as_of=D1, state_dir=state_dir, persist=True, **_providers(D1))
+
+    version_file = state_dir / "thesis_versions" / f"{SYMBOL}.jsonl"
+    assert version_file.exists(), "版本文件应随 state_dir 落位（<state_dir>/thesis_versions/<symbol>.jsonl）"
+    assert not (sentinel_default / f"{SYMBOL}.jsonl").exists(), "版本写入不得回落模块默认目录"
+    loaded = midterm_versions.load_versions(SYMBOL, data_dir=state_dir / "thesis_versions")
+    assert len(loaded) == 1 and loaded[0].version == 1
+
+
+def test_state_dir_none_keeps_default_version_dir(tmp_path, monkeypatch):
+    """缺省分支逐字不变（RC-5）：``state_dir=None`` ⇒ 版本仍落 ``versions.DEFAULT_VERSION_DIR``。
+
+    帧与版本两个默认目录都 monkeypatch 到 tmp 哨兵（本用例不得触碰真实 ``data/``）。
+    """
+    sentinel_state = tmp_path / "sentinel_state"
+    sentinel_versions = tmp_path / "sentinel_versions"
+    monkeypatch.setattr(midterm_persistence, "DEFAULT_DATA_DIR", sentinel_state)
+    monkeypatch.setattr(midterm_versions, "DEFAULT_VERSION_DIR", sentinel_versions)
+
+    reconcile(SYMBOL, as_of=D1, persist=True, **_providers(D1))
+
+    assert (sentinel_state / f"{SYMBOL}.jsonl").exists()  # 帧回落默认 state 目录
+    assert (sentinel_versions / f"{SYMBOL}.jsonl").exists()  # 版本回落默认版本目录（data_dir=None 透传）
 
 
 def test_reconcile_wires_stale_after_ttl(tmp_path):

@@ -12,9 +12,14 @@
 —— 它与研究状态轴**正交**：状态轴回答"现在该做什么"，版本轴回答"当初为什么这么想、后来改了没有"。
 本阶段只做**登记与比对**，不做自动回滚、不改写任何结论。
 
-**存储**：``data/midterm/thesis_versions/<symbol>.jsonl``，append-only JSONL（每行一条
-``model_dump(mode="json")``），与 ``midterm.persistence`` **同构**（同一套容错口径：损坏行跳过、
-按 id 幂等）。
+**存储**：``data/midterm/thesis_versions/<symbol>.jsonl``（缺省，``data_dir=None`` 时路径逐字不变），
+append-only JSONL（每行一条 ``model_dump(mode="json")``），与 ``midterm.persistence`` **同构**（同一套
+容错口径：损坏行跳过、按 id 幂等）。
+
+**RC-5 接线约定**：本模块只认 ``data_dir`` 参数；``tracking.scheduler`` 侧把 ``state_dir`` 派生为
+``data_dir``（``state_dir`` 非 None ⇒ ``Path(state_dir)/"thesis_versions"``，见
+``alphabee/tracking/scheduler.py::_versions_data_dir``）。派生规则**不进本模块**（缺省行为
+``data_dir=None ⇒ data/midterm/thesis_versions`` 由 :data:`DEFAULT_VERSION_DIR` 钉死）。
 
 **不改契约面**：``ThesisVersion`` **没有 ``symbol`` 字段**（标的由**文件名**承载），故本模块
 **不 import、也不修改** ``midterm/models.py`` 的模型定义。
