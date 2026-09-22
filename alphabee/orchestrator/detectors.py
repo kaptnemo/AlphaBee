@@ -32,6 +32,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel
+
 from alphabee.core.schemas import (
     Artifact,
     ArtifactType,
@@ -136,7 +138,7 @@ def detector_categories() -> dict[str, str]:
 
 
 #: 可校验 artifact 类型 → typed model（仅登记**有 typed 契约**的类型；其余跳过，不误报 D2）。
-_ARTIFACT_MODELS: dict[ArtifactType, type] = {
+_ARTIFACT_MODELS: dict[ArtifactType, type[BaseModel]] = {
     ArtifactType.FACT_COLLECTION: FactCollectionArtifact,
     ArtifactType.DERIVED_FACTS: DerivedFactsArtifact,
     ArtifactType.SIGNAL_ANALYSIS: SignalAnalysisArtifact,

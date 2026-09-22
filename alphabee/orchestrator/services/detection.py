@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
 
@@ -65,7 +65,7 @@ def detection_switches() -> bool:
         return _DEFAULT_DETECTION_ENABLED
 
 
-def _merge_state_view(state: dict[str, Any] | None, update: dict[str, Any] | None) -> dict[str, Any]:
+def _merge_state_view(state: Mapping[str, Any] | None, update: dict[str, Any] | None) -> dict[str, Any]:
     """构造 ``state ⊕ update`` 的只读合并视图。
 
     复用 ``state.py`` 的 reducer（``_merge_by_id`` / ``_append_items``），避免检测器看到的
@@ -98,18 +98,18 @@ def with_deviation_detection(node_id: str, fn: NodeFn) -> NodeFn:
 
         async def _async_wrapper(state: OrchestratorState, config: RunnableConfig) -> dict[str, Any]:
             update = await fn(state, config)
-            return _detect(node_id, state, update)
+            return cast("dict[str, Any]", _detect(node_id, state, update))
 
-        return _async_wrapper  # type: ignore[return-value]
+        return _async_wrapper
 
     def _sync_wrapper(state: OrchestratorState, config: RunnableConfig) -> dict[str, Any]:
         update = fn(state, config)
-        return _detect(node_id, state, update)
+        return cast("dict[str, Any]", _detect(node_id, state, update))
 
     return _sync_wrapper
 
 
-def _detect(node_id: str, state: dict[str, Any] | None, update: Any) -> Any:
+def _detect(node_id: str, state: Mapping[str, Any] | None, update: Any) -> Any:
     """在节点出口执行契约检测器；任何异常都 fail-open 返回原 ``update``。"""
     try:
         if not isinstance(update, dict):

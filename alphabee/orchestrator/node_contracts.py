@@ -546,10 +546,15 @@ def _graph_call_edges(path: Path = _AGENT_SOURCE) -> list[tuple[str, str]]:
         ):
             continue
         if func.attr == "add_edge":
-            if len(call.args) >= 2 and all(
-                isinstance(argument, ast.Constant) and isinstance(argument.value, str) for argument in call.args[:2]
-            ):
-                edges.append((call.args[0].value, call.args[1].value))
+            if len(call.args) >= 2:
+                first, second = call.args[0], call.args[1]
+                if (
+                    isinstance(first, ast.Constant)
+                    and isinstance(first.value, str)
+                    and isinstance(second, ast.Constant)
+                    and isinstance(second.value, str)
+                ):
+                    edges.append((first.value, second.value))
             continue
         if func.attr != "add_conditional_edges" or len(call.args) < 3:
             continue

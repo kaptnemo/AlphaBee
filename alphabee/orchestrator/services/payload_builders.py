@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+from collections.abc import Mapping
 from typing import Any
 
 from alphabee.agents.facts.models import FinancialFacts, MarketFacts
@@ -281,7 +282,7 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict[s
     }
 
 
-def build_report_generation_payload(state: OrchestratorState) -> ReportGenerationPayload:
+def build_report_generation_payload(state: Mapping[str, Any]) -> ReportGenerationPayload:
     """Assemble all structured node outputs into a typed report-generation payload."""
 
     artifacts = state.get("artifacts", [])

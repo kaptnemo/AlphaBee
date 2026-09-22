@@ -633,12 +633,13 @@ def run_once(
         frame_diff=frame.frame_diff,  # ← 有 diff 时 exit/tv 判定**委托** midterm（check_exit / monitor_triggers）
         thresholds=limits,
     )
-    triggers += detect_fact_triggers(
-        symbol,
-        snapshot=artifact.factor_snapshot,
-        prev_snapshot=getattr(frame.previous, "factor_snapshot", None),
-        thresholds=limits,
-    )
+    if artifact.factor_snapshot is not None:
+        triggers += detect_fact_triggers(
+            symbol,
+            snapshot=artifact.factor_snapshot,
+            prev_snapshot=getattr(frame.previous, "factor_snapshot", None),
+            thresholds=limits,
+        )
     if manual:
         triggers.append(manual_trigger(symbol, reason="CLI 显式人工触发（--trigger manual）"))
     report.triggers = _dedupe_triggers(triggers)
