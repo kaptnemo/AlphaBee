@@ -127,12 +127,18 @@ def test_kind_price_move_from_snapshot_percent():
 
 def test_kind_price_move_from_belief_drift_comes_from_monitor_triggers():
     """PRICE_MOVE（信念位移侧）：**由 midterm 的 `monitor_triggers` 判定**，本模块只做投影。"""
+    from alphabee.midterm import diff_consumers
+
     found = detect_triggers(SYMBOL, as_of="2026-09-20", artifact=_artifact(), frame_diff=_frame_diff(tv=0.4))
     assert [t.kind for t in found] == [TriggerKind.PRICE_MOVE]
     payload = found[0].payload
     assert payload["source"] == "monitor_triggers"  # 判定来源自证 = midterm
     assert payload["reason"].startswith("tv_distance=")  # 原样透传 midterm 的 reason
-    assert payload["threshold"] is None  # 缺省不传阈值 ⇒ 用 monitor_triggers 自己的默认
+    # 研究连续体 P2（§15.2-D）把 ``deviation.tracking`` 段落地后，``monitor_kwargs()`` 由
+    # "不传参"变为**显式**传 ``tv_threshold=0.3``（== midterm 自己的默认常量），故 payload 的
+    # ``threshold`` 由 ``None`` 转为显式值 —— **有效判定不变**（同一常量；对拍见
+    # tests/orchestrator/test_preflight.py::test_tracking_thresholds_explicit_registration_keeps_monitor_verdict）。
+    assert payload["threshold"] == diff_consumers._TV_TRIGGER
 
 
 def test_kind_stale_expired():
@@ -402,15 +408,30 @@ def test_thresholds_fail_open_when_config_unavailable(monkeypatch):
     assert limits.price_move_pct == DEFAULT_PRICE_MOVE_PCT
 
 
-def test_thresholds_default_section_absent(monkeypatch):
-    """`DeviationSettings` 当前无 `tracking` 段 → 缺段同样 fail-open（而不是 AttributeError）。"""
+def test_thresholds_default_section_registers_existing_defaults(monkeypatch):
+    """研究连续体 P2（§15.2-D）落地 ``deviation.tracking`` 段后的**缺段语义**：段存在且值为既有默认。
+
+    从前本用例断言 "``DeviationSettings`` 没有 ``tracking`` 段 ⇒ 全回落 ``TriggerThresholds()``"；
+    该段现已落地（§15.7 明文要求 `tv_distance=0.3` == ``diff_consumers._TV_TRIGGER``），故
+    ``tv_distance`` 由 ``None`` 变为**显式** ``0.3``、``monitor_kwargs()`` 开始传参 ——
+    因 `monitor_triggers` 的默认值就是同一常量，**有效判定不变**
+    （对拍见 ``tests/orchestrator/test_preflight.py::test_tracking_thresholds_explicit_registration_keeps_monitor_verdict``）。
+    """
     from alphabee.config import DeviationSettings
+    from alphabee.midterm import diff_consumers
 
     class _Settings:
         deviation = DeviationSettings()
 
     monkeypatch.setattr("alphabee.config.get_settings", lambda: _Settings())
-    assert thresholds_from_settings() == TriggerThresholds()
+    limits = thresholds_from_settings()
+    assert limits == TriggerThresholds(
+        tv_distance=diff_consumers._TV_TRIGGER,
+        price_move_pct=DEFAULT_PRICE_MOVE_PCT,
+        stale_grace_days=0,
+        stale_after_days=7,
+    )
+    assert monitor_kwargs(limits) == {"tv_threshold": diff_consumers._TV_TRIGGER}
 
 
 def test_thresholds_read_config_when_section_present(monkeypatch):

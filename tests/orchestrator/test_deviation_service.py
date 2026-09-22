@@ -85,6 +85,8 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8.1 加权边审计的方向不一致上报（review_thesis 节点）
     "amplification_direction_conflict": DeviationClass.D3_ARGUMENT,
+    # ── 研究连续体 P2（D2-B2）：在陈旧/未对账状态下启动分析（collectors 入口前置校验，§15.2-B）
+    "stale_state_run": DeviationClass.D5_CONTROL,
 }
 
 # 确实未登记的 category（只允许走 D2 保守兜底）：历史/外部来源或尚未命名的类目。

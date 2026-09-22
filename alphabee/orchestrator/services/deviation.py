@@ -128,6 +128,8 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     # ── 研究连续体 P1（W3）：财报原文窗口不可用 / 被组份额截断（midterm 节点显式记账，§15.1-C）
     "report_window_unavailable": DeviationClass.D1_DATA,
     "report_window_truncated": DeviationClass.D1_DATA,
+    # ── 研究连续体 P2（D2-B2）：在陈旧/未对账状态下启动分析（collectors 入口前置校验显式记账，§15.2-B）
+    "stale_state_run": DeviationClass.D5_CONTROL,
 }
 
 #: 未知 category 的保守回退：归为结构偏离（§14.1-B）。宁可少分类，不猜测语义。

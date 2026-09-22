@@ -76,3 +76,19 @@ deviation:
 
   recovery:                  # §7 恢复阶梯协议化（F2 使用）
     enabled: true            # 是否启用统一阶梯裁决；**关闭 ⇒ 回落 pre-F2 基线判据**（§14.8 回滚方式）
+
+  # ── 研究连续体 P2（D2-B2）：跟踪阈值 + 入口前置校验（docs/design/RESEARCH_CONTINUUM_DESIGN.md §15.2-D / §15.7）──
+  # 本段**此前不存在**：`tracking/triggers.py::thresholds_from_settings()` 一直 fail-open 回落中试默认。
+  # 本段落地后除 block_stale_runs 为**新增行为**外，其余四键均为**既有默认的显式登记（有效判定不变）**：
+  # stale_after_days == tracking.scheduler.DEFAULT_STALE_AFTER_DAYS；tv_distance == midterm.diff_consumers._TV_TRIGGER
+  # （落地后 monitor_kwargs() 由"不传参"变为显式传 tv_threshold=0.3，而 monitor_triggers 的默认值就是同一常量）；
+  # evidence_rate == _EVIDENCE_RATE_TRIGGER（当前无读取点）；max_alerts_shown 只服务 --track-alerts 只读视图。
+  # **行为变更登记**：block_stale_runs=true 会在该标的最新帧陈旧/存在未消费触发时阻断 CLI 交互分析请求
+  # （SystemExit(3)；--allow-stale 显式放行，且放行后仍由 collect_raw_facts 记账），见
+  # docs/roadmap/ROADMAP.md「行为变更登记」P2 行。整段省略 ⇒ 取内置默认（本段即默认值）。
+  tracking:
+    stale_after_days: 7      # 帧保鲜期（天）：stale_after 到期即陈旧（显式登记既有默认）
+    block_stale_runs: true   # 入口是否阻断（false = 只记录不阻断：§15.2-E 的回滚方式之一）
+    tv_distance: 0.3         # 信念位移阈值（显式登记既有默认，== _TV_TRIGGER）
+    evidence_rate: 0.5       # 证据到达率阈值（显式登记既有默认，== _EVIDENCE_RATE_TRIGGER）
+    max_alerts_shown: 20     # --track-alerts 每标的显示的最大告警帧数（只读视图）

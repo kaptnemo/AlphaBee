@@ -108,14 +108,64 @@ class DeviationRecoverySettings(BaseModel):
     enabled: bool = Field(default=True, description="是否启用统一阶梯裁决（关闭 = 纯回滚到 pre-F2 基线行为）")
 
 
+class DeviationTrackingSettings(BaseModel):
+    """跟踪环（F4）+ 入口前置校验（P2 / D2-B2）的共享配置段（§14.6 / §15.2-D / §15.7）。
+
+    **本段在 P2 之前并不存在** ⇒ ``tracking/triggers.py::thresholds_from_settings()`` 一直走
+    ``_config_section() is None`` 分支（``TriggerThresholds()`` 全默认、``tv_distance=None``
+    ⇒ ``monitor_kwargs()`` 返回 ``{}``、由 ``monitor_triggers`` 用自身默认常量）。本段落地后，
+    该函数开始**显式**读出下列值；除 ``block_stale_runs`` 属**新增行为**外，其余均为
+    **既有默认的显式登记（有效判定不变）**：
+
+    * ``stale_after_days=7`` == ``tracking.scheduler.DEFAULT_STALE_AFTER_DAYS``（帧写入侧的保鲜期）；
+    * ``tv_distance=0.3`` == ``midterm/diff_consumers.py::_TV_TRIGGER`` —— 落地后
+      ``monitor_kwargs()`` 由"不传参"变为显式传 ``tv_threshold=0.3``；因 ``monitor_triggers``
+      的默认值**就是**同一常量，**有效判定逐字不变**（有专测
+      ``test_tracking_thresholds_explicit_registration_keeps_monitor_verdict`` 在真实 diff 上对拍）；
+    * ``evidence_rate=0.5`` == ``_EVIDENCE_RATE_TRIGGER``（当前无读取点，属显式登记）；
+    * ``max_alerts_shown=20`` 只服务 ``--track-alerts`` 只读视图（无数值判定语义）。
+
+    ``block_stale_runs=true`` 会让 CLI 交互入口在"该标的最新帧已陈旧 / 存在未消费触发"时
+    **拒绝执行**（``SystemExit(3)``；``--allow-stale`` 显式放行，放行后仍由 ``collect_raw_facts``
+    记账）；``false`` ⇒ 只记录不阻断。**行为变更登记见 ``docs/roadmap/ROADMAP.md``「行为变更登记」
+    P2 行**。
+
+    缺该段的旧 ``config.yaml`` 仍可 import（本段带默认值）：未配置者拿到的是"既有默认的显式登记"
+    这一等价结果 —— 唯一例外是 ``block_stale_runs=true`` 的新阻断行为，已登记。
+    """
+
+    stale_after_days: int = Field(
+        default=7,
+        description="数据保鲜期（天）：帧 stale_after 到期即视为陈旧（显式登记既有默认 7）",
+    )
+    block_stale_runs: bool = Field(
+        default=True,
+        description="入口是否阻断陈旧/未对账状态下的 CLI 分析请求（false = 只记录不阻断）",
+    )
+    tv_distance: float = Field(
+        default=0.3,
+        description="信念位移阈值（显式登记既有默认，== midterm.diff_consumers._TV_TRIGGER）",
+    )
+    evidence_rate: float = Field(
+        default=0.5,
+        description="证据到达率阈值（显式登记既有默认，== midterm.diff_consumers._EVIDENCE_RATE_TRIGGER）",
+    )
+    max_alerts_shown: int = Field(
+        default=20,
+        description="--track-alerts 只读视图每标的显示的最大告警帧数",
+    )
+
+
 class DeviationSettings(BaseModel):
-    """偏离控制框架的配置总段（§14.6）。**五段全部带默认值**，故配置缺失也能构造。"""
+    """偏离控制框架的配置总段（§14.6）。**各段全部带默认值**，故配置缺失也能构造。"""
 
     detection: DeviationDetectionSettings = Field(default_factory=DeviationDetectionSettings)
     budget: DeviationBudgetSettings = Field(default_factory=DeviationBudgetSettings)
     ledger: DeviationLedgerSettings = Field(default_factory=DeviationLedgerSettings)
     amplification: DeviationAmplificationSettings = Field(default_factory=DeviationAmplificationSettings)
     recovery: DeviationRecoverySettings = Field(default_factory=DeviationRecoverySettings)
+    # 研究连续体 P2（D2-B2）：跟踪阈值 + 入口阻断开关（缺段 ⇒ 上列默认；旧 config 仍可 import）
+    tracking: DeviationTrackingSettings = Field(default_factory=DeviationTrackingSettings)
 
 
 class ReportWindowSettings(BaseModel):

@@ -61,6 +61,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "main.py" = ["E402"]   # load_dotenv() must precede env-var-dependent imports
+"alphabee/apps/web/__init__.py" = ["E402"]   # load_dotenv() must precede env-var-dependent imports
 
 [tool.mypy]
 python_version = "3.13"

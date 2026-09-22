@@ -98,6 +98,20 @@ def parse_args() -> argparse.Namespace:
         metavar="RUN_ID",
         help="打印偏离账本时间线（只读视图，不运行流水线）；省略 RUN_ID 时取最近一次 run",
     )
+    parser.add_argument(
+        "--allow-stale",
+        action="store_true",
+        default=False,
+        help="允许在最新跟踪帧已陈旧/存在未对账触发时继续分析（默认阻断，仅影响交互入口）",
+    )
+    parser.add_argument(
+        "--track-alerts",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="SYMBOL",
+        help="打印跟踪告警（只读视图，不运行流水线）；省略 SYMBOL 时列出全部标的的最近告警",
+    )
     return parser.parse_args()
 
 

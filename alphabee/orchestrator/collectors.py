@@ -21,7 +21,9 @@ from alphabee.agents.schemas import ConflictAnalysisResult
 from alphabee.core import (
     Artifact,
     ArtifactType,
+    DeviationClass,
     Issue,
+    IssueScope,
     IssueSeverity,
     Run,
     RunStatus,
@@ -36,6 +38,8 @@ from alphabee.orchestrator.contracts import (
     VerifiedHypothesisSummary,
     find_artifact_model,
 )
+from alphabee.orchestrator.services.deviation import record_deviation
+from alphabee.orchestrator.services.preflight import check_preflight
 from alphabee.orchestrator.state import OrchestratorState
 from alphabee.tools.common import extract_symbols_from_query
 from alphabee.utils.pipeline import extract_text, make_id
@@ -187,6 +191,32 @@ async def collect_raw_facts(
 
     artifacts: list[Artifact] = []
     issues: list[Issue] = []
+
+    # ── 研究连续体 P2（D2-B2）：入口前置校验的**记录侧**（§15.2-B）──
+    # "记录"与"阻断"解耦（§15.2 设计决策 3）：这里以 ``block_enabled=False`` 调用 ⇒ 本次调用
+    # **永不阻断**采集（首次研究必放行），只在**命中**"带陈旧/未对账状态启动"时把这一事实写进
+    # issues（D5/MEDIUM，category 已登记 CLASS_BY_CATEGORY）。因此即使用户在 CLI 侧用
+    # ``--allow-stale`` 显式放行，账本/state 里仍留下"这次是在陈旧状态下跑的"——这正是
+    # §11 验收 2 修订口径"不可能**静默地**继续"的落点。
+    # 判定本身是纯规则 + fail-open（services/preflight.py）：无帧/读盘异常 ⇒ 不产 issue，
+    # 不改变无状态标的的现状行为。
+    verdict = check_preflight(symbol, block_enabled=False)
+    if verdict.checked and (verdict.stale or verdict.pending):
+        age = "—" if verdict.days_since is None else str(verdict.days_since)
+        issues.append(
+            record_deviation(
+                DeviationClass.D5_CONTROL,
+                IssueSeverity.MEDIUM,
+                f"在未对账的陈旧状态下启动分析：最新帧 {verdict.latest_frame_id or '—'}"
+                f"（as_of={verdict.as_of_date or '—'}，{age} 天前；"
+                f"待消费触发 {len(verdict.pending)} 条）。"
+                "本次结论可能滞后于最新事件。",
+                detected_at_step="collect_raw_facts",
+                category="stale_state_run",
+                scope=IssueScope.PLANNING,
+                recovery_action="proceeded_without_reconcile",
+            )
+        )
 
     fact_text: str = ""
     financial_facts: FinancialFacts | None = None
