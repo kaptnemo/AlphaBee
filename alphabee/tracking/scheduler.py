@@ -45,7 +45,7 @@ from pydantic import BaseModel, Field
 # ★ 复用而非重写：midterm 的引擎一律**按模块属性调用**（不是 import 期绑定名）——
 # 这样 midterm 侧被 monkeypatch（哨兵 / 必抛）时本模块行为会随之变化 / 随之失败，
 # 这是"调用真的路由到 midterm"的可证伪判据（import 期绑定会让哨兵失效）。
-from alphabee.midterm import decision_model, diff_consumers, factors, persistence
+from alphabee.midterm import decision_model, diff_consumers, factors, persistence, versions
 from alphabee.midterm.diff import diff as midterm_diff
 from alphabee.midterm.models import (
     ChangeAttribution,
@@ -143,6 +143,10 @@ class TrackingReport(BaseModel):
     degraded: bool = False
     degraded_reason: str = ""
     skipped_reason: str = ""  # 本帧未差分的原因（如 as_of 未推进）
+    # 研究连续体 P5（W5）：本帧登记后的 thesis 版本号与 reason（0 / "" = 未登记）。
+    # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
+    thesis_version: int = 0
+    thesis_version_reason: str = ""
     # 研究连续体 P4（D3-C2）：研究生命周期**派生视图**状态字（"" = 未计算：降级/异常路径不猜）。
     # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
     research_status: str = ""
@@ -173,6 +177,9 @@ class _Frame:
     accounting: ContradictionAccounting
     skipped_reason: str
     persisted: bool
+    # 研究连续体 P5（W5）：本帧登记后的 thesis 版本号与 reason（0 / "" = 未登记，如 persist=False 或降级）
+    thesis_version: int = 0
+    thesis_version_reason: str = ""
 
 
 # ── §9.4 安全红线 ───────────────────────────────────────────────────────────
@@ -425,12 +432,29 @@ def _reconcile_frame(
         monitor_reasons = tuple(monitor.triggers)
 
     persisted = False
+    thesis_version = 0
+    thesis_version_reason = ""
     if persist:
         try:
             persistence.append_artifact(curr, state_dir)
             persisted = True
         except Exception as exc:  # noqa: BLE001 - 落盘失败不阻断帧产出（fail-open）
             logger.warning("tracking persist failed symbol=%s as_of=%s: %s", symbol, as_of, exc)
+        # ── 研究连续体 P5（W5）：thesis 版本登记（§15.5-B）──
+        # 位置 = 规格明文的"`persistence.append_artifact(curr, state_dir)` 成功之后"，与帧落盘同一开关
+        # （`persist=False` 的只读预演**不写版本文件**）。注意与 P3 的位置差异：P3 的账本写入按 §15.3-B
+        # 放在 `run_once` 上层（副作用留在内核之外），P5 按 §15.5-B 放在内核内 —— 两处各按各自规格片段
+        # 执行，不"顺手对齐"。登记本身 fail-open（`register_thesis_if_changed` 内建异常边界）。
+        try:
+            version, thesis_version_reason = versions.register_thesis_if_changed(
+                symbol,
+                as_of=as_of,
+                thesis=str(getattr(curr, "thesis", "") or ""),
+                invalidation=[str(condition.condition) for condition in (getattr(curr, "exit_conditions", None) or [])],
+            )
+            thesis_version = int(version.version) if version is not None else 0
+        except Exception as exc:  # noqa: BLE001 - 版本登记绝不打断帧（fail-open；双保险）
+            logger.warning("thesis version registration failed (fail-open) symbol=%s as_of=%s: %s", symbol, as_of, exc)
 
     return _Frame(
         artifact=curr,
@@ -441,6 +465,8 @@ def _reconcile_frame(
         accounting=accounting,
         skipped_reason=skipped,
         persisted=persisted,
+        thesis_version=thesis_version,
+        thesis_version_reason=thesis_version_reason,
     )
 
 
@@ -665,6 +691,10 @@ def run_once(
                 payload={"source": "human_confirm_gate", "allowed_tiers": list(ACTION_CLASS_GATE_TIERS)},
             ),
         ]
+
+    # ── 研究连续体 P5（W5）：把内核登记的 thesis 版本号/ reason 带到报告上（§15.5-B）──
+    report.thesis_version = int(frame.thesis_version)
+    report.thesis_version_reason = str(frame.thesis_version_reason)
 
     # ── 研究连续体 P4（D3-C2）：研究生命周期派生视图（§15.4-B）──
     # 纯投影：三个真源都是本报告已算好的既有产物（退出信号 / 监控触发 / 触发列表），
