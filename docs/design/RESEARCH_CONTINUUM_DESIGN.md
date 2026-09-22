@@ -489,3 +489,704 @@ F4 交付物中有四项超出本文档原设计，属于净增能力：
 | 6 | **§8：L2 `ResearchEngine` 协议 + 适配器** | ~1–2 天 | 接入 MiroThinker / MiroFlow 一类外部引擎的前置；无外部引擎接入需求时可暂缓 |
 
 **剩余合计约 6–7 天**（对比 F4 前的原估 8.5–9.5 天，F4 已覆盖约 40%；本表不含已完成的 F0–F5）。
+
+---
+
+## 15. 代码层面详细设计（P1–P6）
+
+> §14.4 给的是**顺位与量级**，本节给**可直接开工的代码粒度**：文件清单、类/函数签名、接线点（含既有代码锚点）、序列化与兼容策略、配置项、测试矩阵、PR 切分与回滚。
+> **阶段编号 P1–P6 与 §14.4 顺位一一对应**，与框架文档的 F0–F5（已完成）无重叠、无编号冲突。
+> 本节所有签名均已对照现有代码核实：`orchestrator/services/deviation.py`（`record_deviation` 真实签名）、`core/schemas.py`（`Issue` 15 字段）、`orchestrator/collectors.py`（`collect_raw_facts` 的 symbol 解析与 Run 构建，约 166–179 行）、`orchestrator/nodes/midterm.py`（`_window_texts`，160–168 行）、`midterm/{decision_model,evidence_extractor,persistence,models,diff_consumers}.py`、`data_fetch/deviation_store.py`（`record_event`）、`tracking/{scheduler,triggers}.py`（`run_once` / `TrackingReport` / `TriggerKind`）、`apps/cli/{args,main}.py`、`financial_report/{links,pipeline,report_parser}.py`，以及真实 `reports/` 目录结构与 `.report_manifest.json` 字段。
+
+### 15.0 通用工程约定（六期共同遵守）
+
+#### A. 文件清单
+
+| 文件 | 动作 | 阶段 | 说明 |
+|---|---|---|---|
+| `alphabee/orchestrator/services/report_window.py` | 新增 | P1 | 财报原文窗口选择（章节裁剪 + 字符预算 + 溯源） |
+| `alphabee/orchestrator/nodes/midterm.py` | 改 | P1 | `_window_texts()` 接入原文窗口；无窗口时**显式**发 D1 issue |
+| `alphabee/orchestrator/services/preflight.py` | 新增 | P2 | 入口前置校验纯函数 + `PreflightVerdict` |
+| `alphabee/orchestrator/collectors.py` | 改 | P2 | `collect_raw_facts` 在 symbol 解析后调用校验并把偏离记入 `issues` |
+| `alphabee/apps/cli/args.py` | 改 | P2 | `--allow-stale` / `--track-alerts` |
+| `alphabee/apps/cli/main.py` | 改 | P2 | 入口 gate（拒绝/放行）+ 告警只读视图分派 |
+| `alphabee/tracking/ledger.py` | 新增 | P3 | `TrackingReport → Issue` 适配 + `record_event` 落账 |
+| `alphabee/tracking/scheduler.py` | 改 | P3/P4/P5 | 帧末尾接账本；派生状态字段；thesis 版本登记 |
+| `alphabee/tracking/status.py` | 新增 | P4 | `ResearchStatus` + `research_status()` 纯投影 |
+| `alphabee/midterm/versions.py` | 新增 | P5 | `ThesisVersion` append-only 读写 |
+| `alphabee/tracking/engine.py` | 新增 | P6 | `ResearchEngine` Protocol + `ResearchContext` / `ResearchOutput` |
+| `alphabee/tracking/engines/pipeline_engine.py` | 新增 | P6 | 现有主图的引擎适配器（唯一允许 import orchestrator 的 tracking 模块） |
+| `alphabee/config/__init__.py` + `config.yaml`(+`.example`) | 改 | P1/P2 | `report_window` 段 + `deviation.tracking` 段 |
+| `alphabee/orchestrator/services/telemetry.py` | 改 | P3 | `--deviations` 时间线的跟踪帧标注（**只读展示**，不改数据与指标） |
+| `docs/roadmap/ROADMAP.md` | 改 | P2/P3 | 行为变更登记（`report_window` / `deviation.tracking`）+ 本设计状态行 |
+| `tests/orchestrator/test_report_window.py` | 新增 | P1 | — |
+| `tests/orchestrator/test_preflight.py` | 新增 | P2 | — |
+| `tests/tracking/test_ledger.py` | 新增 | P3 | — |
+| `tests/tracking/test_status.py` | 新增 | P4 | — |
+| `tests/midterm/test_versions.py` | 新增 | P5 | — |
+| `tests/tracking/test_engine.py` | 新增 | P6 | — |
+
+#### B. 依赖方向（禁止反向，防 import 环与重依赖传递）
+
+```text
+core/schemas.py                      ← 只依赖 pydantic/enum
+  ↑
+data_fetch/*（账本 ORM/读写）         ← 只依赖 core；不得 import orchestrator / tracking
+  ↑
+orchestrator/services/*              ← 可依赖 core / state / contracts
+  ↑
+orchestrator/nodes/* + collectors    ← 可依赖 services；不得被 services import
+  ↑
+tracking/*（除 engines/）            ← 可依赖 midterm / core / data_fetch / orchestrator.services
+  ↑
+tracking/engines/*                   ← 唯一允许 import orchestrator.agent 的 tracking 子包
+```
+
+两条**显式许可与理由**（避免被"依赖方向"误判为违规）：
+
+1. `tracking/* → orchestrator.services.deviation` **允许**：该模块 docstring 自述"只依赖 `alphabee.core` 与 `alphabee.utils`，不 import 任何 orchestrator 节点/图/数据层模块"，不引入重依赖、不产生环；
+2. `tracking/engines/* → orchestrator.agent` **允许，但 import 必须写在方法体内**（不写模块顶层）——沿用 `orchestrator/nodes/record_deviations.py` 的既有纪律（其 docstring 第 5 条：不 import `orchestrator.collectors`，"那条链会拉起 tushare 等重依赖"），目的是让 `import alphabee.tracking` 不触发 `tushare.set_token` 副作用。
+
+#### C. 兼容策略（硬约束）
+
+1. **只 append 字段**：`Issue` / `TrackingReport` / `CompanyStateArtifact` 的新增字段一律带默认值；历史 JSONL 反序列化行为不变；
+2. **账本指纹依赖 category 稳定性**：任何**新增** `Issue(category=...)` 字面量，必须同步登记进 `orchestrator/services/deviation.CLASS_BY_CATEGORY`——否则 `tests/orchestrator/test_deviation_service.py::test_every_produced_issue_category_is_registered` 必然失败。这是**门禁**，不是建议；
+3. **新模块一律 fail-open**：任何异常 → `logger.warning` + 返回空/`None`，绝不打断 run 或跟踪帧（沿用 `data_fetch/helper.py::_report_tushare_failure` 的 "never let failure recording break the caller" 纪律）；
+4. **新行为由开关控制**：默认值必须不改变现有行为（唯一例外见 §15.1 F 对 `report_window.enabled` 的说明，且必须登记行为变更）；
+5. **不新增判定与阈值**（§14.3 三决议的核心约束）：P4 的状态投影必须复用 `monitor_triggers` 既有常量（`_TV_TRIGGER=0.3` / `_EVIDENCE_RATE_TRIGGER=0.5`），**不得**引入 θ_c/θ_d/θ_e；
+6. **提交门**：沿用 `docs/roadmap/ROADMAP.md`「偏离控制框架工程实践登记」1–5 条（基线必须是提交号 / 清单用命令枚举 / 冻结协议 444 / 暂存后逐路径哈希核对 / 双跑 `ruff check` + `ruff format --check`）。
+
+---
+
+### 15.1 P1（W3）：财报原文窗口 → 证据抽取
+
+#### A. 现状与目标
+
+现状（已核实）：`nodes/midterm.py::_window_texts()` 返回 `_conflict_explanations(artifacts) or None`，其 docstring 自述"当前主链不提供真正原文"；`decision_model.collect_evidence(symbol, thesis=…, window_texts=…)` 在 `window_texts=None` 时**只跑数值类证据**（`build_numeric_evidence`：forecast / express / revision），Stage A/B（`extract_facts` → `judge_facts` → `assemble_events`）**从不触发**。
+
+目标：在不新增在线下载、不改变 run 延迟量级的前提下，把**本地已解析的财报章节文本**接进窗口；并且"没有窗口"这件事**必须显式可见**（D1 issue），不再静默。
+
+#### B. 新模块 `alphabee/orchestrator/services/report_window.py`（新增）
+
+```python
+import re
+from pathlib import Path
+from pydantic import BaseModel, Field
+
+class WindowSection(BaseModel):
+    title: str = ""
+    text: str = ""
+    chars: int = 0
+    group: str = ""          # 命中的章节组 key（便于追溯"这条证据来自哪类章节"）
+
+class ReportWindow(BaseModel):
+    symbol: str = ""
+    report_name: str = ""
+    report_period: str = ""
+    page_count: int | None = None
+    source_path: str = ""     # 取自 manifest 的 full_text_path（reports_full 全文副本）
+    sections: list[WindowSection] = Field(default_factory=list)
+    chars: int = 0
+    truncated: bool = False
+    reason: str = ""          # 未取到的原因；空串 = 成功（有 sections）
+
+#: 章节白名单：组内无序、**组间有序**（先命中前面的组）。
+#: 只取"叙事章节"；显式排除 财务报表附注 / 审计报告 / 公司治理 / 董监高 / 股本变动
+#: （超长且对 thesis 方向判定是噪声）。
+SECTION_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("mda",      ("管理层讨论与分析", "经营情况讨论与分析", "管理层讨论", "经营分析")),
+    ("business", ("主营业务", "经营模式", "所处行业", "行业情况", "核心竞争力")),
+    ("risk",     ("风险因素", "面临的风险", "主要风险", "风险提示")),
+)
+
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+
+def select_report_window(
+    symbol: str,
+    *,
+    as_of: str | None = None,
+    reports_root_path: str | Path | None = None,
+    max_chars: int = 12_000,
+    max_sections: int = 12,
+    enabled: bool = True,
+) -> ReportWindow:
+    """从**本地已解析**的财报中选出叙事章节窗口（纯规则、禁 LLM、无网络、不抛异常）。
+
+    步骤：
+    1. glob ``<reports_root>/*(<6位代码>)/财报/*/.report_manifest.json`` → 解析 manifest；
+    2. 若给 ``as_of``：只取 ``report_period``/``created_at`` 不晚于 ``as_of`` 的报告；
+       按 ``created_at`` 倒序取**最新一期**；
+    3. 读 manifest 的 ``full_text_path``（``reports_full`` 全文副本；缺失则回退报告目录下的 ``*.md``）；
+    4. 按 :data:`_HEADING_RE` 把全文切为 (title, body) 段；
+    5. 依 :data:`SECTION_GROUPS` 顺序选段，每段截断到剩余预算，累计到 ``max_chars`` / ``max_sections``；
+    6. 任何一步失败 → 返回带 ``reason`` 的空窗口。
+
+    Returns:
+        :class:`ReportWindow`；``reason`` 非空表示未取到（**调用方负责显式记账**）。
+    """
+```
+
+**设计决策（三条，均有代码依据）**
+
+1. **只读本地、不新增下载**：`reports/` 与 `reports_full/` 已存在真实数据（例如 `reports/工业富联(601138)/财报/…/.report_manifest.json` → `full_text_path`）。在 run 内做"下载 → OCR → 解析"会把**分钟级**延迟引入分析主链，故 v1 不做；数据填充由既有 `financial_report.pipeline`（CLI）或后续时点任务承担（见 D）。
+2. **以 manifest 的 `full_text_path` 为主入口，而非章节树**：实测 `reports/` 下同时存在"嵌套章节树"与"平铺 `<报告名>.md`"两种历史布局；读全文副本 + 按标题切分对两种布局都稳健。
+3. **按 6 位代码 glob，而非按公司名拼路径**：公司名需联网解析（`links._resolve_company`），而目录名已含 `(<代码>)`，可离线确定性匹配。
+
+#### C. 接线点：`nodes/midterm.py`
+
+```python
+# 现状（160-168 行）：
+def _window_texts(artifacts: list[Artifact]) -> list[str] | None:
+    return _conflict_explanations(artifacts) or None
+
+# 改为（保留原语义：无任何窗口文本 → None，仍是 collect_evidence 的合法输入）：
+def _window_texts(
+    artifacts: list[Artifact], *, symbol: str | None, as_of_date: str
+) -> tuple[list[str] | None, ReportWindow]:
+    window = select_report_window(symbol or "", as_of=as_of_date or None)
+    texts = [s.text for s in window.sections if s.text.strip()]
+    texts.extend(_conflict_explanations(artifacts))   # 原文在前，已验证冲突解释在后
+    return (texts or None), window
+```
+
+节点内（`try` 块内、`collect_evidence(...)` 调用**之前**）：
+
+```python
+window_texts, window = _window_texts(artifacts, symbol=symbol, as_of_date=as_of_date)
+if window.sections == [] and window.reason and report_window_enabled():
+    new_issues.append(record_deviation(
+        DeviationClass.D1_DATA, IssueSeverity.MEDIUM,
+        f"财报原文窗口不可用（{window.reason}），本次仅数值类证据参与方向判定。",
+        detected_at_step="resolve_midterm_decision",
+        category="report_window_unavailable",           # ← 必须登记进 CLASS_BY_CATEGORY（D1）
+        scope=IssueScope.DATA,
+        recovery_action="numeric_only",
+    ))
+elif window.truncated:
+    new_issues.append(record_deviation(
+        DeviationClass.D1_DATA, IssueSeverity.LOW,
+        f"财报原文窗口被预算截断（{window.chars} 字符）。",
+        detected_at_step="resolve_midterm_decision",
+        category="report_window_truncated",             # ← 同上登记（D1）
+    ))
+```
+
+> **硬约束**：`report_window_unavailable` / `report_window_truncated` 必须同步登记进 `CLASS_BY_CATEGORY`（D1），否则 §15.0 C-2 的覆盖守卫测试失败。
+> **位置约束**：`window_texts` 必须在 `collect_evidence(...)` 之前算好（现有代码该行已在正确位置）；`as_of_date` 沿用节点既有取值逻辑（`run.context["as_of_date"]` → 缺省 `date.today()`）。
+> **`record_deviation` 签名提醒**（已核实）：`detected_at_step` 为**必填关键字参数**，`related_step` 缺省取之。
+
+#### D. 数据填充（不在本节点内，不阻塞 P1 验收）
+
+窗口依赖"本地已有解析报告"。填充复用既有能力，**v1 只写文档不改代码**：
+
+```bash
+# 既有能力（financial_report.pipeline 的 CLI），按季度/年度节奏离线执行：
+python -m alphabee.financial_report.pipeline --company-code 601138 --company-name 工业富联 \
+    --link-kind financial --report-type annual --question "……"
+```
+
+`select_report_window` 每次 run 只读本地，**不因缺数据而失败**。
+
+#### E. 降级纪律
+
+| 情形 | `reason` | 记账 |
+|---|---|---|
+| 无该标的目录 | `no_local_report` | D1 MEDIUM issue |
+| manifest 不可解析 | `manifest_unreadable` | D1 MEDIUM issue |
+| `full_text_path` 指向缺失 | `full_text_missing` | D1 MEDIUM issue |
+| 白名单未命中任何章节 | `no_matching_section` | D1 MEDIUM issue |
+| 预算截断 | 空串 + `truncated=True` | D1 LOW issue |
+| 内部异常 | `internal_error: …` | D1 MEDIUM issue（**不抛出**） |
+
+#### F. 配置项（顶层新增 `report_window` 段）
+
+```yaml
+report_window:
+  enabled: true          # false → 完全回到现状（只喂冲突解释）
+  max_chars: 12000       # 窗口字符预算（约 8k token 量级）
+  max_sections: 12
+  reports_root: null     # null → report_parser.reports_root() 默认（<PROJECT_ROOT>/reports）
+```
+
+**默认 `enabled: true` 的行为影响**：仅当"本地存在该标的已解析财报"时窗口内容才变化（由"仅冲突解释"变为"原文 + 冲突解释"）；无报告时新增一条 D1 issue（**新增 issue 即改变 run 的可观测面**）⇒ 本段落地必须在 ROADMAP「行为变更登记」追加一行。
+
+#### G. 测试矩阵 / 验收 / 回滚
+
+| 用例 | 断言 |
+|---|---|
+| 真实样本 `reports/工业富联(601138)` | 取到 sections、`reason==""`、至少命中 `mda`/`business`/`risk` 两组 |
+| `as_of` 早于所有报告 | 空窗口 + `reason` 非空 |
+| `max_chars=200` | `truncated=True`、`chars` 不超预算上界、至少 1 段 |
+| 无该标的目录 | `reason=="no_local_report"`，不抛异常 |
+| manifest 半截 JSON | `reason=="manifest_unreadable"` |
+| 节点级（monkeypatch 返回带 reason 的空窗口） | 产出 `report_window_unavailable` issue，且 `collect_evidence` **仍被调用** |
+| 回归 | `tests/orchestrator/test_midterm_node.py` 全绿；`window_texts` 仍可为 `None` |
+
+**验收**：§11 验收 3（`_window_texts` 非空、`collect_evidence` 产出定性证据）由 ⬜ → ✅。
+**回滚**：`report_window.enabled=false`。
+
+---
+
+### 15.2 P2（D2-B2）：入口前置校验 + 告警只读视图
+
+#### A. 新模块 `alphabee/orchestrator/services/preflight.py`（新增）
+
+```python
+class PreflightVerdict(BaseModel):
+    symbol: str = ""
+    checked: bool = False              # False = 无持久化帧（首次研究，不算陈旧、不阻断）
+    latest_frame_id: str = ""
+    as_of_date: str = ""
+    stale: bool = False
+    stale_after: str = ""
+    days_since: int | None = None
+    pending: list[str] = Field(default_factory=list)   # 未消费触发摘要（来自告警末行）
+    blocking: bool = False
+    note: str = ""
+
+def check_preflight(
+    symbol: str | None,
+    *,
+    state_dir: str | Path | None = None,
+    alert_dir: str | Path | None = None,
+    today: str | None = None,
+    block_enabled: bool = True,
+) -> PreflightVerdict:
+    """入口前置校验（§14.3 D2 的 B2）。纯规则、无网络、无 LLM、**永不抛异常**。
+
+    数据源（都是既有产物，不新增存储）：
+    1. ``midterm.persistence.latest_artifact(symbol, state_dir)`` → 最新帧；无 → ``checked=False`` 返回；
+    2. 帧的 ``stale_after`` 与 ``today`` 比较 → ``stale``；
+    3. ``data/tracking/alerts/<symbol>.jsonl`` **最后一行**（TrackingReport JSON）→
+       ``triggers`` / ``exit_reasons`` / ``monitor_reasons`` 非空 ⇒ ``pending``（逐条摘要）。
+    """
+```
+
+**设计决策**
+
+1. **只读既有产物、不新增存储**：帧来自 `data/midterm/state/<symbol>.jsonl`（F4 已写）、触发来自 `data/tracking/alerts/<symbol>.jsonl`（F4 已写）——本阶段**只消费**；
+2. **无帧 ⇒ 不阻断**：首次研究某标的不属于"带过期状态继续"，必须放行，否则破坏现有分析流程；
+3. **"记录"与"阻断"解耦**：记录（B 节）恒发生；阻断（C 节）受 CLI 开关约束。用户即使 `--allow-stale` 放行，**账本仍留下"这次是在陈旧状态下跑的"**——这正是 §11 验收 2 修订口径（"不可能**静默地**继续"）的落点。
+
+#### B. 接线点 1：`orchestrator/collectors.py::collect_raw_facts`（记录，恒发生）
+
+锚点（已核实）：`query = _latest_query(...)` → `symbol = _first_symbol(query)` → `run = Run(...)`（第 173 行）。
+
+```python
+# 在 Run 构建之后、进入采集之前插入（此时 symbol 与 state["run"] 均已可用）：
+verdict = check_preflight(symbol, block_enabled=False)      # 记录侧不阻断
+if verdict.blocking:
+    issues.append(record_deviation(
+        DeviationClass.D5_CONTROL, IssueSeverity.MEDIUM,
+        f"在未对账的陈旧状态下启动分析：最新帧 {verdict.latest_frame_id or '—'}"
+        f"（as_of={verdict.as_of_date}，{verdict.days_since} 天前；待消费触发 {len(verdict.pending)} 条）。"
+        "本次结论可能滞后于最新事件。",
+        detected_at_step="collect_raw_facts",
+        category="stale_state_run",                          # ← 必须登记进 CLASS_BY_CATEGORY（D5）
+        scope=IssueScope.PLANNING,
+        recovery_action="proceeded_without_reconcile",
+    ))
+```
+
+> **为何放在 `collect_raw_facts` 而非新增图入口节点**（重要）：`Run`（含 `symbol`）是在 `collect_raw_facts` **内部**创建的（`collectors.py:173`），START 时 `state["run"]` 不存在；新增前置节点必须改 `agent.py` 图结构**并**同步 `services/deviation.NODE_ORDER`（该元组被冻结契约测试断言），成本与风险都高于在既有入口节点内加约 10 行。
+
+#### C. 接线点 2：CLI gate 与告警视图
+
+```python
+# apps/cli/args.py 追加：
+parser.add_argument("--allow-stale", action="store_true", default=False,
+    help="允许在最新跟踪帧已陈旧/存在未对账触发时继续分析（默认阻断，仅影响交互入口）")
+parser.add_argument("--track-alerts", nargs="?", const="", default=None, metavar="SYMBOL",
+    help="打印跟踪告警（只读视图，不运行流水线）；省略 SYMBOL 时列出全部标的的最近告警")
+```
+
+```python
+# apps/cli/main.py：在 task / deviations 分派之后、进入 run_query/chat 之前：
+if args.track_alerts is not None:
+    print_track_alerts_view(args.track_alerts or None)
+    return
+
+verdict = check_preflight(_symbol_from_query(args.query or ""))
+if verdict.blocking and not args.allow_stale:
+    print(color("  ⚠ 该标的存在未对账的陈旧状态，已阻断；如需继续请加 --allow-stale", Color.YELLOW))
+    print_footer(0, time.monotonic() - start_ts, enhance=args.enhance,
+                 llm_review=args.llm_review, midterm=args.midterm)
+    raise SystemExit(3)          # 与 tracking `--loop` 的 exit 2 同风格：明确的"未执行"退出码
+```
+
+- `print_track_alerts_view(symbol)`：读 `data/tracking/alerts/*.jsonl`（每标的取末 N 行），用 `TrackingReport.model_validate` 还原后渲染 `as_of / research_status / triggers / exit_reasons / blocked_actions`；**import 推迟到函数内**（沿用 `print_deviations_view` 的既有写法与理由）；
+- **这是"告警 dead-end"的修复点**：修好之后 `data/tracking/alerts/*.jsonl` 才有消费者。
+
+#### D. 配置项（新增 `deviation.tracking` 段）
+
+```yaml
+deviation:
+  tracking:
+    stale_after_days: 7        # 既有：triggers.thresholds_from_settings() 已在读（fail-open）
+    block_stale_runs: true     # 新：入口是否阻断（false = 只记录不阻断）
+    tv_distance: 0.3           # 新：显式登记既有默认（== diff_consumers._TV_TRIGGER）
+    evidence_rate: 0.5         # 新：显式登记既有默认（== _EVIDENCE_RATE_TRIGGER）
+    max_alerts_shown: 20       # 新：--track-alerts 显示条数
+```
+
+> **强制要求**：本段是**新段 + 新默认值**，按 §14.3 D2 与 ROADMAP 规则必须在「行为变更登记」追加一行（写明：`block_stale_runs=true` 会阻断陈旧状态下的 CLI 分析请求；`tv_distance`/`evidence_rate` 虽与代码常量同值，仍属显式登记）。
+> `thresholds_from_settings()` 已 fail-open 读取本段（段缺失 → 回落 midterm 常量），故新增段**不改变未配置者的行为**——除 `block_stale_runs` 默认值需在登记行明示。
+
+#### E. 测试矩阵 / 验收 / 回滚
+
+| 用例 | 断言 |
+|---|---|
+| 无帧（新标的） | `checked=False`、`blocking=False`、节点不产 issue |
+| 帧 `stale_after` 已过 | `stale=True`、`blocking=True` |
+| 告警末行有 triggers | `pending` 非空、`blocking=True` |
+| 告警含损坏行 | 跳过该行、不抛异常 |
+| 节点级：陈旧状态下跑 `collect_raw_facts` | 产出 `stale_state_run` issue（D5/MEDIUM），采集继续 |
+| CLI：`blocking` 且无 `--allow-stale` | `SystemExit(3)`、不进入 `run_query` |
+| CLI：`blocking` 且有 `--allow-stale` | 放行，且**仍**产生 `stale_state_run` issue |
+| `--track-alerts 601138` | 打印末 N 行、只读（无写库、无 run） |
+| 覆盖守卫 | `stale_state_run` 已登记进 `CLASS_BY_CATEGORY` |
+
+**验收**：§11 验收 2 由 ⬜ → ✅（修订口径）。
+**回滚**：`deviation.tracking.block_stale_runs=false`（只剩记录）；或删除 CLI gate 调用（视图独立可留）。
+
+---
+
+### 15.3 P3（D1-A2）：tracking 偏离入账本
+
+#### A. 新模块 `alphabee/tracking/ledger.py`（新增）
+
+```python
+TRACKING_RUN_PREFIX = "track"          # run_id 前缀约定（§14.3 D1）
+
+def tracking_run_id(symbol: str, as_of: str) -> str:
+    """跟踪帧的账本 run_id 约定：``track:<symbol>:<as_of>``。
+
+    用前缀约定而非新增表列：``deviation_events`` 的 17 列已冻结（框架 §14.1-C），
+    加列成本远高于前缀；前缀同时让 ``--deviations`` 能按来源分组。
+    """
+
+def tracking_issues(report: TrackingReport) -> list[Issue]:
+    """把一次跟踪帧投影为偏离（``deviation_class`` **显式给定**，不依赖 category 惰性回退）。"""
+
+def record_tracking_deviations(report: TrackingReport) -> int:
+    """逐条 ``record_event(issue, run_id=tracking_run_id(...), symbol=…, step_id=…)`` 写账本。
+
+    fail-open：任何异常 → 0（只 warning）。
+    Returns: 成功写入条数。
+    """
+```
+
+**投影表**（category 必须稳定——账本指纹依赖它；**每条都要登记进 `CLASS_BY_CATEGORY`**）
+
+| `TrackingReport` 条件 | `category` | `deviation_class` | severity | `recovery_action` |
+|---|---|---|---|---|
+| `exit_reasons` 非空 | `tracking_exit_signal` | `D3_ARGUMENT` | HIGH | `escalate` |
+| `monitor_reasons` 非空 | `tracking_drift_trigger` | `D4_STATE` | MEDIUM | `deep_research_due` |
+| `contradiction.forced_sides` 非空 | `tracking_contradiction_forced` | `D3_ARGUMENT` | MEDIUM | `forced_accounting` |
+| `degraded=True` | `tracking_frame_degraded` | `D2_STRUCTURE` | MEDIUM | `degraded_frame` |
+| `skipped_reason` 非空 | `tracking_frame_skipped` | `D5_CONTROL` | LOW | `diff_skipped` |
+
+> `Issue` 构造：`severity` 用 `IssueSeverity`，`message` 带上 `report.as_of` 与具体 reason 文本（**不要**只写类别名——账本 message 存最近一次原始文本，便于人读），`related_step` 填 `"tracking"`（tracking 帧不在 `NODE_ORDER` 内，`detection_latency` 会返回 `None`，这是**预期**行为）。
+
+#### B. 接线点：`tracking/scheduler.py::run_once`
+
+```python
+# 在 _write_alerts(...) 之后、return report 之前：
+if persist:                                  # 与帧落盘同一开关：只读预演（persist=False）不得写库
+    report.deviations_recorded = record_tracking_deviations(report)
+```
+
+`TrackingReport` 追加字段（默认值，向后兼容）：
+
+```python
+    deviations_recorded: int = 0    # P3：本次写入账本的偏离条数（0 = 无偏离或写入失败）
+```
+
+**为何放在 `run_once` 而非 `reconcile`**：`reconcile()` 在 docstring 与测试中被定位为"纯推进内核"（`persist` 参数即为此设计），账本写入是**副作用**，必须留在上层 `run_once`。
+
+#### C. `--deviations` 展示口径（`services/telemetry.py` 最小改动）
+
+- `render_deviation_timeline(run_id)` 保持既有语义；新增**来源标注**：`run_id` 以 `track:` 开头 → 行首标 `[track]`；
+- **`latest_run_id()` 的语义必须明确定义**：新增跟踪帧后，跟踪帧不应抢占"最近一次分析 run"的位置。**决策**：`latest_run_id()` 只返回**非 `track:` 前缀**的 run（查看跟踪帧需显式传 `run_id`），并在 docstring 写明理由——`--deviations` 不传参的语义是"看我最近一次分析"。
+
+#### D. 测试矩阵 / 验收 / 回滚
+
+| 用例 | 断言 |
+|---|---|
+| 投影表逐条（5 行） | 条件命中 → 对应 category / class / severity |
+| 与既有指纹去重协同 | 同标的连续两帧同类偏离 → 账本 `occurrence_count` 递增、`run_id` 刷新 |
+| `persist=False` | 不写帧、不写账本（`deviations_recorded == 0`） |
+| DB 不可用（monkeypatch `record_event` 抛异常） | 返回 0、不抛 |
+| 覆盖守卫 | 5 个新 category 均已登记进 `CLASS_BY_CATEGORY` |
+| `--deviations` | 跟踪帧带 `[track]` 标注；`latest_run_id()` 不返回跟踪帧 |
+
+**验收**：§14.3 D1 的"跟踪路径可见"落地；`--deviations` 同时能看到分析 run 与跟踪帧。
+**回滚**：不调用 `record_tracking_deviations`（旁路写入，回滚=不调用）。
+
+---
+
+### 15.4 P4（D3-C2）：`research_status` 派生视图
+
+#### A. 新模块 `alphabee/tracking/status.py`（新增）
+
+```python
+class ResearchStatus(enum.StrEnum):
+    INVALIDATED = "invalidated"        # thesis 被证伪（退出条件触发）
+    RISK_ALERT = "risk_alert"          # 状态降级 / 仓位背离 / 行情异动
+    THESIS_CHANGED = "thesis_changed"  # 信念漂移超阈（tv_distance）
+    NEEDS_RESEARCH = "needs_research"  # 陈旧 / 新财报公告 / watch 到期
+    WAITING = "waiting"                # 无触发
+
+def research_status(
+    *,
+    exit_reasons: Sequence[str] = (),
+    monitor_reasons: Sequence[str] = (),
+    triggers: Sequence[Trigger] = (),
+    stale: bool = False,
+) -> ResearchStatus:
+    """研究生命周期**派生视图**（§14.3 D3 的 C2）。
+
+    **单一真源**：``exit_reasons``（← ``diff_consumers.check_exit``）、
+    ``monitor_reasons``（← ``monitor_triggers``，阈值即其既有常量 0.3 / 0.5）、
+    ``triggers``（← ``triggers.detect_triggers``）。本函数**不读 config、不新增阈值、
+    不落盘、无 IO**——只把已有判定投影成一个状态字。
+
+    **无 ACTIVE**：ACTIVE 表达"正在执行复核 run"，那是**调度器**的在途状态（由外部
+    cron/进程持有），不是研究对象的语义；塞进本投影会导致同一标的在不同进程里状态不同。
+    """
+```
+
+**优先级（判定顺序即优先级，互斥）**
+
+| 序 | 状态 | 条件 |
+|---|---|---|
+| 1 | `INVALIDATED` | `exit_reasons` 中任一条以"退出条件触发"开头（← `diff.exit_conditions_met`） |
+| 2 | `RISK_ALERT` | `exit_reasons` 中任一条为"状态降级"/"仓位带…背离"，或 `triggers` 含 `TriggerKind.PRICE_MOVE` |
+| 3 | `THESIS_CHANGED` | `monitor_reasons` 中任一条以 `tv_distance=` 开头 |
+| 4 | `NEEDS_RESEARCH` | `stale`，或 `triggers` 含 `STALE_EXPIRED` / `FINANCIAL_REPORT` / `ANNOUNCEMENT` |
+| 5 | `WAITING` | 其余 |
+
+> **匹配口径必须与来源同源**：上表的字符串前缀（如 `"退出条件触发"` / `"状态降级"` / `"tv_distance="`）**来自** `diff_consumers.check_exit` 与 `monitor_triggers` 的既有格式化输出（已核实）。实现时应把这三个前缀提为模块常量并写**同源断言测试**（用真实 `check_exit` / `monitor_triggers` 对假帧的输出驱动本函数），避免将来上游改文案导致静默失配。
+
+#### B. 接线点
+
+```python
+# TrackingReport 追加字段：
+    research_status: str = ""      # P4：派生视图（"" = 未计算，如降级/异常路径）
+
+# run_once 内（report 组装完成后、_write_alerts 之前）：
+report.research_status = research_status(
+    exit_reasons=report.exit_reasons,
+    monitor_reasons=report.monitor_reasons,
+    triggers=report.triggers,
+    stale=any(t.kind == TriggerKind.STALE_EXPIRED for t in report.triggers),
+).value
+```
+
+CLI `_render_text(report)` 增加一行展示（只读渲染）。
+
+#### C. 测试矩阵 / 验收 / 回滚
+
+| 用例 | 断言 |
+|---|---|
+| 五态转移表 | 每态 ≥1 组输入 → 期望状态；同时命中多条 → 取序小者 |
+| **同源一致性** | 用真实 `check_exit` / `monitor_triggers` 对假帧的输出驱动，断言状态符合预期 |
+| 无阈值引入 | 断言 `status.py` 不 import `get_settings`（AST 或 import 检查） |
+| 降级路径 | `run_once` 异常 → `research_status == ""`（不猜） |
+
+**验收**：§5 由"缺口"正式转为"可选增强已交付（派生视图）"；`--track-alerts` 显示状态字。
+**回滚**：删除 `run_once` 赋值与 CLI 展示行。
+
+---
+
+### 15.5 P5（W5）：`ThesisVersion` 读写
+
+#### A. 新模块 `alphabee/midterm/versions.py`（新增，与 `persistence.py` 同构）
+
+```python
+DEFAULT_VERSION_DIR = Path("data") / "midterm" / "thesis_versions"
+
+def _version_path(symbol: str, data_dir: str | Path | None = None) -> Path: ...
+def _version_id(version: ThesisVersion) -> str:      # f"{as_of_date}#{version}"
+def append_version(symbol: str, version: ThesisVersion, *, data_dir=None) -> str:
+    """按 id 幂等追加（append-only JSONL ``<symbol>.jsonl``）；已存在 → 直接返回 id。"""
+def load_versions(symbol: str, *, data_dir=None) -> list[ThesisVersion]:
+    """按 (as_of_date, version) 升序；损坏行跳过（沿用 persistence._read_rows 的容错口径）。"""
+def latest_version(symbol: str, *, data_dir=None) -> ThesisVersion | None: ...
+
+def register_thesis_if_changed(
+    symbol: str, *, as_of: str, thesis: str,
+    invalidation: Sequence[str] = (), data_dir=None,
+) -> tuple[ThesisVersion | None, str]:
+    """thesis 文本与最新版本不一致 → 追加新版本，否则不动。
+
+    反漂移语义（``ThesisVersion`` 的既有意图："原始买入理由与证伪条件不可被行情重写"）：
+    - **首个版本**（无历史）：``version=1``、``buy_rationale=[thesis]``、``invalidation=list(invalidation)``；
+    - **后续版本**（thesis 变了）：``version=prev.version+1``、``thesis=新文本``，
+      **``buy_rationale`` / ``invalidation`` 继承首版**（不得被后续行情/叙事重写）。
+
+    Returns: ``(新版本 | None, reason)``；reason ∈ {first_registered, changed, unchanged}。
+    """
+```
+
+> **注意**：`ThesisVersion` 模型字段为 `version / as_of_date / thesis / buy_rationale / invalidation`——**没有 `symbol` 字段**，标的由文件名承载。因此本模块**不改 `midterm/models.py`**（不动契约面）。
+
+#### B. 接线点：`tracking/scheduler.py::_reconcile_frame`
+
+```python
+# 在 persistence.append_artifact(curr, state_dir) 成功之后：
+if persist:
+    version, reason = register_thesis_if_changed(
+        symbol, as_of=as_of, thesis=str(curr.thesis or ""),
+        invalidation=[c.condition for c in (curr.exit_conditions or [])],
+    )
+```
+
+`TrackingReport` 追加字段：`thesis_version: int = 0`、`thesis_version_reason: str = ""`。
+
+#### C. 与 D3 的关系（避免重复建设）
+
+`ThesisVersion` 承载的正是 §14.3 D3 所排除的**"thesis 语义是否变了"**——它与研究状态轴正交：状态轴回答"现在该做什么"，版本轴回答"当初为什么这么想、后来改了没有"。本阶段**只做登记与比对**，不做自动回滚或结论改写。
+
+#### D. 测试矩阵 / 验收 / 回滚
+
+| 用例 | 断言 |
+|---|---|
+| 首次登记 | `version=1`、`buy_rationale==[thesis]`、`reason=="first_registered"` |
+| thesis 未变（同日重复调用） | 不追加、`reason=="unchanged"`、文件行数不变 |
+| thesis 改变 | `version=2`、`thesis` 为新文本、**`buy_rationale` 仍为首版**（反漂移核心断言） |
+| 幂等 | 同 id 重复 append → 文件仍 1 行 |
+| 损坏行 | 跳过、其余可读、不抛异常 |
+| `persist=False` | 不写版本文件 |
+
+**验收**：W5 由 ⬜ → ✅；`load_versions(symbol)[0].buy_rationale` 恒为"当初为什么买"。
+**回滚**：不调用 `register_thesis_if_changed`；新目录可安全保留或删除。
+
+---
+
+### 15.6 P6（§8）：L2 `ResearchEngine` 协议
+
+#### A. 新模块 `alphabee/tracking/engine.py`（新增）
+
+```python
+class ResearchContext(BaseModel):
+    """L2 引擎输入（研究对象的上下文，不绑定主图内部类型）。"""
+    symbol: str
+    question: str = ""
+    as_of: str = ""
+    thesis: str = ""
+    prior_confidence: float | None = None
+    evidence_ids: list[str] = Field(default_factory=list)     # 已有证据 id（跨 run 复用）
+    open_questions: list[str] = Field(default_factory=list)    # 待研究问题（§6.1 Q5 / 未探索区域）
+
+class ResearchOutput(BaseModel):
+    """L2 引擎输出（序列化产物，不要求与主图 Artifact 同构）。"""
+    engine: str = ""
+    summary: str = ""
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    degraded: bool = False
+    degradation_reason: str = ""
+
+class ResearchEngine(Protocol):
+    name: str
+    async def run(self, context: ResearchContext) -> ResearchOutput: ...
+```
+
+#### B. 适配器 `alphabee/tracking/engines/pipeline_engine.py`（新增）
+
+```python
+class PipelineEngine:
+    """把现有主图（``orchestrator.agent.alphabee_agent``）适配为 L2 引擎。
+
+    **import 必须延迟到方法体内**（§15.0 B-2）：模块顶层 import 会拉起
+    ``orchestrator.collectors`` → tushare ``set_token`` 副作用。
+    """
+    name = "pipeline"
+
+    async def run(self, context: ResearchContext) -> ResearchOutput:
+        from alphabee.orchestrator.agent import alphabee_agent   # 延迟 import
+        initial = {
+            "messages": [HumanMessage(content=context.question or context.symbol)],
+            # 控制标志（enhance / llm_review / midterm）由构造参数或 settings 决定
+            ...
+        }
+        final = await alphabee_agent.ainvoke(initial)
+        return _to_output(final)     # 从最终 payload 抽 artifacts / issues / degraded
+```
+
+**v1 明确不做**（写成非目标，防范围膨胀）：不重构主图为插件系统；不改 `agent.py` 图结构、不改 `NODE_ORDER`；不接入任何外部引擎（MiroThinker / MiroFlow / Tongyi）——只交付**协议 + 现有实现适配器 + 一个 stub 引擎测试**，作为将来替换的接缝。
+
+#### C. `ResearchContext → run.context` 的注入边界
+
+v1 只把 `symbol` / `as_of` / `thesis`（作 `thesis_prior`）/ `prior_confidence` 四个键注入 `Run.context`——**不注入** `evidence_ids`（主图当前无消费者，注入即 dead-end）。主图要真正消费这些键属**后续独立一期**，并需按 steward 流程登记 `OrchestratorState`/节点契约变更。
+
+> 注意：`Run` 目前是在 `collect_raw_facts` 内部创建的（`collectors.py:173`），会**覆盖**调用方传入的 `run`。因此 P6 若要让注入生效，需在 `collectors.py` 改为"已有 run 则复用/合并 context"（**这一处改动必须写进 P6 的 inScope，并加回归测试**）；否则注入是 dead-end。这是 P6 最容易被忽略的实现细节。
+
+#### D. 测试矩阵 / 验收 / 回滚
+
+| 用例 | 断言 |
+|---|---|
+| `PipelineEngine` 满足 Protocol | 结构性检查（`name` + `run` 存在且可调用） |
+| 上下文映射 | monkeypatch `alphabee_agent.ainvoke` → 捕获 initial state，断言 `run.context` 四键正确 |
+| **延迟 import** | `import alphabee.tracking.engines.pipeline_engine` **不**使 `orchestrator.collectors` 进入 `sys.modules` |
+| stub 引擎可替换 | stub 实现 Protocol 并跑通一个消费方调用（证明接缝可用） |
+| run 复用回归 | `collect_raw_facts` 在已有 `run` 时合并而非覆盖 context |
+
+**验收**：§8 由 ⬜ → ✅（协议存在、现有实现可替换）。
+**回滚**：删除 `engines/` 子包；协议模块无副作用可留。
+
+---
+
+### 15.7 配置项汇总
+
+| 段 | 键 | 默认 | 阶段 | 行为变更登记 |
+|---|---|---|---|---|
+| `report_window` | `enabled` | `true` | P1 | **是**（无报告时新增 D1 issue；有报告时窗口内容变化） |
+| `report_window` | `max_chars` / `max_sections` / `reports_root` | `12000` / `12` / `null` | P1 | 否（仅上限参数） |
+| `deviation.tracking` | `stale_after_days` | `7` | P2 | 是（显式登记既有默认） |
+| `deviation.tracking` | `block_stale_runs` | `true` | P2 | **是**（新增阻断行为） |
+| `deviation.tracking` | `tv_distance` / `evidence_rate` | `0.3` / `0.5` | P2 | 是（显式登记既有默认，值不变） |
+| `deviation.tracking` | `max_alerts_shown` | `20` | P2 | 否（只读视图） |
+
+> 全部新段的实现方式与 `DeviationSettings` 一致：`alphabee/config/__init__.py` 的 Pydantic 模型 + `config.yaml.example` 同步 + **旧 config 缺段仍可 import**（默认值保证，需专测 + 变异坐实）。
+
+### 15.8 测试矩阵汇总
+
+| 阶段 | 测试文件 | 关键断言（不可省） |
+|---|---|---|
+| P1 | `tests/orchestrator/test_report_window.py` | 真实 `reports/` 样本命中；无报告 → `reason` 非空不抛；预算截断；节点级 issue 产出 |
+| P2 | `tests/orchestrator/test_preflight.py` | 无帧不阻断；陈旧/触发 → `blocking`；CLI 两路径；`stale_state_run` 入账 |
+| P3 | `tests/tracking/test_ledger.py` | 投影表 5 条；指纹去重与 `occurrence_count`；`persist=False` 不写；fail-open 返回 0 |
+| P4 | `tests/tracking/test_status.py` | 五态 + 优先级互斥；**同源驱动**（真实 `check_exit`/`monitor_triggers` 输出）；无新阈值 |
+| P5 | `tests/midterm/test_versions.py` | 首版登记；未变不追加；变更后 `buy_rationale` **保持首版**；幂等 |
+| P6 | `tests/tracking/test_engine.py` | Protocol 结构化满足；context 映射；**延迟 import 不拉起 collectors**；run 复用 |
+| 横向 | `tests/orchestrator/test_deviation_service.py`（既有） | 新 category 全部已登记（覆盖守卫）——**P1/P2/P3 新增 category 后必须为绿** |
+| 横向 | 全量门禁 | `poetry run pytest` + `ruff check` + `ruff format --check`。**基线口径**：本次核实 `--collect-only` 为 **1836 collected / 11 errors**；11 个收集错误全部来自 `chmod 444` 冻结文件（如 `tests/orchestrator/test_recovery.py`、`tests/company_track/test_e3_consumption.py`）与 `tmp/pre-commit-home/` 残留，**非本设计引入**——按提交门第 3 条，跑门禁前须先 `chmod 644` 解冻、跑完复冻 444 |
+
+### 15.9 PR 切分与回滚
+
+| PR | 范围（inScope） | 回滚方式 |
+|---|---|---|
+| PR1 | `services/report_window.py`、`nodes/midterm.py`、`config`、`test_report_window.py`、ROADMAP 登记 | `report_window.enabled=false` |
+| PR2 | `services/preflight.py`、`collectors.py`、`apps/cli/{args,main}.py`、`config`、ROADMAP 登记、`test_preflight.py` | `block_stale_runs=false` + 移除 CLI gate |
+| PR3 | `tracking/ledger.py`、`tracking/scheduler.py`、`services/telemetry.py`、`test_ledger.py` | 不调用 `record_tracking_deviations` |
+| PR4 | `tracking/status.py`、`tracking/scheduler.py`、`test_status.py` | 删除赋值与展示行 |
+| PR5 | `midterm/versions.py`、`tracking/scheduler.py`、`test_versions.py` | 不调用 `register_thesis_if_changed` |
+| PR6 | `tracking/engine.py`、`tracking/engines/`、`collectors.py`（run 复用）、`test_engine.py` | 删除 `engines/` 子包 |
+
+**依赖**：PR1 / PR2 相互独立可并行；PR3 与 PR2 共享"入口命中即入账"的形状但不硬依赖；PR4 复用 PR3 的展示口径（`--track-alerts` 显示状态字）；PR5 / PR6 独立。**每期先 review（verdict=pass）后提交**，并遵守 §15.0 C-6 的提交门 5 条。
+
+### 15.10 验收映射
+
+| 本文档条款 | 由哪期达成 |
+|---|---|
+| §3 W3（财报原文进窗口） | P1 |
+| §3 W5（`ThesisVersion` 读写） | P5 |
+| §11 验收 2（不可能**静默**继续） | P2（口径已按 §14.3 D2 修订） |
+| §11 验收 3（`_window_texts` 非空） | P1 |
+| §11 验收 6（wiring gap 闭合） | P1（W3）+ P5（W5）；W1 已由 F4 闭合 tracking 路径 |
+| §14.3 D1（跟踪路径可观测） | P3 |
+| §14.3 D2（入口校验 + 告警消费者） | P2 |
+| §14.3 D3（派生视图） | P4 |
+| §8（L2 引擎协议） | P6 |
