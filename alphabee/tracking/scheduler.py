@@ -54,6 +54,7 @@ from alphabee.midterm.models import (
     EvidenceEvent,
     FactorSnapshot,
 )
+from alphabee.tracking.ledger import record_tracking_deviations
 from alphabee.tracking.triggers import (
     Trigger,
     TriggerKind,
@@ -141,6 +142,9 @@ class TrackingReport(BaseModel):
     degraded: bool = False
     degraded_reason: str = ""
     skipped_reason: str = ""  # 本帧未差分的原因（如 as_of 未推进）
+    # 研究连续体 P3（D1-A2）：本帧写入偏离账本的条数（0 = 无偏离，或写入失败/未持久化）。
+    # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
+    deviations_recorded: int = 0
 
     @property
     def kinds(self) -> list[str]:
@@ -659,6 +663,13 @@ def run_once(
         ]
 
     report.alerts_path = _write_alerts(report, alert_dir) if write_alerts else ""
+    # ── 研究连续体 P3（D1-A2）：本帧偏离写入既有账本（§15.3-B）──
+    # 与**帧落盘**同一开关：``persist=False``（只读预演）既不改状态目录、也不写账本；
+    # 写入本身 fail-open（``record_tracking_deviations`` 任何异常 → 0，只 warning），绝不打断跟踪帧。
+    # 放在 ``run_once`` 而非 ``reconcile``：``reconcile`` 是"纯推进内核"（§15.3-B），
+    # 账本写入是副作用，留在上层。
+    if persist:
+        report.deviations_recorded = record_tracking_deviations(report)
     return report
 
 

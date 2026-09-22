@@ -528,11 +528,30 @@ def _safe_events(*, run_id: str | None = None) -> list[Any]:
         return []
 
 
+#: 跟踪帧的 ``run_id`` 前缀（§14.3 D1 / §15.3-A 的前缀约定）。
+#:
+#: 与 ``tracking/ledger.py::TRACKING_RUN_PREFIX`` **同口径**，但这里**不 import** ``alphabee.tracking``：
+#: 依赖方向不得反向（§15.0 C-6 —— tracking 可以 import orchestrator，反之不行），且本模块在主链上
+#: 会被 ``nodes/record_deviations.py`` import（import 期副作用必须为零、代价必须最小）。
+#: 两处口径由 ``tests/tracking/test_ledger.py::test_tracking_run_prefix_matches_telemetry_prefix`` 钉住。
+_TRACKING_RUN_PREFIX = "track"
+
+
+def is_tracking_run_id(run_id: str | None) -> bool:
+    """``run_id`` 是否跟踪帧（``track:`` 前缀）。"""
+    return str(run_id or "").strip().startswith(f"{_TRACKING_RUN_PREFIX}:")
+
+
 def latest_run_id() -> str | None:
-    """账本中最近出现的非空 ``run_id``（``list_events`` 已按 ``last_seen_at`` 倒序）；无 → ``None``。"""
+    """账本中最近出现的**非跟踪帧** ``run_id``（``list_events`` 已按 ``last_seen_at`` 倒序）；无 → ``None``。
+
+    研究连续体 P3（§15.3-C 的决策）：跟踪帧（``track:`` 前缀）**不抢占**"最近一次分析 run"的位置 ——
+    ``--deviations`` 不传参的语义是"看我**最近一次分析**"；要看跟踪帧须显式传 ``run_id``
+    （或从 ``data/tracking/alerts/*.jsonl`` 的帧里取 ``as_of``）。
+    """
     for event in _safe_events():
         run_id = str(getattr(event, "run_id", "") or "").strip()
-        if run_id:
+        if run_id and not is_tracking_run_id(run_id):
             return run_id
     return None
 
@@ -609,17 +628,18 @@ def render_deviation_timeline(run_id: str) -> str:
 
     * 完全从账本重建（一次 ``list_events(run_id=...)``），不读 state、不触发 run、不改编排；
     * 按节点序（未登记节点排末）→ 类目 → 指纹排序，**不渲染时间戳** ⇒ 同一账本两次渲染逐字节相同；
-    * 无记录（含 DB 不可用）→ 确定性空视图（含提示行），**不抛异常**。
+    * 无记录（含 DB 不可用）→ 确定性空视图（含提示行），**不抛异常**；
+    * **来源标注（P3 / §15.3-C）**：``run_id`` 以 ``track:`` 开头（跟踪帧）⇒ **整块输出的每一行**
+      行首加 ``[track] ``；非跟踪帧 → 逐字节与既有渲染相同（零回归）。
     """
     events = sorted(_safe_events(run_id=run_id), key=_timeline_order)
     header = f"偏离时间线 · run_id={run_id or '(未指定)'} · 记录 {len(events)} 条"
     if not events:
-        return "\n".join(
-            [
-                header,
-                "无记录：账本为空，或该 run 未产生偏离（可用 --deviations <run_id> 指定其他 run）。",
-            ]
-        )
+        lines = [
+            header,
+            "无记录：账本为空，或该 run 未产生偏离（可用 --deviations <run_id> 指定其他 run）。",
+        ]
+        return "\n".join(_mark_source(lines, run_id))
 
     columns = " ".join(_pad(name, width) for name, width in _TIMELINE_COLUMNS).rstrip()
     lines = [header, columns, _timeline_rule()]
@@ -634,4 +654,15 @@ def render_deviation_timeline(run_id: str) -> str:
     }
     distribution = " ".join(f"{name}={count}" for name, count in class_counts.items())
     lines.append(f"汇总：已恢复 {resolved} / 未恢复 {len(events) - resolved}；分类 {distribution}")
-    return "\n".join(lines)
+    return "\n".join(_mark_source(lines, run_id))
+
+
+def _mark_source(lines: list[str], run_id: str) -> list[str]:
+    """跟踪帧的来源标注：``run_id`` 是 ``track:`` 帧 ⇒ 每行行首加 ``[track] ``（否则原样返回）。
+
+    只改**行首**、不改列宽/排序/汇总口径 ⇒ ``--deviations`` 的既有语义与不变量（同一账本两次渲染
+    逐字节相同）不受影响；跟踪帧与分析 run 的区分也因此不依赖任何新字段（前缀约定，§14.3 D1）。
+    """
+    if not is_tracking_run_id(run_id):
+        return lines
+    return [f"[track] {line}" for line in lines]

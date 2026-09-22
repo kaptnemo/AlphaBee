@@ -130,6 +130,12 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "report_window_truncated": DeviationClass.D1_DATA,
     # ── 研究连续体 P2（D2-B2）：在陈旧/未对账状态下启动分析（collectors 入口前置校验显式记账，§15.2-B）
     "stale_state_run": DeviationClass.D5_CONTROL,
+    # ── 研究连续体 P3（D1-A2）：跟踪帧 → 偏离账本投影（tracking/ledger.py 显式给定 class，§15.3-A）
+    "tracking_exit_signal": DeviationClass.D3_ARGUMENT,
+    "tracking_drift_trigger": DeviationClass.D4_STATE,
+    "tracking_contradiction_forced": DeviationClass.D3_ARGUMENT,
+    "tracking_frame_degraded": DeviationClass.D2_STRUCTURE,
+    "tracking_frame_skipped": DeviationClass.D5_CONTROL,
 }
 
 #: 未知 category 的保守回退：归为结构偏离（§14.1-B）。宁可少分类，不猜测语义。
