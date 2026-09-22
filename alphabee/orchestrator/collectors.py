@@ -174,13 +174,27 @@ async def collect_raw_facts(
     query = _latest_query(state.get("messages", []))
     symbol = _first_symbol(query)
 
-    run = Run(
-        id=_make_id("orch-run"),
-        goal=query or "investment analysis",
-        status=RunStatus.RUNNING,
-        context={"query": query, "symbol": symbol},
-        started_at=datetime.now(),
-    )
+    # ── 研究连续体 P6（§15.6-C）：**已有 run 则复用/合并 context，不覆盖调用方的 run** ──
+    # 背景：`Run` 是在本节点内部创建的，且 `OrchestratorState.run` **没有 reducer**（last-write-wins），
+    # 因此 P6 的 L2 引擎适配器注入的 `run.context`（symbol / as_of / thesis_prior / prior_confidence）
+    # 会被这里无条件覆盖 ⇒ 注入变成 dead-end。最小修法：调用方**已提供** run 时保留它的 id /
+    # goal / status / started_at，只把本节点解析出的 query（以及可用时的 symbol）并进 context；
+    # 调用方**未提供** run 时（CLI / 既有主链）走原分支，语义逐字不变。
+    incoming_run = state.get("run")
+    if incoming_run is not None:
+        merged_context = {**dict(getattr(incoming_run, "context", None) or {}), "query": query}
+        if symbol:
+            # 查询串里解析出标的才覆盖注入值；解析不到时**保留**调用方注入的 symbol（不写成 None）
+            merged_context["symbol"] = symbol
+        run = incoming_run.model_copy(update={"context": merged_context})
+    else:
+        run = Run(
+            id=_make_id("orch-run"),
+            goal=query or "investment analysis",
+            status=RunStatus.RUNNING,
+            context={"query": query, "symbol": symbol},
+            started_at=datetime.now(),
+        )
 
     step = Step(
         id="collect_raw_facts",
