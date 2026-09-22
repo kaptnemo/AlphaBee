@@ -99,7 +99,7 @@ class PipelineEngine:
         try:
             from alphabee.orchestrator.agent import alphabee_agent  # ← 延迟 import（§15.0 B-2）
 
-            final = await alphabee_agent.ainvoke(self.initial_state(context))
+            final = await alphabee_agent.ainvoke(self.initial_state(context))  # type: ignore[call-overload]
             return to_output(final, engine=self.name)
         except Exception as exc:  # noqa: BLE001 - fail-open：引擎失败返回降级产物，不抛给上层（§15.0 C-3）
             logger.warning("pipeline engine run failed (fail-open): symbol=%s err=%s", context.symbol, exc)

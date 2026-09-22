@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 
 from alphabee.apps.web.sessions import session_store
@@ -9,13 +11,13 @@ from alphabee.apps.web.sessions import session_store
 sessions_router = APIRouter(tags=["sessions"])
 
 
-@sessions_router.get("/api/sessions")
-async def list_sessions() -> dict:
+@sessions_router.get("/api/sessions")  # type: ignore[untyped-decorator]
+async def list_sessions() -> dict[str, list[dict[str, Any]]]:
     return {"sessions": session_store.list_sessions()}
 
 
-@sessions_router.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str) -> dict:
+@sessions_router.delete("/api/sessions/{session_id}")  # type: ignore[untyped-decorator]
+async def delete_session(session_id: str) -> dict[str, str]:
     if not session_id:
         raise HTTPException(status_code=400, detail="missing session_id")
     session_store.clear(session_id)

@@ -7,6 +7,6 @@ from fastapi import APIRouter
 health_router = APIRouter(tags=["health"])
 
 
-@health_router.get("/api/health")
+@health_router.get("/api/health")  # type: ignore[untyped-decorator]
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "alphabee-web"}

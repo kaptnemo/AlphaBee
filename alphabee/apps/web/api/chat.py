@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from alphabee.apps.web.sessions import session_store
 from alphabee.apps.web.sse import sse_response
@@ -25,8 +26,8 @@ class ChatRequest(BaseModel):
     midterm: bool = False
 
 
-@chat_router.post("/api/chat")
-async def chat(body: ChatRequest):
+@chat_router.post("/api/chat")  # type: ignore[untyped-decorator]
+async def chat(body: ChatRequest) -> EventSourceResponse:
     """接收 JSON 请求体，返回 SSE 事件流。
 
     请求体：
