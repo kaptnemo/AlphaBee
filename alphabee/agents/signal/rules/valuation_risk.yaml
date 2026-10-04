@@ -9,10 +9,16 @@ dimension: valuation
 description: >
   评估公司当前估值相对于历史估值中枢和盈利增速的合理性，
   综合PEG、历史估值压缩程度和PB-ROE匹配度三个维度。
+  PEG 分子（PE-TTM）与分母（归母净利润 TTM 同比）同为滚动 12 个月口径；
+  当分母不适用（非正增长/亏损/数据不足）时 peg_ratio 为 not_applicable，
+  该维度自动跳过，本信号仅按估值压缩与 PB-ROE 匹配判定。
   高估值不一定风险，但如果同时伴随盈利增速无法支撑且
   PB远超ROE对应的合理定价，则估值回归风险加大。
 
 required_facts:
+  # pe_ttm 为估值判断的必需输入；net_profit_yoy 提供报告期累计同比成长性上下文。
+  # PEG 的分母是 net_profit_ttm_yoy（TTM 口径），不列为必需字段：
+  # 其缺失/不适用由 peg_ratio 的 not_applicable 处理，不应让整条信号失效。
   - pe_ttm
   - net_profit_yoy
 
@@ -56,7 +62,7 @@ interpretation_templates:
 
 critic_questions:
   - 估值压缩（pe_ttm/pe_ttm_5y_avg偏低）是由于基本面恶化还是系统性/行业性杀估值？
-  - PEG计算中使用的净利润增速是否为可持续的经常性增速（排除非经常性损益影响）？
+  - PEG计算中使用的净利润增速是否为可持续的经常性增速（排除非经常性损益影响）？TTM 口径下是否存在一次性收益垫高基数？
   - 公司当前的PE相对行业平均PE的折溢价情况如何？
   - PB-ROE匹配偏离是否由一次性资产重估或会计准则变更导致？
   - 估值偏高的主要原因是什么（行业概念、资金炒作还是真实高增长预期）？

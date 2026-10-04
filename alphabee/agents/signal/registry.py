@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,78 @@ RULES_DIR = Path(__file__).resolve().parent / "rules"
 
 # 档位严重度顺序：从最高到最低逐个匹配，第一个命中的级别作为结果
 SEVERITY_ORDER = ["high", "medium", "low"]
+
+
+def _referenced_names(expression: str) -> set[str]:
+    """返回条件表达式中引用的变量名（用于定位"不适用"输入）。"""
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError:
+        return set()
+    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+
+def _unavailable_in(expression: str, fact_values: dict[str, Any]) -> list[str]:
+    """条件中被显式标记为不适用（值为 None）的输入字段。
+
+    只统计"键存在但值为 None"的情况 —— 键完全缺失属于契约问题，仍按 invalid 处理。
+    """
+    return sorted(name for name in _referenced_names(expression) if name in fact_values and fact_values[name] is None)
+
+
+class _Unavailable:
+    """不适用（None）输入的求值占位符。
+
+    语义：引用它的比较一律不成立（该分支不触发），算术继续返回自身，
+    因此同一表达式中的其它可用分支仍能正常命中 —— 例如
+    ``peg_ratio > 3 or (valuation_compression > 1.3 and pb_roe_match > 2.0)``
+    在 PEG 不适用时仍可命中后半段，而不是整条条件报错。
+    """
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __eq__(self, other: object) -> bool:
+        return False
+
+    def __ne__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return hash(None)
+
+    def __gt__(self, other: object) -> bool:
+        return False
+
+    def __ge__(self, other: object) -> bool:
+        return False
+
+    def __lt__(self, other: object) -> bool:
+        return False
+
+    def __le__(self, other: object) -> bool:
+        return False
+
+    # 算术运算：继续传播"不可用"，不抛异常
+    def _self(self, *args: object) -> _Unavailable:
+        return self
+
+    __add__ = __radd__ = __sub__ = __rsub__ = _self
+    __mul__ = __rmul__ = __truediv__ = __rtruediv__ = _self
+    __floordiv__ = __rfloordiv__ = __mod__ = __rmod__ = _self
+    __pow__ = __rpow__ = __neg__ = __pos__ = _self
+
+
+UNAVAILABLE = _Unavailable()
+
+
+def _eval_context(fact_values: dict[str, Any]) -> dict[str, Any]:
+    """把值为 None 的输入替换为 UNAVAILABLE 占位符（无 None 时原样返回）。"""
+    if not any(value is None for value in fact_values.values()):
+        return fact_values
+    return {name: (UNAVAILABLE if value is None else value) for name, value in fact_values.items()}
 
 
 class SignalRule:
@@ -104,23 +177,38 @@ class SignalRule:
                 "error": f"缺少衍生事实：{missing_derived}",
             }
 
-        # 按严重度顺序评估 trigger_rules
+        # 按严重度顺序评估 trigger_rules。
+        # 值为 None（上游判定"不适用"）的输入用占位符参与求值：引用它的比较不成立，
+        # 但同一表达式中的其它分支仍然有效，整条信号不会因此变成 invalid。
+        eval_context = _eval_context(fact_values)
+        unavailable_inputs: set[str] = set()
         for level in SEVERITY_ORDER:
             condition = self.trigger_rules.get(level)
             if not condition:
                 continue
             try:
-                matched = safe_eval_formula(condition, fact_values)
+                matched = safe_eval_formula(condition, eval_context)
             except Exception as e:
                 return {
                     "level": "invalid",
                     "error": f"条件 '{condition}' 求值失败：{e}",
                 }
+            unavailable = _unavailable_in(condition, fact_values)
             if matched:
-                return self._build_result(level, fact_values)
+                result = self._build_result(level, fact_values)
+                if unavailable:
+                    result["unavailable_inputs"] = unavailable
+                return result
+            unavailable_inputs.update(unavailable)
 
         # 全部条件均未命中 → none
-        return self._build_result("none", fact_values)
+        result = self._build_result("none", fact_values)
+        if unavailable_inputs:
+            result["unavailable_inputs"] = sorted(unavailable_inputs)
+            result["interpretation"] = (
+                f"{result['interpretation']}（注：{'、'.join(sorted(unavailable_inputs))} 因口径不适用未参与本次判定）"
+            )
+        return result
 
     def _build_result(self, level: str, fact_values: dict[str, float]) -> dict[str, Any]:
         """构建命中 level 后的完整结果字典。"""
