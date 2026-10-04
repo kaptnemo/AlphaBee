@@ -19,7 +19,7 @@ from typing import Any, cast
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from alphabee.agents.thesis.engine import _CONFLICT_PENALTY, INSIGHT_CONFIDENCE_WEIGHTS
+from alphabee.agents.thesis.engine import _CONFLICT_PENALTY, INSIGHT_CONFIDENCE_WEIGHTS, conflict_direction
 from alphabee.agents.thesis.models import (
     IMPACT_TO_DIRECTION,
     SIGNAL_LEVEL_TO_SCORE,
@@ -627,20 +627,33 @@ def _anomaly_votes(thesis: Any) -> tuple[list[float], int]:
 
 
 def _conflict_votes(conflicts: Any) -> tuple[list[float], list[str]]:
-    """已验证 / 部分验证冲突的方向票（固定为负）+ 人类可读判据明细。"""
+    """已验证 / 部分验证冲突的方向票 + 人类可读判据明细。
+
+    P0-2：按假设方向投影——全部已核验假设均为**良性解释**（正常现象/良性备货/主动
+    安排/有支撑等）的冲突不再投负票；任一非良性（含判不清的保守回落）假设维持既有
+    负票。方向判读与 ``engine._apply_conflict_analysis`` 共用 ``conflict_direction``，
+    且同源同文本（假设 ``explanation``）。
+    """
     votes: list[float] = []
     notes: list[str] = []
     for conflict in _conflict_items(conflicts):
         severity = _conflict_severity(conflict)
         penalty = _CONFLICT_PENALTY.get(severity, 0.0)
-        statuses = {str(_field(hypothesis, "status", "") or "").strip().lower() for hypothesis in _hypotheses(conflict)}
-        settled = statuses & {"verified", "partial"}
+        settled = [
+            hypothesis
+            for hypothesis in _hypotheses(conflict)
+            if str(_field(hypothesis, "status", "") or "").strip().lower() in ("verified", "partial")
+        ]
         if not settled:
+            continue
+        theme = str(_field(conflict, "theme", "") or "未命名")
+        if all(conflict_direction(str(_field(h, "explanation", "") or "")) == "benign" for h in settled):
+            notes.append(f"冲突『{theme}』已核验假设均为良性解释 → 不计负票")
             continue
         # 扣分幅度用 engine 的同一张表（-0.8 为最强档），折算成 [-1, 0] 的方向票。
         strength = penalty / max(_CONFLICT_PENALTY.values())
         votes.append(-strength)
-        notes.append(f"冲突『{_field(conflict, 'theme', '') or '未命名'}』severity={severity} 扣分={penalty:g}")
+        notes.append(f"冲突『{theme}』severity={severity} 扣分={penalty:g}")
     return votes, notes
 
 
@@ -651,7 +664,10 @@ def _evidence_direction(signals: Any, conflicts: Any, thesis: Any) -> tuple[int,
     conflict_votes, conflict_notes = _conflict_votes(conflicts)
     votes = [*votes, *anomaly_votes, *conflict_votes]
     if not votes:
-        return 0, f"{signal_note}；异常投影票 0 条；已验证冲突 0 条 → 证据方向不可判（中性）"
+        # P0-2：良性解释的已核验冲突不计负票——存在已核验但全为良性的冲突时，
+        # 在判据里如实标注（而不是笼统写成"已验证冲突 0 条"）。
+        benign_hint = f"（{'；'.join(conflict_notes)}）" if conflict_notes else ""
+        return 0, f"{signal_note}；异常投影票 0 条；已验证冲突负票 0 条{benign_hint} → 证据方向不可判（中性）"
     mean = sum(votes) / len(votes)
     direction = _sign(mean)
     details = [signal_note]
@@ -744,6 +760,9 @@ def _audit_conflict_penalty(thesis: Any, insight: Any, signals: Any, conflicts: 
     冲突严重度』一致性检查"。L1 口径：**每个已结算（verified/partial）且 severity≥high 的冲突，
     其关联维度不得仍为正向判断**（否则说明扣分没有落到方向上）；权重取 engine 的同一张
     ``_CONFLICT_PENALTY``（不复制第二张表，避免"文档一个值、代码另一个值"）。
+
+    P0-2：与 ``engine._apply_conflict_analysis`` 同口径方向投影——已核验假设**全部为良性解释**
+    的冲突不要求维度被扣分（engine 已按投影跳过扣分），不参与核查、不计权重。
     """
     offenders: list[str] = []
     checked = 0
@@ -753,9 +772,20 @@ def _audit_conflict_penalty(thesis: Any, insight: Any, signals: Any, conflicts: 
         severity = _conflict_severity(conflict)
         if severity not in ("high", "critical"):
             continue
-        statuses = {str(_field(h, "status", "") or "").strip().lower() for h in _hypotheses(conflict)}
-        if not (statuses & {"verified", "partial"}):
+        settled = [
+            hypothesis
+            for hypothesis in _hypotheses(conflict)
+            if str(_field(hypothesis, "status", "") or "").strip().lower() in ("verified", "partial")
+        ]
+        if not settled:
             continue
+        penalized = [
+            hypothesis
+            for hypothesis in settled
+            if conflict_direction(str(_field(hypothesis, "explanation", "") or "")) != "benign"
+        ]
+        if not penalized:
+            continue  # 全部良性解释：engine 按同一投影跳过扣分，本冲突无强制扣分面
         related = _field(conflict, "related_dimensions") or []
         penalty = _CONFLICT_PENALTY.get(severity, 0.0)
         max_weight = penalty if max_weight is None else max(max_weight, penalty)
@@ -771,7 +801,7 @@ def _audit_conflict_penalty(thesis: Any, insight: Any, signals: Any, conflicts: 
     consistent = not offenders
     rationale = (
         f"冲突扣分一致性审计（{'一致' if consistent else '**不一致**'}）：核查 {checked} 个"
-        f"（已结算且 severity≥high）冲突 × 维度对，期望扣分幅度={max_weight if max_weight is not None else 0:g}"
+        f"（已结算且 severity≥high、非良性）冲突 × 维度对，期望扣分幅度={max_weight if max_weight is not None else 0:g}"
     )
     if offenders:
         rationale += "；方向未落地：" + "；".join(offenders[:3])
@@ -844,8 +874,11 @@ def _edge_applicable(edge: str, thesis: Any, insight: Any, signals: Any, conflic
     if edge == "anomaly->fact_values->signal":
         return bool(_anomaly_votes(thesis)[0])
     if edge == "verified_conflict->dimension_score":
+        # P0-2：全部已核验假设均为良性解释的冲突不产生强制扣分面（与 engine 同口径
+        # 方向投影），该边无审计输入 → 不适用（不构造"看起来一致"的空审计）。
         return any(
             str(_field(hypothesis, "status", "") or "").strip().lower() in ("verified", "partial")
+            and conflict_direction(str(_field(hypothesis, "explanation", "") or "")) != "benign"
             for conflict in _conflict_items(conflicts)
             for hypothesis in _hypotheses(conflict)
         )

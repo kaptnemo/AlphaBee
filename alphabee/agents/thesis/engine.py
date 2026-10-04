@@ -55,6 +55,130 @@ _POSITIVE_ANOMALY_PATTERNS = {"efficiency_gain"}
 # 见 alphabee/industry/industry_names.yaml groups.financial
 _PROJECT_BASED_KEYWORDS = ("项目", "验收", "军工", "工程", "软件", "集成", "to_b")
 
+# ── 冲突假设方向投影（P0-2）──────────────────────────────────────────────
+# verified/partial 冲突不再无条件投负票/扣分：按假设 explanation 的方向投影。
+# engine._apply_conflict_analysis 与 reviewer._conflict_votes /
+# _audit_conflict_penalty / _edge_applicable 共用同一判读函数与同一文本来源
+# （假设 explanation），保证两处口径一致。
+_BENIGN_CONFLICT_MARKERS: tuple[str, ...] = (
+    "良性",
+    "正常",
+    "正常现象",
+    "正常波动",
+    "正常范围",
+    "合理",
+    "符合",
+    "惯例",
+    "主动",
+    "战略",
+    "备货",
+    "有支撑",
+    "成长性",
+    "季节性",
+    "一次性",
+    "非经常",
+    "需求驱动",
+    "订单驱动",
+    "客户驱动",
+    "风险可控",
+    "可控",
+    "可解释",
+    "未发现异常",
+    "无异常",
+    "无虞",
+    "排除",
+    "不构成",
+    "改善",
+    "好转",
+)
+
+_NEGATIVE_CONFLICT_MARKERS: tuple[str, ...] = (
+    "操纵",
+    "粉饰",
+    "造假",
+    "虚增",
+    "虚报",
+    "欺诈",
+    "恶化",
+    "积压",
+    "滞销",
+    "挪用",
+    "占用",
+    "掏空",
+    "隐瞒",
+    "暴雷",
+    "失控",
+    "危机",
+    "风险积聚",
+    "实质风险",
+    "违背",
+    "存疑",
+    "不明显",
+    "异常",
+)
+
+#: 标记前否定窗口（字符数）内出现的否定词 → 该次命中作废
+#: （如「未发现操纵」「不构成资金占用」「高于正常水平」「排除操纵」都不算恶性/良性命中）。
+_NEGATION_WINDOW = 6
+_NEGATION_MARKERS: tuple[str, ...] = (
+    "否认",
+    "排除",
+    "缺乏",
+    "高于",
+    "超出",
+    "不存在",
+    "无证据",
+    "未发现",
+    "不构成",
+    "无",
+    "未",
+    "非",
+    "不",
+    "没",
+    "否",
+    "超",
+)
+
+
+def _negated(text: str, start: int) -> bool:
+    """标记在 ``text[start:]`` 命中时，其前 ``_NEGATION_WINDOW`` 字符内是否出现否定词。"""
+    window = text[max(0, start - _NEGATION_WINDOW) : start]
+    return any(neg in window for neg in _NEGATION_MARKERS)
+
+
+def _marker_hits(text: str, markers: tuple[str, ...]) -> bool:
+    """任一标记在文本中出现且**未被否定窗口覆盖** → True。"""
+    for marker in markers:
+        start = text.find(marker)
+        while start != -1:
+            if not _negated(text, start):
+                return True
+            start = text.find(marker, start + 1)
+    return False
+
+
+def conflict_direction(text: str) -> str:
+    """读冲突假设的解释方向（P0-2 方向投影）。
+
+    :returns: ``"benign"``（良性解释：正常现象/良性备货/主动安排/有支撑等）、
+        ``"negative"``（恶性解释：确认操纵/粉饰等）、``"unknown"``（判不清）。
+    :ref: 调用方对 ``"unknown"`` 保守回落**既有负贡献语义**（行为与修复前一致）。
+
+    文本来源约定：engine 与 reviewer 两处都只读**假设 ``explanation``**。reviewer 侧
+    的输入契约（``ConflictAnalysisResult``，验证结算只回写 status）拿不到 verification
+    summary，为保证两处口径一致，engine 侧同样不以 summary 判向（summary 只用于
+    证据文案与 rejected 分支，不参与方向投影）。
+    """
+    text = (text or "").strip()
+    if not text:
+        return "unknown"
+    if _marker_hits(text, _NEGATIVE_CONFLICT_MARKERS):
+        return "negative"
+    if _marker_hits(text, _BENIGN_CONFLICT_MARKERS):
+        return "benign"
+    return "unknown"
+
+
 #: §8.1 第 1 行 `insight -> thesis` **WEIGHTED** 边的显式权重（§8.2 规则 1：权重值必须显式，
 #: 不得埋在 prompt 里）：insight 自身 ``confidence`` 档位 → 维度 confidence 的乘数。
 #:
@@ -400,7 +524,12 @@ class ThesisEngine:
                 gaps = self._resolve_hypothesis_gaps(hypothesis, verify_by_hid)
 
                 if status in ("verified", "partial"):
-                    if severity in ("high", "critical"):
+                    # P0-2：按假设方向投影——良性解释（正常现象/良性备货/主动安排/有支撑等）
+                    # 的已核验冲突不再投负票、不再扣维度分；恶性解释维持既有负贡献。
+                    # 方向只读假设 explanation（与 reviewer._conflict_votes 同源同文本，
+                    # 口径一致性说明见 conflict_direction docstring）。
+                    benign = conflict_direction(hypothesis.get("explanation", "")) == "benign"
+                    if severity in ("high", "critical") and not benign:
                         self._apply_verified_conflict(
                             dimensions=dimensions,
                             dim_ids=dim_ids,
