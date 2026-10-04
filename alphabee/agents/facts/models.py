@@ -16,6 +16,8 @@ import math
 
 from pydantic import BaseModel, Field, computed_field
 
+from alphabee.agents.facts.ttm import ttm_yoy
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Financial
 # ═══════════════════════════════════════════════════════════════════════════
@@ -33,7 +35,8 @@ class FinancialSnapshot(BaseModel):
     # ── 利润表 ─────────────────────────────────────────────────────────────
     revenue: float | None = None  # 营业总收入
     operating_profit: float | None = None  # 营业利润
-    net_profit: float | None = None  # 归母净利润
+    net_profit: float | None = None  # 净利润（含少数股东损益，tushare n_income）
+    net_profit_attr_p: float | None = None  # 归母净利润（tushare n_income_attr_p）
     ebitda: float | None = None
     interest_expense: float | None = None
     basic_eps: float | None = None  # 基本每股收益
@@ -89,8 +92,8 @@ class FinancialFacts(BaseModel):
     snapshots 按时间倒序排列：snapshots[0] = 最新期，snapshots[1] = 上一期，
     snapshots[4] ≈ 去年同期（季报口径）。
 
-    跨期衍生字段（avg_shareholders_equity / ebit / inventory_yoy）通过
-    @computed_field 自动计算，无需手工提取。
+    跨期衍生字段（avg_shareholders_equity / ebit / inventory_yoy /
+    net_profit_ttm_yoy）通过 @computed_field 自动计算，无需手工提取。
 
     to_fact_values() 输出可直接传入 DerivedFacts 引擎的 fact_values 参数。
     """
@@ -133,6 +136,26 @@ class FinancialFacts(BaseModel):
             return (cur - comp) / comp * 100.0
         return None
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def net_profit_ttm_yoy(self) -> float | None:
+        """归母净利润 TTM 同比增速（%），与 PE-TTM 同口径（都基于滚动 12 个月）。
+
+        PEG 的分母必须与 PE-TTM 口径一致：数据源返回的是报告期累计值
+        （三季报 = 前三季度累计同比），直接使用会与 PE-TTM 错配，因此这里
+        用 TTM 恒等式还原后再同比（见 alphabee/agents/facts/ttm.py）。
+
+        数据不足、缺少上年报表，或去年同期 TTM ≤ 0（基期亏损，增速无意义）
+        时返回 None —— 不静默回退为累计同比，也不制造数字。
+        """
+        if not self.snapshots or not self.snapshots[0].period:
+            return None
+
+        series: dict[str, float | None] = {
+            snap.period: snap.net_profit_attr_p for snap in self.snapshots if snap.period
+        }
+        return ttm_yoy(series, self.snapshots[0].period)
+
     # ── 核心输出接口 ───────────────────────────────────────────────────────
 
     def to_fact_values(self) -> dict[str, float]:
@@ -142,7 +165,8 @@ class FinancialFacts(BaseModel):
         - 当期字段：来自 snapshots[0] 的所有非 None 数值字段
         - gross_margin_current：gross_margin 的别名（规则使用该名称）
         - _prev 后缀字段：来自 snapshots[1] 的指定字段
-        - 跨期计算字段：avg_shareholders_equity / ebit / inventory_yoy
+        - 跨期计算字段：avg_shareholders_equity / ebit / inventory_yoy /
+          net_profit_ttm_yoy
         """
         result: dict[str, float] = {}
 
@@ -182,6 +206,7 @@ class FinancialFacts(BaseModel):
         _put("avg_shareholders_equity", self.avg_shareholders_equity)
         _put("ebit", self.ebit)
         _put("inventory_yoy", self.inventory_yoy)
+        _put("net_profit_ttm_yoy", self.net_profit_ttm_yoy)
 
         return result
 

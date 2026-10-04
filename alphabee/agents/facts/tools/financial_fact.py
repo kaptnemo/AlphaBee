@@ -47,7 +47,7 @@ def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
                 ts_code=ts_code,
                 start_date=start,
                 fields="ts_code,end_date,total_revenue,operate_profit,"
-                "n_income,ebitda,basic_eps,interest_expense,"
+                "n_income,n_income_attr_p,ebitda,basic_eps,interest_expense,"
                 "income_tax,total_profit",
             ).data
             balance_df = helper.balancesheet(
@@ -106,6 +106,7 @@ _FIELD_EXTRACTORS: dict[str, tuple[str, str, int]] = {
     # ── 利润表（income）──────────────────────────────────────
     "revenue": ("income", "revenue", 0),
     "net_profit": ("income", "net_profit", 0),
+    "net_profit_attr_p": ("income", "net_profit_attr_p", 0),
     "operating_profit": ("income", "operating_profit", 0),
     "ebitda": ("income", "ebitda", 0),
     "interest_expense": ("income", "interest_expense", 0),
@@ -284,6 +285,7 @@ def get_financial_facts_model(symbol: str, periods: int = 24) -> FinancialFacts:
                 revenue=safe_float(inc.get("revenue")),
                 operating_profit=safe_float(inc.get("operating_profit")),
                 net_profit=safe_float(inc.get("net_profit")),
+                net_profit_attr_p=safe_float(inc.get("net_profit_attr_p")),
                 ebitda=safe_float(inc.get("ebitda")),
                 interest_expense=safe_float(inc.get("interest_expense")),
                 basic_eps=safe_float(inc.get("basic_eps")),
@@ -359,8 +361,8 @@ def render(data: dict[str, Any]) -> str:
     # ── 利润表 ────────────────────────────────────────────────────────
     lines += [
         "### 利润表（单位：亿元）",
-        "| 报告期 | 营业总收入 | 营业利润 | 归母净利润 | EBITDA | 基本EPS(元) |",
-        "|--------|-----------|---------|-----------|--------|------------|",
+        "| 报告期 | 营业总收入 | 营业利润 | 净利润 | 归母净利润 | EBITDA | 基本EPS(元) |",
+        "|--------|-----------|---------|--------|-----------|--------|------------|",
     ]
     for d in ref_dates:
         r = income_map.get(d)
@@ -370,6 +372,7 @@ def render(data: dict[str, Any]) -> str:
                 f"| {safe_float(r['revenue']) / 1e8:.2f} "
                 f"| {safe_float(r['operating_profit']) / 1e8:.2f} "
                 f"| {safe_float(r['net_profit']) / 1e8:.2f} "
+                f"| {safe_float(r.get('net_profit_attr_p')) / 1e8:.2f} "
                 f"| {safe_float(r['ebitda']) / 1e8:.2f} "
                 f"| {safe_float(r['basic_eps']):.4f} |"
             )
@@ -442,8 +445,8 @@ def render(data: dict[str, Any]) -> str:
     # ── 成长指标 ───────────────────────────────────────────────────────
     lines += [
         "### 同比成长性",
-        "| 报告期 | 营收同比增速(%) | 净利润同比增速(%) | EPS同比增速(%) |",
-        "|--------|--------------|----------------|--------------|",
+        "| 报告期 | 营收同比增速(%) | 归母净利润累计同比增速(%) | EPS同比增速(%) |",
+        "|--------|--------------|----------------------|--------------|",
     ]
     for d in ref_dates:
         r = fina_map.get(d)
@@ -454,6 +457,11 @@ def render(data: dict[str, Any]) -> str:
                 f"| {safe_float(r['net_profit_yoy']):.2f} "
                 f"| {safe_float(r['eps_growth_yoy']):.2f} |"
             )
+    lines.append("")
+    lines.append(
+        "> 口径说明：上表净利润同比为**报告期累计同比**（三季报 = 前三季度累计）；"
+        "PEG（peg_ratio）使用 **TTM 归母净利润同比**（滚动 12 个月），与 PE-TTM 同口径。"
+    )
     lines.append("")
 
     return "\n".join(lines)

@@ -23,7 +23,7 @@ class IncomeStatement(BaseModel):
     period: str = Field(description="报告期（YYYYMMDD），如 '20241231' 表示2024年年报")
     revenue: float = Field(description="营业总收入（元）")
     operating_profit: float = Field(description="营业利润（元）")
-    net_profit: float = Field(description="归母净利润（元）")
+    net_profit: float = Field(description="净利润（元，含少数股东损益；tushare n_income）")
     ebitda: float = Field(description="息税折旧摊销前利润EBITDA（元），衡量核心盈利能力")
     basic_eps: float = Field(description="基本每股收益（元/股）")
 

@@ -9,7 +9,7 @@ domains:
   financial:
     file: schemas/financial.yaml
     description: 财务报表域（利润表、资产负债表、现金流量表、财务比率、成长性）
-    field_count: 30
+    field_count: 39
     primary_source: tushare
     apis: [income, balancesheet, cashflow, fina_indicator]
 
@@ -121,6 +121,12 @@ field_gaps:
   - field: pe_ttm_5y_avg
     used_by: derived_facts/rules/valuation_compression.yaml
     gap: 需调用方从 Tushare daily_basic 历史数据聚合计算
+
+  - field: net_profit_ttm_yoy
+    used_by: derived_facts/rules/peg_ratio.yaml
+    gap: >-
+      需调用方从 Tushare income 的多期累计归母净利润（n_income_attr_p）还原滚动 12 个月值后同比
+      （alphabee/agents/facts/ttm.py）；数据不足或去年同期 TTM ≤ 0 时显式为 null。
 
   - field: industry_revenue_yoy
     used_by: derived_facts/rules/market_share_change.yaml

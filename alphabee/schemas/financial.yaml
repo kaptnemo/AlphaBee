@@ -41,15 +41,30 @@ net_profit:
   type: float
   unit: CNY
   frequency: [quarterly, annual]
-  description: 归母净利润（归属于上市公司股东的净利润）
+  description: 净利润（含少数股东损益）
   aliases:
-    zh: [净利润, 归母净利润, 净利]
-    en: [net profit, net income attributable to parent]
+    zh: [净利润, 净利]
+    en: [net profit, net income]
   required_by:
     derived_facts: [cashflow_quality, profit_leverage]
   source_mappings:
     tushare: [n_income]
-  notes: 扣除少数股东权益后归属于母公司股东的净利润。
+  notes: 含少数股东损益的净利润（tushare n_income）；归母口径见 net_profit_attr_p。
+
+net_profit_attr_p:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 归母净利润（归属于母公司股东的净利润，报告期累计值）
+  aliases:
+    zh: [归母净利润, 归母净利, 归属于母公司股东的净利润]
+    en: [net profit attributable to parent]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [n_income_attr_p]
+  notes: Tushare income 为报告期累计值（三季报 = 前三季度累计）；TTM 还原与同比见 net_profit_ttm_yoy。
 
 ebitda:
   category: financial
@@ -522,14 +537,32 @@ net_profit_yoy:
   type: float
   unit: PERCENT
   frequency: [quarterly, annual]
-  description: 净利润同比增长率（%）
+  description: 归母净利润同比增长率（%），报告期累计口径
   aliases:
-    zh: [净利润增速, 净利润同比, 利润同比]
+    zh: [净利润增速, 净利润累计同比, 利润同比]
     en: [net profit growth YoY, net income YoY]
   required_by:
-    derived_facts: [profit_leverage, peg_ratio]
+    derived_facts: [profit_leverage]
   source_mappings:
     tushare: [netprofit_yoy]
+  notes: 报告期累计同比（三季报 = 前三季度累计同比）；与 PE-TTM 同口径的滚动 12 个月增速见 net_profit_ttm_yoy。
+
+net_profit_ttm_yoy:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 归母净利润 TTM 同比增速（%），滚动 12 个月口径
+  aliases:
+    zh: [净利润TTM同比, 滚动12个月净利润增速]
+    en: [net profit TTM growth YoY, trailing twelve month profit growth]
+  required_by:
+    derived_facts: [peg_ratio]
+  source_mappings: {}
+  notes: >-
+    由调用方从多期 income 累计值还原（alphabee/agents/facts/ttm.py，恒等式：
+    TTM_t = 上年年报累计 + 本期累计 − 上年同期累计），再与去年同期 TTM 同比；
+    数据不足或去年同期 TTM ≤ 0 时显式返回 null（不静默回退为累计同比）。
 
 eps_growth_yoy:
   category: financial

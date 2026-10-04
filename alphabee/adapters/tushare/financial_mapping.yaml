@@ -10,6 +10,7 @@ income:
   total_revenue:        revenue
   operate_profit:       operating_profit
   n_income:             net_profit
+  n_income_attr_p:      net_profit_attr_p
   ebitda:               ebitda
   basic_eps:            basic_eps
   interest_expense:     interest_expense
