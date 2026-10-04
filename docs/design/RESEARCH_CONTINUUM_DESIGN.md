@@ -511,7 +511,7 @@ F4 交付物中有四项超出本文档原设计，属于净增能力：
 | `alphabee/apps/cli/args.py` | 改 | P2 | `--allow-stale` / `--track-alerts` |
 | `alphabee/apps/cli/main.py` | 改 | P2 | 入口 gate（拒绝/放行）+ 告警只读视图分派 |
 | `alphabee/tracking/ledger.py` | 新增 | P3 | `TrackingReport → Issue` 适配 + `record_event` 落账 |
-| `alphabee/tracking/scheduler.py` | 改 | P3/P4/P5 | 帧末尾接账本；派生状态字段；thesis 版本登记 |
+| `alphabee/tracking/scheduler.py` | 改 | **P1**/P3/P4/P5 | P1：证据来源接原文窗口（§15.1 C-2）；P3/P4/P5：帧末尾接账本、派生状态字段、thesis 版本登记 |
 | `alphabee/tracking/status.py` | 新增 | P4 | `ResearchStatus` + `research_status()` 纯投影 |
 | `alphabee/midterm/versions.py` | 新增 | P5 | `ThesisVersion` append-only 读写 |
 | `alphabee/tracking/engine.py` | 新增 | P6 | `ResearchEngine` Protocol + `ResearchContext` / `ResearchOutput` |
@@ -674,6 +674,40 @@ elif window.truncated:
 > **硬约束**：`report_window_unavailable` / `report_window_truncated` 必须同步登记进 `CLASS_BY_CATEGORY`（D1），否则 §15.0 C-2 的覆盖守卫测试失败。
 > **位置约束**：`window_texts` 必须在 `collect_evidence(...)` 之前算好（现有代码该行已在正确位置）；`as_of_date` 沿用节点既有取值逻辑（`run.context["as_of_date"]` → 缺省 `date.today()`）。
 > **`record_deviation` 签名提醒**（已核实）：`detected_at_step` 为**必填关键字参数**，`related_step` 缺省取之。
+
+#### C-2. 接线点：`tracking/scheduler.py::_default_evidence_provider`（**易漏，必做**）
+
+**为什么必须一起改**：定性证据走的是**两条独立通路**，只接 `nodes/midterm.py` 会让跟踪路径永远拿不到原文。已核实：
+
+```python
+# alphabee/tracking/scheduler.py:215-221（现状）
+def _default_evidence_provider(symbol: str, *, thesis: str = "", as_of_date: str = "") -> list[EvidenceEvent]:
+    """默认证据来源：复用 midterm/decision_model.collect_evidence（数值规则 + 可选 LLM 通道）。
+
+    ``window_texts`` 留空（原文管线未接，§9.3 的 W 项），因此 v1 只入账**数值类**证据；
+    """
+    return decision_model.collect_evidence(symbol, thesis, None, as_of_date=as_of_date)
+    #                                                ↑ 硬编码 None：原文永不进入跟踪帧
+```
+
+即：**本设计的 W3 项在代码里有两处具名缺口**——`nodes/midterm.py::_window_texts()`（分析 run）与 `tracking/scheduler.py::_default_evidence_provider`（跟踪帧）。只改前者，季度推进帧的证据日志仍恒为数值类。
+
+```python
+# 改为：
+def _default_evidence_provider(symbol: str, *, thesis: str = "", as_of_date: str = "") -> list[EvidenceEvent]:
+    """默认证据来源：数值规则 + （P1 起）财报原文定性通道。"""
+    from alphabee.orchestrator.services.report_window import select_report_window   # 延迟 import（§15.0 B）
+
+    window = select_report_window(symbol, as_of=as_of_date or None)
+    texts = [s.text for s in window.sections if s.text.strip()] or None
+    return decision_model.collect_evidence(symbol, thesis, texts, as_of_date=as_of_date)
+```
+
+- **不做**在 tracking 侧记账（`report_window_unavailable` 等）：跟踪帧的偏离经 **P3 的 `tracking/ledger.py`** 统一入账，避免同一件事两处上报；窗口不可用信息可经 `TrackingReport.degraded_reason` 或 P3 的投影表体现（实现时二选一，**不得两处都写**）；
+- **延迟 import 的理由**与 §15.0 B-2 相同：`select_report_window` 走 `orchestrator.services.*`（轻依赖），但仍按既有纪律把跨包 import 放在函数内，保持 `import alphabee.tracking` 无副作用；
+- **测试**：`tests/tracking/test_scheduler.py` 增加一条——monkeypatch `select_report_window` 返回含 sections 的窗口，断言 `decision_model.collect_evidence` 收到的 `window_texts` **非 `None`**（当前实现为硬编码 `None`，改前该用例必红）。
+
+> 若决定**只改分析路径、暂不改跟踪路径**，必须在 PR1 描述与 ROADMAP 顺延项里具名登记"跟踪帧仍无数值外证据"，不得沉默略过（沿用本仓库"设计有要求而未落地者必须具名登记"的纪律）。
 
 #### D. 数据填充（不在本节点内，不阻塞 P1 验收）
 
@@ -1168,7 +1202,7 @@ v1 只把 `symbol` / `as_of` / `thesis`（作 `thesis_prior`）/ `prior_confiden
 
 | PR | 范围（inScope） | 回滚方式 |
 |---|---|---|
-| PR1 | `services/report_window.py`、`nodes/midterm.py`、`config`、`test_report_window.py`、ROADMAP 登记 | `report_window.enabled=false` |
+| PR1 | `services/report_window.py`、`nodes/midterm.py`、**`tracking/scheduler.py`（证据来源接线 §15.1 C-2）**、`config`、`test_report_window.py`、`tests/tracking/test_scheduler.py`（新增 1 例）、ROADMAP 登记 | `report_window.enabled=false` |
 | PR2 | `services/preflight.py`、`collectors.py`、`apps/cli/{args,main}.py`、`config`、ROADMAP 登记、`test_preflight.py` | `block_stale_runs=false` + 移除 CLI gate |
 | PR3 | `tracking/ledger.py`、`tracking/scheduler.py`、`services/telemetry.py`、`test_ledger.py` | 不调用 `record_tracking_deviations` |
 | PR4 | `tracking/status.py`、`tracking/scheduler.py`、`test_status.py` | 删除赋值与展示行 |
