@@ -17,7 +17,9 @@ def _detect_market_cap(
 ) -> str:
     """Detect market cap category from structured data or text hints."""
     if market_facts is not None and market_facts.market_cap is not None:
-        mv = market_facts.market_cap / 1e8
+        # MarketFacts.market_cap 存储单位是万元（models.py 注释 + market_fact.py
+        # 直取 tushare daily_basic 原值），万元 → 亿元 = /1e4（阈值按亿元语义）。
+        mv = market_facts.market_cap / 1e4
         if mv >= 500:
             return "large"
         if mv >= 100:
