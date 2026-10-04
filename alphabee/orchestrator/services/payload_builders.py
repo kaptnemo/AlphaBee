@@ -161,6 +161,9 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
             "period": getattr(snapshot, "period", ""),
             "revenue_yoy": getattr(snapshot, "revenue_yoy", None),
             "net_profit_yoy": getattr(snapshot, "net_profit_yoy", None),
+            # 跨期字段（来自 FinancialFacts，非单期快照）：与 PE-TTM 同口径的滚动 12 个月
+            # 归母净利润同比，PEG 的分母，避免 LLM 混用累计同比与 TTM 口径。
+            "net_profit_ttm_yoy": getattr(financial_facts, "net_profit_ttm_yoy", None),
             "gross_margin": getattr(snapshot, "gross_margin", None),
             "roe": getattr(snapshot, "roe", None),
             "operating_cashflow_ratio": getattr(snapshot, "operating_cashflow_ratio", None),
@@ -621,6 +624,8 @@ def build_insight_context(state: OrchestratorState, symbol: str | None) -> dict[
             "period": getattr(s, "period", ""),
             "revenue_yoy": getattr(s, "revenue_yoy", None),
             "net_profit_yoy": getattr(s, "net_profit_yoy", None),
+            # 跨期字段（来自 FinancialFacts）：滚动 12 个月归母净利润同比，PEG 的分母
+            "net_profit_ttm_yoy": getattr(financial_facts, "net_profit_ttm_yoy", None),
             "gross_margin": getattr(s, "gross_margin", None),
             "roe": getattr(s, "roe", None),
             "operating_cashflow_ratio": getattr(s, "operating_cashflow_ratio", None),
