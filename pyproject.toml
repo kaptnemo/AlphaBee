@@ -44,6 +44,7 @@ dependencies = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+norecursedirs = ["tmp", ".*", "*.egg", "build", "dist", "node_modules", "venv", ".venv"]
 markers = [
     "integration: marks tests that require external services (LLM, Tushare)",
 ]
