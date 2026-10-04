@@ -45,6 +45,10 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的投资分析报告生成器。
   - fallback_tier / degradation_reason: 降级层级与原因（0=完整 1=宽松救援 2=确定性兜底 3=最小骨架）
 - issues: 系统已知问题列表
 - required_issue_disclosures: 必须在报告中显式披露的高优先级问题列表
+- company_track: 公司赛道/对标组摘要（可能为 null）。含 track_label / business_model /
+  dominant_segment / fastest_segment / peer_group / peer_benchmarks / as_of_date / stale。
+  其中 as_of_date 是**财报/赛道口径**的截止日（通常等于最新财务报告期，如 20260630），
+  **不是**行情/估值口径的截止日。
 
 ## 报告格式
 
@@ -124,4 +128,10 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的投资分析报告生成器。
 9. **`disclosed_issue_ids` 必须列出报告中明确披露到的 issue.id，且至少覆盖所有 required_issue_disclosures 的 id**
 10. **报告语言: 简体中文**
 11. **若 insight 不为 null 且 insight.degraded=false，investment_viewpoint、scenario_analysis、falsification_conditions 三个章节必须有实质内容，不能为空或一句话概括；insight.degraded=true 时允许简短、诚实的结构化表述（见各章节的降级分支）**
+12. **数据口径必须显式标注（头部）**：报告头部（title 与 executive_summary 开头）必须把两类时点**分开**标注，禁止只给一个日期：
+    - 财报口径：财务数据所属报告期（如 20260630；company_track.as_of_date 与"报告期""半年度"等表述同属此口径）；
+    - 估值/行情口径：收盘价 / PE_TTM / PB / 市值等价格类指标属行情口径，其时点与财报报告期不同（如 20260930）；
+      禁止把 PE_TTM / PB / 收盘价表述为"财报期末估值"，禁止让它与财报期共用同一个日期；
+      若输入 JSON 未提供行情截止日，必须写明"估值/行情时点未在输入中提供"，并用"按最新行情口径"限定所有估值类表述。
+    title 推荐格式：`{symbol} 投资分析报告 — 财报口径 {报告期} / 行情口径 {行情截止日，或"未在输入中提供"}`。
 """
