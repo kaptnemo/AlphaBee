@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import structlog
@@ -55,11 +56,25 @@ _POSITIVE_ANOMALY_PATTERNS = {"efficiency_gain"}
 # 见 alphabee/industry/industry_names.yaml groups.financial
 _PROJECT_BASED_KEYWORDS = ("项目", "验收", "军工", "工程", "软件", "集成", "to_b")
 
-# ── 冲突假设方向投影（P0-2）──────────────────────────────────────────────
+# ── 冲突假设方向投影（P0-2 / P0-2R3 收紧）──────────────────────────────
 # verified/partial 冲突不再无条件投负票/扣分：按假设 explanation 的方向投影。
 # engine._apply_conflict_analysis 与 reviewer._conflict_votes /
 # _audit_conflict_penalty / _edge_applicable 共用同一判读函数与同一文本来源
 # （假设 explanation），保证两处口径一致。
+#
+# 标记表出处（P0-2R3 / t22 F5 逐条披露）：经 258 条本地真实 [冲突已验证] explanation
+# + task_records/reports 全文扫描：
+# ① 良性 29 标记中 28 个有真实语料命中；「好转」零命中——标准财务质量表述词典
+#    扩充词、真实语料零命中、保留作前瞻拦截（非凭空拟定）。
+# ② 恶性 R1 22 标记中 16 个有真实语料命中；「虚报/挪用/掏空/隐瞒/暴雷/风险积聚」
+#    6 个零命中——标准金融舞弊词典扩充词、真实语料零命中、保留作前瞻拦截。
+# ③ P0-2R3 扩充的 10 个风险词中，「调节/被高估/承压/不可持续」4 个有真实语料命中
+#    （t22 F1 真实漏判样本：利润调节/主营增长被高估/毛利率承压/弹性不可持续）；
+#    「利益输送/违规担保/内幕交易/激进/水分/美化」6 个为通用金融舞弊词典扩充词、
+#    无本地语料佐证。
+# ④ 拉丁恶性词表（_LATIN_NEGATIVE_WORDS）与缩写白名单（_LATIN_ACRONYM_WHITELIST）
+#    为 captain 裁定（P0-2R3 F3 细化）给出的通用词典，白名单为常见金融/行业/报告期
+#    缩写；拉丁恶性词为通用财务舞弊英语词，无本地语料佐证。
 _BENIGN_CONFLICT_MARKERS: tuple[str, ...] = (
     "良性",
     "正常",
@@ -93,6 +108,18 @@ _BENIGN_CONFLICT_MARKERS: tuple[str, ...] = (
 )
 
 _NEGATIVE_CONFLICT_MARKERS: tuple[str, ...] = (
+    # P0-2R3 扩充风险词（t22 F1）——任一分句命中即非 benign
+    "利益输送",
+    "违规担保",
+    "内幕交易",
+    "激进",
+    "水分",
+    "不可持续",
+    "被高估",
+    "承压",
+    "调节",
+    "美化",
+    # R1 原始恶性标记
     "操纵",
     "粉饰",
     "造假",
@@ -117,6 +144,12 @@ _NEGATIVE_CONFLICT_MARKERS: tuple[str, ...] = (
     "异常",
 )
 
+#: 症状词（P0-2R3 / t22 F4a）：本身是恶性标记，但被良性语境包围时
+#: （「属…现象」「而非…」「主因在…」等）可判良性。
+_SYMPTOM_CONFLICT_MARKERS: tuple[str, ...] = ("异常", "恶化", "占用", "积压")
+#: 良性语境标记：症状词所在句的句尾方向出现任一即视为「被良性语境修饰」。
+_BENIGN_CONTEXT_MARKERS: tuple[str, ...] = ("而非", "并非", "属", "现象", "主因", "所致")
+
 #: 标记前否定窗口（字符数）内出现的否定词 → 该次命中作废
 #: （如「未发现操纵」「不构成资金占用」「高于正常水平」「排除操纵」都不算恶性/良性命中）。
 _NEGATION_WINDOW = 6
@@ -139,6 +172,28 @@ _NEGATION_MARKERS: tuple[str, ...] = (
     "超",
 )
 
+# ── P0-2R3 / t22 F3（captain 细化）：拉丁词混排保守回落 ──────────────────
+# 只对**白名单外**的拉丁词 token 触发：① 命中拉丁恶性词表 ⇒ 直接 negative；
+# ② 无法归类且存在良性命中 ⇒ unknown（保守）；③ 纯非中文文本（无 CJK 字符）⇒
+# unknown（不做拉丁语义分析，t22 保守默认）。
+_LATIN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z\-]*")
+#: 常见金融/行业/报告期缩写白名单（不触发混排回落，按中文规则正常判向）。
+#: Q1~Q4 / 5G 等「单字母+数字」形态天然不产出 ≥2 长度的纯拉丁 token，无需列举。
+_LATIN_ACRONYM_WHITELIST: frozenset[str] = frozenset(
+    {"AI", "PCB", "ROE", "PE", "PB", "PS", "FCF", "EBITDA", "ODM", "OEM", "IDC", "HBM", "COWOS", "ESG"}
+)
+#: 拉丁恶性词表（通用财务舞弊英语词典扩充词，无本地语料佐证；captain 裁定 F3 细化）。
+_LATIN_NEGATIVE_WORDS: frozenset[str] = frozenset(
+    {"manipulation", "fraud", "overstated", "unsustainable", "aggressive", "fictitious", "fabricated", "inflated"}
+)
+
+#: 分句边界（否定窗口只在分句内生效，跨标点/换行不吞掉下一分句的标记命中，
+#: P0-2R3 / t22 F2；并含转折连词但/而/然而/不过——captain F1/F2 契约）。
+_CLAUSE_SPLIT_RE = re.compile(r"[，。；、：:！？!?\n]|然而|不过|但|而")
+#: 句界（症状词良性语境的判定域，比逗号更粗；不含转折连词，保证
+#: 「而非」「主因在…而非」等语境标记保留在症状词所在句内）。
+_SENTENCE_SEPARATORS = "。；！？!?\n"
+
 
 def _negated(text: str, start: int) -> bool:
     """标记在 ``text[start:]`` 命中时，其前 ``_NEGATION_WINDOW`` 字符内是否出现否定词。"""
@@ -157,12 +212,73 @@ def _marker_hits(text: str, markers: tuple[str, ...]) -> bool:
     return False
 
 
+def _clauses(text: str) -> list[str]:
+    """按标点/换行与转折连词（但/而/然而/不过）分句（否定窗口的生效域）。"""
+    return [part.strip() for part in _CLAUSE_SPLIT_RE.split(text) if part.strip()]
+
+
+def _sentences(text: str) -> list[str]:
+    """按句界（。；！？!? 与换行）分句（症状词良性语境的判定域）。"""
+    parts: list[str] = []
+    current: list[str] = []
+    for ch in text:
+        if ch in _SENTENCE_SEPARATORS:
+            if current:
+                parts.append("".join(current))
+                current = []
+            continue
+        current.append(ch)
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
+def _symptoms_in_benign_context(text: str) -> bool:
+    """每个未否定症状词命中所在句的句尾方向都存在良性语境标记（P0-2R3 / t22 F4a）。"""
+    for sentence in _sentences(text):
+        for marker in _SYMPTOM_CONFLICT_MARKERS:
+            start = sentence.find(marker)
+            while start != -1:
+                if not _negated(sentence, start):
+                    tail = sentence[start + len(marker) :]
+                    if not any(ctx in tail for ctx in _BENIGN_CONTEXT_MARKERS):
+                        return False
+                start = sentence.find(marker, start + 1)
+    return True
+
+
 def conflict_direction(text: str) -> str:
-    """读冲突假设的解释方向（P0-2 方向投影）。
+    """读冲突假设的解释方向（P0-2 方向投影；P0-2R3 收紧）。
 
     :returns: ``"benign"``（良性解释：正常现象/良性备货/主动安排/有支撑等）、
         ``"negative"``（恶性解释：确认操纵/粉饰等）、``"unknown"``（判不清）。
     :ref: 调用方对 ``"unknown"`` 保守回落**既有负贡献语义**（行为与修复前一致）。
+
+    判定流程（全部确定性，无 LLM、无新阈值）：
+    1. 空白 → ``"unknown"``；
+    2. 纯非中文文本（无 CJK 字符，如纯英文/数字/符号）→ ``"unknown"``
+       （P0-2R3 / t22 F3 保守默认：不做拉丁语义分析）；
+    3. 提取白名单外拉丁词 token（``[A-Za-z][A-Za-z\\-]*``、长度 ≥2，缩写白名单
+       ``_LATIN_ACRONYM_WHITELIST`` 内者不计，t22 F3 captain 细化）：
+       a) 任一 token 命中拉丁恶性词表 ``_LATIN_NEGATIVE_WORDS`` ⇒ 直接
+          ``"negative"``（如 manipulation / fraud / overstated / unsustainable /
+          aggressive）；
+       b) 有白名单外 token 但无法归类，且存在良性标记命中 ⇒ ``"unknown"``（保守）；
+    4. 按标点/换行与转折连词（但/而/然而/不过）**分句**，逐句做否定感知的恶性标记
+       命中（否定窗口只在分句内生效，「不构成。资金占用」的第二分句不会被首分句的
+       否定词吞掉）；任一未否定命中 ⇒ 记入恶性集合；良性标记命中同样逐句判定；
+    5. 有恶性命中时：
+       a) 命中全部来自症状词 {异常/恶化/占用/积压}、存在良性标记命中、且每个症状词
+          所在句的句尾方向存在良性语境标记（而非/并非/属/现象/主因/所致）
+          ⇒ ``"benign"``（P0-2R3 / t22 F4a：良性语境包围症状词的真实模式）。
+          **收紧口径（captain 裁定，P0-2R3 落地版）**：良性语境**必须与良性标记命中
+          共现**才升 benign——裸「主因在…而非…」「系…所致」不单独判良性（否则会把
+          「存货积压，主因在需求下滑」「经营异常，系管理层动荡所致」这类纯负面归因
+          误放行；reviewer 19 例对抗探针实测该前置条件有效，4 例负面归因样本全部
+          正确判 negative）；
+       b) 否则 ⇒ ``"negative"``（含扩充风险词表，任一分句命中即非 benign，t22 F1）；
+    6. 无恶性命中且有良性标记命中 ⇒ ``"benign"``（拉丁回落已在 3b 处理）；
+    7. 其余 ⇒ ``"unknown"``。
 
     文本来源约定：engine 与 reviewer 两处都只读**假设 ``explanation``**。reviewer 侧
     的输入契约（``ConflictAnalysisResult``，验证结算只回写 status）拿不到 verification
@@ -172,9 +288,37 @@ def conflict_direction(text: str) -> str:
     text = (text or "").strip()
     if not text:
         return "unknown"
-    if _marker_hits(text, _NEGATIVE_CONFLICT_MARKERS):
+
+    has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in text)
+    if not has_cjk:
+        return "unknown"
+
+    latin_tokens = [
+        token
+        for token in _LATIN_TOKEN_RE.findall(text)
+        if len(token) >= 2 and token.upper() not in _LATIN_ACRONYM_WHITELIST
+    ]
+    if latin_tokens and any(token.lower() in _LATIN_NEGATIVE_WORDS for token in latin_tokens):
         return "negative"
-    if _marker_hits(text, _BENIGN_CONFLICT_MARKERS):
+
+    clauses = _clauses(text)
+
+    neg_hits: list[str] = []
+    for clause in clauses:
+        for marker in _NEGATIVE_CONFLICT_MARKERS:
+            if _marker_hits(clause, (marker,)):
+                neg_hits.append(marker)
+
+    benign_hit = any(_marker_hits(clause, _BENIGN_CONFLICT_MARKERS) for clause in clauses)
+
+    if neg_hits:
+        if benign_hit and set(neg_hits) <= set(_SYMPTOM_CONFLICT_MARKERS) and _symptoms_in_benign_context(text):
+            return "benign"
+        return "negative"
+
+    if benign_hit:
+        if latin_tokens:
+            return "unknown"
         return "benign"
     return "unknown"
 
