@@ -617,7 +617,12 @@ class ThesisEngine:
                 )
             )
             dim.score = max(-1.0, min(1.0, dim.score - penalty))
-            dim.confidence = min(1.0, dim.confidence + 0.1)
+            # P1-4：惩罚**不**提升置信度。原实现 `confidence + 0.1` 使「被扣分越重
+            # 的维度置信度越高」，而 `_thesis_direction` 对 `confidence > 0` 的维度
+            # 分数取**简单均值** ⇒ 惩罚越重、越自信、越主导方向（用户外部数据交叉
+            # 核对 002916 一轮暴露：被打爆的维度 confidence 最高）。
+            # 置信度只反映证据覆盖度（见 `_build_dimensions` 的 `contribs/total_signals`），
+            # 不应因「被冲突打穿」而升高。
 
     def _resolve_disputed_evidence(
         self,
