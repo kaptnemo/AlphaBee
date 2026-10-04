@@ -158,11 +158,17 @@ class ThesisReviewer:
                 impact = ev.impact if hasattr(ev, "impact") else ""
                 ev_level = ev.level if hasattr(ev, "level") else ""
                 if impact == "positive":
+                    # P1-3：none 级证据 = 「无风险发现」（absence-of-risk），不是正面
+                    # 发现——不计入 positive 票，也不计入 strong_positive（原来只有
+                    # strong_positive 排除 none，positive 计数仍被 none 灌票 ⇒
+                    # 「两条无风险信号 + 两条负面」误判 is_severe → contested → blocked）。
+                    if ev_level == "none":
+                        continue
                     positive += 1
                     # Only count as strong_positive if the risk signal actually fired
                     # (non-none level). A none:positive means "no risk found" — it is
                     # mild positive evidence, not a strong counter-signal.
-                    if ev_level and ev_level != "none":
+                    if ev_level:
                         strong_positive += 1
                 elif impact == "slightly_positive":
                     positive += 1
@@ -174,8 +180,9 @@ class ThesisReviewer:
             if positive > 0 and negative > 0:
                 issues.append(f"信号方向冲突：{positive} 条正面 vs {negative} 条负面")
                 # Severe conflict: strong-vs-strong or multi-signal clashes.
-                # Note: none-level "positive" evidence is NOT counted as strong_positive
-                # because it represents absence-of-risk, not an affirmative positive finding.
+                # Note: none-level "positive" evidence is NOT counted at all (neither
+                # positive nor strong_positive) because it represents absence-of-risk,
+                # not an affirmative positive finding（P1-3）。
                 is_severe = (strong_positive >= 1 and strong_negative >= 1) or (positive >= 2 and negative >= 2)
                 if is_severe:
                     if status != "insufficient":
