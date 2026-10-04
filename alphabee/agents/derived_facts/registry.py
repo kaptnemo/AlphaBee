@@ -109,6 +109,8 @@ class DerivedFactRule:
     interpretation: dict[str, str] = {}
     zero_division_policy: str = "invalid"
     zero_division_error: str = "division_by_zero"
+    not_applicable_if: list[str] = []
+    not_applicable_error: str = "not_applicable_condition"
 
     @singledispatchmethod  # type: ignore[misc]
     def __init__(self, fact_name: str) -> None:
@@ -141,12 +143,67 @@ class DerivedFactRule:
             self.required_derived_facts = data.get("required_derived_facts", [])
             self.zero_division_policy = data.get("zero_division_policy", "invalid")
             self.zero_division_error = data.get("zero_division_error", "division_by_zero")
+            declared = data.get("not_applicable_if", [])
+            self.not_applicable_if = [declared] if isinstance(declared, str) else list(declared)
+            self.not_applicable_error = data.get("not_applicable_error", "not_applicable_condition")
+
+    def _not_applicable_result(self, reason: str, interpretation: bool) -> dict[str, Any]:
+        """构建 not_applicable 结果（值以 None 落地，供下游识别"该指标不适用"）。"""
+        result: dict[str, Any] = {
+            self.name: None,
+            "level": "not_applicable",
+            "error": reason,
+        }
+        if interpretation:
+            result["interpretation"] = self.interpretation.get(
+                "not_applicable",
+                self.interpretation.get("invalid", "未知"),
+            )
+        return result
+
+    def _check_not_applicable(
+        self,
+        fact_values: dict[str, float],
+        interpretation: bool,
+    ) -> dict[str, Any] | None:
+        """计算前的"不适用"判定，返回 None 表示可以正常计算。
+
+        两类来源：
+
+        1. 依赖字段存在但值为 ``None``（上游已显式判定不适用/缺失）—— 此时把 None
+           丢进公式只会得到 invalid，应显式降级为 not_applicable，让下游知道
+           "指标不适用"而不是"算出错了"；
+        2. YAML 声明了 ``not_applicable_if`` 条件表达式且命中 —— 表达经济含义上的
+           不适用（例如 PEG 在净利润非正增长时无意义）。表达式求值失败（引用的
+           字段缺失）时跳过该项，与阈值回退链同策略。
+        """
+        required = [*self.required_facts, *self.required_derived_facts]
+        unavailable = [name for name in required if name in fact_values and fact_values[name] is None]
+        if unavailable:
+            return self._not_applicable_result(
+                f"input_not_applicable: {', '.join(unavailable)}",
+                interpretation,
+            )
+
+        for expression in self.not_applicable_if:
+            try:
+                matched = safe_eval_formula(expression, fact_values)
+            except Exception:
+                continue
+            if matched:
+                return self._not_applicable_result(self.not_applicable_error, interpretation)
+
+        return None
 
     def compute(
         self,
         fact_values: dict[str, float],
         interpretation: bool = False,
     ) -> dict[str, Any]:
+        not_applicable = self._check_not_applicable(fact_values, interpretation)
+        if not_applicable is not None:
+            return not_applicable
+
         try:
             derived_value = safe_eval_formula(self.formula, fact_values)
         except ZeroDivisionError:

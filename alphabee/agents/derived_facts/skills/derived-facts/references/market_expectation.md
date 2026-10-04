@@ -34,9 +34,12 @@
 - premium（> 1.3）：当前PE高于历史均值30%以上，市场预期偏乐观
 
 ### 维度2：横向（成长维度）——PEG（`peg_ratio`）
+- 口径：**分子分母同为滚动 12 个月** —— `pe_ttm` / `net_profit_ttm_yoy`（归母净利润 TTM 同比）。
+  不要用报告期累计同比（`net_profit_yoy`，三季报 = 前三季度累计）当分母，两者会错配。
 - undervalued（< 1.0）：成长定价便宜，若增速可持续则性价比高
 - fair（1.0-2.0）：合理定价成长预期
 - overvalued（> 2.0）：成长溢价过高，增速稍有不及预期则估值承压
+- not_applicable：净利润 TTM 非正增长（或 PE-TTM 非正）时 PEG 无经济含义，此时不要输出 PEG 判断
 
 ### 维度3：横向（质量维度）——PB/ROE（`pb_roe_match`）
 - undervalued（< 0.5）：按盈利能力支付的PB溢价低，质量折价
@@ -73,7 +76,8 @@
 在输出估值判断之前，先做前提校验：
 
 1. `roe_level`：若ROE = weak（< 8%），PB/ROE匹配没有意义，低PB只是低质量的体现
-2. `net_profit_yoy` 是否为正：PEG仅适用于盈利正增长标的，负增长时PEG无效
+2. `net_profit_ttm_yoy` 是否为正：PEG 仅适用于盈利正增长标的；为负（或去年同期亏损、数据不足）时
+   `peg_ratio` 返回 `not_applicable`，不要用累计同比 `net_profit_yoy` 临时顶替分母
 3. `pe_ttm_5y_avg` 是否可用：若历史PE均值缺失，`valuation_compression` 无法计算
 4. 是否为周期股：周期股在盈利高点PE最低（看起来便宜），实际是历史最贵时点
 

@@ -1,9 +1,13 @@
 name: peg_ratio
-description: 市盈率（PE-TTM）/ 净利润增速（%），衡量成长溢价是否合理；适用于成长型企业，不适用于周期股或利润负增长标的
+description: 市盈率（PE-TTM）/ 归母净利润 TTM 同比增速（%），衡量成长溢价是否合理；分子分母同为滚动 12 个月口径，适用于成长型企业，不适用于周期股或利润非正增长标的
 required_facts:
   - pe_ttm
-  - net_profit_yoy
-formula: pe_ttm / net_profit_yoy
+  - net_profit_ttm_yoy
+formula: pe_ttm / net_profit_ttm_yoy
+# 口径守卫：净利润非正增长（含亏损、扭亏无基数）或 PE 非正时，PEG 没有经济含义。
+# 命中即返回 not_applicable（值以 None 落地），不再算出负值/0 被阈值误判为"低估"。
+not_applicable_if: pe_ttm <= 0 or net_profit_ttm_yoy <= 0
+not_applicable_error: non_positive_pe_or_profit_growth
 thresholds:
   # 说明（Phase 0 决策）：PEG 本身已按公司自身成长归一化，行业 PE 溢价属于
   # 另一维度，不适合在此做相对判断；行业感知估值判断留给 signal 层
@@ -15,3 +19,4 @@ interpretation:
   undervalued: PEG < 1，当前估值低于成长速度，可能存在安全边际，性价比较高
   fair: PEG在合理区间，当前估值基本反映成长预期，需持续跟踪增速兑现情况
   overvalued: PEG > 2，成长溢价过高，若后续增速放缓则估值回调风险显著
+  not_applicable: 归母净利润 TTM 非正增长（或 PE-TTM 非正），PEG 无经济含义，本指标不适用

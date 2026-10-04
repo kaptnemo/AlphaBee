@@ -58,7 +58,7 @@ version: 1.0.0
 ### 估值匹配
 | 规则 | 公式 | 核心问题 |
 |------|------|---------|
-| `peg_ratio` | pe_ttm / net_profit_yoy | 成长溢价是否合理？ |
+| `peg_ratio` | pe_ttm / net_profit_ttm_yoy | 成长溢价是否合理？ |
 | `pb_roe_match` | pb_ratio / (roe × 100) | 按盈利能力衡量估值是否偏贵？ |
 | `valuation_compression` | pe_ttm / pe_ttm_5y_avg | 当前估值是否被历史压缩？ |
 

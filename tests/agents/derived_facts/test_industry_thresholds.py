@@ -63,9 +63,27 @@ def test_roe_level_missing_industry_falls_back():
 
 def test_peg_ratio_remains_absolute():
     # PEG 已按公司自身成长归一化，Phase 0 不做行业相对判断
-    assert _compute("peg_ratio", {"pe_ttm": 40.0, "net_profit_yoy": 16.0}) == "overvalued"
-    assert _compute("peg_ratio", {"pe_ttm": 20.0, "net_profit_yoy": 20.0}) == "fair"
-    assert _compute("peg_ratio", {"pe_ttm": 10.0, "net_profit_yoy": 20.0}) == "undervalued"
+    assert _compute("peg_ratio", {"pe_ttm": 40.0, "net_profit_ttm_yoy": 16.0}) == "overvalued"
+    assert _compute("peg_ratio", {"pe_ttm": 20.0, "net_profit_ttm_yoy": 20.0}) == "fair"
+    assert _compute("peg_ratio", {"pe_ttm": 10.0, "net_profit_ttm_yoy": 20.0}) == "undervalued"
+
+
+def test_peg_ratio_not_applicable_when_growth_non_positive():
+    # 口径守卫：净利润 TTM 非正增长 / PE 非正时 PEG 无经济含义，
+    # 不能算出负值或 0 被阈值误判为 undervalued
+    assert _compute("peg_ratio", {"pe_ttm": 30.0, "net_profit_ttm_yoy": -20.0}) == "not_applicable"
+    assert _compute("peg_ratio", {"pe_ttm": 30.0, "net_profit_ttm_yoy": 0.0}) == "not_applicable"
+    assert _compute("peg_ratio", {"pe_ttm": 0.0, "net_profit_ttm_yoy": 20.0}) == "not_applicable"
+    assert _compute("peg_ratio", {"pe_ttm": -8.0, "net_profit_ttm_yoy": 20.0}) == "not_applicable"
+
+
+def test_peg_ratio_not_applicable_when_growth_input_unavailable():
+    # 上游显式判定的"不适用"（值为 None，如去年同期亏损无法算 TTM 同比）
+    # 不应变成 invalid，而是同样标记 not_applicable
+    load_rules()
+    result = RULES["peg_ratio"].compute({"pe_ttm": 30.0, "net_profit_ttm_yoy": None})  # type: ignore[dict-item]
+    assert result["level"] == "not_applicable"
+    assert "input_not_applicable" in result["error"]
 
 
 # ── market_share_change 复活 ───────────────────────────────────────────────
