@@ -1,5 +1,7 @@
 """对标组存储测试（COMPANY_TRACK Phase D / Phase C3 存储基础）。"""
 
+import pytest
+
 from alphabee.company_track.peer_group_store import PeerGroup, PeerGroupStore
 
 
@@ -58,3 +60,45 @@ def test_no_peers_flag_roundtrip(tmp_path):
     legacy = tmp_path / "600000.SH.json"
     legacy.write_text('{"symbol": "600000.SH", "codes": [], "source": "manual"}', encoding="utf-8")
     assert store.load("600000.SH").no_peers is False
+
+
+# ── 判定 C：scores / match_dims 持久化（设计 §3.4 / §8 决策 2） ─────────────
+
+
+def test_scores_and_match_dims_roundtrip(tmp_path):
+    """scores（code→合成 overlap）与 match_dims（code→四维）save/load 往返一致。"""
+    store = PeerGroupStore(root=tmp_path)
+    dims = {"product": 0.9, "customer": 0.8, "material_tech": 0.7, "business_model": 0.6}
+    store.save(
+        PeerGroup(
+            symbol="002916.SZ",
+            codes=["002463.SZ"],
+            source="llm",
+            scores={"002463.SZ": 0.84},
+            match_dims={"002463.SZ": dims},
+        )
+    )
+    loaded = store.load("002916.SZ")
+    assert loaded is not None
+    assert loaded.scores == {"002463.SZ": pytest.approx(0.84)}
+    assert loaded.match_dims == {"002463.SZ": dims}
+
+
+def test_legacy_file_without_new_keys_loads_defaults(tmp_path):
+    """旧文件（无 scores/match_dims 两键）仍可 load，且取默认空表（append 带默认，向后兼容）。"""
+    store = PeerGroupStore(root=tmp_path)
+    legacy = tmp_path / "600000.SH.json"
+    legacy.write_text(
+        '{"symbol": "600000.SH", "codes": ["000001.SZ"], "source": "manual", "notes": [], "reason_map": {}}',
+        encoding="utf-8",
+    )
+    loaded = store.load("600000.SH")
+    assert loaded is not None
+    assert loaded.codes == ["000001.SZ"]
+    assert loaded.scores == {} and loaded.match_dims == {}
+
+
+def test_new_keys_default_to_empty_for_fresh_group():
+    """新建 PeerGroup 默认空表（不引入必需参数 ⇒ 既有构造点零改动）。"""
+    group = PeerGroup(symbol="x")
+    assert group.scores == {} and group.match_dims == {}

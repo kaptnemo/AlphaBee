@@ -367,20 +367,28 @@ def gate(
                 kept.add(code)
             continue
         if strategy in ("C_D_judge", "C_D_E"):
-            dims = decision.judge_dims
-            if dims is None or decision.judge_verdict is None:
+            if decision.judge_verdict is None:
                 continue
             if decision.judge_verdict == "reject":
                 continue
+            raw_dims = decision.judge_dims
         else:  # C_dims / C_E_taxo
-            dims = decision.dims
-            if dims is None:
+            raw_dims = decision.dims
+        # 与生产 Gate 同源口径（判定 C，设计 §3.3/§4）：
+        #   ① verdict==reject 先否决；② 维度下限仅在候选**携带 dims** 时生效（旧存量/人工候选
+        #   没有 dims ⇒ 只按 overlap 判定）；③ 有 dims 时用合成 Σ w_i·dim_i，缺 dims 时回落自评 overlap。
+        has_dims = isinstance(raw_dims, dict) and any(dim in raw_dims for dim in DIMS)
+        if has_dims:
+            assert raw_dims is not None
+            if raw_dims.get("product", 0.0) < product_floor:
                 continue
-        if dims.get("product", 0.0) < product_floor:
-            continue
-        if dims.get("customer", 0.0) < customer_floor:
-            continue
-        if _overlap(dims, weights) < min_overlap:
+            if raw_dims.get("customer", 0.0) < customer_floor:
+                continue
+            score = _overlap(raw_dims, weights)
+        else:
+            fallback = decision.judge_overlap if strategy in ("C_D_judge", "C_D_E") else decision.gen_overlap
+            score = float(fallback or 0.0)
+        if score < min_overlap:
             continue
         kept.add(code)
     return kept

@@ -205,6 +205,41 @@ class ReportWindowSettings(BaseModel):
     )
 
 
+class PeerQualityConfidenceSettings(BaseModel):
+    """对标组置信度分档阈值（设计 §3.7；判定 E/D 的展示分档，本步先落配置面）。"""
+
+    low: float = Field(default=0.4, description="低于该值 ⇒ 低置信（报告显式提示基准参考性弱）")
+    medium: float = Field(default=0.7, description="低于该值 ⇒ 中置信；否则高置信")
+
+
+class PeerQualitySettings(BaseModel):
+    """对标组候选质量闸（判定 C，设计 §3.3/§3.5）。
+
+    读写口径：权重/阈值的**唯一处**在 ``alphabee/company_track/peer_judge.py`` 的默认常量，
+    本段用于**覆盖**；缺段 ⇒ 全部取默认值（旧 config 仍可 import，行为不变）。
+    """
+
+    enabled: bool = Field(default=True, description="质量闸总开关（false ⇒ 只用结构性下限判定）")
+    min_overlap: float = Field(default=0.40, description="合成 overlap 下限（0–1；train 段标定）")
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {"product": 0.40, "customer": 0.30, "business_model": 0.20, "material_tech": 0.10},
+        description="四维权重（overlap = Σ w_i·dim_i）",
+    )
+    product_floor: float = Field(default=0.20, description="product 维度下限（train 段标定）")
+    customer_floor: float = Field(default=0.20, description="customer 维度下限")
+    residual_l3_min_constituents: int = Field(default=15, description="残差桶判定：L3 成分数低于该值 ⇒ 分类学不可信")
+    judge_enabled: bool = Field(default=True, description="独立 batch judge 开关（与生成同模型）")
+    judge_batch_size: int = Field(default=20, description="judge 单批候选数")
+    min_peers: int = Field(default=2, description="消费侧最小对标数：低于该值不注入 peer_*、回退 industry")
+    confidence: PeerQualityConfidenceSettings = Field(default_factory=PeerQualityConfidenceSettings)
+
+
+class CompanyTrackSettings(BaseModel):
+    """公司赛道（COMPANY_TRACK）：对标组候选判定相关配置。"""
+
+    peer_quality: PeerQualitySettings = Field(default_factory=PeerQualitySettings)
+
+
 class Settings(BaseModel):
     llm: LLMConfig
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
@@ -214,6 +249,8 @@ class Settings(BaseModel):
     deviation: DeviationSettings = Field(default_factory=DeviationSettings)
     # 研究连续体 P1（W3）：财报原文窗口（缺段 ⇒ 取上列默认值）
     report_window: ReportWindowSettings = Field(default_factory=ReportWindowSettings)
+    # 公司赛道：对标组候选判定（判定 C；缺段 ⇒ 全默认值，旧 config 行为不变）
+    company_track: CompanyTrackSettings = Field(default_factory=CompanyTrackSettings)
 
 
 def get_settings() -> Settings:

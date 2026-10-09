@@ -14,6 +14,7 @@
 | 无业务线数据（无 track） | 无 artifact | ``company_track_missing``（MEDIUM） |
 | 有 track 但无对标组（存储未命中且在线兜底无果） | 全量 artifact（无 peer_*） | ``peer_group_missing``（LOW） |
 | 对标组计算失败 | artifact（degraded）+ 无 peer_* | ``peer_group_benchmarks_missing``（MEDIUM） |
+| 对标组保留数 < ``min_peers``（默认 2） | artifact（无 peer_*） | ``peer_group_missing``（LOW，『对标组不足、中位数不可比』） |
 | track 过期 | artifact（stale=True） | ``company_track_stale``（MEDIUM，进报告披露检查） |
 
 注入的 ``peer_*`` canonical 字段：peer_avg_roe / peer_avg_debt_ratio / peer_avg_gross_margin /
@@ -30,6 +31,18 @@ from langchain_core.runnables import RunnableConfig
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.orchestrator.collectors import _finalize_step, _make_id
 from alphabee.orchestrator.state import OrchestratorState
+
+
+def _min_peers() -> int:
+    """消费侧最小对标数（``company_track.peer_quality.min_peers`` 配置项；缺段/异常 ⇒ 默认 2）。"""
+    from alphabee.company_track.peer_judge import MIN_PEERS_DEFAULT
+
+    try:
+        from alphabee.config import get_settings
+
+        return int(get_settings().company_track.peer_quality.min_peers)
+    except Exception:
+        return MIN_PEERS_DEFAULT
 
 
 def _is_stale(stale_after: str | None) -> bool:
@@ -121,6 +134,35 @@ async def resolve_company_track(
                 peer_group = built_group
 
     peer_values: dict[str, float] = {}
+    # 消费侧**最小数量闸**（设计 §3.3/§3.6/§8 决策 4）：1 只候选时中位数 = 该股本身，作基准无意义
+    # ⇒ 不注入任何 peer_*，回退 industry 基线并记 issue/notes（期望空组走同一条路）。
+
+    min_peers = _min_peers()
+    peer_gate_blocked = False
+    too_few = peer_group is not None and not peer_group.is_empty() and len(peer_group.codes) < min_peers
+    if too_few:
+        assert peer_group is not None  # 由 too_few 的定义保证
+        message = (
+            f"对标组不足（{len(peer_group.codes)} < {min_peers}），中位数不可比，不注入 peer_*，回退 industry 基线"
+        )
+        if message not in peer_group.notes:
+            peer_group.notes.append(message)
+            try:
+                store.save(peer_group)  # 留痕；存储异常不影响降级路径（fail-open）
+            except Exception:
+                pass
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.LOW,
+                category="peer_group_missing",
+                message=f"标的 {symbol} {message}",
+                related_step=step.id,
+            )
+        )
+        peer_group = None
+        peer_gate_blocked = True
+
     if peer_group is not None and not peer_group.is_empty():
         from alphabee.company_track import derive_peer_benchmarks
 
@@ -140,7 +182,8 @@ async def resolve_company_track(
                     related_step=step.id,
                 )
             )
-    else:
+    elif not peer_gate_blocked:
+        # 无对标组配置（存储未命中且在线兜底无果）。上方的 min_peers 闸已单独记 issue，不重复。
         new_issues.append(
             Issue(
                 id=_make_id("issue"),

@@ -613,28 +613,20 @@ def test_report_mentions_production_entry():
 
 _ONLINE_MODULE = PROJECT_ROOT / "alphabee" / "company_track" / "peer_extract.py"
 
-#: 在线生成器 prompt 的**逐字**冻结快照（等价性基线）。
-_FROZEN_INFER_PROMPT = (
-    "你是买方研究员。根据下面这家公司的业务描述，识别其在 **A 股市场**中的"
-    "**同产业链环节的竞争对手/可比公司**，给出 5–8 家并按可比度降序。\n"
-    "要求：\n"
-    "1. 排除上游供应商与下游客户（如 PCB 公司不要选上游覆铜板、下游封测）；\n"
-    "2. 优先给 A 股上市公司，代码带交易所后缀（如 002463.SZ / 603228.SH）；"
-    "不确定的代码填空串，**不要编造**；\n"
-    "3. 每条必须诚实给出 `overlap`（0–1，与标的在**同环节业务/产品/客户**上的重叠度）："
-    "越接近直接竞对越接近 1.0；若候选主要在材料（如碳钢 vs 不锈钢）、终端"
-    "（如半导体/医药洁净 vs 石化/核电）或盈利模式上与标的不同，请**如实给低分**"
-    "（由下游按阈值过滤，不要因为拿不准就直接省略）。\n"
-    "只输出 JSON 数组（确实无候选才输出 []），每条："
-    '{"name": "公司名", "code": "股票代码", "exchange": "SH/SZ/BJ", '
-    '"overlap": 0.0-1.0, "reason": "为什么是同环节竞对（业务/产品/客户重叠）"}。\n'
-    "行业（供参考）: PCB\n"
-    "业务线构成（供参考）:\n（无业务线数据）\n\n"
-    "公司业务描述:\n印制电路板与封装基板"
-)
+"""#: 在线生成器 prompt 的**新冻结基线**（设计 §4：本步**有意**增补 dims schema）。
+#: 旧→新逐字 diff 存于 ``tmp/certified/pj1_peer_quality_prereview/prompt_diff_old_to_new.json``：
+#: 新增行仅为「第 4 条 dims 要求」与「输出 schema 增加 dims 字段」，无第三条语义被改写。
+"""
+_FROZEN_INFER_PROMPT = '你是买方研究员。根据下面这家公司的业务描述，识别其在 **A 股市场**中的**同产业链环节的竞争对手/可比公司**，给出 5–8 家并按可比度降序。\n要求：\n1. 排除上游供应商与下游客户（如 PCB 公司不要选上游覆铜板、下游封测）；\n2. 优先给 A 股上市公司，代码带交易所后缀（如 002463.SZ / 603228.SH）；不确定的代码填空串，**不要编造**；\n3. 每条必须诚实给出 `overlap`（0–1，与标的在**同环节业务/产品/客户**上的重叠度）：越接近直接竞对越接近 1.0；若候选主要在材料（如碳钢 vs 不锈钢）、终端（如半导体/医药洁净 vs 石化/核电）或盈利模式上与标的不同，请**如实给低分**（由下游按阈值过滤，不要因为拿不准就直接省略）。\n4. 每条还要给出**结构化维度** `dims`（各自 0–1，按证据独立打分、不要一律同值）：product(产品/服务重叠)、customer(客户/终端重叠)、material_tech(材料/技术路线相近度)、business_model(盈利模式/业态相近度)。\n只输出 JSON 数组（确实无候选才输出 []），每条：{"name": "公司名", "code": "股票代码", "exchange": "SH/SZ/BJ", "overlap": 0.0-1.0, "dims": {"product":0.0,"customer":0.0,"material_tech":0.0,"business_model":0.0}, "reason": "为什么是同环节竞对（业务/产品/客户重叠）"}。\n行业（供参考）: PCB\n业务线构成（供参考）:\n（无业务线数据）\n\n公司业务描述:\n印制电路板与封装基板'
 
 #: 在线模块 token 流签名（去注释/换行后 sha256）：生产 judge 入口若被误接进在线路径必然变化。
-_FROZEN_ONLINE_TOKEN_SIGNATURE = "683cc76b22bce45977d97f9f2fb92fb94ed1bbdd28229a3ec107fe0546b029ed"
+#: **重定标沿革（旧→新；均属本步有意变更，不是删除守护）**：
+#:   ``683cc76b…``（``343c774`` 基线）
+#:   → ``00486a09a0870c12f3b7c3c625c7b5c4e4224c71eee1474ee9c658efef5422a7``（删除中文关键词否决表 ⇒ token 流变化）
+#:   → ``785d4e94a1f0b6c90f253b7ca25f85855cdac51c892de5fde2193211edcd7fd6``（生成器改为产出结构化 ``dims``）
+#:   → ``fe5a7b8fe600acc996addc8f0cd0d253583705ee050bf520d4ca19e94586c131``（阈值常量统一为单一权威定义：
+#:     ``peer_extract`` 删除自带 ``= 0.5`` 的同名常量，改为再导出 ``peer_judge.DEFAULT_MIN_OVERLAP``）
+_FROZEN_ONLINE_TOKEN_SIGNATURE = "4860511395f508c0f8c6201c3e496f9043dd1b91b3351eead1beb723b0b8ee73"
 
 
 def _online_source() -> str:
@@ -703,7 +695,11 @@ def _capture_infer_prompt(monkeypatch, content: str = "[]") -> list[str]:
 
 
 def test_online_infer_prompt_is_byte_identical_to_frozen_snapshot(monkeypatch):
-    """在线生成器 prompt 与改动前**逐字一致**（等价性证据 1/3）。"""
+    """在线生成器 prompt 与**新冻结基线**逐字一致（设计 §4 有意增补 dims schema 后重定标）。
+
+    反回归意图保留：prompt 若有任何未被本步声明的改写 ⇒ 与基线不等 ⇒ 判红。
+    旧→新逐字 diff 见 tmp/certified/pj1_peer_quality_prereview/prompt_diff_old_to_new.json。
+    """
     prompts = _capture_infer_prompt(monkeypatch)
     assert prompts == [_FROZEN_INFER_PROMPT]
 
@@ -745,31 +741,53 @@ def test_online_infer_four_branches_unchanged(monkeypatch):
 
 
 def test_online_infer_candidate_shape_unchanged(monkeypatch):
-    """候选 dict 的形状/键序不变（下游 ``build_peer_group`` 的消费契约）。"""
+    """候选 dict 的**新声明形状**（设计 §4：overlap + 结构化 dims），锁定键序与类型。
+
+    本用例原锁「相对 343c774 逐字不变」；本步按设计 §4 **有意**为生成器输出增补
+    ``overlap`` / ``dims`` 两键 ⇒ 按新契约重定标（未弱化：键序、类型、JSON 可解析性均钉死）。
+    """
     _capture_infer_prompt(
-        monkeypatch, '[{"name": "沪电股份", "code": "002463.SZ", "exchange": "sz", "overlap": 0.9, "reason": "同环节"}]'
+        monkeypatch,
+        '[{"name": "沪电股份", "code": "002463.SZ", "exchange": "sz", "overlap": 0.9, "reason": "同环节", '
+        '"dims": {"product": 0.9, "customer": 0.8, "material_tech": 0.7, "business_model": 0.9}}]',
     )
+    import json as _json
+
     from alphabee.company_track import infer_peer_candidates
 
     candidates, _ = infer_peer_candidates("002916.SZ", [], "PCB")
     assert len(candidates) == 1
-    assert list(candidates[0]) == ["name", "code", "exchange", "reason", "source"]
-    assert candidates[0] == {
-        "name": "沪电股份",
-        "code": "002463.SZ",
-        "exchange": "SZ",
-        "reason": "同环节",
-        "source": "infer",
+    assert list(candidates[0]) == ["name", "code", "exchange", "reason", "source", "overlap", "dims"]
+    assert candidates[0]["name"] == "沪电股份"
+    assert candidates[0]["code"] == "002463.SZ"
+    assert candidates[0]["exchange"] == "SZ"  # 交易所归一到大写
+    assert candidates[0]["source"] == "infer"
+    assert float(candidates[0]["overlap"]) == 0.9
+    assert _json.loads(candidates[0]["dims"]) == {
+        "product": 0.9,
+        "customer": 0.8,
+        "material_tech": 0.7,
+        "business_model": 0.9,
     }
 
 
 def test_online_module_signature_is_frozen():
-    """在线模块 token 签名与冻结值一致（等价性证据 3/3；M4 的判据之一）。"""
+    """在线模块 token 签名与冻结值一致（回归守护；M4 的判据之一）。
+
+    **契约形状按设计 §4 有意收窄后重定标**（非删除）：在线生成器**必须**继续调用生产侧
+    **打分/生成**入口（`build_scoring_prompt`），但**不得**调用独立**评审**入口
+    （`judge_peer_candidates` / `build_judge_prompt`）。判定口径从"任何 peer_judge 引用都禁"
+    收窄为"仅禁评审入口"；签名值随判定口径变更而重定标（关键词否决表删除 ⇒ token 流变化）。
+    """
     assert _online_module_signature(_online_source()) == _FROZEN_ONLINE_TOKEN_SIGNATURE
 
 
 def test_online_module_does_not_reference_peer_judge():
-    """在线路径不得 import / 调用生产 judge 入口（M4 的判据之二）。"""
+    """在线路径**可以**用生产侧打分/生成入口，但**绝不**接入独立评审入口（M4 的判据之二）。
+
+    登记的口径差异：`build_scoring_prompt`（生成器打分）允许在线调用；`judge_peer_candidates` /
+    `infer_peer_scoring` / `build_judge_prompt` / `resolve_peer_eval_model`（独立评审）禁止。
+    """
     assert _online_peer_judge_references(_online_source()) == []
 
 
@@ -826,7 +844,7 @@ def test_m3_jaccard_degenerate_to_one_is_killed(ev):
 
 
 def test_m4_production_entry_wired_into_online_path_is_killed(ev):
-    """M4：把生产 judge 入口误接进在线路径（``infer_peer_candidates``）。
+    """M4：把**独立评审**入口误接进在线路径（``infer_peer_candidates``）⇒ 必红。
 
     该变异必须被『在线行为不变』的两条断言杀死（均位于 ``test_peer_group_build.py``）：
     1. ```test_online_module_does_not_reference_peer_judge```：AST 断言在线模块不得 import / 调用

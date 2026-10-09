@@ -21,6 +21,7 @@ prompt”的双维护（设计 §5.2）。
 
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol
 
 __all__ = [
@@ -249,3 +250,83 @@ def judge_peer_candidates(
             "reason": str(item.get("reason") or "").strip(),
         }
     return out
+
+
+# ── 判定 C：结构化维度 / 合成 overlap / 剔除明细格式（**单一实现**，供在线与 Gate 共用） ──
+#: 权重唯一处（设计 §3.3/§3.5）：overlap = Σ w_i · dim_i。
+DEFAULT_WEIGHTS: dict[str, float] = {
+    "product": 0.40,
+    "customer": 0.30,
+    "business_model": 0.20,
+    "material_tech": 0.10,
+}
+
+#: 阈值/下限：**由标注集 train 段标定**（设计 §6 Step 1 允许「仅用 train 重标定后复测」）；
+#: 标定点 = train 段 C_dims 的 F1 最优（min_overlap 0.40 / product_floor 0.20）。
+DEFAULT_PRODUCT_FLOOR = 0.20
+DEFAULT_CUSTOMER_FLOOR = 0.20
+DEFAULT_MIN_OVERLAP = 0.40
+
+#: 消费侧最小对标数（设计 §8 决策 4）：1 只候选时中位数 = 该股本身，作基准无意义。
+MIN_PEERS_DEFAULT = 2
+
+DROP_JUDGE_REJECT = "judge reject"
+DROP_PRODUCT_FLOOR = "产品重叠不足"
+DROP_CUSTOMER_FLOOR = "客户重叠不足"
+
+#: notes 里 reason 的字符上限（设计 §3.4 明细可审计）。
+REASON_MAX_CHARS = 80
+
+
+def normalize_dims(raw: Any) -> dict[str, float]:
+    """``dims`` 归一到**四维齐全**的 ``[0,1]`` 表。
+
+    输入可为 dict，也接受 **JSON 文本**（候选跨层传递时以 JSON 文本承载维度）；
+    无法解析/非映射 → 全 0；缺字段/非法值 → 0.0。
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {dim: 0.0 for dim in DIMS}
+    if not isinstance(raw, dict):
+        return {dim: 0.0 for dim in DIMS}
+    out: dict[str, float] = {}
+    for dim in DIMS:
+        value = raw.get(dim)
+        if value is None:
+            out[dim] = 0.0
+            continue
+        try:
+            out[dim] = max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            out[dim] = 0.0
+    return out
+
+
+def _has_dims(raw: Any) -> bool:
+    """候选是否**携带**结构化维度（缺失时不做维度下限判定，只按 overlap 阈值，保持旧数据可用）。"""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return False
+    return isinstance(raw, dict) and any(dim in raw for dim in DIMS)
+
+
+def overlap_score(dims: dict[str, float] | None, weights: dict[str, float] | None = None) -> float:
+    """四维 → 合成 ``overlap``（权重唯一处；``weights`` 缺省取 :data:`DEFAULT_WEIGHTS`）。"""
+    active = weights or DEFAULT_WEIGHTS
+    table = dims or {}
+    return sum(weight * table.get(dim, 0.0) for dim, weight in active.items())
+
+
+def format_drop_note(item: dict[str, Any]) -> str:
+    """单条剔除明细 → ``质量闸剔除 {code} {name}（{drop}）：{reason}``（reason ≤80 字符）。"""
+    code = str(item.get("code") or "?")
+    name = str(item.get("name") or "")
+    drop = str(item.get("drop") or "")
+    reason = str(item.get("reason") or "").strip()
+    if len(reason) > REASON_MAX_CHARS:
+        reason = reason[:REASON_MAX_CHARS] + "…"
+    return f"质量闸剔除 {code} {name}（{drop}）：{reason}"

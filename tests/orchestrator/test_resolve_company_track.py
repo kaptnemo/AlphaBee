@@ -196,7 +196,7 @@ def test_track_without_peer_group_local_report_fragments_path(monkeypatch):
     """有本地财报片段 ⇒ 透传给 build_peer_group（优先于闭集），并注入结果。"""
     from alphabee.company_track.peer_group_store import PeerGroup
 
-    built = PeerGroup(symbol="603986.SH", codes=["300223.SZ"], source="llm")
+    built = PeerGroup(symbol="603986.SH", codes=["300223.SZ", "688766.SH"], source="llm")
     captured: list[dict] = []
     section = "第三节 管理层讨论与分析：公司主营存储芯片……"
     result = _run_node(
@@ -207,7 +207,7 @@ def test_track_without_peer_group_local_report_fragments_path(monkeypatch):
         fragments=[section],
         built=built,
         values={"peer_avg_roe": 0.05},
-        meta={"error": None, "peer_count": 1},
+        meta={"error": None, "peer_count": 2},
         captured=captured,
     )
 
@@ -271,10 +271,68 @@ def test_peer_group_injects_values_and_full_artifact(monkeypatch):
     assert artifact.degraded is False
 
 
+def test_min_peers_gate_blocks_single_candidate(monkeypatch):
+    """保留数 < min_peers(2) ⇒ 不注入任何 peer_*、记 peer_group_missing、notes 写明『中位数不可比』。"""
+    from alphabee.company_track.peer_group_store import PeerGroup
+
+    group = PeerGroup(symbol="603986.SH", codes=["300223.SZ"], source="llm")
+    result = _run_node(
+        monkeypatch,
+        _track(),
+        group=group,
+        values={"peer_avg_roe": 0.05},
+        meta={"error": None, "peer_count": 1},
+    )
+
+    assert result["fact_values"] == {}
+    issues = [i for i in result["issues"] if i.category == "peer_group_missing"]
+    assert len(issues) == 1
+    assert "对标组不足" in issues[0].message and "中位数不可比" in issues[0].message
+    artifact = _find_company_track(result)
+    assert artifact is not None
+    assert artifact.peer_group == []  # 不注入：中位数不可比
+    assert any("对标组不足" in note for note in group.notes)
+
+
+def test_min_peers_gate_allows_two_candidates(monkeypatch):
+    """保留数 == min_peers(2) ⇒ 正常注入（边界不误杀）。"""
+    from alphabee.company_track.peer_group_store import PeerGroup
+
+    group = PeerGroup(symbol="603986.SH", codes=["300223.SZ", "688766.SH"], source="llm")
+    result = _run_node(
+        monkeypatch,
+        _track(),
+        group=group,
+        values={"peer_avg_roe": 0.05},
+        meta={"error": None, "peer_count": 2},
+    )
+
+    assert result["fact_values"]["peer_avg_roe"] == 0.05
+    assert not [i for i in result["issues"] if i.category == "peer_group_missing"]
+
+
+def test_min_peers_gate_reads_config(monkeypatch):
+    """min_peers 由 company_track.peer_quality 配置驱动：调到 3 时 2 只候选也回退。"""
+    from alphabee.company_track.peer_group_store import PeerGroup
+
+    monkeypatch.setattr(node, "_min_peers", lambda: 3)
+    group = PeerGroup(symbol="603986.SH", codes=["300223.SZ", "688766.SH"], source="llm")
+    result = _run_node(
+        monkeypatch,
+        _track(),
+        group=group,
+        values={"peer_avg_roe": 0.05},
+        meta={"error": None, "peer_count": 2},
+    )
+
+    assert result["fact_values"] == {}
+    assert [i for i in result["issues"] if i.category == "peer_group_missing"]
+
+
 def test_peer_derive_failure_marks_degraded(monkeypatch):
     from alphabee.company_track.peer_group_store import PeerGroup
 
-    group = PeerGroup(symbol="603986.SH", codes=["300223.SZ"])
+    group = PeerGroup(symbol="603986.SH", codes=["300223.SZ", "688766.SH"])
     result = _run_node(monkeypatch, _track(), group=group, values={}, meta={"error": "对标组取数失败", "peer_count": 0})
 
     artifact = _find_company_track(result)

@@ -48,16 +48,24 @@ from alphabee.company_track.peer_extract import (
     infer_peer_candidates,
     select_peer_candidates,
 )
-from alphabee.company_track.peer_group_build import build_peer_group
+from alphabee.company_track.peer_group_build import (
+    build_peer_group,
+    gate_candidates,
+)
 from alphabee.company_track.peer_group_store import PeerGroup, PeerGroupStore
+from alphabee.company_track.peer_judge import (
+    DEFAULT_MIN_OVERLAP as PEER_MIN_OVERLAP,
+)
 from alphabee.company_track.peer_judge import (
     DIMS as PEER_JUDGE_DIMS,
 )
 from alphabee.company_track.peer_judge import (
+    MIN_PEERS_DEFAULT,
     build_judge_prompt,
-    build_scoring_prompt,
     infer_peer_scoring,
     judge_peer_candidates,
+    normalize_dims,
+    overlap_score,
 )
 from alphabee.company_track.peer_report import fetch_local_report_fragments
 from alphabee.company_track.peer_universe import build_peer_universe
@@ -70,7 +78,9 @@ from alphabee.company_track.track import build_company_track
 
 __all__ = [
     "CompanyTrackArtifact",
+    "MIN_PEERS_DEFAULT",
     "PEER_JUDGE_DIMS",
+    "PEER_MIN_OVERLAP",
     "PeerGroup",
     "PeerGroupStore",
     "SegmentCollection",
@@ -84,12 +94,14 @@ __all__ = [
     "build_judge_prompt",
     "build_peer_group",
     "build_peer_universe",
-    "build_scoring_prompt",
     "classify_business_model",
     "derive_peer_benchmarks",
     "derive_segment_yoy",
     "derive_track_label",
     "extract_peer_candidates",
+    "gate_candidates",
+    "normalize_dims",
+    "overlap_score",
     "fetch_local_report_fragments",
     "infer_peer_candidates",
     "infer_peer_scoring",

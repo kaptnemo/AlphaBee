@@ -7,28 +7,18 @@
 
 from __future__ import annotations
 
-import re
+import json
 from typing import Any
 
 from alphabee.company_track.contracts import SegmentSnapshot
+from alphabee.company_track.peer_judge import DEFAULT_MIN_OVERLAP, normalize_dims
 from alphabee.company_track.peer_judge import coerce_overlap as _coerce_overlap
 
-#: 直接对标的最低业务重叠度（LLM 自评 0–1）。对标组用于**同业中位数**基准，宁可少选：
-#: 低于此值即使被 LLM 选中也应剔除，避免不同终端/不同材料的公司污染基准。
-#: 0.5 = 「同环节重叠需过半」；实证 0.6 会误伤强直接对标（如盛德鑫泰），故取 0.5。
-DEFAULT_MIN_OVERLAP = 0.5
-
-#: 理由自洽否决词：理由里出现下列"实质性差异"措辞 ⇒ 候选与标的在材料/终端上并非同环节，
-#: 即便 LLM 仍选中也应剔除（防「理由自相矛盾」）。刻意收窄，避免误伤正常描述
-#: （如「下游覆盖石化/核电」是共享下游，不算差异）。
-_REASON_MISMATCH = re.compile(
-    "下游偏|终端偏|应用偏|以碳钢为主|碳钢为主|而非|非直接|并非直接|部分重叠|仅部分|不完全重叠"
-)
-
-
-def _reason_self_contradicts(reason: str) -> bool:
-    """理由是否自曝与标的的实质性差异（材料/终端非同一环节）。"""
-    return bool(_REASON_MISMATCH.search(reason or ""))
+#: 阈值（``min_overlap``）的**权威定义只有一处** = :data:`alphabee.company_track.peer_judge.DEFAULT_MIN_OVERLAP`；
+#: 生产生效值另有配置覆盖（``company_track.peer_quality.min_overlap``），缺段即取该默认。
+#: 本模块历史上自带过一份取值 ``0.5`` 的同名常量（看似权威、实际不参与任何判定）——**已删除**，
+#: 以免「同名异值」误导文档 / DoD 表述 / 下游 ``import``；此处仅作**向后兼容再导出**
+#: （``infer_peer_candidates`` 的 ``min_overlap`` 参数已不参与剔除，判定统一由 Gate 执行）。
 
 
 def _segment_lines(segments: list[SegmentSnapshot]) -> str:
@@ -126,7 +116,7 @@ def infer_peer_candidates(
     *,
     industry: str = "",
     use_llm: bool = True,
-    min_overlap: float = DEFAULT_MIN_OVERLAP,
+    min_overlap: float = DEFAULT_MIN_OVERLAP,  # 兼容既有调用签名；判定已移交 Gate（见下）
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
     """依据**公司业务描述**（本地年报/半年报「管理层讨论与分析」）推断 A 股直接对标。
 
@@ -136,11 +126,16 @@ def infer_peer_candidates(
     供应商与下游客户**（盈利结构不同，混入会污染同业中位数）。代码仍由 ``build_peer_group``
     经 Tushare 存在性校验，编造代码会在下游被剔除。
 
-    **质量闸（两重）**——对标组用于同业中位数，宁可少选：
-    1. **overlap 阈值**：要求 LLM 逐条给出 ``overlap``（0–1 的同环节业务/客户重叠度），
-       低于 ``min_overlap`` 者剔除；
-    2. **理由自洽**：理由文本命中实质性差异措辞（下游/终端偏移、以碳钢为主、而非、部分重叠……）
-       者剔除——防「理由自曝差异却仍入选」。
+    **质量闸**——对标组用于同业中位数，宁可少选：
+    1. **结构化维度**：要求 LLM 逐条给出 ``dims``（product/customer/material_tech/business_model，
+       各 0–1）与 ``overlap``，随候选返回（归一化只有一份实现）；
+       注：**overlap 阈值不再由本函数执行**（见第 3 条）。
+    2. **理由非空**：理由缺失者剔除（**不再按理由措辞判定**——中文关键词否决表已删除：
+       措辞不可穷举、跨行业不可移植；实质性差异改由 ``peer_group_build.gate_candidates``
+       的结构化维度与 verdict 承载）。
+    3. **生成器不再按 overlap 自行剔除**：overlap 阈值与维度下限统一由构建阶段的确定性
+       Gate 执行（设计 §4「生成器出 dims+overlap、Gate 做剔除」），故本函数**返回 LLM 给出的
+       全部候选**（仅去重/去无理由，含 ``overlap`` 与四维 ``dims``），剔除明细由 Gate 落入 notes。
 
     Args:
         symbol: 标的代码（血缘）。
@@ -148,11 +143,14 @@ def infer_peer_candidates(
         business_description: 公司业务描述文本（本地财报「管理层讨论与分析」章节）。
         industry: 行业名（血缘，仅入 prompt）。
         use_llm: 是否启用 LLM 推断。
-        min_overlap: 最低业务重叠度（0–1），低于此值剔除。
+        min_overlap: 兼容参数（历史签名）；**本函数不再据此剔除**——阈值判定由构建阶段
+            :func:`gate_candidates` 统一执行。
 
     Returns:
         ``(candidates, meta)``：candidates 每条为
-        ``{"name", "code", "exchange", "reason", "source": "infer"}``；空 → 不编造。
+        ``{"name", "code", "exchange", "reason", "source": "infer", "overlap", "dims"}``
+        （``overlap`` 十进制文本、``dims`` 四维 JSON 文本，均经**单一**归一化实现处理）；
+        空 → 不编造。**候选缺 dims** 时由构建阶段 Gate 只按 overlap 阈值判定（旧存量数据兼容）。
         ``meta["dropped"]`` 记录被质量闸剔除的候选（``{name, code, overlap, reason, drop}``）。
     """
     del symbol  # 血缘信息，仅日志用
@@ -179,9 +177,13 @@ def infer_peer_candidates(
             "越接近直接竞对越接近 1.0；若候选主要在材料（如碳钢 vs 不锈钢）、终端"
             "（如半导体/医药洁净 vs 石化/核电）或盈利模式上与标的不同，请**如实给低分**"
             "（由下游按阈值过滤，不要因为拿不准就直接省略）。\n"
+            "4. 每条还要给出**结构化维度** `dims`（各自 0–1，按证据独立打分、不要一律同值）："
+            "product(产品/服务重叠)、customer(客户/终端重叠)、material_tech(材料/技术路线相近度)、"
+            "business_model(盈利模式/业态相近度)。\n"
             "只输出 JSON 数组（确实无候选才输出 []），每条："
             '{"name": "公司名", "code": "股票代码", "exchange": "SH/SZ/BJ", '
-            '"overlap": 0.0-1.0, "reason": "为什么是同环节竞对（业务/产品/客户重叠）"}。\n'
+            '"overlap": 0.0-1.0, "dims": {"product":0.0,"customer":0.0,"material_tech":0.0,"business_model":0.0}, '
+            '"reason": "为什么是同环节竞对（业务/产品/客户重叠）"}。\n'
             f"行业（供参考）: {industry or '未标注'}\n"
             f"业务线构成（供参考）:\n{_segment_lines(segments)}\n\n"
             f"公司业务描述:\n{business_description}"
@@ -210,15 +212,26 @@ def infer_peer_candidates(
                 seen.add(code)
 
             overlap = _coerce_overlap(item.get("overlap"))
+            # 结构化维度（判定 C）：归一化**只有一份实现**（peer_judge.normalize_dims），
+            # 缺字段/非法值按 0；候选缺 dims 时 Gate 只按 overlap 阈值判定（旧存量数据兼容）。
+            dims = normalize_dims(item.get("dims"))
             drop_reason = ""
             if not reason:
                 drop_reason = "无理由"
-            elif _reason_self_contradicts(reason):
-                drop_reason = "理由自曝实质差异"
-            elif overlap is not None and overlap < min_overlap:
-                drop_reason = f"overlap {overlap:.2f} < {min_overlap:.2f}"
+            # 判定口径统一由 :func:`alphabee.company_track.peer_group_build.gate_candidates`
+            # 承担（权重×四维合成 overlap + 四条剔除规则）；生成器**不再自行按 overlap 剔除**，
+            # 否则会把候选挡在 Gate 之外、令剔除明细不可审计（设计 §4）。
             if drop_reason:
-                dropped.append({"name": name, "code": code, "overlap": overlap, "reason": reason, "drop": drop_reason})
+                dropped.append(
+                    {
+                        "name": name,
+                        "code": code,
+                        "overlap": overlap,
+                        "dims": dims,
+                        "reason": reason,
+                        "drop": drop_reason,
+                    }
+                )
                 continue
 
             candidates.append(
@@ -228,6 +241,8 @@ def infer_peer_candidates(
                     "exchange": str(item.get("exchange") or "").strip().upper(),
                     "reason": reason,
                     "source": "infer",
+                    "overlap": "" if overlap is None else f"{overlap:.4f}",
+                    "dims": json.dumps(dims, ensure_ascii=False, sort_keys=True),
                 }
             )
         meta["dropped"] = dropped

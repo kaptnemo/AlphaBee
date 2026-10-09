@@ -1,5 +1,9 @@
 """对标组 LLM 抽取与校验测试（COMPANY_TRACK Phase C，C2/C4）。"""
 
+import json
+
+import pytest
+
 import alphabee.company_track.peer_group_build as build_module
 from alphabee.company_track import (
     build_peer_group,
@@ -115,7 +119,7 @@ def test_build_peer_group_manual_candidates(tmp_path, monkeypatch):
         {"name": "坏代码", "code": "2382", "reason": ""},
     ]
     group, warnings = build_peer_group("601138.SH", candidates=candidates, name="AI 服务器 ODM", store=store)
-    assert group.codes == ["603296.SH"]  # A 股进基准
+    assert group.codes == ["603296.SH"]  # A 股进基准（调用方给定候选不经 LLM 质量闸）
     assert group.international == ["2382.TW"]  # 境外仅名单
     assert group.reason_map["603296.SH"] == "AI 服务器 ODM 龙头"
     assert any("无法识别" in w for w in warnings)
@@ -160,7 +164,16 @@ def test_build_peer_group_llm_candidates(tmp_path, monkeypatch):
         build_module,
         "extract_peer_candidates",
         lambda symbol, segments, fragments, use_llm=True: (
-            [{"name": "华勤技术", "code": "603296.SH", "reason": "LLM 命中"}],
+            [
+                {
+                    "name": "华勤技术",
+                    "code": "603296.SH",
+                    "reason": "LLM 命中",
+                    "overlap": 0.9,
+                    "dims": {"product": 0.9, "customer": 0.8, "material_tech": 0.7, "business_model": 0.9},
+                    "verdict": "direct",
+                }
+            ],
             {"note": ""},
         ),
     )
@@ -168,6 +181,17 @@ def test_build_peer_group_llm_candidates(tmp_path, monkeypatch):
     group, warnings = build_peer_group("601138.SH", fragments=["研报片段"], store=store)
     assert group.codes == ["603296.SH"]
     assert group.source == "llm"
+    # 判定 C：保留者的合成 overlap 与四维**随组持久化**（供审计与后续重标定）
+    # 记分 = 合成分（权重 × 四维）：0.9*0.4 + 0.8*0.3 + 0.7*0.2 + 0.9*0.1 = 0.85
+    assert group.scores == {"603296.SH": pytest.approx(0.85)}
+    assert group.match_dims["603296.SH"] == {
+        "product": 0.9,
+        "customer": 0.8,
+        "material_tech": 0.7,
+        "business_model": 0.9,
+    }
+    reloaded = store.load("601138.SH")
+    assert reloaded is not None and reloaded.match_dims == group.match_dims
 
 
 # ── 同行业成分股闭集择优（在线兜底） ────────────────────────────────────────
@@ -183,7 +207,16 @@ def test_build_peer_group_universe_path(tmp_path, monkeypatch):
     def fake_select(symbol, segments, universe, industry="", use_llm=True):
         captured.append(universe)
         return (
-            [{"name": "北京君正", "code": "300223.SZ", "reason": "存储芯片设计同环节"}],
+            [
+                {
+                    "name": "北京君正",
+                    "code": "300223.SZ",
+                    "reason": "存储芯片设计同环节",
+                    "overlap": 0.88,
+                    "dims": {"product": 0.9, "customer": 0.8, "material_tech": 0.8, "business_model": 0.9},
+                    "verdict": "direct",
+                }
+            ],
             {"note": ""},
         )
 
@@ -211,7 +244,16 @@ def test_build_peer_group_business_description_path(tmp_path, monkeypatch):
         build_module,
         "infer_peer_candidates",
         lambda symbol, segments, business_description, industry="", use_llm=True: (
-            [{"name": "沪电股份", "code": "002463.SZ", "reason": "通信设备 PCB 同环节"}],
+            [
+                {
+                    "name": "沪电股份",
+                    "code": "002463.SZ",
+                    "reason": "通信设备 PCB 同环节",
+                    "overlap": 0.9,
+                    "dims": {"product": 0.9, "customer": 0.9, "material_tech": 0.8, "business_model": 0.9},
+                    "verdict": "direct",
+                }
+            ],
             {"note": ""},
         ),
     )
@@ -227,7 +269,7 @@ def test_build_peer_group_business_description_path(tmp_path, monkeypatch):
 
 
 def test_build_peer_group_notes_list_dropped_details(tmp_path, monkeypatch):
-    """质量闸剔除明细进 notes（可审计），空结果标记 no_peers 终态。"""
+    """剔除明细进 notes（可审计），空结果标记 no_peers 终态；drop 文本来自确定性 Gate。"""
     from alphabee.company_track.peer_group_store import PeerGroupStore
 
     monkeypatch.setattr(
@@ -242,9 +284,10 @@ def test_build_peer_group_notes_list_dropped_details(tmp_path, monkeypatch):
                     {
                         "name": "新莱应材",
                         "code": "300260.SZ",
-                        "overlap": 0.45,
-                        "drop": "理由自曝实质差异",
-                        "reason": "下游偏半导体、医药洁净应用",
+                        "overlap": 0.15,
+                        "dims": {"product": 0.2, "customer": 0.3, "material_tech": 0.1, "business_model": 0.4},
+                        "drop": "产品重叠不足",
+                        "reason": "高洁净管件，终端错配",
                     }
                 ],
             },
@@ -254,7 +297,7 @@ def test_build_peer_group_notes_list_dropped_details(tmp_path, monkeypatch):
     group, _ = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=store)
 
     assert group.is_empty() and group.no_peers is True
-    assert any("质量闸剔除 300260.SZ 新莱应材" in n and "下游偏半导体" in n for n in group.notes)
+    assert any("质量闸剔除 300260.SZ 新莱应材" in n and "产品重叠不足" in n for n in group.notes)
 
 
 def test_build_peer_group_remaps_stale_bj_code_by_name(tmp_path, monkeypatch):
@@ -265,7 +308,18 @@ def test_build_peer_group_remaps_stale_bj_code_by_name(tmp_path, monkeypatch):
         build_module,
         "infer_peer_candidates",
         lambda *a, **k: (
-            [{"name": "鼎智科技", "code": "873593.BJ", "exchange": "BJ", "reason": "直线运动", "source": "infer"}],
+            [
+                {
+                    "name": "鼎智科技",
+                    "code": "873593.BJ",
+                    "exchange": "BJ",
+                    "reason": "直线运动",
+                    "source": "infer",
+                    "overlap": 0.8,
+                    "dims": {"product": 0.8, "customer": 0.8, "material_tech": 0.8, "business_model": 0.9},
+                    "verdict": "direct",
+                }
+            ],
             {"note": "", "llm_ok": True, "dropped": []},
         ),
     )
@@ -293,7 +347,9 @@ def test_infer_peer_candidates_source_and_dedup(monkeypatch):
                 (),
                 {
                     "content": (
-                        '[{"name": "沪电股份", "code": "002463.SZ", "exchange": "SZ", "reason": "PCB 同环节"}, '
+                        '[{"name": "沪电股份", "code": "002463.SZ", "exchange": "SZ", "overlap": 0.9, '
+                        '"dims": {"product": 0.9, "customer": 0.8, "material_tech": 0.8, "business_model": 0.9}, '
+                        '"verdict": "direct", "reason": "PCB 同环节"}, '
                         '{"name": "沪电股份", "code": "002463.SZ", "reason": "重复"}]'
                     )
                 },
@@ -304,6 +360,14 @@ def test_infer_peer_candidates_source_and_dedup(monkeypatch):
     assert len(candidates) == 1
     assert candidates[0]["code"] == "002463.SZ"
     assert candidates[0]["source"] == "infer"
+    # 判定 C（设计 §4）：生成器产出候选 + overlap + 结构化 dims（四维 JSON 文本），供 Gate 消费
+    assert list(candidates[0]) == ["name", "code", "exchange", "reason", "source", "overlap", "dims"]
+    assert set(json.loads(candidates[0]["dims"])) == {
+        "product",
+        "customer",
+        "material_tech",
+        "business_model",
+    }
 
 
 def _fake_infer(monkeypatch, content: str):
@@ -316,39 +380,85 @@ def _fake_infer(monkeypatch, content: str):
     monkeypatch.setattr(llm_module, "create_chat_model", lambda component, **kw: FakeModel())
 
 
-def test_infer_peer_candidates_drops_low_overlap(monkeypatch):
-    from alphabee.company_track import infer_peer_candidates
+def test_generator_emits_all_scored_candidates_and_gate_does_the_dropping(tmp_path, monkeypatch):
+    """判定分工（设计 §4）：**生成器只产出候选**（带 overlap），**剔除由构建阶段 Gate 执行**。
 
-    _fake_infer(
-        monkeypatch,
-        '[{"name": "A", "code": "002463.SZ", "overlap": 0.9, "reason": "同环节直接竞争"}, '
-        '{"name": "B", "code": "600183.SH", "overlap": 0.3, "reason": "上游覆铜板"}]',
+    端到端剔除以仍被覆盖：低 overlap 候选在 ``build_peer_group`` 被 Gate 剔除，
+    notes 逐条写明 ``质量闸剔除 {code} {name}（overlap x < y）：{reason}``。
+    """
+    from alphabee.company_track import infer_peer_candidates
+    from alphabee.company_track.peer_group_build import build_peer_group
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _DIMS = '"dims": {"product": 0.9, "customer": 0.8, "material_tech": 0.8, "business_model": 0.9}'
+    payload = (
+        '[{"name": "A", "code": "002463.SZ", "overlap": 0.9, "reason": "同环节直接竞争", '
+        + _DIMS
+        + ', "verdict": "direct"}, '
+        '{"name": "B", "code": "600183.SH", "overlap": 0.3, "reason": "上游覆铜板", '
+        + _DIMS
+        + ', "verdict": "direct"}]'
     )
+
+    # ① 生成器：两条都返回（不自行按 overlap 剔除）
+    _fake_infer(monkeypatch, payload)
     candidates, meta = infer_peer_candidates("002916.SZ", [], "印制电路板与封装基板")
-    assert [c["code"] for c in candidates] == ["002463.SZ"]
-    assert meta["dropped"][0]["code"] == "600183.SH"
-    assert "overlap" in meta["dropped"][0]["drop"]
+    assert [c["code"] for c in candidates] == ["002463.SZ", "600183.SH"]
+    assert meta["dropped"] == []
+
+    # ② 构建阶段：Gate 按合成 overlap 剔除低分候选，明细进 notes（可审计）
+    monkeypatch.setattr(
+        "alphabee.company_track.peer_group_build.infer_peer_candidates",
+        lambda *a, **k: (
+            [
+                {"name": "A", "code": "002463.SZ", "reason": "同环节直接竞争", "source": "infer", "overlap": 0.9},
+                {"name": "B", "code": "600183.SH", "reason": "上游覆铜板", "source": "infer", "overlap": 0.3},
+            ],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    monkeypatch.setattr(
+        "alphabee.company_track.peer_group_build.validate_a_share_codes",
+        lambda codes: (list(codes), [], None),
+    )
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+    assert group.codes == ["002463.SZ"]
+    assert any("质量闸剔除 600183.SH B（" in n and "上游覆铜板" in n for n in warnings)
+    assert "600183.SH" not in group.scores
 
 
-def test_infer_peer_candidates_drops_self_contradicting_reason(monkeypatch):
-    """理由自曝终端/材料差异 ⇒ 即便 overlap 高也剔除。"""
+def test_infer_peer_candidates_keeps_reason_variants(monkeypatch):
+    """**措辞不是判据**：理由里含旧否决词表措辞（下游偏/而非/部分重叠）仍按 overlap 决定去留。"""
     from alphabee.company_track import infer_peer_candidates
 
     _fake_infer(
         monkeypatch,
-        '[{"name": "新莱应材", "code": "300260.SZ", "overlap": 0.9, '
-        '"reason": "同属不锈钢管件，但下游偏半导体、医药、食品等洁净应用"}]',
+        '[{"name": "武进不锈", "code": "603878.SH", "overlap": 0.85, '
+        '"reason": "同属不锈钢管，部分重叠于电站锅炉领域，而非石化"}]',
     )
     candidates, meta = infer_peer_candidates("002318.SZ", [], "工业不锈钢管")
-    assert candidates == []
-    assert meta["dropped"][0]["drop"] == "理由自曝实质差异"
-    assert "未推断出" in meta["note"]
+    assert [c["code"] for c in candidates] == ["603878.SH"]
+    assert meta["dropped"] == []
+
+    # 低 overlap 也不再由生成器剔除（判定移交构建阶段 Gate，设计 §4）
+    _fake_infer(
+        monkeypatch,
+        '[{"name": "新莱应材", "code": "300260.SZ", "overlap": 0.3, '
+        '"reason": "同属不锈钢管件，但下游偏半导体，而非石化"}]',
+    )
+    candidates, meta = infer_peer_candidates("002318.SZ", [], "工业不锈钢管")
+    assert [c["code"] for c in candidates] == ["300260.SZ"]
+    assert meta["dropped"] == []
 
 
 def test_infer_peer_candidates_accepts_percentage_overlap(monkeypatch):
     from alphabee.company_track import infer_peer_candidates
 
-    _fake_infer(monkeypatch, '[{"name": "A", "code": "002463.SZ", "overlap": 85, "reason": "同环节"}]')
+    _fake_infer(
+        monkeypatch,
+        '[{"name": "A", "code": "002463.SZ", "overlap": 85, "reason": "同环节", "dims": {"product": 0.9, '
+        '"customer": 0.8, "material_tech": 0.8, "business_model": 0.9}, "verdict": "direct"}]',
+    )
     candidates, _ = infer_peer_candidates("002916.SZ", [], "PCB")
     assert [c["code"] for c in candidates] == ["002463.SZ"]
 
@@ -357,7 +467,11 @@ def test_infer_peer_candidates_missing_overlap_not_dropped(monkeypatch):
     """LLM 漏给 overlap（None）不因阈值剔除，交给理由自洽兜底。"""
     from alphabee.company_track import infer_peer_candidates
 
-    _fake_infer(monkeypatch, '[{"name": "A", "code": "002463.SZ", "reason": "同环节直接竞争"}]')
+    _fake_infer(
+        monkeypatch,
+        '[{"name": "A", "code": "002463.SZ", "reason": "同环节直接竞争", "dims": {"product": 0.9, '
+        '"customer": 0.8, "material_tech": 0.8, "business_model": 0.9}, "verdict": "direct"}]',
+    )
     candidates, _ = infer_peer_candidates("002916.SZ", [], "PCB")
     assert [c["code"] for c in candidates] == ["002463.SZ"]
 
@@ -384,3 +498,62 @@ def test_select_peer_candidates_drops_out_of_set_codes(monkeypatch):
     candidates, _ = select_peer_candidates("603986.SH", [], universe, industry="半导体")
     assert [c["code"] for c in candidates] == ["300223.SZ"]
     assert candidates[0]["name"] == "北京君正"
+
+
+# ── Gate 清空 ⇒ 空组必须置 no_peers 终态（设计 §3.6） ──────────────────────
+
+
+def test_gate_emptied_group_sets_no_peers_terminal(tmp_path, monkeypatch):
+    """Gate 把生成器给出的候选**全部剔除** ⇒ 空组必须置 ``no_peers`` 终态。
+
+    与「生成器零候选」分支同属终态空组（设计 §3.6：生成器与 judge 均有效响应且无保留）；
+    未置位会让 ``resolve_company_track`` 每次分析都重复走在线兜底并重复调用 LLM。
+
+    判别力：去掉该分支的 ``no_peers=...`` ⇒ 本用例必红。
+    """
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    monkeypatch.setattr(
+        build_module,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [
+                {
+                    "name": "新莱应材",
+                    "code": "300260.SZ",
+                    "reason": "高洁净管件，终端错配",
+                    "overlap": 0.15,
+                    "dims": {"product": 0.2, "customer": 0.3, "material_tech": 0.1, "business_model": 0.4},
+                    "verdict": "adjacent",
+                }
+            ],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    store = PeerGroupStore(root=tmp_path)
+    group, _warnings = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=store)
+
+    assert group.is_empty()
+    assert group.no_peers is True, "Gate 清空后未置 no_peers 终态 ⇒ 每次分析重复调用 LLM"
+    assert store.load("002318.SZ").no_peers is True, "落盘终态须同样携带 no_peers"
+    assert any("质量闸后无保留候选" in note for note in group.notes)
+
+
+def test_gate_emptied_but_llm_failed_does_not_set_no_peers(tmp_path, monkeypatch):
+    """对照：LLM 未有效响应（``llm_ok=False``）时**不得**置 ``no_peers``，以便下次重试。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    monkeypatch.setattr(
+        build_module,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [{"name": "新莱应材", "code": "300260.SZ", "reason": "x", "overlap": 0.15, "verdict": "adjacent"}],
+            {"note": "LLM 推断失败: 超时", "llm_ok": False, "dropped": []},
+        ),
+    )
+    store = PeerGroupStore(root=tmp_path)
+    group, _warnings = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=store)
+
+    assert group.is_empty() and group.no_peers is False

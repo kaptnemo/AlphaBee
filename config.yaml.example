@@ -48,6 +48,22 @@ report_window:
 # 五段全部带默认值 ⇒ 本段可以整段省略（缺段时各读取点 fail-open 取内置默认，import 期不读配置）。
 # 此处显式列出便于运维调整与回滚；数值与 alphabee.config.DeviationSettings() 的默认值逐项一致
 # （由测试程序化比对，防"文档写一套、代码是另一套"的漂移）。
+# 公司赛道：对标组候选判定质量闸（判定 C）。
+# 权重/阈值的唯一处在 alphabee/company_track/peer_quality.py 的默认常量，本段用于覆盖；
+# 整段缺省时全部取默认值（旧 config 仍可 import，行为不变）。
+company_track:
+  peer_quality:
+    enabled: true
+    min_overlap: 0.40           # 合成 overlap 下限（overlap = Σ w_i·dim_i；由 train 段标定）
+    weights: {product: 0.40, customer: 0.30, business_model: 0.20, material_tech: 0.10}
+    product_floor: 0.20         # product 维度下限（由 train 段标定）
+    customer_floor: 0.20        # customer 维度下限
+    residual_l3_min_constituents: 15   # 残差桶判定：L3 成分数不足 ⇒ 分类学不可信
+    judge_enabled: true         # 独立 batch judge（与生成同模型，无独立模型配置项）
+    judge_batch_size: 20
+    min_peers: 2                # 消费侧最小对标数：低于该值不注入 peer_*、回退 industry
+    confidence: {low: 0.4, medium: 0.7}
+
 deviation:
   detection:                 # §6 即时检测（F1：with_deviation_detection 包装器读这里）
     enabled: true            # 检测器总开关：关闭 ⇒ 整层 no-op（回滚用，不影响业务节点行为）
