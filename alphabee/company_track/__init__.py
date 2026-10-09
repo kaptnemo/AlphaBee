@@ -49,8 +49,12 @@ from alphabee.company_track.peer_extract import (
     select_peer_candidates,
 )
 from alphabee.company_track.peer_group_build import (
+    PeerConfidence,
     build_peer_group,
     gate_candidates,
+    peer_confidence_for_group,
+    peer_confidence_from_group,
+    synthesize_peer_confidence,
 )
 from alphabee.company_track.peer_group_store import PeerGroup, PeerGroupStore
 from alphabee.company_track.peer_judge import (
@@ -68,6 +72,13 @@ from alphabee.company_track.peer_judge import (
     overlap_score,
 )
 from alphabee.company_track.peer_report import fetch_local_report_fragments
+from alphabee.company_track.peer_taxonomy import (
+    assess_reliability,
+    recall_pool,
+    same_levels,
+    stock_taxonomy,
+    taxonomy_entry,
+)
 from alphabee.company_track.peer_universe import build_peer_universe
 from alphabee.company_track.peer_validate import (
     normalize_peer_code,
@@ -78,6 +89,15 @@ from alphabee.company_track.track import build_company_track
 
 __all__ = [
     "CompanyTrackArtifact",
+    "PeerConfidence",
+    "assess_reliability",
+    "peer_confidence_for_group",
+    "peer_confidence_from_group",
+    "recall_pool",
+    "same_levels",
+    "stock_taxonomy",
+    "synthesize_peer_confidence",
+    "taxonomy_entry",
     "MIN_PEERS_DEFAULT",
     "PEER_JUDGE_DIMS",
     "PEER_MIN_OVERLAP",

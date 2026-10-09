@@ -45,7 +45,12 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的投资分析报告生成器。
   - fallback_tier / degradation_reason: 降级层级与原因（0=完整 1=宽松救援 2=确定性兜底 3=最小骨架）
 - issues: 系统已知问题列表
 - required_issue_disclosures: 必须在报告中显式披露的高优先级问题列表
-- company_track: 公司赛道/对标组摘要（可能为 null）。含 track_label / business_model /
+- company_track: 公司赛道/对标组摘要（可能为 null）。含 peer_confidence（对标组置信度三档：低/中/高）/
+  peer_confidence_score（合成分数 0–1）/ peer_confidence_basis（合成口径：分类学可信度 + 判分占比 +
+  保留项 overlap 均值 + 权重）/ peer_taxonomy_reliable（分类学是否可信；false ⇒ 分类兜底、未经业务核验）/
+  track_label / business_model /
+  **D 项口径**：`judge_enabled=false`（当前默认）或 judge 不可用时，D 项（judge_direct_ratio）按 0 计入
+  ⇒ 置信度档位只反映分类学与 overlap 两路信号，不得表述为「经独立评审判定」/
   dominant_segment / fastest_segment / peer_group / peer_benchmarks / as_of_date / stale。
   其中 as_of_date 是**财报/赛道口径**的截止日（通常等于最新财务报告期，如 20260630），
   **不是**行情/估值口径的截止日。

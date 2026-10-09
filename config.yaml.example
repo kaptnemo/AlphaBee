@@ -66,6 +66,9 @@ company_track:
     product_floor: 0.20         # product 维度下限（由 train 段标定）
     customer_floor: 0.20        # customer 维度下限
     residual_l3_min_constituents: 15   # 残差桶判定：L3 成分数不足 ⇒ 分类学不可信
+    taxonomy_enabled: true      # 分类学（判定 E）：同 L3/（残差桶时）同 L2 成分作召回池 + 特征注入。
+                                # 只作召回与提示，**绝不硬闸**；回滚方式 = 该键置 false
+                                # （不读快照、不并入召回池、不注入 same_l3/same_l2、置信度按缺失信号）。
     judge_enabled: false        # 独立 batch judge（与生成同模型，无独立模型配置项）。
                                 # 默认 false（= 判定 C 口径）：评测 DoD 为负结果——F1 判据在标定点/
                                 # 生产生效点成立（0.702 ≥ 0.685），但稳定性判据不成立（保留集 Jaccard
@@ -76,7 +79,10 @@ company_track:
                                 # 记 judge_degraded，**不置** no_peers（可重试）
     judge_batch_size: 20        # judge 单批候选数上限（超出按批切分调用）
     min_peers: 2                # 消费侧最小对标数：低于该值不注入 peer_*、回退 industry
-    confidence: {low: 0.4, medium: 0.7}
+    confidence:                 # 对标组置信度（确定性合成，不额外调 LLM；缺失信号按 0 处理）
+      low: 0.4                  # score < low ⇒ 低（报告显式提示基准参考性弱）
+      medium: 0.7               # score < medium ⇒ 中；否则高
+      weights: {taxonomy_reliable: 0.4, judge_direct_ratio: 0.3, mean_overlap: 0.3}   # 和 = 1
 
 deviation:
   detection:                 # §6 即时检测（F1：with_deviation_detection 包装器读这里）

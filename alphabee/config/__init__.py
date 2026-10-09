@@ -206,10 +206,28 @@ class ReportWindowSettings(BaseModel):
 
 
 class PeerQualityConfidenceSettings(BaseModel):
-    """对标组置信度分档阈值（设计 §3.7；判定 E/D 的展示分档，本步先落配置面）。"""
+    """对标组置信度（设计 §3.7）：三项权重 + 三档阈值（缺段回落默认）。
+
+    确定性合成（不额外调 LLM）::
+
+        confidence_score = w_taxonomy · taxonomy_reliable       # E：target L3 是否可信
+                         + w_judge_direct · judge_direct_ratio  # D：保留项中 verdict=direct 占比
+                         + w_overlap · mean_overlap             # C：保留项 overlap 均值
+
+    档位：``< low → 低``、``< medium → 中``、否则 ``高``；**缺失信号按 0 处理**。
+
+    **D 项口径（`judge_direct_ratio`）**：`judge_enabled=false`（当前默认）或 judge 不可用时，D 项按 **0** 计入 ⇒ 档位只反映 E（`taxonomy_reliable`）与 C（`mean_overlap`）两路信号。
+    """
 
     low: float = Field(default=0.4, description="低于该值 ⇒ 低置信（报告显式提示基准参考性弱）")
     medium: float = Field(default=0.7, description="低于该值 ⇒ 中置信；否则高置信")
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {"taxonomy_reliable": 0.4, "judge_direct_ratio": 0.3, "mean_overlap": 0.3},
+        description=(
+            "三项权重（和 = 1；缺键按 0 处理，多余键忽略）；"
+            "`judge_enabled=false`（默认）时 D 项（judge_direct_ratio）按 0 计入 ⇒ 档位只反映 E 与 C 两路信号"
+        ),
+    )
 
 
 class PeerQualitySettings(BaseModel):
@@ -231,6 +249,13 @@ class PeerQualitySettings(BaseModel):
     product_floor: float = Field(default=0.20, description="product 维度下限（train 段标定）")
     customer_floor: float = Field(default=0.20, description="customer 维度下限")
     residual_l3_min_constituents: int = Field(default=15, description="残差桶判定：L3 成分数低于该值 ⇒ 分类学不可信")
+    taxonomy_enabled: bool = Field(
+        default=True,
+        description=(
+            "分类学（判定 E）开关：false ⇒ 不读静态快照、不并入召回池、不注入 same_l3/same_l2 特征，"
+            "置信度按缺失信号处理（**回滚口径**：分类学相关行为一键停用，Gate 与 min_peers 语义不变）"
+        ),
+    )
     judge_enabled: bool = Field(
         default=False,
         description=(

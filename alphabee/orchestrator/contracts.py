@@ -345,7 +345,7 @@ class ReportInsightPayload(BaseModel):
 
 
 class ReportCompanyTrackPayload(BaseModel):
-    """报告层公司赛道摘要（COMPANY_TRACK Phase F5）。"""
+    """报告层公司赛道摘要（COMPANY_TRACK Phase F5；Phase E 起含对标组置信度）。"""
 
     track_label: str = ""
     business_model: str = ""
@@ -353,9 +353,19 @@ class ReportCompanyTrackPayload(BaseModel):
     fastest_segment: str = ""
     peer_group: list[str] = Field(default_factory=list)
     peer_benchmarks: dict[str, float | None] = Field(default_factory=dict)
+    # 对标组置信度（设计 §3.7）：三档 + 分数 + 合成口径；``confidence="低"`` ⇒ 报告须显式提示基准参考性弱
+    peer_confidence: str = ""
+    peer_confidence_score: float | None = None
+    peer_confidence_basis: str = ""
+    peer_taxonomy_reliable: bool | None = None
     as_of_date: str = ""
     stale: bool = False
     degraded: bool = False
+
+    @property
+    def peer_confidence_low(self) -> bool:
+        """低置信（基准参考性弱）——报告层的显式提示判据。"""
+        return self.peer_confidence == "低"
 
 
 class ReportGenerationPayload(BaseModel):

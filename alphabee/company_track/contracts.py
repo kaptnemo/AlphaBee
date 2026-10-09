@@ -50,7 +50,7 @@ class CompanyTrackArtifact(BaseModel):
 
     Phase B 填充：segments / dominant_segment / fastest_segment / track_label /
     override_basis / 新鲜度元数据 / review_notes（含漂移）。
-    Phase C-E 填充：business_model / peer_group / peer_benchmarks。
+    Phase C-E 填充：business_model / peer_group / peer_benchmarks / peer_group_confidence（三档）。
     B3 override 机制：``track_label``（公司赛道，修正字段）与 ``sw_industry``（申万基线）
     并存；下游引用 track 时必须注明「公司赛道标签（数据截至 X 报告期）」。
     """
@@ -76,6 +76,13 @@ class CompanyTrackArtifact(BaseModel):
     peer_group: list[str] = Field(default_factory=list)  # 对标组（Phase C）
     peer_group_source: str = ""
     peer_benchmarks: dict[str, float | None] = Field(default_factory=dict)  # peer_*（Phase D）
+
+    # 对标组置信度（Phase E，设计 §3.7/§8 决策 5）：确定性合成三档（不额外调 LLM）。
+    # ``peer_group_confidence`` 为空串表示未计算（无对标组 / 判定闸未通过）。
+    peer_group_confidence: str = ""  # 低 / 中 / 高
+    peer_group_confidence_score: float | None = None
+    peer_group_confidence_basis: str = ""  # 合成口径一行（信号取值 + 权重 + 档位）
+    peer_group_taxonomy_reliable: bool | None = None  # 分类学（判定 E）：target L3 是否可信
 
     review_status: str | None = None  # approved / needs_review / rejected
     review_notes: list[str] = Field(default_factory=list)

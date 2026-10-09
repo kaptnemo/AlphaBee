@@ -5,6 +5,7 @@ import json
 import pytest
 
 import alphabee.company_track.peer_group_build as build_module
+from alphabee import PROJECT_ROOT
 from alphabee.company_track import (
     build_peer_group,
     extract_peer_candidates,
@@ -96,6 +97,18 @@ def test_split_domestic_international():
 
 
 # ── 端到端 build_peer_group ────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _taxonomy_cache_isolation():
+    """每个用例前后清空分类学快照缓存（合成快照的用例不得污染后续用例的缓存）。"""
+    import alphabee.company_track.peer_taxonomy as taxo
+
+    taxo.stock_taxonomy.cache_clear()
+    taxo._members_by.cache_clear()
+    yield
+    taxo.stock_taxonomy.cache_clear()
+    taxo._members_by.cache_clear()
 
 
 def _patch_validation(monkeypatch, valid=None):
@@ -546,6 +559,7 @@ def test_gate_emptied_group_sets_no_peers_terminal(tmp_path, monkeypatch):
             {"note": "", "llm_ok": True, "dropped": []},
         ),
     )
+    _taxonomy_off(monkeypatch)
     store = PeerGroupStore(root=tmp_path)
     group, _warnings = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=store)
 
@@ -561,6 +575,7 @@ def test_gate_emptied_but_llm_failed_does_not_set_no_peers(tmp_path, monkeypatch
 
     _patch_validation(monkeypatch)
     _judge_off(monkeypatch)
+    _taxonomy_off(monkeypatch)
     monkeypatch.setattr(
         build_module,
         "infer_peer_candidates",
@@ -595,6 +610,20 @@ def _judge_on(monkeypatch, *, batch_size: int = 20) -> None:
     settings = config_module.get_settings().model_copy(deep=True)
     settings.company_track.peer_quality.judge_enabled = True
     settings.company_track.peer_quality.judge_batch_size = batch_size
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    build_module._PEER_QUALITY_CACHE.clear()
+
+
+def _taxonomy_off(monkeypatch) -> None:
+    """把 ``company_track.peer_quality.taxonomy_enabled`` 置 False（判据与判定 E 无关的用例用）。
+
+    分类学召回池会把「同 L3/L2 成分」并入候选池并逐条注入特征，凡以判定 C/D 为判据的用例
+    都关掉它以免被池规模影响；判定 E 有专测（见文件末段）。
+    """
+    from alphabee import config as config_module
+
+    settings = config_module.get_settings().model_copy(deep=True)
+    settings.company_track.peer_quality.taxonomy_enabled = False
     monkeypatch.setattr(config_module, "get_settings", lambda: settings)
     build_module._PEER_QUALITY_CACHE.clear()
 
@@ -672,6 +701,7 @@ def test_judge_applied_gate_consumes_judge_verdict_and_dims(tmp_path, monkeypatc
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     _patch_infer(
         monkeypatch,
         [
@@ -715,6 +745,7 @@ def test_judge_degraded_falls_back_to_generator_and_records_note(tmp_path, monke
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     # 生成器认为 KEEP 高分 ⇒ 回退后仍应保留（若误把 judge 的空结果当"全剔"就会清空成空组）
     _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "KEEP", 0.9)])
     _patch_judge(monkeypatch, ok=False)
@@ -735,6 +766,7 @@ def test_judge_degraded_never_sets_no_peers(tmp_path, monkeypatch):
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     # 生成器分低 ⇒ Gate 全剔；但 judge 降级 ⇒ 不得置终态
     _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "低分", 0.05)])
     _patch_judge(monkeypatch, ok=False)
@@ -752,6 +784,7 @@ def test_judge_ok_with_empty_kept_sets_no_peers(tmp_path, monkeypatch):
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "低分", 0.05)])
     _patch_judge(monkeypatch, rows={"300260.SZ": _judge_row("reject", 0.05)}, ok=True)
     group, _ = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path))
@@ -770,6 +803,7 @@ def test_judge_not_called_on_non_infer_paths(tmp_path, monkeypatch):
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     calls = _patch_judge(monkeypatch, rows={})
     monkeypatch.setattr(
         build_module,
@@ -791,6 +825,7 @@ def test_judge_batch_size_comes_from_config(tmp_path, monkeypatch):
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch, batch_size=2)
+    _taxonomy_off(monkeypatch)
     _patch_infer(
         monkeypatch,
         [_gen_candidate("002463.SZ", "A", 0.9), _gen_candidate("300476.SZ", "B", 0.9)],
@@ -865,6 +900,7 @@ def test_m1_judge_failure_mis_setting_no_peers_is_killed(tmp_path, monkeypatch):
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "低分", 0.05)])
     _patch_judge(monkeypatch, ok=False)
     _mutate_build(
@@ -902,6 +938,7 @@ def test_m2_dropping_judge_degraded_note_is_killed(tmp_path, monkeypatch):
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "KEEP", 0.9)])
     _patch_judge(monkeypatch, ok=False)
     _mutate_build(
@@ -937,6 +974,7 @@ def test_m3_ignoring_judge_reject_is_killed(tmp_path, monkeypatch):
 
     _patch_validation(monkeypatch)
     _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
     _patch_infer(monkeypatch, [_gen_candidate("300476.SZ", "REJECT", 0.95)])
     _patch_judge(monkeypatch, rows={"300476.SZ": _judge_row("reject", 1.0)})
     _mutate_build(
@@ -964,3 +1002,380 @@ def test_m3_ignoring_judge_reject_is_killed(tmp_path, monkeypatch):
         "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
     )
     assert group_ref.is_empty() and any("judge reject" in note for note in warnings_ref)
+
+
+# ── 判定 E：分类学召回池并入 + 特征注入 + 绝不硬闸（设计 §3.1/§3.3/§6 Step 3） ──
+
+_TAXO_HEADER = [
+    "stock_code",
+    "symbol",
+    "company_name",
+    "area",
+    "industry",
+    "cnspell",
+    "market",
+    "list_date",
+    "act_name",
+    "act_ent_type",
+    "sw_l1_code",
+    "sw_l1_name",
+    "sw_l2_code",
+    "sw_l2_name",
+    "sw_l3_code",
+    "sw_l3_name",
+]
+
+
+def _taxo_row(code: str, name: str, l1: tuple[str, str], l2: tuple[str, str], l3: tuple[str, str]) -> dict[str, str]:
+    return {
+        "stock_code": code,
+        "symbol": code.split(".")[0],
+        "company_name": name,
+        "area": "广东",
+        "industry": "元器件",
+        "cnspell": "X",
+        "market": "主板",
+        "list_date": "20100101",
+        "act_name": "某",
+        "act_ent_type": "自然人",
+        "sw_l1_code": l1[0],
+        "sw_l1_name": l1[1],
+        "sw_l2_code": l2[0],
+        "sw_l2_name": l2[1],
+        "sw_l3_code": l3[0],
+        "sw_l3_name": l3[1],
+    }
+
+
+_PCB_L1 = ("801080.SI", "电子")
+_PCB_L2 = ("801083.SI", "元件")
+_PCB_L3 = ("850822.SI", "印制电路板")
+_OTHER_L3 = ("850751.SI", "其他专用设备")
+_OTHER_L2 = ("801072.SI", "专用设备")
+
+
+def _patch_snapshot(monkeypatch, tmp_path, rows: list[dict[str, str]]) -> None:
+    """把分类学快照指向合成 CSV（密闭：不读真实数据、不联网）。"""
+    import csv
+
+    import alphabee.company_track.peer_taxonomy as taxo
+
+    path = tmp_path / "all_stocks.csv"
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=_TAXO_HEADER)
+        writer.writeheader()
+        writer.writerows(rows)
+    monkeypatch.setattr(taxo, "TAXONOMY_CSV", path)
+    taxo.stock_taxonomy.cache_clear()
+    taxo._members_by.cache_clear()
+
+
+def _pcb_rows(count: int = 20) -> list[dict[str, str]]:
+    """可信 L3（印制电路板）：count 只，含标的 002916.SZ 与生成器候选 002463.SZ。"""
+    codes = ["002916.SZ", "002463.SZ"] + [f"8{index:05d}.SZ" for index in range(count - 2)]
+    return [_taxo_row(code, f"PCB{index}", _PCB_L1, _PCB_L2, _PCB_L3) for index, code in enumerate(codes)]
+
+
+def test_recall_pool_merged_dedup_excludes_self_and_is_order_stable(tmp_path, monkeypatch):
+    """召回池并入：去重、排除标的自身、保序（生成器候选在前）、受 ``build_peer_universe`` 上限约束。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(20))
+    _patch_infer(
+        monkeypatch,
+        [
+            _gen_candidate("002463.SZ", "已在池内", 0.9),
+            _gen_candidate("600584.SH", "不在快照", 0.9),
+        ],
+    )
+    calls = _patch_judge(monkeypatch, ok=False)  # judge 关闭口径：只考察召回池并入
+    _judge_off(monkeypatch)
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    merged = [item["code"] for item in calls[0]["pool"]] if calls else []
+    assert merged == []  # judge 未启用 ⇒ 不调 judge
+    assert group.codes == ["002463.SZ", "600584.SH"], "召回池不得改变既有候选的采纳结果（精度不放宽）"
+    merge_notes = [note for note in warnings if note.startswith("分类学召回池并入")]
+    assert len(merge_notes) == 1 and "同 L3 成分" in merge_notes[0]
+    # 20 只成分 − 标的自身 1 只 − 已在候选池内 1 只 = 18 只并入
+    assert "并入 18 只" in merge_notes[0]
+    # 未判分的并入项聚合一行（不逐条刷 notes）
+    unscored = [note for note in warnings if note.startswith("分类学召回池 18 只未经判分")]
+    assert len(unscored) == 1
+    assert not [note for note in warnings if "质量闸剔除 8000" in note]
+
+
+def test_recall_pool_falls_back_to_l2_for_residual_bucket(tmp_path, monkeypatch):
+    """残差桶（L3 名为「其他*」）⇒ 召回降级用 **L2**，并标注「分类兜底，未经业务核验」。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    rows = [_taxo_row("920025.BJ", "目标", ("801890.SI", "机械设备"), _OTHER_L2, _OTHER_L3)]
+    rows += [
+        _taxo_row(f"9{index:05d}.SZ", f"OTH{index}", ("801890.SI", "机械设备"), _OTHER_L2, _OTHER_L3)
+        for index in range(19)
+    ]
+    # L2 里另加 5 只其它 L3（分类降级后也应进入召回池，证明用的是 L2 而非 L3）
+    rows += [
+        _taxo_row(
+            f"7{index:05d}.SZ",
+            f"L2ONLY{index}",
+            ("801890.SI", "机械设备"),
+            _OTHER_L2,
+            ("850752.SI", "冶金矿采化工设备"),
+        )
+        for index in range(5)
+    ]
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, rows)
+    _patch_infer(monkeypatch, [_gen_candidate("920001.BJ", "候选", 0.9)])
+    _judge_off(monkeypatch)
+    _group, warnings = build_peer_group(
+        "920025.BJ", business_description="专用设备", store=PeerGroupStore(root=tmp_path)
+    )
+
+    merge_notes = [note for note in warnings if note.startswith("分类学召回池并入")]
+    assert len(merge_notes) == 1 and "同 L2 成分" in merge_notes[0]
+    # L2 共 25 只 − 标的自身 1 只 = 24 只并入（若用 L3 只会是 20-1=19 只）
+    assert "并入 24 只" in merge_notes[0]
+    fallback = [note for note in warnings if note.startswith("分类兜底，未经业务核验")]
+    assert fallback and "残差桶" in fallback[0] and "召回改用 L2" in fallback[0]
+
+
+def test_recall_pool_respects_universe_limit(tmp_path, monkeypatch):
+    """召回池受 ``build_peer_universe`` 上限约束（上限生效 ⇒ 并入数被截断）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(40))
+    _patch_infer(monkeypatch, [_gen_candidate("600584.SH", "候选", 0.9)])
+    _judge_off(monkeypatch)
+    monkeypatch.setattr(build_module, "TAXONOMY_RECALL_LIMIT_DEFAULT", 10, raising=False)
+    _group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+    merge_notes = [note for note in warnings if note.startswith("分类学召回池并入")]
+    # 40 只成分 − 标的自身 1 只 = 39 只，受上限 10 约束 ⇒ 并入 10 只
+    assert merge_notes and "并入 10 只" in merge_notes[0] and "上限 10" in merge_notes[0]
+
+
+def test_judge_pool_carries_taxonomy_features(tmp_path, monkeypatch):
+    """E 作为**特征**注入 judge prompt：``same_l3`` / ``same_l2``；未知代码 ⇒ 不注入（None）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    rows = _pcb_rows(20) + [
+        _taxo_row("603986.SH", "跨 L3", ("801080.SI", "电子"), ("801081.SI", "半导体"), ("850814.SI", "数字芯片设计"))
+    ]
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, rows)
+    _judge_on(monkeypatch)
+    _patch_infer(
+        monkeypatch,
+        [
+            _gen_candidate("002463.SZ", "同 L3", 0.9),
+            _gen_candidate("603986.SH", "跨 L3", 0.9),
+            _gen_candidate("600584.SH", "不在快照", 0.9),
+        ],
+    )
+    pool_codes = ["002463.SZ", "603986.SH", "600584.SH"]
+    calls = _patch_judge(
+        monkeypatch,
+        rows={code: _judge_row("direct", 0.9) for code in pool_codes},
+    )
+    build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    assert len(calls) == 1
+    pool = {item["code"]: item for item in calls[0]["pool"]}
+    assert pool["002463.SZ"]["same_l3"] is True and pool["002463.SZ"]["same_l2"] is True
+    assert pool["603986.SH"]["same_l3"] is False and pool["603986.SH"]["same_l2"] is False
+    assert "same_l3" not in pool["600584.SH"] and "same_l2" not in pool["600584.SH"]  # 未知 ⇒ 不注入
+
+
+def test_taxonomy_features_downgraded_for_residual_target(tmp_path, monkeypatch):
+    """残差桶 ⇒ 特征降权：judge 入参只带 ``same_l2``（``same_l3`` 不注入）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    rows = [
+        _taxo_row("920025.BJ", "目标", ("801890.SI", "机械设备"), _OTHER_L2, _OTHER_L3),
+        _taxo_row("920001.BJ", "同 L2 同 L3", ("801890.SI", "机械设备"), _OTHER_L2, _OTHER_L3),
+    ]
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, rows)
+    _judge_on(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("920001.BJ", "同 L2 同 L3", 0.9)])
+    calls = _patch_judge(monkeypatch, rows={"920001.BJ": _judge_row("direct", 0.9)})
+    build_peer_group("920025.BJ", business_description="专用设备", store=PeerGroupStore(root=tmp_path))
+
+    item = calls[0]["pool"][0]
+    assert "same_l3" not in item and item.get("same_l2") is True
+
+
+def test_taxonomy_disabled_rollback(tmp_path, monkeypatch):
+    """回滚口径：``taxonomy_enabled=false`` ⇒ 不读快照、不并入召回池、不注入特征。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(20))
+    _judge_on(monkeypatch)
+    _taxonomy_off(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "同 L3", 0.9)])
+    calls = _patch_judge(monkeypatch, rows={"002463.SZ": _judge_row("direct", 0.9)})
+    _group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    assert not [note for note in warnings if "分类学" in note or "分类兜底" in note]
+    assert calls and "same_l3" not in calls[0]["pool"][0]
+
+
+def test_peer_confidence_for_group_and_missing_signals(tmp_path, monkeypatch):
+    """置信度按 symbol + 已落盘对标组复算：分类学可信度 + overlap 均值；无分数 ⇒ 该信号缺失。"""
+    from alphabee.company_track import peer_confidence_for_group
+    from alphabee.company_track.peer_group_store import PeerGroup
+
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(20))
+    reliable = peer_confidence_for_group(
+        "002916.SZ", PeerGroup(symbol="002916.SZ", codes=["002463.SZ"], scores={"002463.SZ": 0.9})
+    )
+    assert reliable.signals["taxonomy_reliable"] == pytest.approx(1.0)
+    assert reliable.signals["mean_overlap"] == pytest.approx(0.9)
+    assert reliable.signals["judge_direct_ratio"] is None  # 持久化层无 verdict ⇒ 缺失（按 0 参与）
+    # 残差桶 ⇒ 分类学信号 0
+    residual = peer_confidence_for_group(
+        "002916.SZ",
+        PeerGroup(symbol="002916.SZ", codes=["002463.SZ"], scores={}),
+    )
+    assert residual.signals["mean_overlap"] is None
+    empty_scores = peer_confidence_for_group("002916.SZ", PeerGroup(symbol="002916.SZ", codes=[]))
+    assert empty_scores.signals["mean_overlap"] is None
+
+
+def test_m1_taxonomy_as_hard_gate_is_killed(tmp_path, monkeypatch):
+    """M1：把 ``same_l3`` 变成硬闸（``same_l3 is False`` ⇒ 剔）⇒ 必红。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(20))
+    _judge_off(monkeypatch)
+    # 跨 L3 但生成器高分：正确实现应保留（E 绝不硬闸）
+    _patch_infer(monkeypatch, [_gen_candidate("603986.SH", "跨 L3 但同环节", 0.9)])
+    _patch_snapshot(
+        monkeypatch,
+        tmp_path,
+        _pcb_rows(20)
+        + [
+            _taxo_row(
+                "603986.SH", "跨 L3", ("801080.SI", "电子"), ("801081.SI", "半导体"), ("850814.SI", "数字芯片设计")
+            )
+        ],
+    )
+    group_ref, _ = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+    assert group_ref.codes == ["603986.SH"], "未变异实现必须保留跨 L3 候选（否则判据不灵敏）"
+
+    _mutate_build(
+        '        elif verdict == "reject":',
+        '        elif str(cand.get("same_l3")).lower() == "false":  # M1 分类学硬闸\n'
+        '            drop = "分类学硬闸（M1）"\n'
+        '        elif verdict == "reject":',
+        "pbg_mutant_m1_taxo",
+        monkeypatch,
+    )
+    import sys as _sys
+
+    mutant = _sys.modules["pbg_mutant_m1_taxo"]
+    monkeypatch.setattr(
+        mutant,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [
+                {
+                    "name": "跨 L3 但同环节",
+                    "code": "603986.SH",
+                    "reason": "同环节",
+                    "source": "infer",
+                    "overlap": 0.9,
+                    "dims": {"product": 0.9, "customer": 0.9, "material_tech": 0.9, "business_model": 0.9},
+                    "same_l3": False,
+                    "same_l2": False,
+                }
+            ],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    group_mutant, _ = mutant.build_peer_group(
+        "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
+    )
+    assert group_mutant.is_empty(), "M1 未被杀死：分类学硬闸没有剔除跨 L3 候选"
+
+
+def test_m2_reliability_always_true_is_killed(tmp_path, monkeypatch):
+    """M2：残差判定恒 True（不再降级）⇒ 残差桶误判为可信 ⇒ 必红。"""
+    import alphabee.company_track.peer_taxonomy as taxo
+
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(20))
+    residual_rows = [
+        _taxo_row("920025.BJ", "目标", ("801890.SI", "机械设备"), _OTHER_L2, _OTHER_L3),
+        _taxo_row("920001.BJ", "同 L2", ("801890.SI", "机械设备"), _OTHER_L2, _OTHER_L3),
+    ]
+    _patch_snapshot(monkeypatch, tmp_path, residual_rows)
+    assert taxo.assess_reliability("920025.BJ").reliable is False  # 参照实现
+
+    mutant = _mutant_module(
+        PROJECT_ROOT / "alphabee" / "company_track" / "peer_taxonomy.py",
+        "    if entry.is_residual_l3_name:",
+        "    if False:  # M2 残差判定恒 False（永不降级）",
+        "taxo_mutant_m2",
+    )
+    assert mutant.assess_reliability("920025.BJ").reliable is True, "M2 未被杀死：残差桶仍判可信"
+    assert mutant.recall_pool("920025.BJ")[1] == "l3"
+
+
+def test_m4_recall_pool_not_merged_is_killed(tmp_path, monkeypatch):
+    """M4：召回池不并入（``_merge_taxonomy_recall_pool`` 原样返回）⇒ 必红。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(20))
+    _judge_off(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("600584.SH", "候选", 0.9)])
+
+    _mutate_build(
+        "    pool_codes, level = peer_taxonomy.recall_pool(symbol, min_constituents=min_constituents)",
+        "    return candidates  # M4 不并入召回池\n    pool_codes, level = peer_taxonomy.recall_pool(symbol, min_constituents=min_constituents)",
+        "pbg_mutant_m4_recall",
+        monkeypatch,
+    )
+    import sys as _sys
+
+    mutant = _sys.modules["pbg_mutant_m4_recall"]
+    monkeypatch.setattr(
+        mutant,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [_gen_candidate("600584.SH", "候选", 0.9)],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    _group_mutant, warnings_mutant = mutant.build_peer_group(
+        "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
+    )
+    assert not [note for note in warnings_mutant if note.startswith("分类学召回池并入")], "M4 未被杀死"
+    _group_ref, warnings_ref = build_peer_group(
+        "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
+    )
+    assert any(note.startswith("分类学召回池并入") for note in warnings_ref)
+
+
+def _mutant_module(path, old: str, new: str, name: str):
+    import importlib.util
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    text = path.read_text(encoding="utf-8")
+    assert text.count(old) == 1, f"变异锚点不唯一：{old!r}"
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / f"{name}.py"
+        target.write_text(text.replace(old, new), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(name, target)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return module

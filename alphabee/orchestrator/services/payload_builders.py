@@ -51,6 +51,9 @@ def _build_track_summary(artifacts: list[Artifact]) -> dict[str, Any] | None:
         "dominant_segment": track.dominant_segment,
         "peer_group": track.peer_group,
         "peer_benchmarks": track.peer_benchmarks,
+        # 对标组置信度（设计 §3.7）：供冲突探索/验证判断「基准参考性是否偏弱」
+        "peer_confidence": track.peer_group_confidence,
+        "peer_confidence_score": track.peer_group_confidence_score,
         "as_of_date": track.as_of_date,
         "stale": track.stale,
     }
@@ -476,6 +479,10 @@ def build_report_generation_payload(state: Mapping[str, Any]) -> ReportGeneratio
             fastest_segment=track.fastest_segment or "",
             peer_group=list(track.peer_group),
             peer_benchmarks=dict(track.peer_benchmarks),
+            peer_confidence=track.peer_group_confidence,
+            peer_confidence_score=track.peer_group_confidence_score,
+            peer_confidence_basis=track.peer_group_confidence_basis,
+            peer_taxonomy_reliable=track.peer_group_taxonomy_reliable,
             as_of_date=track.as_of_date,
             stale=track.stale,
             degraded=track.degraded,

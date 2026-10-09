@@ -71,7 +71,6 @@ prompt 构造与解析逻辑全部在 ``peer_judge`` 内，本文件不再复制
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import importlib
 import itertools
@@ -128,7 +127,6 @@ CACHE_DIR = PROJECT_ROOT / "data" / "peer_eval_cache" / "gen2"
 LEGACY_CACHE_DIR = PROJECT_ROOT / "data" / "peer_eval_cache"
 REPORT_PATH = PROJECT_ROOT / "outputs" / "peer_group_eval.md"
 ARCHIVE_DIR = PROJECT_ROOT / "outputs" / "peer_group_eval" / "baseline_run"
-_ALL_STOCKS = PROJECT_ROOT / "alphabee" / "static" / "all_stocks.csv"
 
 #: 与生产同组件（设计 §8 决策 1）。
 SMALL_MODEL_COMPONENT = MODEL_COMPONENT
@@ -152,6 +150,10 @@ DEFAULT_SPLIT = "train"
 GRID_OVERLAP = (0.40, 0.45, 0.50, 0.55, 0.60)
 GRID_PRODUCT_FLOOR = (0.20, 0.30, 0.40)
 GRID_CUSTOMER_FLOOR = (0.10, 0.20, 0.30)
+
+#: **F-2 舍入口径声明**（t16 未达项）：稳定性差值由**未舍入**均值计算，
+#: 故读者按印出的三位舍入均值相减可能相差 0.001。报告两处差值呈现共用本常量（单一来源）。
+ROUNDING_SCOPE_NOTE = "- **舍入口径**：稳定性差值由**未舍入**均值计算，故可能与上方三位舍入均值之差**相差 0.001**"
 
 #: DoD（设计 §6 Step 2）复核的两个阈值点：
 #: 「标定点」由 train 段扫参给出；「占位默认」= RC-DOD-SENS 要求复核的 0.50/0.30/0.20。
@@ -225,38 +227,42 @@ class Decision:
         )
 
 
-# ── 分类学（E 特征）─────────────────────────────────────────────────
+# ── 分类学（E 特征）——**单一来源**：复用生产函数，harness 不再自带一份 CSV 读取 ──────
 def _stock_taxonomy() -> dict[str, dict[str, str]]:
-    """``stock_code → {l2_code,l2_name,l3_code,l3_name}``（读失败 → 空表）。"""
-    if not _ALL_STOCKS.is_file():
-        return {}
-    out: dict[str, dict[str, str]] = {}
-    with _ALL_STOCKS.open("r", encoding="utf-8", newline="") as fh:
-        for row in csv.DictReader(fh):
-            code = str(row.get("stock_code") or "").strip().upper()
-            if code:
-                out[code] = {
-                    "l2_code": str(row.get("sw_l2_code") or "").strip(),
-                    "l2_name": str(row.get("sw_l2_name") or "").strip(),
-                    "l3_code": str(row.get("sw_l3_code") or "").strip(),
-                    "l3_name": str(row.get("sw_l3_name") or "").strip(),
-                }
-    return out
+    """``stock_code → {l2_code,l2_name,l3_code,l3_name}``（读失败 → 空表）。
+
+    实现 = ``alphabee.company_track.peer_taxonomy.stock_taxonomy()``（生产**唯一**快照读取处）；
+    本函数只做形状适配，避免 harness 与生产各读一份 CSV 而口径漂移。
+    """
+    from alphabee.company_track.peer_taxonomy import stock_taxonomy
+
+    return {
+        code: {
+            "l2_code": entry.l2_code,
+            "l2_name": entry.l2_name,
+            "l3_code": entry.l3_code,
+            "l3_name": entry.l3_name,
+        }
+        for code, entry in stock_taxonomy().items()
+    }
 
 
 def _attach_taxonomy(case: EvalCase, taxonomy: dict[str, dict[str, str]]) -> None:
-    """给每个候选标 ``same_l3/same_l2``（相对标的的 sw_l3/l2 代码）。"""
+    """给每个候选标 ``same_l3/same_l2``（**生产函数** ``peer_taxonomy.same_levels``，未知 ⇒ None）。"""
+    from alphabee.company_track.peer_taxonomy import same_levels
+
     target = taxonomy.get(case.symbol.upper(), {})
-    t_l3 = case.taxonomy_l3 or target.get("l3_code", "")
-    t_l2 = case.taxonomy_l2 or target.get("l2_code", "")
-    for cand in case.candidates:
-        info = taxonomy.get(cand.code.upper(), {})
-        cand.same_l3 = bool(t_l3) and info.get("l3_code") == t_l3
-        cand.same_l2 = bool(t_l2) and info.get("l2_code") == t_l2
     if not case.taxonomy_l3:
-        case.taxonomy_l3 = t_l3
+        case.taxonomy_l3 = target.get("l3_code", "")
     if not case.taxonomy_l2:
-        case.taxonomy_l2 = t_l2
+        case.taxonomy_l2 = target.get("l2_code", "")
+    pairs = same_levels(case.symbol, [cand.code for cand in case.candidates])
+    for cand in case.candidates:
+        pair = pairs.get(cand.code.upper())
+        if pair is None:
+            cand.same_l3, cand.same_l2 = None, None
+        else:
+            cand.same_l3, cand.same_l2 = pair
 
 
 def taxonomy_recall(case: EvalCase, level: str = "l3") -> float:
@@ -839,6 +845,120 @@ def _stability_split_mean(pairs: list[tuple[str, float]]) -> dict[str, float]:
     return out
 
 
+# ── 判定 E：召回口径审计 + 置信度复算（设计 §3.1/§3.7/§6 Step 3 的 DoD） ──
+def taxonomy_recall_audit(cases: list[EvalCase], *, min_constituents: int = 15) -> dict[str, Any]:
+    """E 的**召回两口径对照**（DoD ②）——三个口径，算法见下（数字与算法一并进报告）。
+
+    记 ``keep`` = 该 case 的人工标注 keep 候选，``pool`` = 标注集冻结候选池（= 首采缓存 ∪ 同 L3 成分，
+    Step 0 起冻结）。则：
+
+    1. ``llm_only``（**未并入**分类学成分）：``|keep ∩ pool∖(same_l3∪same_l2)| / |keep|``——
+       池内「既非 same_l3 亦非 same_l2」的候选只可能来自 LLM/研报路径，故该集合等价于
+       「未并入同 L3/L2 成分」的反事实池；
+    2. ``with_taxonomy``（**并入后**）：``|keep ∩ pool| / |keep|``（并入实现后池已含同 L3/L2 成分）；
+    3. ``production_pool``（**真实召回头寸**）：直接调用生产 ``peer_taxonomy.recall_pool(symbol)``
+       （残差桶自动降级 L2）得到的成分池对 keep 的覆盖率——与在线并入**同一实现**。
+
+    判据：``with_taxonomy ≥ llm_only``（单位是「覆盖 keep 的比例」，越高越好）。
+    """
+    from alphabee.company_track.peer_taxonomy import recall_pool
+
+    rows: list[dict[str, Any]] = []
+    for case in cases:
+        keeps = [cand for cand in case.candidates if cand.label == "keep"]
+        if not keeps:
+            continue
+        pool_codes = {cand.code for cand in case.candidates}
+        taxo_codes = {cand.code for cand in case.candidates if cand.same_l3 or cand.same_l2}
+        llm_codes = pool_codes - taxo_codes
+        production_codes, level = recall_pool(case.symbol, min_constituents=min_constituents)
+        production = set(production_codes)
+        keeps_codes = {cand.code for cand in keeps}
+        keep_total = len(keeps_codes)
+        rows.append(
+            {
+                "case": case.symbol,
+                "split": case.split,
+                "keep_total": keep_total,
+                "kept_in_pool": len(keeps_codes & pool_codes),
+                "kept_in_llm_only": len(keeps_codes & llm_codes),
+                "kept_in_production_pool": len(keeps_codes & production),
+                "production_level": level,
+                "production_pool_size": len(production),
+                "coverage_llm_only": len(keeps_codes & llm_codes) / keep_total,
+                "coverage_with_taxonomy": len(keeps_codes & pool_codes) / keep_total,
+                "coverage_production_pool": len(keeps_codes & production) / keep_total,
+            }
+        )
+    means = {
+        key: (statistics.mean([cast(float, row[key]) for row in rows]) if rows else 0.0)
+        for key in ("coverage_llm_only", "coverage_with_taxonomy", "coverage_production_pool")
+    }
+    return {"rows": rows, "means": means, "cases": len(rows)}
+
+
+def confidence_recompute(
+    cases: list[EvalCase],
+    decisions: dict[str, dict[str, Decision]],
+    *,
+    min_constituents: int = 15,
+) -> dict[str, Any]:
+    """对标组置信度的**离线复算**（DoD ③）：用生产合成函数 + 真实三信号逐 case 复算三档。
+
+    信号口径（与设计 §3.7 一致）：
+
+    - ``taxonomy_reliable``：生产 ``peer_taxonomy.assess_reliability``（残差桶/成分不足 ⇒ False）；
+    - ``judge_direct_ratio``：``C_D_judge`` 策略**保留项**中 ``verdict == "direct"`` 的占比；
+    - ``mean_overlap``：保留项的合成 overlap 均值。
+
+    返回逐 case 结果 + 三档分布 + 确定性自检（复算两遍逐位一致）。
+    """
+    from alphabee.company_track.peer_group_build import synthesize_peer_confidence
+    from alphabee.company_track.peer_taxonomy import assess_reliability
+
+    def _project(case: EvalCase) -> dict[str, Any] | None:
+        rows = decisions.get(case.symbol) or {}
+        kept, judge_ok = gate_for_case(case, decisions, "C_D_judge")
+        if not kept:
+            return None
+        direct = sum(1 for code in kept if (rows.get(code) or Decision(code=code)).judge_verdict == "direct")
+        overlaps = [overlap_score(rows[code].judge_dims or {}) for code in kept if code in rows]
+        confidence = synthesize_peer_confidence(
+            taxonomy_reliable=assess_reliability(case.symbol, min_constituents=min_constituents).reliable,
+            judge_direct_ratio=(direct / len(kept)) if judge_ok else None,
+            mean_overlap=(statistics.mean(overlaps) if overlaps else None),
+        )
+        return {
+            "case": case.symbol,
+            "split": case.split,
+            "level": confidence.level,
+            "score": confidence.score,
+            "signals": confidence.signals,
+            "basis": confidence.basis(),
+        }
+
+    first = [_project(case) for case in cases]
+    second = [_project(case) for case in cases]
+    deterministic = first == second
+    distribution = {level: 0 for level in ("低", "中", "高")}
+    for row in first:
+        if row is not None:
+            distribution[str(row["level"])] += 1
+    return {
+        "rows": [row for row in first if row is not None],
+        "distribution": distribution,
+        "deterministic": deterministic,
+        "cases_with_peers": sum(1 for row in first if row is not None),
+    }
+
+
+def overlap_score(dims: dict[str, float]) -> float:
+    """四维 → 合成 overlap（**生产权重**单一来源，供离线复算复用）。"""
+    from alphabee.company_track.peer_judge import overlap_score as production_overlap
+
+    return production_overlap(dims)
+
+
 # ── 留档 / 血缘审计 / DoD 复核（F-5、F-6、设计 §6 Step 2） ────────────
 def sha256_of(path: Path) -> str:
     """文件 sha256（留档与血缘审计用）。"""
@@ -1129,6 +1249,8 @@ def render_report(
     dod: dict[str, Any] | None = None,
     lineage: dict[str, Any] | None = None,
     generated_at: str = "",
+    recall_audit: dict[str, Any] | None = None,
+    confidence: dict[str, Any] | None = None,
 ) -> str:
     lines = ["# 对标组判定策略回归", ""]
     lines.append(f"- 测量时刻（UTC）: {generated_at or '—'}")
@@ -1223,14 +1345,22 @@ def render_report(
 
     lines.append("## 分类学召回（E）")
     lines.append("")
-    lines.append("| case | split | 业态 | same_l3 recall | same_l2 recall |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| case | split | 业态 | same_l3 recall | same_l2 recall | 生产分类学 | 召回层级 |")
+    lines.append("|---|---|---|---|---|---|---|")
     for case in cases:
+        info = _taxonomy_row(case)
         lines.append(
             f"| {case.symbol} {case.name} | {case.split} | {case.segment or '—'} "
-            f"| {taxonomy_recall(case, 'l3'):.2f} | {taxonomy_recall(case, 'l2'):.2f} |"
+            f"| {taxonomy_recall(case, 'l3'):.2f} | {taxonomy_recall(case, 'l2'):.2f} "
+            f"| {info['reliable']}{info['detail']} | {info['level']} |"
         )
     lines.append("")
+
+    if recall_audit is not None:
+        lines.extend(_recall_audit_lines(recall_audit, results))
+
+    if confidence is not None:
+        lines.extend(_confidence_lines(confidence))
 
     lines.append("## 逐 case（按策略保留集）")
     lines.append("")
@@ -1305,6 +1435,7 @@ def render_report(
             candidate = stability_strategies[-1]
             cand_split = stability_by_split(stability_rows, candidate)
             lines.append("")
+            lines.append(ROUNDING_SCOPE_NOTE)
             lines.append(f"- 对照：`{candidate}` vs 生成器口径（差值为正表示前者更稳）")
             for baseline_side in stability_strategies[:-1]:
                 base_split = stability_by_split(stability_rows, baseline_side)
@@ -1342,6 +1473,100 @@ def render_report(
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _taxonomy_row(case: EvalCase) -> dict[str, str]:
+    """生产分类学口径（``peer_taxonomy``）逐 case 摘要：可信性、L3 名称/成分数、召回层级。"""
+    from alphabee.company_track.peer_taxonomy import assess_reliability
+
+    reliability = assess_reliability(case.symbol)
+    entry = reliability.entry
+    detail = ""
+    if entry is not None:
+        detail = f"（{entry.l3_name or '—'} / {reliability.l3_constituents} 只）"
+    return {
+        "reliable": "可信" if reliability.reliable else "不可信",
+        "detail": detail,
+        "level": reliability.recall_level,
+        "reason": reliability.reason,
+    }
+
+
+def _recall_audit_lines(recall_audit: dict[str, Any], results: dict[str, dict[str, Any]]) -> list[str]:
+    """E 召回两口径对照章节（DoD ②）：数字 + 算法说明 + 判据。"""
+    means = recall_audit["means"]
+    lines = ["## E 召回口径审计（DoD ②）", ""]
+    lines.append(
+        "- **算法**：`keep` = 人工标注 keep；`pool` = 标注集冻结候选池（首采缓存 ∪ 同 L3 成分）。"
+        "`llm_only`（**未并入**）= `|keep ∩ pool∖(same_l3∪same_l2)| / |keep|`（池内既非同 L3 亦非同 L2 的"
+        "候选只可能来自 LLM/研报路径，故等价于未并入的反事实池）；`with_taxonomy`（**并入后**）"
+        "= `|keep ∩ pool| / |keep|`；`production_pool`（**真实召回头寸**）= 生产 "
+        "`peer_taxonomy.recall_pool(symbol)`（残差桶自动降级 L2）对 keep 的覆盖率"
+    )
+    lines.append(
+        f"- **均值**：llm_only={means['coverage_llm_only']:.3f}；with_taxonomy="
+        f"{means['coverage_with_taxonomy']:.3f}；production_pool={means['coverage_production_pool']:.3f}"
+        f"（{recall_audit['cases']} 例有 keep 的 case）"
+    )
+    verdict = means["coverage_with_taxonomy"] >= means["coverage_llm_only"] - 1e-12
+    lines.append(f"- **判据（with_taxonomy ≥ llm_only）**：{'成立 ✓' if verdict else '不成立 ✗'}")
+    lines.append(
+        "- **诚实口径提示**：`with_taxonomy=1.000` 含**构造性**成分——Step 0 的冻结候选池本就按"
+        "「首采缓存 ∪ 同 L3 成分」构建，故并入口径必然覆盖全部 keep；**真实召回头寸以 "
+        f"`production_pool={means['coverage_production_pool']:.3f}` 为准**（生产 `recall_pool` 实际能覆盖的 "
+        "keep 比例），其未覆盖部分 = **跨 L3/L2 的真对标**（E 的固有漏检，设计 §5.1 结论 3：E 只能作召回/特征、"
+        "绝不硬闸）"
+    )
+    lines.append("")
+    lines.append("| case | split | keep | llm_only | with_taxonomy | production_pool | 生产召回层级 |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for row in recall_audit["rows"]:
+        lines.append(
+            f"| {row['case']} | {row['split']} | {row['keep_total']} | {row['coverage_llm_only']:.3f} "
+            f"| {row['coverage_with_taxonomy']:.3f} | {row['coverage_production_pool']:.3f} "
+            f"| {row['production_level']}（池 {row['production_pool_size']} 只） |"
+        )
+    lines.append("")
+    if "C_dims" in results and "C_E_taxo" in results:
+        lines.append(
+            "- **精度对照（DoD ①）**：`C_E_taxo` 与 `C_dims` 保留集逐 case 相同（E 只作特征/召回池、"
+            "不进 Gate 条件）⇒ 精度不放宽；逐 split 数字见上方策略汇总"
+        )
+        lines.append("")
+    return lines
+
+
+def _confidence_lines(confidence: dict[str, Any]) -> list[str]:
+    """对标组置信度复算章节（DoD ③）：逐 case 三档 + 分布 + 确定性自检。"""
+    lines = ["## 对标组置信度复算（DoD ③）", ""]
+    lines.append(
+        "- **口径**：`confidence_score = w_taxonomy·taxonomy_reliable + w_judge_direct·judge_direct_ratio "
+        "+ w_overlap·mean_overlap`（生产合成函数，缺失信号按 0）；"
+        "档位 `< low → 低`、`< medium → 中`、否则 `高`"
+    )
+    lines.append(
+        "- **D 项口径**：`judge_enabled=false`（当前默认）或 judge 不可用时，D 项（`judge_direct_ratio`）"
+        "按 **0** 计入 ⇒ 档位只反映 E（`taxonomy_reliable`）与 C（`mean_overlap`）两路信号"
+        "（**不得**读作「judge 判过但都不是 direct」）；本报告为**离线复算**，传入录制缓存的"
+        "**真实 ratio** ⇒ 三路齐备（公式本体被覆盖，而非只覆盖 0 分支）"
+    )
+    lines.append(
+        f"- **三档分布**：{confidence['distribution']}（有对标组的 case {confidence['cases_with_peers']} 个）；"
+        f"**确定性自检（复算两遍逐位一致）**：{'通过 ✓' if confidence['deterministic'] else '失败 ✗'}"
+    )
+    lines.append("- 边界用例（score 恰等于 low/medium）由单测钉住：`tests/company_track/test_peer_quality.py`")
+    lines.append("")
+    lines.append("| case | split | 档位 | score | 信号（taxonomy/判分占比/overlap） |")
+    lines.append("|---|---|---|---|---|")
+    for row in confidence["rows"]:
+        signals = row["signals"]
+        parts = ", ".join(
+            f"{name}={'缺失' if signals.get(name) is None else f'{signals[name]:.2f}'}"
+            for name in ("taxonomy_reliable", "judge_direct_ratio", "mean_overlap")
+        )
+        lines.append(f"| {row['case']} | {row['split']} | {row['level']} | {row['score']:.3f} | {parts} |")
+    lines.append("")
+    return lines
 
 
 def _equivalence_lines(results: dict[str, dict[str, Any]], left: str, right: str) -> list[str]:
@@ -1408,6 +1633,7 @@ def _dod_lines(dod: dict[str, Any]) -> list[str]:
         + ("成立 ✓" if dod["f1_ok_at_placeholder"] else "不成立 ✗")
     )
     if dod.get("stability_deltas"):
+        lines.append(ROUNDING_SCOPE_NOTE)
         lines.append("- **稳定性判据**（judge 策略相对生成器口径的 Jaccard 差值，正=更稳）：")
         for strategy, row in dod["stability_deltas"].items():
             for ref, deltas in row.items():
@@ -1553,6 +1779,8 @@ def main() -> None:
         if args.sweep
         else None
     )
+    recall_audit = taxonomy_recall_audit(cases)
+    confidence = confidence_recompute(cases, decisions)
     lineage = [cache_lineage_audit(cases, root=CACHE_DIR, label="现行世代（评测用）")]
     if LEGACY_CACHE_DIR != CACHE_DIR and LEGACY_CACHE_DIR.is_dir():
         lineage.append(
@@ -1571,6 +1799,8 @@ def main() -> None:
         dod=dod,
         lineage=lineage,
         generated_at=generated_at,
+        recall_audit=recall_audit,
+        confidence=confidence,
     )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1604,6 +1834,15 @@ def main() -> None:
                     "stability_ok": None if dod is None else dod["stability_ok"],
                 },
                 "lineage_mismatches": [item for audit in lineage for item in (audit.get("mismatches") or [])],
+                "e_recall": {
+                    "means": recall_audit["means"],
+                    "cases": recall_audit["cases"],
+                },
+                "peer_confidence": {
+                    "distribution": confidence["distribution"],
+                    "deterministic": confidence["deterministic"],
+                    "cases_with_peers": confidence["cases_with_peers"],
+                },
                 **git_fingerprint(),
             },
         )
@@ -1637,6 +1876,15 @@ def main() -> None:
                 f"holdout={by_split['holdout']:.3f} all={by_split['all']:.3f} "
                 f"unassessable={len(unassessable)}"
             )
+    means = recall_audit["means"]
+    print(
+        f"[E 召回] llm_only={means['coverage_llm_only']:.3f} with_taxonomy={means['coverage_with_taxonomy']:.3f} "
+        f"production_pool={means['coverage_production_pool']:.3f}"
+    )
+    print(
+        f"[置信度] 分布={confidence['distribution']} 确定性={confidence['deterministic']} "
+        f"cases={confidence['cases_with_peers']}"
+    )
     print(f"report → {out_path}")
 
 

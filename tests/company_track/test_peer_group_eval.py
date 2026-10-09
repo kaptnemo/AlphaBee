@@ -1402,3 +1402,212 @@ def test_labels_coverage_claim_prose_mutation_is_killed(cases):
     computed = len({case.segment for case in cases if case.split == "holdout"})
     claims = [numerals[token] for token in _re.findall(r"六类中的([一二三四五六])类", mutated)]
     assert claims and claims[0] != computed
+
+
+# ── 判定 E 与对标组置信度（t10：召回口径审计 + 置信度复算 + 变异） ──────────
+
+
+def test_taxonomy_recall_audit_two_scopes_and_production_pool(ev):
+    """E 召回审计：未并入（llm_only）与并入后（with_taxonomy）两口径 + 生产召回头寸。"""
+    cases = ev.load_cases(ev.DEFAULT_CASES)
+    taxonomy = ev._stock_taxonomy()
+    for case in cases:
+        ev._attach_taxonomy(case, taxonomy)
+    audit = ev.taxonomy_recall_audit(cases)
+
+    assert audit["cases"] >= 1
+    means = audit["means"]
+    assert means["coverage_with_taxonomy"] >= means["coverage_llm_only"] - 1e-12, means
+    assert 0.0 <= means["coverage_production_pool"] <= 1.0
+    for row in audit["rows"]:
+        assert row["coverage_with_taxonomy"] == pytest.approx(row["kept_in_pool"] / row["keep_total"])
+        assert row["coverage_llm_only"] == pytest.approx(row["kept_in_llm_only"] / row["keep_total"])
+        assert row["production_level"] in {"l3", "l2", "none"}
+
+
+def test_taxonomy_recall_audit_without_taxonomy_subset_is_killed(ev):
+    """判别力：把「并入后」口径也算成反事实池（丢掉同 L3/L2 子集）⇒ 判据必红。"""
+    cases = ev.load_cases(ev.DEFAULT_CASES)
+    taxonomy = ev._stock_taxonomy()
+    for case in cases:
+        ev._attach_taxonomy(case, taxonomy)
+    mutant = _mutate(
+        ev,
+        "        llm_codes = pool_codes - taxo_codes",
+        "        llm_codes = pool_codes  # 变异：并入口径退回未并入口径",
+        "pge_mutant_e_recall",
+    )
+    audit = mutant.taxonomy_recall_audit(cases)
+    # 两口径退化为一套 ⇒ with_taxonomy == llm_only，判别力（含构造性差异）被杀死
+    assert audit["means"]["coverage_with_taxonomy"] == pytest.approx(audit["means"]["coverage_llm_only"])
+    reference = ev.taxonomy_recall_audit(cases)
+    assert reference["means"]["coverage_with_taxonomy"] > reference["means"]["coverage_llm_only"]
+
+
+def test_confidence_recompute_is_deterministic_and_reports_tiers(ev):
+    """置信度复算：三档分布 + 确定性自检 + 逐 case 信号（含缺失信号按 0）。"""
+    cases = ev.load_cases(ev.DEFAULT_CASES)
+    taxonomy = ev._stock_taxonomy()
+    for case in cases:
+        ev._attach_taxonomy(case, taxonomy)
+    decisions = {case.symbol: ev.collect_decisions(case, record=False) for case in cases}
+    result = ev.confidence_recompute(cases, decisions)
+
+    assert result["deterministic"] is True
+    assert set(result["distribution"]) == {"低", "中", "高"}
+    assert sum(result["distribution"].values()) == result["cases_with_peers"]
+    ratios = [row["signals"]["judge_direct_ratio"] for row in result["rows"]]
+    for row in result["rows"]:
+        assert row["level"] in {"低", "中", "高"}
+        assert 0.0 <= row["score"] <= 1.0
+        assert "taxonomy_reliable=" in row["basis"]
+    # 「公式本体被覆盖，而不只是 0 分支」：离线复算必须用到**真实**判分占比（存在非缺失且非零的取值）
+    assert any(value is not None and value > 0 for value in ratios), ratios
+
+
+def test_confidence_recompute_reuses_production_synthesis(ev):
+    """单源判据：复算必须走**生产**合成函数（改生产权重 ⇒ 复算分数随之变化）。"""
+    from alphabee.company_track.peer_group_build import synthesize_peer_confidence
+
+    case = _synth_case(ev, "C1", split="train", candidates=[("A", "keep", False)])
+    decisions = {
+        "C1": {
+            "A": ev.Decision(
+                code="A",
+                gen_overlap=0.9,
+                dims=_dims(0.9, 0.9),
+                judge_verdict="direct",
+                judge_dims=_dims(0.9, 0.9),
+            )
+        }
+    }
+    result = ev.confidence_recompute([case], decisions)
+    row = result["rows"][0]
+    expected = synthesize_peer_confidence(
+        taxonomy_reliable=row["signals"]["taxonomy_reliable"] == 1.0,
+        judge_direct_ratio=row["signals"]["judge_direct_ratio"],
+        mean_overlap=row["signals"]["mean_overlap"],
+    )
+    assert row["level"] == expected.level and row["score"] == pytest.approx(expected.score)
+
+
+def test_report_includes_e_recall_and_confidence_sections(cases, ev):
+    """报告含 E 召回口径审计与置信度复算章节（DoD ②③ 的可核对落点）。"""
+    decisions = _all_keep_decisions(cases, ev)
+    results = {
+        "C_dims": ev.evaluate_strategy(cases, decisions, "C_dims"),
+        "C_E_taxo": ev.evaluate_strategy(cases, decisions, "C_E_taxo"),
+    }
+    audit = ev.taxonomy_recall_audit(cases)
+    confidence = ev.confidence_recompute(cases, decisions)
+    report = ev.render_report(
+        cases,
+        results,
+        ev._stock_taxonomy(),
+        None,
+        None,
+        recall_audit=audit,
+        confidence=confidence,
+    )
+    assert "E 召回口径审计（DoD ②）" in report
+    assert "llm_only" in report and "with_taxonomy" in report and "production_pool" in report
+    assert "对标组置信度复算（DoD ③）" in report
+    assert "三档分布" in report and "确定性自检" in report
+    assert "生产分类学" in report  # 逐 case 表新增生产口径列
+
+
+# ── F-2（t16 未达项）：稳定性差值的**舍入口径声明** ─────────────────────────
+
+
+def _f2_stability_rows():
+    return [
+        {
+            "case": "T1",
+            "split": "train",
+            "segment": "同质 L3",
+            "repeat": 3,
+            "results": {"C_dims": 0.9},
+            "empty_runs": {},
+        },
+        {
+            "case": "H1",
+            "split": "holdout",
+            "segment": "跨行业",
+            "repeat": 3,
+            "results": {"C_dims": 0.8},
+            "empty_runs": {},
+        },
+    ]
+
+
+def _f2_dod(ev):
+    """带稳定性差值的 DoD 载荷（用于检查 DoD 章节同样带舍入口径声明）。"""
+    return _dod_payload(
+        ev,
+        stability_deltas={"C_dims": {"B_single": {"train": 0.01, "holdout": -0.015741, "all": 0.0}}},
+        stability_ok=True,
+    )
+
+
+def test_stability_delta_declares_unrounded_rounding_scope(ev, cases):
+    """报告须声明「稳定性差值由**未舍入**均值计算」（否则按印出的三位均值相减会差 0.001）。
+
+    t16 实测：全文 0 次提及舍入口径；差值按未舍入均值算（holdout Δ=−0.015741 显示 −0.016），
+    与三位舍入均值之差（0.934−0.919=−0.015）相差 0.001。
+    """
+    decisions = _all_keep_decisions(cases, ev)
+    results = {"C_dims": ev.evaluate_strategy(cases, decisions, "C_dims")}
+    rows = _f2_stability_rows()
+    common = {
+        "stability_strategies": ("B_single", "C_dims"),
+        "repeat": 3,
+    }
+    with_dod = ev.render_report(cases, results, ev._stock_taxonomy(), None, rows, dod=_f2_dod(ev), **common)
+    without_dod = ev.render_report(cases, results, ev._stock_taxonomy(), None, rows, **common)
+
+    assert "未舍入" in with_dod and "相差 0.001" in with_dod
+    # 两处差值呈现（DoD 稳定性判据 + 稳定性章节对照）都带声明 ⇒ 引用同一常量、共 2 次
+    assert with_dod.count("舍入口径") == 2
+    assert without_dod.count("舍入口径") == 1
+    # 声明与实现同源（报告文本来自模块常量）
+    assert ev.ROUNDING_SCOPE_NOTE in with_dod
+
+
+@pytest.mark.parametrize(
+    ("replacement", "label"),
+    [
+        ('ROUNDING_SCOPE_NOTE = ""', "删掉声明"),
+        ('ROUNDING_SCOPE_NOTE = "- **舍入口径**：稳定性差值由**舍入后**的均值计算"', "改写成「由舍入值计算」"),
+    ],
+)
+def test_f2_rounding_scope_declaration_removed_is_killed(ev, cases, replacement, label):
+    """判别力：删掉声明或改写成「由舍入值计算」⇒ 上面的检查必红（实测 KILLED）。"""
+    anchor = (
+        'ROUNDING_SCOPE_NOTE = "- **舍入口径**：稳定性差值由**未舍入**均值计算，'
+        '故可能与上方三位舍入均值之差**相差 0.001**"'
+    )
+    mutant = _mutate(ev, anchor, replacement, f"pge_mutant_f2_{abs(hash(label)) % 9973}")
+
+    decisions = _all_keep_decisions(cases, mutant)
+    results = {"C_dims": mutant.evaluate_strategy(cases, decisions, "C_dims")}
+    rows = _f2_stability_rows()
+    report = mutant.render_report(
+        cases,
+        results,
+        mutant._stock_taxonomy(),
+        None,
+        rows,
+        stability_strategies=("B_single", "C_dims"),
+        repeat=3,
+    )
+    assert "未舍入" not in report, f"{label}：变异体仍带未舍入口径声明"
+    reference = ev.render_report(
+        cases,
+        results,
+        ev._stock_taxonomy(),
+        None,
+        rows,
+        stability_strategies=("B_single", "C_dims"),
+        repeat=3,
+    )
+    assert "未舍入" in reference, "参照实现必须带声明（否则判据不灵敏）"

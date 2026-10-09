@@ -883,3 +883,198 @@ def test_judge_rollback_switch_is_verbatim_and_documented():
     live = peer_group_build._peer_quality_settings()
     assert live["judge_enabled"] == get_settings().company_track.peer_quality.judge_enabled
     assert live["judge_batch_size"] == get_settings().company_track.peer_quality.judge_batch_size
+
+
+# ── 对标组置信度（设计 §3.7）：三档、边界、确定性、节点落字段 ────────────────
+
+
+def test_confidence_config_defaults_and_weights_sum_to_one():
+    """置信度权重/阈值默认值：三项权重和 = 1、阈值 0.4/0.7，且与示例配置逐项一致。"""
+    import yaml
+
+    from alphabee.company_track.peer_group_build import CONFIDENCE_SIGNALS as SIGNALS
+    from alphabee.company_track.peer_group_build import CONFIDENCE_WEIGHTS_DEFAULT
+    from alphabee.config import PeerQualitySettings
+
+    defaults = PeerQualitySettings()
+    weights = defaults.confidence.weights
+    assert set(weights) == set(SIGNALS) == {"taxonomy_reliable", "judge_direct_ratio", "mean_overlap"}
+    assert sum(weights.values()) == pytest.approx(1.0)
+    assert weights == CONFIDENCE_WEIGHTS_DEFAULT
+    assert (defaults.confidence.low, defaults.confidence.medium) == (0.4, 0.7)
+
+    example = yaml.safe_load((PROJECT_ROOT / "config.yaml.example").read_text(encoding="utf-8"))
+    section = example["company_track"]["peer_quality"]
+    assert PeerQualitySettings(**section).model_dump() == defaults.model_dump()
+    assert "taxonomy_enabled" in section  # 回滚开关在示例中显式在位
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_level", "expected_score"),
+    [
+        # 边界：恰好等于 low（0.4）⇒ 中（判据是 `< low`）
+        ({"taxonomy_reliable": True, "mean_overlap": 0.0}, "中", 0.4),
+        # 略低于 low
+        ({"taxonomy_reliable": False, "mean_overlap": 0.99}, "低", pytest.approx(0.297)),
+        # 边界：恰好等于 medium（0.7）⇒ 高
+        ({"taxonomy_reliable": True, "judge_direct_ratio": 1.0}, "高", 0.7),
+        # 略低于 medium
+        ({"taxonomy_reliable": True, "judge_direct_ratio": 0.99}, "中", pytest.approx(0.697)),
+        # 三信号全缺失 ⇒ 0 ⇒ 低
+        ({}, "低", 0.0),
+    ],
+)
+def test_confidence_tiers_and_boundaries(kwargs, expected_level, expected_score):
+    from alphabee.company_track import synthesize_peer_confidence
+
+    confidence = synthesize_peer_confidence(**kwargs)
+    assert confidence.level == expected_level
+    assert confidence.score == pytest.approx(expected_score, abs=1e-6)
+    assert f"score={confidence.score:.2f}" in confidence.basis()
+
+
+def test_confidence_is_deterministic_and_normalizes_weights():
+    from alphabee.company_track import synthesize_peer_confidence
+
+    first = synthesize_peer_confidence(taxonomy_reliable=True, mean_overlap=0.9)
+    second = synthesize_peer_confidence(taxonomy_reliable=True, mean_overlap=0.9)
+    assert first == second
+    # 权重和不为 1 ⇒ 按权重和归一（不越界），信号缺失仍按 0
+    scaled = synthesize_peer_confidence(
+        taxonomy_reliable=True,
+        mean_overlap=0.9,
+        weights={"taxonomy_reliable": 4.0, "judge_direct_ratio": 3.0, "mean_overlap": 3.0},
+    )
+    assert scaled.score == pytest.approx(first.score)
+    # 阈值可配（来自配置）
+    configurable = synthesize_peer_confidence(taxonomy_reliable=True, mean_overlap=0.0, low=0.5, medium=0.5)
+    assert configurable.level == "低"
+
+
+def test_node_writes_confidence_to_artifact_and_notes(monkeypatch):
+    """节点把三档与合成口径落 ``CompanyTrackArtifact`` 字段 + ``review_notes`` 一行（设计 §3.8/§8 决策 5）。"""
+    from alphabee.company_track.contracts import CompanyTrackArtifact
+    from alphabee.core import ArtifactType
+
+    result = _run_node(monkeypatch, ["300223.SZ", "688766.SH"])
+    artifacts = [item for item in result["artifacts"] if item.type == ArtifactType.COMPANY_TRACK]
+    assert len(artifacts) == 1
+    artifact = CompanyTrackArtifact(**artifacts[0].value)
+    assert artifact.peer_group_confidence in {"低", "中", "高"}
+    assert artifact.peer_group_confidence_score is not None
+    assert "|低|中|高|" not in f"|{artifact.peer_group_confidence}|"  # 三档取值约束
+    assert "taxonomy_reliable=" in artifact.peer_group_confidence_basis  # 合成口径（信号取值）
+    assert any(note.startswith("对标组置信度") for note in artifact.review_notes)
+
+
+def test_node_skips_confidence_without_peer_group(monkeypatch):
+    """无对标组（min_peers 闸拦下）⇒ 不写置信度字段（空串），且不得编造档位。"""
+    from alphabee.company_track.contracts import CompanyTrackArtifact
+    from alphabee.core import ArtifactType
+
+    result = _run_node(monkeypatch, ["300223.SZ"])  # 1 只 < min_peers 2 ⇒ 不注入 peer_*
+    artifact = CompanyTrackArtifact(
+        **next(item for item in result["artifacts"] if item.type == ArtifactType.COMPANY_TRACK).value
+    )
+    assert artifact.peer_group_confidence == ""
+    assert artifact.peer_group_confidence_score is None
+    assert not any(note.startswith("对标组置信度") for note in artifact.review_notes)
+
+
+def test_m3_confidence_ignoring_taxonomy_is_killed():
+    """M3：置信度忽略 ``taxonomy_reliable`` ⇒ 必红（参照实现下该信号必须改变 score）。"""
+    from alphabee.company_track import synthesize_peer_confidence
+
+    reliable = synthesize_peer_confidence(taxonomy_reliable=True, mean_overlap=0.9)
+    unreliable = synthesize_peer_confidence(taxonomy_reliable=False, mean_overlap=0.9)
+    assert reliable.score > unreliable.score, "参照实现下分类学信号必须影响分数"
+
+    mutant = _mutant(
+        _QUALITY_MODULE,
+        '        "taxonomy_reliable": None if taxonomy_reliable is None else (1.0 if taxonomy_reliable else 0.0),',
+        '        "taxonomy_reliable": 0.0,  # M3 忽略分类学可信度',
+        "pq_mutant_m3_confidence",
+    )
+    assert mutant.synthesize_peer_confidence(taxonomy_reliable=True, mean_overlap=0.9).score == pytest.approx(
+        mutant.synthesize_peer_confidence(taxonomy_reliable=False, mean_overlap=0.9).score
+    )
+    assert mutant.synthesize_peer_confidence(taxonomy_reliable=True, mean_overlap=0.9).score != pytest.approx(
+        reliable.score
+    )
+
+
+def test_confidence_judge_off_signal_counts_as_zero_and_is_declared(monkeypatch):
+    """**D 项口径**：``judge_enabled=false``（默认）时 ``judge_direct_ratio`` 按 **0** 计入。
+
+    判据三点（防「伪造成有 judge」与「读成判过但全非 direct」两种误读）：
+
+    1. 生产路径（judge 关闭）算出的 artifact 分数**精确等于**「只含 E + C 两路」的合成分；
+    2. `basis()` 显式写 ``judge_direct_ratio=缺失``（而不是 0.00 之类像真信号的取值）；
+    3. 合成函数 docstring 逐字声明该口径（`judge_enabled=false` … 按 0 计入 ⇒ 只反映 E 与 C）。
+    """
+    import inspect
+
+    from alphabee.company_track import synthesize_peer_confidence
+    from alphabee.company_track.contracts import CompanyTrackArtifact
+    from alphabee.company_track.peer_taxonomy import assess_reliability
+    from alphabee.core import ArtifactType
+
+    # ① 生产路径（默认 judge 关闭）
+    result = _run_node(monkeypatch, ["300223.SZ", "688766.SH"])
+    artifact = CompanyTrackArtifact(
+        **next(item for item in result["artifacts"] if item.type == ArtifactType.COMPANY_TRACK).value
+    )
+    assert artifact.peer_group_confidence  # 有对标组 ⇒ 有档位
+    two_signal_only = synthesize_peer_confidence(
+        taxonomy_reliable=assess_reliability("603986.SH").reliable,
+        judge_direct_ratio=None,  # D 项缺失 ⇒ 按 0
+        mean_overlap=None,  # 该夹具的对标组无 scores ⇒ C 项也缺失
+    )
+    assert artifact.peer_group_confidence_score == pytest.approx(two_signal_only.score)
+    # 反证：若把 D 项当 1 或 0.5 计入，分数必然不同（判据不是恒真）
+    assert two_signal_only.score != pytest.approx(
+        synthesize_peer_confidence(
+            taxonomy_reliable=assess_reliability("603986.SH").reliable, judge_direct_ratio=1.0
+        ).score
+    )
+
+    # ② 口径在展示层逐字可读
+    assert "judge_direct_ratio=缺失" in artifact.peer_group_confidence_basis
+    assert two_signal_only.basis().count("缺失") >= 1
+
+    # ③ docstring 逐字声明
+    doc = inspect.getdoc(synthesize_peer_confidence) or ""
+    assert "`judge_enabled=false`（当前默认）或 judge 不可用时" in doc
+    assert "D 项按 **0** 计入" in doc and "只反映 E" in doc and "与 C" in doc
+
+
+def test_m6_missing_ratio_counted_as_nonzero_is_killed():
+    """M6：把「缺失按 0」改成「缺失按 1 / 0.5」⇒ 上面的口径用例必红（判别力自证）。"""
+    from alphabee.company_track import synthesize_peer_confidence
+
+    reference = synthesize_peer_confidence(taxonomy_reliable=True, judge_direct_ratio=None, mean_overlap=None)
+    assert reference.signals["judge_direct_ratio"] is None
+    assert reference.score == pytest.approx(0.4)  # 0.4·1 + 0.3·0 + 0.3·0
+
+    forged_one = _mutant(
+        _QUALITY_MODULE,
+        "    ratio = _coerce_ratio(judge_direct_ratio)",
+        "    ratio = 1.0 if judge_direct_ratio is None else _coerce_ratio(judge_direct_ratio)  # M6 缺失按 1",
+        "pq_mutant_m6_ratio_one",
+    )
+    assert forged_one.synthesize_peer_confidence(
+        taxonomy_reliable=True, judge_direct_ratio=None
+    ).score == pytest.approx(0.7)
+    assert forged_one.synthesize_peer_confidence(
+        taxonomy_reliable=True, judge_direct_ratio=None
+    ).score != pytest.approx(reference.score)
+
+    forged_half = _mutant(
+        _QUALITY_MODULE,
+        "    ratio = _coerce_ratio(judge_direct_ratio)",
+        "    ratio = 0.5 if judge_direct_ratio is None else _coerce_ratio(judge_direct_ratio)  # M6 缺失按 0.5",
+        "pq_mutant_m6_ratio_half",
+    )
+    assert forged_half.synthesize_peer_confidence(
+        taxonomy_reliable=True, judge_direct_ratio=None
+    ).score == pytest.approx(0.55)

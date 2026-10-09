@@ -170,6 +170,19 @@ async def resolve_company_track(
         track.peer_group = peer_group.codes
         track.peer_group_source = peer_group.source
         track.peer_benchmarks = cast(dict[str, float | None], peer_values)
+        # 对标组置信度（设计 §3.7/§8 决策 5）：确定性合成三档（不额外调 LLM），
+        # 落 artifact 字段 + review_notes 一行（含三档与合成口径）；低置信由报告层显式提示。
+        from alphabee.company_track import peer_confidence_for_group
+
+        confidence = peer_confidence_for_group(symbol, peer_group)
+        track.peer_group_confidence = confidence.level
+        track.peer_group_confidence_score = confidence.score
+        track.peer_group_confidence_basis = confidence.basis()
+        taxonomy_signal = confidence.signals.get("taxonomy_reliable")
+        track.peer_group_taxonomy_reliable = None if taxonomy_signal is None else bool(taxonomy_signal)
+        track.review_notes.append(confidence.note_line())
+        if track.peer_group_taxonomy_reliable is False:
+            track.review_notes.append("对标组分类兜底，未经业务核验（分类学不可信：残差桶/成分不足/快照缺失）")
         if meta.get("error") or not peer_values:
             track.degraded = True
             track.degraded_reason = meta.get("error") or "对标组基准不可得"

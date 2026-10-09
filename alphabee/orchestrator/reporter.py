@@ -165,6 +165,14 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
             track_lines.append(f"- 对标组基准: {bench}")
         if track.peer_group:
             track_lines.append(f"- 对标组: {', '.join(track.peer_group)}")
+        if track.peer_confidence:
+            track_lines.append(f"- 对标组置信度: {track.peer_confidence}（{track.peer_confidence_basis}）")
+            if track.peer_confidence_low:
+                track_lines.append(
+                    "- ⚠ 对标组置信度低：同业基准参考性弱，不宜作为估值/盈利比较的主要依据（需补充候选或人工核验）"
+                )
+        if track.peer_taxonomy_reliable is False:
+            track_lines.append("- ⚠ 对标组分类兜底，未经业务核验（分类学不可信：残差桶/成分不足/快照缺失）")
         if track.stale:
             track_lines.append("- ⚠ 公司赛道数据可能过期，请以最新报告期为准")
         track_section = "\n".join(track_lines) or "无公司赛道数据"
@@ -249,6 +257,13 @@ async def generate_report(
             "\n报告必须包含「公司赛道/对标组」章节：公司真实赛道为"
             f"「{payload.company_track.track_label or '未识别'}」，结合对标组基准"
             "（company_track.peer_benchmarks）说明公司相对真对手（而非申万行业）的位置。"
+            + (
+                f"对标组置信度为「{payload.company_track.peer_confidence}」"
+                f"（{payload.company_track.peer_confidence_basis}）：**必须在报告中显式提示同业基准参考性弱**，"
+                "不得据其下强结论。"
+                if payload.company_track.peer_confidence_low
+                else ""
+            )
         )
         if payload.company_track.stale:
             track_hint += "公司赛道数据已过期，必须显式写出「行业/赛道上下文可能过期」。"
