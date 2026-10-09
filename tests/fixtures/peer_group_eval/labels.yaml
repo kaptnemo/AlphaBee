@@ -1,0 +1,67 @@
+# 对标组判定策略回归标注集（scripts/peer_group_eval.py 的 §8 输入）。
+#
+# 每个 case：一个标的 + 一个**冻结候选池** + 逐候选 ground truth（label: keep/drop）。
+# 候选池来源 = 历史 LLM 产出 ∪ 同 L2/L3 成分，冻结以隔离"生成漂移"；E 的 same_l3/same_l2
+# 由脚本从 alphabee/static/all_stocks.csv 现算（不写进本文件）。
+#
+# 覆盖四类：同质 L3（易，002916/603986）、分类冲突（难，002318）、残差桶+精度（难，301029）。
+
+- symbol: "002916.SZ"
+  name: 深南电路
+  industry: 印制电路板
+  taxonomy_l3: "850822.SI"
+  taxonomy_l2: "801083.SI"
+  business_description_source: local_report
+  candidates:
+    - {code: "002463.SZ", name: 沪电股份, label: keep, rationale: "通信设备/数据中心高多层板，同环节最直接"}
+    - {code: "300476.SZ", name: 胜宏科技, label: keep, rationale: "AI 服务器/加速卡高多层板"}
+    - {code: "002436.SZ", name: 兴森科技, label: keep, rationale: "PCB + IC 封装基板同环节"}
+    - {code: "603228.SH", name: 景旺电子, label: keep, rationale: "中大批量 PCB 一线"}
+    - {code: "001389.SZ", name: 广合科技, label: keep, rationale: "服务器 PCB"}
+    - {code: "603920.SH", name: 世运电路, label: keep, rationale: "中大批量 PCB"}
+    - {code: "600183.SH", name: 生益科技, label: drop, rationale: "上游覆铜板 CCL，会污染同业中位数"}
+    - {code: "600584.SH", name: 长电科技, label: drop, rationale: "下游封测 OSAT"}
+    - {code: "002185.SZ", name: 华天科技, label: drop, rationale: "下游封测 OSAT"}
+
+- symbol: "603986.SH"
+  name: 兆易创新
+  industry: 数字芯片设计
+  taxonomy_l3: "850814.SI"
+  taxonomy_l2: "801081.SI"
+  business_description_source: local_report
+  candidates:
+    - {code: "300223.SZ", name: 君正股份, label: keep, rationale: "存储/MCU 同环节"}
+    - {code: "688766.SH", name: 普冉股份, label: keep, rationale: "NOR Flash/存储"}
+    - {code: "688110.SH", name: 东芯股份, label: keep, rationale: "存储芯片设计"}
+    - {code: "688416.SH", name: 恒烁股份, label: keep, rationale: "NOR Flash"}
+    - {code: "688123.SH", name: 聚辰股份, label: keep, rationale: "EEPROM/存储"}
+
+- symbol: "002318.SZ"
+  name: 久立特材
+  industry: 工业不锈钢管
+  taxonomy_l3: "850412.SI"
+  taxonomy_l2: "801045.SI"
+  business_description_source: local_report
+  candidates:
+    - {code: "603878.SH", name: 武进不锈, label: keep, rationale: "工业不锈钢管双龙头最直接（申万归普钢）"}
+    - {code: "002478.SZ", name: 常宝股份, label: keep, rationale: "能源装备用管同环节"}
+    - {code: "300881.SZ", name: 盛德鑫泰, label: keep, rationale: "电站锅炉无缝管"}
+    - {code: "300963.SZ", name: 中洲特材, label: keep, rationale: "特种合金管件法兰（相邻，边界）"}
+    - {code: "002443.SZ", name: 金洲管道, label: drop, rationale: "同 L3 但碳钢焊管，盈利结构不同"}
+    - {code: "300260.SZ", name: 新莱应材, label: drop, rationale: "高洁净不锈钢管件，下游半导体/医药，终端错配"}
+
+- symbol: "301029.SZ"
+  name: 怡合达
+  industry: 其他自动化设备
+  taxonomy_l3: "850784.SI"
+  taxonomy_l2: "801078.SI"
+  business_description_source: local_report
+  candidates:
+    - {code: "920593.BJ", name: 鼎智科技, label: keep, rationale: "直线运动零件相邻（北交所迁移码）"}
+    - {code: "002896.SZ", name: 中大力德, label: drop, rationale: "减速器/传动，非全品类 FA 平台"}
+    - {code: "603728.SH", name: 鸣志电器, label: drop, rationale: "控制电机自有品牌，非平台"}
+    - {code: "300718.SZ", name: 长盛轴承, label: drop, rationale: "轴承单品类"}
+    - {code: "002979.SZ", name: 雷赛智能, label: drop, rationale: "运动控制部件，非机械 FA"}
+    - {code: "688160.SH", name: 步科股份, label: drop, rationale: "工控部件"}
+    - {code: "300124.SZ", name: 汇川技术, label: drop, rationale: "控制驱动为主"}
+    - {code: "603416.SH", name: 信捷电气, label: drop, rationale: "工控控制类"}
