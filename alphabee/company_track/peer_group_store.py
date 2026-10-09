@@ -31,6 +31,9 @@ class PeerGroup:
     updated_at: str = ""
     notes: list[str] = field(default_factory=list)  # 构建/校验告警
     reason_map: dict[str, str] = field(default_factory=dict)  # code → 对标理由
+    #: 已在线判定「确无 A 股直接对标」的终态标记：为 True 时空对标组**不再触发在线重试**
+    #: （避免每次分析重复调用 LLM）。仅当 LLM 有效响应且无候选时置位；取数/LLM 失败不置位。
+    no_peers: bool = False
 
     def is_empty(self) -> bool:
         return not self.codes and not self.international
@@ -64,6 +67,7 @@ class PeerGroupStore:
                         "notes": peer_group.notes,
                         "international": peer_group.international,
                         "reason_map": peer_group.reason_map,
+                        "no_peers": peer_group.no_peers,
                     },
                     handle,
                     ensure_ascii=False,
@@ -94,6 +98,7 @@ class PeerGroupStore:
                 updated_at=str(raw.get("updated_at") or ""),
                 notes=[str(note) for note in (raw.get("notes") or [])],
                 reason_map={str(key): str(value) for key, value in (raw.get("reason_map") or {}).items()},
+                no_peers=bool(raw.get("no_peers", False)),
             )
         except (OSError, json.JSONDecodeError):
             return None

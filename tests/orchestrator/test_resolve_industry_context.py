@@ -32,15 +32,16 @@ def _patch_industry_fact(monkeypatch, ind_fact):
     monkeypatch.setattr(industry_fact_module, "get_industry_fact", lambda symbol: ind_fact)
 
 
-def _patch_peers(monkeypatch, records, error=None):
+def _patch_peers(monkeypatch, records, error=None, peer_codes=None):
     import alphabee.industry.data as data_module
 
-    monkeypatch.setattr(data_module, "fetch_peer_financials", lambda *a, **k: (records, error))
+    codes = peer_codes if peer_codes is not None else [f"{index:06d}.SZ" for index in range(len(records))]
+    monkeypatch.setattr(data_module, "fetch_industry_peers", lambda *a, **k: (records, codes, error))
 
 
-def _run_node(monkeypatch, ind_fact, records, error=None) -> dict:
+def _run_node(monkeypatch, ind_fact, records, error=None, peer_codes=None) -> dict:
     _patch_industry_fact(monkeypatch, ind_fact)
-    _patch_peers(monkeypatch, records, error)
+    _patch_peers(monkeypatch, records, error, peer_codes)
     return asyncio.run(node.resolve_industry_context(_state(), {}))
 
 
@@ -73,6 +74,8 @@ def test_success_injects_benchmarks_and_artifact(monkeypatch):
     assert artifact.industry == "白酒"
     assert artifact.degraded is False
     assert artifact.peer_count == 3
+    # 成分股代码写入 peer_universe（供对标组在线兜底作闭集）
+    assert artifact.peer_universe == ["000000.SZ", "000001.SZ", "000002.SZ"]
     # v2 形状：三组基准字典（canonical 键，RATIO 口径）
     assert artifact.financial_benchmarks["industry_avg_debt_ratio"] == 0.60
     assert artifact.financial_benchmarks["industry_avg_roe"] == 0.16
@@ -161,7 +164,7 @@ def test_industry_fact_failure_degrades_with_issue(monkeypatch):
     assert result["steps"][0].status.value == "skipped"
 
 
-def test_peer_fetch_failure_marks_degraded_artifact(monkeypatch):
+def test_industry_peer_fetch_failure_marks_degraded_artifact(monkeypatch):
     # 拿不到成分股财务 → artifact 仍产出（估值快照有效）但 degraded=true
     result = _run_node(monkeypatch, _ind_fact(pe=25.0, pb=6.0), [], error="index_member 空成分列表")
 

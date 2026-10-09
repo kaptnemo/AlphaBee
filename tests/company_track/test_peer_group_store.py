@@ -45,3 +45,16 @@ def test_path_sanitized(tmp_path):
 def test_is_empty():
     assert PeerGroup(symbol="x").is_empty() is True
     assert PeerGroup(symbol="x", codes=["A"]).is_empty() is False
+
+
+def test_no_peers_flag_roundtrip(tmp_path):
+    """no_peers 终态标记持久化（旧文件无该字段 → 默认 False，向后兼容）。"""
+    store = PeerGroupStore(root=tmp_path)
+    store.save(PeerGroup(symbol="301029.SZ", source="llm", no_peers=True, notes=["确无对标"]))
+    loaded = store.load("301029.SZ")
+    assert loaded is not None
+    assert loaded.no_peers is True
+    # 旧格式（无 no_peers 字段）→ False
+    legacy = tmp_path / "600000.SH.json"
+    legacy.write_text('{"symbol": "600000.SH", "codes": [], "source": "manual"}', encoding="utf-8")
+    assert store.load("600000.SH").no_peers is False

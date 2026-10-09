@@ -3,12 +3,16 @@
 职责（只解析 + 注入，完整研究走离线 build_company_track）：
 1. 组装完整 ``CompanyTrackArtifact``（业务线分项 + 真实赛道标签 + 商业模式 + 漂移）；
 2. 读对标组存储 → 计算并注入 ``peer_*`` 基准（fact_values），写 COMPANY_TRACK artifact；
+   存储未命中时走**在线兜底**（REPORT_QUALITY_FIX_ROADMAP §11 P2-①）：首选本地财报
+   「管理层讨论与分析」章节作业务描述 → LLM 推断同环节 A 股对标；无本地报告时退而同行业
+   成分股闭集（``IndustryContextArtifact.peer_universe``）LLM 择优 → ``build_peer_group``
+   持久化 → 成功即注入，失败才降级 ``peer_group_missing``；
 3. 降级分级（显式留痕，不静默）：
 
 | 场景 | 产物 | issue |
 |---|---|---|
 | 无业务线数据（无 track） | 无 artifact | ``company_track_missing``（MEDIUM） |
-| 有 track 但无对标组 | 全量 artifact（无 peer_*） | ``peer_group_missing``（LOW） |
+| 有 track 但无对标组（存储未命中且在线兜底无果） | 全量 artifact（无 peer_*） | ``peer_group_missing``（LOW） |
 | 对标组计算失败 | artifact（degraded）+ 无 peer_* | ``peer_group_benchmarks_missing``（MEDIUM） |
 | track 过期 | artifact（stale=True） | ``company_track_stale``（MEDIUM，进报告披露检查） |
 
@@ -87,7 +91,35 @@ async def resolve_company_track(
     # ── 2. 对标组基准（有对标组 → peer_* 注入）───────────────────
     from alphabee.company_track.peer_group_store import PeerGroupStore
 
-    peer_group = PeerGroupStore().load(symbol)
+    store = PeerGroupStore()
+    peer_group = store.load(symbol)
+    # 空对标组且已判定「确无 A 股直接对标」（no_peers）时不再重试在线兜底，
+    # 避免每次分析重复调用 LLM（如 301029 怡合达的目录平台业态确实无同模式对标）。
+    if peer_group is None or (peer_group.is_empty() and not peer_group.no_peers):
+        # 在线兜底（REPORT_QUALITY_FIX_ROADMAP §11 P2-①）：存储未命中 →
+        # 首选**本地财报「管理层讨论与分析」章节**作片段（半年报/年报业务描述，最接近人工选股
+        # 依据）→ LLM 抽取；无本地报告时退而同行业成分股闭集（artifact.peer_universe）LLM 择优。
+        # 两者皆无可选 → 不编造，落到下方 peer_group_missing 降级。
+        from alphabee.company_track import build_peer_group
+        from alphabee.company_track.peer_report import fetch_local_report_fragments
+
+        report_sections, _report_meta = fetch_local_report_fragments(symbol)
+        business_description = report_sections[0] if report_sections else None
+        universe_codes = list(ind.peer_universe) if ind is not None else []
+        if business_description or universe_codes:
+            built_group, _build_warnings = build_peer_group(
+                symbol,
+                business_description=business_description,
+                universe_codes=universe_codes,
+                industry=sw_industry,
+                segments=track.segments,
+                name=track.track_label,
+                use_llm=True,
+                store=store,
+            )
+            if not built_group.is_empty():
+                peer_group = built_group
+
     peer_values: dict[str, float] = {}
     if peer_group is not None and not peer_group.is_empty():
         from alphabee.company_track import derive_peer_benchmarks

@@ -170,6 +170,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         postconditions=[
             "CompanyStateArtifact schema 合法",
             "跟踪缺失或陈旧时显式产 company_track_missing / company_track_stale issue",
+            "对标组存储未命中时先走在线兜底（东财研报片段 → build_peer_group），无果才产 peer_group_missing",
         ],
         detectors=["artifact_schema_valid"],
         recovery_ladder=(0, 2, 3),

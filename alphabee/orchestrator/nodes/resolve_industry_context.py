@@ -99,14 +99,16 @@ async def resolve_industry_context(
 
     # ── 2. 财务/成长基准（成分股中位数，best-effort）────────────────
     peer_records: list[dict[str, Any]] = []
+    peer_universe: list[str] = []
     fetch_error: str | None = None
     try:
-        from alphabee.industry.data import fetch_peer_financials
+        from alphabee.industry.data import fetch_industry_peers
         from alphabee.industry.normalize import normalize_industry_records
 
         # fetch 返回源单位行（百分比），先经 normalize 统一为 canonical（RATIO 口径），
-        # 修复 Phase 0 单位错配（见 docs/industry/industry-context-phase1-design.md §2.1）
-        raw_records, fetch_error = fetch_peer_financials(symbol or "", industry, sw_code)
+        # 修复 Phase 0 单位错配（见 docs/industry/industry-context-phase1-design.md §2.1）。
+        # peer_codes 写入 artifact.peer_universe，供下游（对标组在线兜底）作闭集候选复用。
+        raw_records, peer_universe, fetch_error = fetch_industry_peers(sw_code or "")
         peer_records = normalize_industry_records(raw_records, source="tushare")
     except Exception as exc:
         fetch_error = str(exc)
@@ -158,6 +160,7 @@ async def resolve_industry_context(
         valuation_benchmarks=valuation,
         financial_benchmarks=financial,
         growth_benchmarks=growth,
+        peer_universe=peer_universe,
         peer_count=benchmarks.peer_count,
         degraded=degraded,
         degraded_reason=degraded_reason,
