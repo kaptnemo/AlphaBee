@@ -324,6 +324,13 @@ def test_peer_quality_config_defaults_and_example_sync():
     assert defaults.product_floor == peer_group_build.DEFAULT_PRODUCT_FLOOR
     assert defaults.customer_floor == peer_group_build.DEFAULT_CUSTOMER_FLOOR
     assert defaults.confidence.low == 0.4 and defaults.confidence.medium == 0.7
+    # 判定 D（独立 batch judge）配置面：批量上限的**唯一默认处** = peer_judge 常量
+    from alphabee.company_track import peer_judge
+
+    assert defaults.judge_batch_size == peer_judge.JUDGE_BATCH_SIZE_DEFAULT
+    # 判定 D 的**默认开关**：Step 2 的 DoD 复核为负结果（F1 判据成立、稳定性判据不成立）
+    # ⇒ 按设计 §6 Step 2 的负结果路径**不得默认启用**（Gate 走判定 C 口径；置 true 即启用）。
+    assert defaults.judge_enabled is False
 
     import yaml
 
@@ -854,3 +861,25 @@ def test_no_regex_on_reason_text_anywhere():
                 if "reason" in node.name and returns_bool:
                     offenders.append(f"{path}:{node.lineno}: def {node.name} -> bool")
     assert offenders == [], f"发现对理由文本的否决式判定（变相词表）：{offenders}"
+
+
+def test_judge_rollback_switch_is_verbatim_and_documented():
+    """开关口径可逐字执行：``judge_enabled`` 缺省 false（判定 C）⇒ 置 true 即启用判定 D（接线与配置保留）。
+
+    判据两点：① 键在 ``PeerQualitySettings`` 与 ``config.yaml.example`` 中同名同位；
+    ② 读取点 ``_peer_quality_settings()`` 能取到该键（缺段回落默认 True）。
+    """
+    import yaml
+
+    from alphabee.company_track import peer_group_build
+    from alphabee.config import PeerQualitySettings, get_settings
+
+    example = yaml.safe_load((PROJECT_ROOT / "config.yaml.example").read_text(encoding="utf-8"))
+    section = example["company_track"]["peer_quality"]
+    assert "judge_enabled" in section and "judge_batch_size" in section
+    assert PeerQualitySettings(**section).judge_enabled is False  # 负结果 ⇒ 默认不启用（回滚口径 = 现状）
+
+    peer_group_build._PEER_QUALITY_CACHE.clear()
+    live = peer_group_build._peer_quality_settings()
+    assert live["judge_enabled"] == get_settings().company_track.peer_quality.judge_enabled
+    assert live["judge_batch_size"] == get_settings().company_track.peer_quality.judge_batch_size

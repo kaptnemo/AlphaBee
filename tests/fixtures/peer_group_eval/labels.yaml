@@ -10,8 +10,11 @@
 # E 的 same_l3/same_l2 由脚本从 alphabee/static/all_stocks.csv 现算（不写进本文件）。
 #
 # 划分依据（split 字段）：**按业态分层**而非按行业单堆——六个业态各 ≥1 例，且 holdout 覆盖
-#   同质 L3 / 分类冲突 / 残差桶 / 境内外混合 / 无对标空组 / 跨行业 六类中的五类（跨行业与空组
-#   各只 2 例，按分层各拿 1 例）；holdout 共享同一套候选池（同行业）会系统性偏乐观，故按业态分层。
+#   同质 L3 / 分类冲突 / 残差桶 / 境内外混合 / 无对标空组 / 跨行业 六类中的六类（残差桶进入 holdout
+#   后已全覆盖，每类各 1 例；跨行业与空组整体各只 2 例，按分层各拿 1 例）；
+#   holdout 共享同一套候选池（同行业）会系统性偏乐观，故按业态分层。
+#   **本行「六类中的N类」为定量散文，N 由 tests/company_track/test_peer_group_eval.py 现算校验**
+#   （现算值 = holdout 子集的业态集合大小），改 split/segment 必须同步，否则该用例必红。
 #
 # 元数据自洽（**下列分账行与机器可读字段程序化一致，由 tests/company_track/test_peer_group_labels.py 现算校验**；
 # 改动任一 case 的 split/segment 必须同步下列数字，否则该测试必红。禁止在测试里硬编码例数）：

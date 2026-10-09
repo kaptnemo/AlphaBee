@@ -193,8 +193,11 @@ def test_judge_prompt_contract():
     # verdict 三级语义
     for verdict in VALID_VERDICTS:
         assert verdict in prompt
-    # 不要求 LLM 做采纳决定（决定权交 Gate）
-    assert "采纳" not in prompt
+    # 不要求 LLM 做采纳决定（决定权交 Gate）：改为**显式声明**（此前进判定 D 接线后
+    # 该约束写入 prompt —— 原判据「prompt 里不得出现"采纳"二字」会与显式声明互相矛盾，
+    # 故按新口径重定标：断言声明存在 + 不得要求 LLM 输出 keep/drop 采纳字段）。
+    assert "不负责决定是否采纳" in prompt and "是否入选由下游确定性闸门决定" in prompt
+    assert '"keep"' not in prompt and '"drop"' not in prompt
     # E 特征注入 + 「同 L3 不能替代业务判断」
     assert "same_l3=True" in prompt and "same_l2=True" in prompt
     assert "不能替代业务判断" in prompt

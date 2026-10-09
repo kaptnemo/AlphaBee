@@ -212,7 +212,10 @@ def test_gate_strategies(ev):
     decisions = {"A": good, "B": reject, "C": low_product}
 
     assert ev.gate(decisions, "B_single") == {"A", "B", "C"}  # 只看 gen_overlap
-    assert ev.gate(decisions, "C_dims") == {"A", "B"}  # product floor 剔 C
+    # RC-VERDICT-DIVERGENCE 收口：`gate()` 对**任何**策略都执行规则①「verdict==reject 先否决」，
+    # 与生产 `gate_candidates` 同源同序（旧行为是 C_dims 只看 dims ⇒ 与生产相反，已删除）。
+    # C 类策略"没有 judge"由 `project_decisions` 显式清空 verdict 表达，而不是靠闸门忽略 verdict。
+    assert ev.gate(decisions, "C_dims") == {"A"}  # reject 先否决（B）+ product floor（C）
     assert ev.gate(decisions, "C_D_judge") == {"A"}  # judge reject 剔 B
 
 
@@ -237,9 +240,17 @@ def test_metrics_are_segmented_by_split(ev):
     train = _synth_case(ev, "T1", split="train", candidates=[("A", "keep", False), ("B", "drop", False)])
     holdout = _synth_case(ev, "H1", split="holdout", candidates=[("A", "drop", False), ("B", "keep", False)])
     cases = [train, holdout]
+    # 每 case 的候选池必须**逐只**有 judge 判定（生产 `JudgeReport.ok` 的全覆盖口径）；
+    # 漏判会按 fail-open 整体回退生成器分，故这里显式给全（否则测的是降级路径）。
     decisions = {
-        "T1": {"A": ev.Decision(code="A", judge_verdict="direct", judge_dims=_dims(0.9, 0.9))},  # 全对
-        "H1": {"A": ev.Decision(code="A", judge_verdict="direct", judge_dims=_dims(0.9, 0.9))},  # 全错
+        "T1": {
+            "A": ev.Decision(code="A", judge_verdict="direct", judge_dims=_dims(0.9, 0.9)),  # 全对
+            "B": ev.Decision(code="B", judge_verdict="reject", judge_dims=_dims(0.1, 0.1)),
+        },
+        "H1": {
+            "A": ev.Decision(code="A", judge_verdict="direct", judge_dims=_dims(0.9, 0.9)),  # 全错：留下 drop
+            "B": ev.Decision(code="B", judge_verdict="reject", judge_dims=_dims(0.1, 0.1)),  # 剔掉 keep
+        },
     }
     result = ev.evaluate_strategy(cases, decisions, "C_D_judge")
     assert ev.segment_metrics(result, "train")["f1"] == pytest.approx(1.0)
@@ -306,11 +317,16 @@ def test_disputed_case_with_all_candidates_disputed(ev):
 
 def test_discipline_metrics_exposes_both_disputed_scopes(ev):
     case = _synth_case(ev, "D3", split="train", candidates=[("A", "keep", False), ("B", "drop", True)])
-    decisions = {"D3": {"B": ev.Decision(code="B", judge_verdict="direct", judge_dims=_dims(0.9, 0.9))}}
+    decisions = {
+        "D3": {
+            "A": ev.Decision(code="A", judge_verdict="direct", judge_dims=_dims(0.9, 0.9)),
+            "B": ev.Decision(code="B", judge_verdict="direct", judge_dims=_dims(0.9, 0.9)),
+        }
+    }
     results = {"C_D_judge": ev.evaluate_strategy([case], decisions, "C_D_judge")}
     include = ev.discipline_metrics(results)
     exclude = ev.discipline_metrics(results, exclude_disputed=True)
-    assert include["C_D_judge"]["all"]["precision"] == pytest.approx(0.0)
+    assert include["C_D_judge"]["all"]["precision"] == pytest.approx(0.5)  # 保留 A、B；B 是 drop ⇒ 1/2
     assert exclude["C_D_judge"]["all"]["precision"] == pytest.approx(1.0)
 
 
@@ -344,12 +360,19 @@ def test_sweep_calibrates_on_train_segment(ev):
 
 
 def test_jaccard_definitions(ev):
-    assert ev.jaccard(set(), set()) == 1.0  # 双方皆空 = 一致（不是缺失）
+    assert ev.jaccard(set(), set()) == 1.0  # 单对语义：双方皆空 = 一致（不是缺失）
     assert ev.jaccard({"A"}, set()) == 0.0
     assert ev.jaccard({"A"}, {"A"}) == 1.0
     assert ev.jaccard({"A", "B"}, {"B", "C"}) == pytest.approx(1 / 3)
     assert ev.mean_pairwise_jaccard([{"A"}, {"A", "B"}, {"A", "B"}]) == pytest.approx((0.5 + 0.5 + 1.0) / 3)
-    assert ev.mean_pairwise_jaccard([]) == 1.0
+    # F-1 收口：**聚合**层面把"双方皆空"的对排除出均值（无信息），全无信息 ⇒ 不可评估（None），
+    # 不再静默报 1.000 假通过。
+    assert ev.mean_pairwise_jaccard([]) is None
+    assert ev.mean_pairwise_jaccard([set(), set()]) is None
+    # 混合情形：`(∅,∅)` 对不参与，`(∅,{A})` 两对参与且均为 0（该 case 每次都变）
+    assert ev.mean_pairwise_jaccard([set(), set(), {"A"}]) == pytest.approx(0.0)
+    assert ev.pair_is_evaluable(set(), set()) is False
+    assert ev.pair_is_evaluable({"A"}, set()) is True
 
 
 def test_stability_requires_repeat(cases, ev):
@@ -514,9 +537,9 @@ def test_harness_calls_production_prompt_builders():
             imported.update(alias.name for alias in node.names)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             called.add(node.func.id)
-    # 两个阶段都必须经生产入口调用
-    assert {"infer_peer_scoring", "judge_peer_candidates"} <= imported
-    assert {"infer_peer_scoring", "judge_peer_candidates"} <= called
+    # 两个阶段都必须经生产入口调用（judge 侧为**批量生产入口** judge_peer_candidates_batched）
+    assert {"infer_peer_scoring", "judge_peer_candidates_batched"} <= imported
+    assert {"infer_peer_scoring", "judge_peer_candidates_batched"} <= called
 
     # 生产侧模块确实提供 prompt 构造入口（harness 不复制 prompt 的前提）
     import alphabee.company_track.peer_judge as peer_judge
@@ -823,7 +846,12 @@ def test_m2_ignoring_disputed_in_exclusion_scope_is_killed(ev):
         "pge_mutant_m2",
     )
     case = _synth_case(mutant, "D3", split="train", candidates=[("A", "keep", False), ("B", "drop", True)])
-    decisions = {"D3": {"B": mutant.Decision(code="B", judge_verdict="direct", judge_dims=_dims(0.9, 0.9))}}
+    decisions = {
+        "D3": {
+            "A": mutant.Decision(code="A", judge_verdict="direct", judge_dims=_dims(0.9, 0.9)),
+            "B": mutant.Decision(code="B", judge_verdict="direct", judge_dims=_dims(0.9, 0.9)),
+        }
+    }
     result = mutant.evaluate_strategy([case], decisions, "C_D_judge")
     include = mutant.segment_metrics(result, "train")
     exclude = mutant.segment_metrics(result, "train", exclude_disputed=True)
@@ -841,6 +869,8 @@ def test_m3_jaccard_degenerate_to_one_is_killed(ev):
     # 正确实现为 0.0（完全不一致）；变异恒 1.0 ⇒ 稳定性“永远完美”，判别力被杀死
     assert mutant.jaccard({"A"}, {"B"}) == pytest.approx(1.0)
     assert mutant.mean_pairwise_jaccard([{"A"}, {"B"}, {"C"}]) == pytest.approx(1.0)
+    # 参照实现（未变异）：同一输入必须为 0.0（否则本变异体不可观测）
+    assert ev.mean_pairwise_jaccard([{"A"}, {"B"}, {"C"}]) == pytest.approx(0.0)
 
 
 def test_m4_production_entry_wired_into_online_path_is_killed(ev):
@@ -868,3 +898,507 @@ def test_m4_production_entry_wired_into_online_path_is_killed(ev):
     # prompt 构造片段不因该变异变化 ⇒ 证明 M4 只被「在线接入」判据杀死，而非被 prompt 判据误杀
     for fragment in ("根据下面这家公司的业务描述", '"overlap": 0.0-1.0', "公司业务描述:"):
         assert fragment in mutant_source
+
+
+# ── RC-QUALITY-DEFAULTS / RC-VERDICT-DIVERGENCE / F-1 / F-2 / F-5 / F-6 ─────
+#    以上收口项的共同判据：报告与 harness 不得存在"看似权威的第二份默认"，且每个
+#    「旧行为缺陷」都有可判红的反回归断言（对实现字节实测必红）。
+
+
+def test_gate_defaults_reference_production_constants():
+    """RC-QUALITY-DEFAULTS：``gate()`` 签名默认值**引用生产常量**（harness 无第二份权威）。"""
+    import inspect
+
+    from alphabee.company_track import peer_judge
+    from alphabee.config import PeerQualitySettings
+
+    signature = inspect.signature(ev_gate_signature_module().gate)
+    assert signature.parameters["min_overlap"].default == peer_judge.DEFAULT_MIN_OVERLAP
+    assert signature.parameters["product_floor"].default == peer_judge.DEFAULT_PRODUCT_FLOOR
+    assert signature.parameters["customer_floor"].default == peer_judge.DEFAULT_CUSTOMER_FLOOR
+    assert signature.parameters["weights"].default == peer_judge.DEFAULT_WEIGHTS
+
+    defaults = PeerQualitySettings()
+    assert (defaults.min_overlap, defaults.product_floor, defaults.customer_floor) == (
+        peer_judge.DEFAULT_MIN_OVERLAP,
+        peer_judge.DEFAULT_PRODUCT_FLOOR,
+        peer_judge.DEFAULT_CUSTOMER_FLOOR,
+    )
+    assert defaults.weights == peer_judge.DEFAULT_WEIGHTS
+
+    # 源码级：不得出现与前份权威同名的字面量默认（旧值 0.5 / 0.30）
+    source = _SCRIPT.read_text(encoding="utf-8")
+    assert "min_overlap: float = 0.5" not in source
+    assert "product_floor: float = 0.30" not in source
+    assert "min_overlap: float = DEFAULT_MIN_OVERLAP" in source
+
+
+def ev_gate_signature_module():
+    import importlib.util as _ilu
+    import sys as _sys
+
+    spec = _ilu.spec_from_file_location("pge_gate_defaults_probe", _SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = _ilu.module_from_spec(spec)
+    _sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_rc_quality_defaults_second_authority_is_killed(ev):
+    """判别力：把 gate() 默认改回"harness 自己的"阈值 ⇒ 上面的同源断言必红。"""
+    import inspect
+
+    from alphabee.company_track import peer_judge
+
+    mutant = _mutate(
+        ev,
+        "    min_overlap: float = DEFAULT_MIN_OVERLAP,",
+        "    min_overlap: float = 0.5,  # RC 双重权威回归",
+        "pge_mutant_rc_defaults",
+    )
+    assert inspect.signature(mutant.gate).parameters["min_overlap"].default != peer_judge.DEFAULT_MIN_OVERLAP
+
+
+def test_projection_keeps_verdict_only_for_d_strategies(ev):
+    """RC-VERDICT-DIVERGENCE 收口：D 类策略带 verdict（同源先否决）；C 类策略 verdict **显式清空**。"""
+    case = _synth_case(ev, "V1", split="train", candidates=[("A", "keep", False)])
+    decisions = {
+        "V1": {
+            "A": ev.Decision(
+                code="A",
+                gen_overlap=0.9,
+                dims=_dims(0.9, 0.9),
+                judge_verdict="reject",
+                judge_dims=_dims(0.9, 0.9),
+            )
+        }
+    }
+    # D 类（judge 生效）：reject 先否决 ⇒ 不保留
+    kept_d, judge_ok = ev.gate_for_case(case, decisions, "C_D_judge")
+    assert judge_ok is True and kept_d == set()
+    # C 类：策略定义就是"没有 judge" ⇒ 投影清空 verdict，按生成器 dims 判定
+    kept_c, _ = ev.gate_for_case(case, decisions, "C_dims")
+    assert kept_c == {"A"}
+    # 闸门本身对 verdict 的处理是统一的（同源先否决）：直接喂带 verdict 的 decisions 也剔
+    assert ev.gate(ev.project_decisions(decisions["V1"], "C_D_judge", judge_ok=True), "C_dims") == set()
+
+
+def test_judge_incomplete_coverage_falls_back_like_production(ev):
+    """judge 降级口径（与生产 fail-open 同源）：漏判 ⇒ 该 case **整体**回退生成器 dims/overlap。"""
+    case = _synth_case(ev, "V2", split="train", candidates=[("A", "keep", False), ("B", "keep", False)])
+    decisions = {
+        "V2": {
+            "A": ev.Decision(
+                code="A",
+                gen_overlap=0.9,
+                dims=_dims(0.9, 0.9),
+                judge_verdict="reject",  # judge 想否决 A，但因 B 漏判 ⇒ 整体降级 ⇒ A 不得被静默剔除
+                judge_dims=_dims(0.1, 0.1),
+            ),
+            "B": ev.Decision(code="B", gen_overlap=0.9, dims=_dims(0.9, 0.9)),
+        }
+    }
+    kept, judge_ok = ev.gate_for_case(case, decisions, "C_D_judge")
+    assert judge_ok is False and kept == {"A", "B"}
+    result = ev.evaluate_strategy([case], decisions, "C_D_judge")
+    assert ev.judge_status_counts(result) == {"applied": 0, "degraded": 1, "n/a": 0}
+    assert ev.judge_status_counts(ev.evaluate_strategy([case], decisions, "C_dims")) == {
+        "applied": 0,
+        "degraded": 0,
+        "n/a": 1,
+    }
+
+
+# ── F-1：稳定性不可评估（不再假通过）+ 缓存 fail-loud ───────────────────────
+
+
+def _write_repeat_cache(tmp_path, symbol: str, payload: dict, runs: int = 3) -> None:
+    import json as _json
+
+    for index in range(runs):
+        run_dir = tmp_path / f"stable_run{index}"
+        run_dir.mkdir(exist_ok=True)
+        (run_dir / f"{symbol}.json").write_text(_json.dumps(payload), encoding="utf-8")
+
+
+def test_stability_all_empty_is_unassessable_not_perfect(tmp_path, monkeypatch, ev):
+    """F-1：n 次采集保留集**全空** ⇒ 该行「不可评估」（旧行为静默报 Jaccard=1.000 假通过）。"""
+    monkeypatch.setattr(ev, "CACHE_DIR", tmp_path)
+    case = _synth_case(ev, "S2", split="train", candidates=[("A", "drop", False)])
+    payload = {
+        "schema_version": ev.CACHE_SCHEMA_VERSION,
+        "symbol": "S2",
+        "split": "train",
+        "segment": "同质 L3",
+        "decisions": [ev.Decision(code="A", judge_verdict="reject", judge_dims=_dims(0.1, 0.1)).to_dict()],
+    }
+    _write_repeat_cache(tmp_path, "S2", payload)
+    rows = ev.stability([case], ("C_D_judge",), 3, record=False)
+
+    assert rows[0]["results"]["C_D_judge"] is None, "全空仍报数值 ⇒ F-1 假通过回归"
+    assert rows[0]["empty_runs"]["C_D_judge"] == 3
+    assert ev.stability_unassessable_cases(rows, "C_D_judge") == ["S2"]
+    assert ev.stability_empty_everywhere_cases(rows, "C_D_judge") == ["S2"]  # 报告里的「n 次皆空案例数」
+    # 不可评估行不参与分段均值
+    assert ev.stability_by_split(rows, "C_D_judge") == {"train": 0.0, "holdout": 0.0, "all": 0.0}
+
+
+def test_stability_all_empty_reported_as_na_in_report(tmp_path, monkeypatch, ev, cases):
+    """报告层：不可评估行显式写 ``n/a（皆空）``，并给出「n 次皆空案例数」。"""
+    monkeypatch.setattr(ev, "CACHE_DIR", tmp_path)
+    case = _synth_case(ev, "S3", split="holdout", candidates=[("A", "drop", False)])
+    payload = {
+        "schema_version": ev.CACHE_SCHEMA_VERSION,
+        "symbol": "S3",
+        "split": "holdout",
+        "segment": "跨行业",
+        "decisions": [ev.Decision(code="A", judge_verdict="reject", judge_dims=_dims(0.1, 0.1)).to_dict()],
+    }
+    _write_repeat_cache(tmp_path, "S3", payload)
+    rows = ev.stability([case], ("B_single", "C_D_E"), 3, record=False)
+    report = ev.render_report(
+        [case],
+        {"C_D_E": ev.evaluate_strategy([case], {"S3": {}}, "C_D_E")},
+        ev._stock_taxonomy(),
+        None,
+        rows,
+        stability_strategies=("B_single", "C_D_E"),
+        repeat=3,
+    )
+    assert "n/a（皆空）" in report
+    assert "不可评估 case 数=1" in report or "不可评估 case 数=2" in report
+    assert "皆空" in report
+
+
+def test_m_f1_all_empty_reports_perfect_is_killed(ev):
+    """判别力（M-F1）：把聚合改回"双方皆空 = 1.0"⇒ 不可评估断言必红。"""
+    mutant = _mutate(
+        ev,
+        "    pairs = [pair for pair in itertools.combinations(sets, 2) if pair_is_evaluable(*pair)]\n"
+        "    if not pairs:\n        return None",
+        "    pairs = list(itertools.combinations(sets, 2))\n    if not pairs:\n        return 1.0  # F-1 假通过",
+        "pge_mutant_f1",
+    )
+    assert mutant.mean_pairwise_jaccard([set(), set()]) == pytest.approx(1.0)
+    assert ev.mean_pairwise_jaccard([set(), set()]) is None
+
+
+def test_cache_corrupt_or_missing_fails_loud(tmp_path, monkeypatch, cases, ev):
+    """F-1 附带判据：缓存**缺失/损坏/结构非法**一律 fail-loud（不得静默降级为"无数据"）。"""
+    import json as _json
+
+    monkeypatch.setattr(ev, "CACHE_DIR", tmp_path)
+    case = _case(cases, "603986.SH")
+    with pytest.raises(FileNotFoundError) as missing:
+        ev.collect_decisions(case, record=False)
+    assert "--record" in str(missing.value)
+
+    path = tmp_path / "603986.SH.json"
+    path.write_text("{ not json", encoding="utf-8")
+    with pytest.raises(ValueError) as corrupt:
+        ev.collect_decisions(case, record=False)
+    assert "缓存损坏" in str(corrupt.value)
+
+    path.write_text(_json.dumps('"a string"'), encoding="utf-8")
+    with pytest.raises(ValueError):
+        ev.collect_decisions(case, record=False)
+
+
+# ── F-6：缓存血缘审计（现算 + sha256，不人手维护散文） ──────────────────────
+
+
+def test_cache_lineage_audit_lists_mismatch_with_sha256(tmp_path, cases, ev):
+    """F-6：血缘不一致必须**现算并列出 sha256**；一致时为“无不一致”。"""
+    import hashlib as _hashlib
+    import json as _json
+
+    case = _case(cases, "002318.SZ")
+    consistent = {"symbol": case.symbol, "split": case.split, "segment": case.segment}
+    (tmp_path / f"{case.symbol}.json").write_text(_json.dumps(consistent), encoding="utf-8")
+    _write_repeat_cache(
+        tmp_path,
+        case.symbol,
+        {"symbol": case.symbol, "split": "train" if case.split != "train" else "holdout", "segment": case.segment},
+    )
+    audit = ev.cache_lineage_audit(cases, root=tmp_path)
+    assert audit["scanned"] == 4
+    assert len(audit["mismatches"]) == 3
+    first = audit["mismatches"][0]
+    assert first["mismatched_fields"] == ["split"]
+    assert first["labels_split"] == case.split and first["cache_split"] != case.split
+    assert (
+        first["sha256"] == _hashlib.sha256((tmp_path / "stable_run0" / f"{case.symbol}.json").read_bytes()).hexdigest()
+    )
+    assert first["path"].startswith(str(tmp_path))
+
+    # 全部一致 ⇒ 空清单
+    _write_repeat_cache(tmp_path, case.symbol, consistent, runs=3)
+    for index in range(3):
+        (tmp_path / f"stable_run{index}" / f"{case.symbol}.json").write_text(_json.dumps(consistent), encoding="utf-8")
+    assert ev.cache_lineage_audit(cases, root=tmp_path)["mismatches"] == []
+
+
+def test_current_generation_lineage_has_no_segment_mismatch(cases, ev):
+    """现行世代（评测根）缓存应与标注集 stride「零不一致」，且任何不一致都必须列出 sha256。
+
+    缓存缺失（全新克隆，``data/`` 被 gitignore）时跳过——本判据只约束"有缓存时不得静默"。
+    """
+    audit = ev.cache_lineage_audit(cases, root=ev.CACHE_DIR, label="现行世代")
+    if audit["scanned"] == 0:
+        pytest.skip("无本地现行世代缓存（data/ 为 gitignore 本地交付）")
+    assert audit["mismatches"] == [], f"现行世代血缘不一致：{audit['mismatches']}"
+    assert all(len(item["sha256"]) == 64 for item in audit["mismatches"])
+
+
+def test_legacy_generation_lineage_mismatch_is_disclosed_with_sha256(cases, ev):
+    """F-6：历史世代（``data/peer_eval_cache``，Step 0 旧 prompt）的**唯一不一致 = 002318.SZ 的 split**，
+    且审计须给出这 4 个文件（主线 + stable_run0/1/2）的**现行 sha256**；本步**不改写**其字节。
+    """
+    root = ev.LEGACY_CACHE_DIR
+    if not root.is_dir():
+        pytest.skip("无历史世代缓存目录（data/ 为 gitignore 本地交付）")
+    audit = ev.cache_lineage_audit(cases, root=root, label="历史世代")
+    symbols = {item["path"].rsplit("/", 1)[-1] for item in audit["mismatches"]}
+    if not symbols:
+        pytest.skip("历史世代缓存已不存在（本地数据被清理）")
+    assert symbols == {"002318.SZ.json"}, f"历史世代血缘不一致不止 002318：{sorted(symbols)}"
+    assert all(item["mismatched_fields"] == ["split"] for item in audit["mismatches"])
+    assert len(audit["mismatches"]) == 4  # 主线 + stable_run0/1/2
+    assert all(len(item["sha256"]) == 64 for item in audit["mismatches"])
+
+
+# ── F-5：评测产物版本化留档 + F-2 披露 ──────────────────────────────────────
+
+
+def test_archive_run_writes_report_and_manifest(tmp_path, ev):
+    """F-5：留档目录含 ``report.md`` + ``manifest.json``（含报告 sha256 与外部元数据）。"""
+    import hashlib as _hashlib
+    import json as _json
+
+    result = ev.archive_run(
+        "# report\n",
+        meta={"cache_root": "data/peer_eval_cache/gen2", "labels": {"sha256": "x"}},
+        out_dir=tmp_path,
+        stamp="20260101T000000Z",
+    )
+    target = tmp_path / "20260101T000000Z"
+    assert (target / "report.md").read_text(encoding="utf-8") == "# report\n"
+    manifest = _json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["report_sha256"] == _hashlib.sha256(b"# report\n").hexdigest()
+    assert manifest["cache_root"] == "data/peer_eval_cache/gen2"
+    assert manifest["archived_at"] == "20260101T000000Z"
+    assert result["dir"] == str(target)
+
+
+def test_report_discloses_equivalence_lineage_and_immutability(cases, ev):
+    """F-2/F-5/F-6 披露：等价关系（实测 C_E_taxo≡C_dims、C_D_E≡C_D_judge）、缓存非不可变证据、
+    血缘不一致文件与 sha256 均须出现在报告头部。"""
+    decisions = _all_keep_decisions(cases, ev)
+    results = {
+        name: ev.evaluate_strategy(cases, decisions, name) for name in ("C_dims", "C_E_taxo", "C_D_judge", "C_D_E")
+    }
+    lineage = [
+        {
+            "root": "data/peer_eval_cache",
+            "label": "历史世代（Step 0 旧 judge prompt，只读血缘证据）",
+            "scanned": 4,
+            "mismatches": [
+                {
+                    "path": "data/peer_eval_cache/002318.SZ.json",
+                    "sha256": "a" * 64,
+                    "mismatched_fields": ["split"],
+                    "cache_split": "train",
+                    "cache_segment": "残差桶",
+                    "labels_split": "holdout",
+                    "labels_segment": "残差桶",
+                }
+            ],
+        }
+    ]
+    report = ev.render_report(
+        cases,
+        results,
+        ev._stock_taxonomy(),
+        None,
+        None,
+        lineage=lineage,
+        generated_at="2026-10-10T00:00:00+00:00",
+    )
+    assert "`C_E_taxo ≡ C_dims`" in report and "`C_D_E ≡ C_D_judge`" in report
+    assert "保留集相同" in report  # 等价关系是**实测**披露，不是仅声明
+    assert "不是不可变证据" in report
+    assert "002318.SZ.json" in report and "a" * 64 in report
+    assert "权威一律取 `tests/fixtures/peer_group_eval/labels.yaml`" in report
+    assert "RC-QUALITY-DEFAULTS" in report and "RC-VERDICT-DIVERGENCE" in report
+    assert "3 位小数" in report
+
+
+# ── DoD（设计 §6 Step 2 + RC-DOD-SENS 两点复核 + 负结果路径） ───────────────
+
+
+def _dod_fixture(ev) -> tuple[list[Any], dict[str, dict[str, Any]]]:
+    """合成夹具：C_dims 在 holdout 上优于 C_D_judge（judge 误杀 keep）⇒ DoD 不成立。"""
+    train = _synth_case(ev, "T1", split="train", candidates=[("A", "keep", False)])
+    holdout = _synth_case(ev, "H1", split="holdout", candidates=[("A", "keep", False), ("B", "drop", False)])
+    decisions = {
+        "T1": {
+            "A": ev.Decision(
+                code="A",
+                gen_overlap=1.0,
+                dims=_dims(0.9, 0.9),
+                judge_verdict="direct",
+                judge_dims=_dims(0.9, 0.9),
+            )
+        },
+        "H1": {
+            "A": ev.Decision(
+                code="A",
+                gen_overlap=1.0,
+                dims=_dims(0.9, 0.9),
+                judge_verdict="reject",
+                judge_dims=_dims(0.1, 0.1),
+            ),
+            "B": ev.Decision(
+                code="B",
+                gen_overlap=1.0,
+                dims=_dims(0.9, 0.9),
+                judge_verdict="reject",
+                judge_dims=_dims(0.1, 0.1),
+            ),
+        },
+    }
+    return [train, holdout], decisions
+
+
+def test_dod_check_three_points_and_negative_result_path(ev):
+    """DoD 复核：标定点 + **生产生效点** + 占位默认点三处都报数；不成立时给出负结果路径（不得凑口径）。"""
+    cases, decisions = _dod_fixture(ev)
+    dod = ev.dod_check(cases, decisions)
+    assert dod["calibrate_split"] == "train"
+    assert {check["point"] for check in dod["checks"]} == {"calibrated", "production", "placeholder"}
+    # 两处均不成立（judge 误杀 keep）
+    assert dod["f1_ok_at_calibrated"] is False and dod["f1_ok_at_placeholder"] is False
+    report = ev.render_report(
+        cases,
+        {"C_dims": ev.evaluate_strategy(cases, decisions, "C_dims")},
+        ev._stock_taxonomy(),
+        None,
+        None,
+        dod=dod,
+    )
+    assert "负结果（诚实登记）" in report
+    assert "不得默认启用 judge" in report and "judge_enabled" in report
+
+
+def _dod_payload(ev, **overrides):
+    """构造 render_report 用的 DoD 载荷（默认 = 判据全成立）。"""
+    params = {"min_overlap": 0.4, "product_floor": 0.2, "customer_floor": 0.2}
+    payload = {
+        "calibrate_split": "train",
+        "baseline": "C_dims",
+        "candidates": ["C_D_judge"],
+        "calibrated": {
+            "C_dims": {"params": params, "holdout": {"f1": 0.6}},
+            "C_D_judge": {"params": params, "holdout": {"f1": 0.7}},
+        },
+        "production": {
+            "C_dims": {"params": params, "holdout": {"f1": 0.685}},
+            "C_D_judge": {"params": params, "holdout": {"f1": 0.702}},
+        },
+        "placeholder": {},
+        "checks": [],
+        "stability_deltas": {},
+        "stability_skipped": [],
+        "stability_ok": True,
+        "f1_ok_at_calibrated": True,
+        "f1_ok_at_production": True,
+        "f1_ok_at_placeholder": False,
+        "dod_satisfied": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_dod_point_table_reports_train_and_holdout_for_three_points(ev):
+    """阈值点对照表：三点 × 策略都给 train/holdout（防止只报有利方向）。"""
+    cases, decisions = _dod_fixture(ev)
+    dod = ev.dod_check(cases, decisions)
+    table = dod["point_table"]
+    assert set(table) == {"calibrated", "production", "placeholder"}
+    for label in table:
+        for name in ("B_single", "C_dims", "C_D_judge"):
+            assert name in table[label], (label, name)
+            assert set(table[label][name]) == {"train_f1", "holdout_f1"}
+    report = ev.render_report([], {}, {}, None, None, dod=dod)
+    assert "阈值点对照" in report
+
+
+def test_dod_report_declares_calibrated_point_when_only_it_passes(ev):
+    """RC-DOD-SENS：F1 判据只在标定点/生产生效点成立时，报告须显式声明「生产生效阈值 = 标定点」。"""
+    report = ev.render_report([], {}, {}, None, None, dod=_dod_payload(ev))
+    assert "生产生效阈值 = 标定点" in report
+    assert "不得表述为「DoD 已稳健成立」" in report
+    assert "DoD 成立 ✓" in report
+
+
+def test_dod_report_negative_result_names_unmet_stability_criterion(ev):
+    """稳定性判据不成立（F1 成立）⇒ 报告须走负结果路径并点名未满足判据（不得只说 F1 好看）。"""
+    dod = _dod_payload(
+        ev,
+        stability_ok=False,
+        dod_satisfied=False,
+        stability_deltas={"C_D_judge": {"B_single": {"train": -0.009, "holdout": -0.016, "all": -0.011}}},
+    )
+    report = ev.render_report([], {}, {}, None, None, dod=dod)
+    assert "负结果（诚实登记）" in report
+    assert "稳定性判据（judge 策略的保留集 Jaccard 相对生成器口径存在下降段）" in report
+    assert "不得默认启用 judge" in report
+    assert "DoD 成立 ✓" not in report
+
+
+def test_cli_default_cache_root_is_module_constant():
+    """``--cache-root`` 默认 = 模块常量（缓存世代可切换，历史世代字节不被触碰）。"""
+    source = _SCRIPT.read_text(encoding="utf-8")
+    assert "default=str(CACHE_DIR)" in source
+    assert "历史世代文件字节保持原样" in source
+    assert 'CACHE_DIR = PROJECT_ROOT / "data" / "peer_eval_cache" / "gen2"' in source
+    assert 'LEGACY_CACHE_DIR = PROJECT_ROOT / "data" / "peer_eval_cache"' in source
+
+
+def ev_labels_path():
+    """标注集路径（现算校验的锚点）。"""
+    from alphabee.company_track.peer_judge import DIMS as _PRODUCTION_DIMS
+
+    assert _PRODUCTION_DIMS  # 依赖可用性守卫（避免加载错文件造成假绿）
+    return PROJECT_ROOT / "tests" / "fixtures" / "peer_group_eval" / "labels.yaml"
+
+
+def test_labels_header_coverage_claim_matches_computed(cases):
+    """F-7：标注集头部的**定量散文**（「六类中的N类」）必须与现算的 holdout 业态数一致。
+
+    旧残留：t14 把残差桶案例移入 holdout 后，散文仍写「六类中的五类」（与实际 6 类矛盾）——
+    这类"注释撒谎"此后由本用例现算判红，不靠人眼复核。
+    """
+    import re as _re
+
+    text = ev_labels_path().read_text(encoding="utf-8")
+    computed = len({case.segment for case in cases if case.split == "holdout"})
+    numerals = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}
+    claims = [numerals[token] for token in _re.findall(r"六类中的([一二三四五六])类", text)]
+    assert claims, "头部缺少「六类中的N类」覆盖声明（本判据的锚点）"
+    assert all(claim == computed for claim in claims), f"散文声明 {claims} ≠ 现算 holdout 业态数 {computed}"
+    assert computed == 6  # 六类业态全覆盖（含残差桶）
+
+
+def test_labels_coverage_claim_prose_mutation_is_killed(cases):
+    """判别力：把散文改回「六类中的五类」⇒ 上面的现算判据必红。"""
+    import re as _re
+
+    text = ev_labels_path().read_text(encoding="utf-8")
+    mutated = text.replace("六类中的六类", "六类中的五类", 1)
+    assert mutated != text
+    numerals = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}
+    computed = len({case.segment for case in cases if case.split == "holdout"})
+    claims = [numerals[token] for token in _re.findall(r"六类中的([一二三四五六])类", mutated)]
+    assert claims and claims[0] != computed

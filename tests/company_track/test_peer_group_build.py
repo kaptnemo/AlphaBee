@@ -236,10 +236,14 @@ def test_build_peer_group_universe_path(tmp_path, monkeypatch):
 
 
 def test_build_peer_group_business_description_path(tmp_path, monkeypatch):
-    """有公司业务描述 ⇒ 走 LLM 推断，source=llm（优先于闭集与片段）。"""
+    """有公司业务描述 ⇒ 走 LLM 推断，source=llm（优先于闭集与片段）。
+
+    judge 显式关闭：本用例考察**来源优先级**（判定 D 的接线另有专测见文件末段）。
+    """
     from alphabee.company_track.peer_group_store import PeerGroupStore
 
     _patch_validation(monkeypatch)
+    _judge_off(monkeypatch)
     monkeypatch.setattr(
         build_module,
         "infer_peer_candidates",
@@ -301,9 +305,13 @@ def test_build_peer_group_notes_list_dropped_details(tmp_path, monkeypatch):
 
 
 def test_build_peer_group_remaps_stale_bj_code_by_name(tmp_path, monkeypatch):
-    """陈旧北交所代码（873593.BJ→920593.BJ）按公司名回查当前代码，不再误剔。"""
+    """陈旧北交所代码（873593.BJ→920593.BJ）按公司名回查当前代码，不再误剔。
+
+    judge 显式关闭：本用例考察 A 股存在性校验与按名回查，judge 接线另有专测。
+    """
     from alphabee.company_track.peer_group_store import PeerGroupStore
 
+    _judge_off(monkeypatch)
     monkeypatch.setattr(
         build_module,
         "infer_peer_candidates",
@@ -385,11 +393,15 @@ def test_generator_emits_all_scored_candidates_and_gate_does_the_dropping(tmp_pa
 
     端到端剔除以仍被覆盖：低 overlap 候选在 ``build_peer_group`` 被 Gate 剔除，
     notes 逐条写明 ``质量闸剔除 {code} {name}（overlap x < y）：{reason}``。
+
+    judge 显式关闭：本用例的判据是「生成器不自行剔除 + Gate 执行剔除」，
+    judge 生效态的消费口径见文件末段 ``test_judge_applied_*``。
     """
     from alphabee.company_track import infer_peer_candidates
     from alphabee.company_track.peer_group_build import build_peer_group
     from alphabee.company_track.peer_group_store import PeerGroupStore
 
+    _judge_off(monkeypatch)
     _DIMS = '"dims": {"product": 0.9, "customer": 0.8, "material_tech": 0.8, "business_model": 0.9}'
     payload = (
         '[{"name": "A", "code": "002463.SZ", "overlap": 0.9, "reason": "同环节直接竞争", '
@@ -510,10 +522,13 @@ def test_gate_emptied_group_sets_no_peers_terminal(tmp_path, monkeypatch):
     未置位会让 ``resolve_company_track`` 每次分析都重复走在线兜底并重复调用 LLM。
 
     判别力：去掉该分支的 ``no_peers=...`` ⇒ 本用例必红。
+    （judge 显式关闭：本条钉的是生成器口径下的终态；judge 生效态的终态见
+    ``test_judge_ok_with_empty_kept_sets_no_peers`` 与 ``test_judge_degraded_never_sets_no_peers``。）
     """
     from alphabee.company_track.peer_group_store import PeerGroupStore
 
     _patch_validation(monkeypatch)
+    _judge_off(monkeypatch)
     monkeypatch.setattr(
         build_module,
         "infer_peer_candidates",
@@ -545,6 +560,7 @@ def test_gate_emptied_but_llm_failed_does_not_set_no_peers(tmp_path, monkeypatch
     from alphabee.company_track.peer_group_store import PeerGroupStore
 
     _patch_validation(monkeypatch)
+    _judge_off(monkeypatch)
     monkeypatch.setattr(
         build_module,
         "infer_peer_candidates",
@@ -557,3 +573,394 @@ def test_gate_emptied_but_llm_failed_does_not_set_no_peers(tmp_path, monkeypatch
     group, _warnings = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=store)
 
     assert group.is_empty() and group.no_peers is False
+
+
+# ── 判定 D：独立 batch judge 接线（生成/判定解耦 + fail-open，设计 §3.2/§3.6/§4） ──
+
+
+def _judge_off(monkeypatch) -> None:
+    """把 ``company_track.peer_quality.judge_enabled`` 置 False（判据与 judge 无关的用例用）。"""
+    from alphabee import config as config_module
+
+    settings = config_module.get_settings().model_copy(deep=True)
+    settings.company_track.peer_quality.judge_enabled = False
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    build_module._PEER_QUALITY_CACHE.clear()
+
+
+def _judge_on(monkeypatch, *, batch_size: int = 20) -> None:
+    """显式打开 judge（并把 batch_size 写进配置），供批量参数断言用。"""
+    from alphabee import config as config_module
+
+    settings = config_module.get_settings().model_copy(deep=True)
+    settings.company_track.peer_quality.judge_enabled = True
+    settings.company_track.peer_quality.judge_batch_size = batch_size
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    build_module._PEER_QUALITY_CACHE.clear()
+
+
+def _patch_infer(monkeypatch, candidates: list[dict], *, llm_ok: bool = True) -> None:
+    monkeypatch.setattr(
+        build_module,
+        "infer_peer_candidates",
+        lambda *a, **k: (list(candidates), {"note": "", "llm_ok": llm_ok, "dropped": []}),
+    )
+
+
+def _patch_judge(monkeypatch, *, rows: dict[str, dict] | None = None, ok: bool = True) -> list[dict]:
+    """patch 生产 judge 入口（**不调真 LLM**），返回逐次调用记录。"""
+    from alphabee.company_track import peer_judge
+
+    calls: list[dict] = []
+
+    def fake(description, candidates, *, batch_size=peer_judge.JUDGE_BATCH_SIZE_DEFAULT, model=None):
+        calls.append({"description": description, "pool": [dict(c) for c in candidates], "batch_size": batch_size})
+        if ok:
+            return peer_judge.JudgeReport(
+                results=dict(rows or {}),
+                batches=1,
+                failed_batches=0,
+                missing_codes=(),
+                out_of_set_codes=(),
+                errors=(),
+                called=True,
+            )
+        missing = tuple(str(c.get("code")) for c in candidates)
+        return peer_judge.JudgeReport(
+            results={},
+            batches=1,
+            failed_batches=1,
+            missing_codes=missing,
+            errors=("batch#0: RuntimeError: llm down",),
+            called=True,
+        )
+
+    monkeypatch.setattr(peer_judge, "judge_peer_candidates_batched", fake)
+    return calls
+
+
+def _gen_candidate(code: str, name: str, product: float) -> dict:
+    """生成器候选：故意让**生成器维分**与 judge 维分不同，用于证明 Gate 消费的是哪一侧。"""
+    return {
+        "name": name,
+        "code": code,
+        "reason": f"{name} 同环节",
+        "source": "infer",
+        "overlap": 0.9,
+        "dims": {"product": product, "customer": product, "material_tech": product, "business_model": product},
+    }
+
+
+def _judge_row(verdict: str, product: float, customer: float = 0.9) -> dict:
+    return {
+        "verdict": verdict,
+        "dims": {"product": product, "customer": customer, "material_tech": 0.9, "business_model": 0.9},
+        "reason": "匹配点：同环节；不匹配点：无",
+    }
+
+
+def test_judge_applied_gate_consumes_judge_verdict_and_dims(tmp_path, monkeypatch):
+    """judge 生效：Gate 采纳 **judge 的 verdict 与 dims**（不是生成器自评分）。
+
+    构造三只候选，使结论只可能来自 judge 侧：
+    - ``KEEP``：生成器给 product=0.05（本会被产品下限剔），judge 给 0.9/direct ⇒ 必须保留；
+    - ``REJECT``：生成器给 0.95（本会保留），judge 给 reject（dims 全 1.0）⇒ 必须按 ``judge reject`` 剔；
+    - ``FLOOR``：生成器 0.95，judge 给 ``product=0.05``（direct）⇒ 必须按“产品重叠不足”剔。
+    """
+    from alphabee.company_track import peer_judge
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    _patch_infer(
+        monkeypatch,
+        [
+            _gen_candidate("002463.SZ", "KEEP", 0.05),
+            _gen_candidate("300476.SZ", "REJECT", 0.95),
+            _gen_candidate("600183.SH", "FLOOR", 0.95),
+        ],
+    )
+    calls = _patch_judge(
+        monkeypatch,
+        rows={
+            "002463.SZ": _judge_row("direct", 0.9),
+            "300476.SZ": _judge_row("reject", 1.0),
+            "600183.SH": _judge_row("direct", 0.05),
+        },
+    )
+    store = PeerGroupStore(root=tmp_path)
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=store)
+
+    # ① judge 被调用一次，入参是**生成器候选池**（闭集），且不含生成器分数
+    assert len(calls) == 1
+    assert [item["code"] for item in calls[0]["pool"]] == ["002463.SZ", "300476.SZ", "600183.SH"]
+    assert all(set(item) == {"code", "name"} for item in calls[0]["pool"])
+
+    # ② 保留集与剔除以 judge 为准
+    assert group.codes == ["002463.SZ"]
+    drops = {note.split()[1]: note for note in warnings if "质量闸剔除" in note}
+    assert "judge reject" in drops["300476.SZ"]
+    assert "产品重叠不足" in drops["600183.SH"]
+    # ③ 持久化的维度 = judge 的四维（而非生成器 0.05）
+    assert group.match_dims["002463.SZ"] == peer_judge.normalize_dims(_judge_row("direct", 0.9)["dims"])
+    assert group.scores["002463.SZ"] == pytest.approx(0.9, abs=1e-6)
+
+
+def test_judge_degraded_falls_back_to_generator_and_records_note(tmp_path, monkeypatch):
+    """fail-open（设计 §3.6）：judge 降级 ⇒ **回退生成器分**继续走 Gate，notes 记 ``judge_degraded``。
+
+    判别力（M2）：把 ``_run_judge`` 里的降级 note 去掉 ⇒ 本用例的 notes 断言必红（回退证据消失）。
+    """
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    # 生成器认为 KEEP 高分 ⇒ 回退后仍应保留（若误把 judge 的空结果当"全剔"就会清空成空组）
+    _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "KEEP", 0.9)])
+    _patch_judge(monkeypatch, ok=False)
+    store = PeerGroupStore(root=tmp_path)
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=store)
+
+    assert group.codes == ["002463.SZ"], "judge 降级时未回退生成器分"
+    degraded = [note for note in warnings if note.startswith("judge 降级")]
+    assert degraded, "judge 降级未在 notes 记账（回退证据丢失）"
+    assert "回退生成器分" in degraded[0] and "不置 no_peers" in degraded[0]
+    assert "002463.SZ" in degraded[0]  # 未取得可用判定的候选被列名
+    assert group.scores["002463.SZ"] == pytest.approx(0.9, abs=1e-6)  # 生成器维分（product=0.9 ⇒ 合成 0.9）
+
+
+def test_judge_degraded_never_sets_no_peers(tmp_path, monkeypatch):
+    """fail-open 硬要求（M1）：judge 失败 ⇒ **绝不置** ``no_peers``（可重试），即使 Gate 清空。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    # 生成器分低 ⇒ Gate 全剔；但 judge 降级 ⇒ 不得置终态
+    _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "低分", 0.05)])
+    _patch_judge(monkeypatch, ok=False)
+    store = PeerGroupStore(root=tmp_path)
+    group, warnings = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=store)
+
+    assert group.is_empty()
+    assert group.no_peers is False, "judge 降级却置 no_peers ⇒ 该标的永不重试（M1）"
+    assert any(note.startswith("judge 降级") for note in warnings)
+
+
+def test_judge_ok_with_empty_kept_sets_no_peers(tmp_path, monkeypatch):
+    """双有效 + 无保留 ⇒ ``no_peers=True``；judge 未接线（配置关闭）时沿用生成器口径。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "低分", 0.05)])
+    _patch_judge(monkeypatch, rows={"300260.SZ": _judge_row("reject", 0.05)}, ok=True)
+    group, _ = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path))
+    assert group.is_empty() and group.no_peers is True
+
+    # 对照：judge 关闭（回滚口径）⇒ 生成器有效响应且无保留即终态
+    _judge_off(monkeypatch)
+    group2, _ = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path))
+    assert group2.is_empty() and group2.no_peers is True
+
+
+def test_judge_not_called_on_non_infer_paths(tmp_path, monkeypatch):
+    """非生成器推断路径（研报片段抽取 / 闭集择优 / 人工直传）**不调 judge**，行为保持。"""
+    from alphabee.company_track import peer_judge
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    calls = _patch_judge(monkeypatch, rows={})
+    monkeypatch.setattr(
+        build_module,
+        "extract_peer_candidates",
+        lambda *a, **k: (
+            [{"name": "华勤技术", "code": "603296.SH", "reason": "管理层点名", "source": "#0"}],
+            {"note": "", "llm_ok": True},
+        ),
+    )
+    group, _ = build_peer_group("601138.SH", fragments=["片段"], store=PeerGroupStore(root=tmp_path))
+    assert group.codes == ["603296.SH"]
+    assert calls == [], "非推断路径不应调用独立 judge"
+    assert peer_judge.JUDGE_BATCH_SIZE_DEFAULT == 20
+
+
+def test_judge_batch_size_comes_from_config(tmp_path, monkeypatch):
+    """批量上限取配置 ``judge_batch_size``（生产入口按批切分的入口参数）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch, batch_size=2)
+    _patch_infer(
+        monkeypatch,
+        [_gen_candidate("002463.SZ", "A", 0.9), _gen_candidate("300476.SZ", "B", 0.9)],
+    )
+    calls = _patch_judge(
+        monkeypatch,
+        rows={"002463.SZ": _judge_row("direct", 0.9), "300476.SZ": _judge_row("direct", 0.9)},
+    )
+    group, _ = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+    assert len(calls) == 1 and calls[0]["batch_size"] == 2
+    assert group.codes == ["002463.SZ", "300476.SZ"]
+
+
+def test_judge_enabled_false_is_verbatim_rollback(tmp_path, monkeypatch):
+    """回滚口径：``judge_enabled=false`` ⇒ 不调 judge、无降级 note、判定回到生成器口径。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_off(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "KEEP", 0.9)])
+    calls = _patch_judge(monkeypatch, rows={"002463.SZ": _judge_row("reject", 1.0)})
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+    assert calls == []
+    assert group.codes == ["002463.SZ"], "judge 关闭时不应消费 judge 的 reject"
+    assert not [note for note in warnings if "judge" in note]
+
+
+def test_judge_is_off_by_default(tmp_path, monkeypatch):
+    """**默认不启用**（DoD 负结果口径）：未改配置时生成器推断路径**不调用** judge，判定走 C 口径。
+
+    这是负结果路径的落脚点：接线与配置保留（置 ``judge_enabled=true`` 即启用，见上一条用例），
+    但生产缺省行为 = 判定 C（关键词表已删除的「结构化维度 + 确定性 Gate」口径）。
+    """
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    build_module._PEER_QUALITY_CACHE.clear()  # 不 patch 配置：读真实缺省（judge_enabled=False）
+    _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "KEEP", 0.9)])
+    calls = _patch_judge(monkeypatch, rows={"002463.SZ": _judge_row("reject", 0.1)})
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    assert calls == [], "缺省配置下不应调用独立 judge"
+    assert group.codes == ["002463.SZ"], "缺省口径应完全按生成器 dims 判定（C）"
+    assert not [note for note in warnings if "judge" in note]
+
+
+def _mutate_build(old: str, new: str, name: str, monkeypatch) -> None:
+    """把 peer_group_build 源码变异后加载为模块（并把依赖换成 fake，保持密闭）。"""
+    import importlib.util
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    source = build_module.__file__
+    assert source is not None
+    text = Path(source).read_text(encoding="utf-8")
+    assert text.count(old) == 1, f"变异锚点不唯一：{old!r}"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / f"{name}.py"
+        path.write_text(text.replace(old, new), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(name, path)
+        assert spec is not None and spec.loader is not None
+        mutant = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mutant
+        spec.loader.exec_module(mutant)
+    monkeypatch.setattr(mutant, "validate_a_share_codes", lambda codes: (list(codes), [], None))
+
+
+def test_m1_judge_failure_mis_setting_no_peers_is_killed(tmp_path, monkeypatch):
+    """M1：judge 降级时误置 ``no_peers``（丢失"可重试"语义）⇒ 必红。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "低分", 0.05)])
+    _patch_judge(monkeypatch, ok=False)
+    _mutate_build(
+        '        no_peers = bool(use_llm and meta.get("llm_ok") and (judge_ok if judge_called else True))',
+        '        no_peers = bool(use_llm and meta.get("llm_ok"))  # M1 忽略 judge 降级',
+        "pbg_mutant_m1",
+        monkeypatch,
+    )
+    # 变异体：降级也置终态 ⇒ 用同一夹具跑变异模块，断言其 no_peers=True（说明判据能观察到该行为）
+    import sys as _sys
+
+    mutant = _sys.modules["pbg_mutant_m1"]
+    monkeypatch.setattr(
+        mutant,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [_gen_candidate("300260.SZ", "低分", 0.05)],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    group_mutant, _ = mutant.build_peer_group(
+        "002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path)
+    )
+    assert group_mutant.no_peers is True, "M1 未被杀死：变异体仍不置 no_peers"
+    # 参照实现：同一输入下必须为 False
+    group_ref, _ = build_module.build_peer_group(
+        "002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path)
+    )
+    assert group_ref.no_peers is False
+
+
+def test_m2_dropping_judge_degraded_note_is_killed(tmp_path, monkeypatch):
+    """M2：judge 降级时**丢掉回退证据**（不记 ``judge_degraded`` note）⇒ 必红。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "KEEP", 0.9)])
+    _patch_judge(monkeypatch, ok=False)
+    _mutate_build(
+        "    if not report.ok:\n        note = report.note()\n        if note:\n            warnings.append(note)",
+        "    if not report.ok:\n        # M2 丢弃降级证据（静默采纳生成分）",
+        "pbg_mutant_m2",
+        monkeypatch,
+    )
+    import sys as _sys
+
+    mutant = _sys.modules["pbg_mutant_m2"]
+    monkeypatch.setattr(
+        mutant,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [_gen_candidate("002463.SZ", "KEEP", 0.9)],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    _group, warnings_mutant = mutant.build_peer_group(
+        "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
+    )
+    assert not [note for note in warnings_mutant if note.startswith("judge 降级")], "M2 未被杀死：变异体仍留有降级证据"
+    _group_ref, warnings_ref = build_module.build_peer_group(
+        "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
+    )
+    assert any(note.startswith("judge 降级") for note in warnings_ref)
+
+
+def test_m3_ignoring_judge_reject_is_killed(tmp_path, monkeypatch):
+    """M3：Gate 忽略 ``verdict=="reject"``（只按 dims 判）⇒ 必红（未变异的实现必须剔）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _judge_on(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("300476.SZ", "REJECT", 0.95)])
+    _patch_judge(monkeypatch, rows={"300476.SZ": _judge_row("reject", 1.0)})
+    _mutate_build(
+        '        elif verdict == "reject":\n            drop = DROP_JUDGE_REJECT',
+        "        elif False:  # M3 忽略 judge reject\n            drop = DROP_JUDGE_REJECT",
+        "pbg_mutant_m3",
+        monkeypatch,
+    )
+    import sys as _sys
+
+    mutant = _sys.modules["pbg_mutant_m3"]
+    monkeypatch.setattr(
+        mutant,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [_gen_candidate("300476.SZ", "REJECT", 0.95)],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    group_mutant, _ = mutant.build_peer_group(
+        "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
+    )
+    assert group_mutant.codes == ["300476.SZ"], "M3 未被杀死：忽略 reject 后候选仍被保留"
+    group_ref, warnings_ref = build_module.build_peer_group(
+        "002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path)
+    )
+    assert group_ref.is_empty() and any("judge reject" in note for note in warnings_ref)

@@ -5,6 +5,18 @@
 C4 校验拆分：A 股经 tushare 存在性校验进 ``codes``（基准计算）；
 境外代码进 ``international``（仅名单）；无法识别交易所的候选剔除并告警。
 C3 持久化：``data/peer_groups/{symbol}.json``（原子写、latest-wins、人工可编辑覆盖）。
+
+判定链（设计 §3.2/§3.6/§4，C/D 分工）：
+
+1. **生成器**（Recall，``peer_extract.infer_peer_candidates``）出候选 + 自评 ``overlap`` + 四维 ``dims``；
+2. **独立 judge**（D，``peer_judge.judge_peer_candidates_batched``）：对生成器候选池做一次批量独立评审，
+   逐候选取 ``verdict`` + ``dims``（``judge_enabled=false`` 时跳过 ⇒ 判定回到 C 口径）；
+3. **确定性 Gate**（C，本模块 :func:`gate_candidates`）：按序 verdict 否决 → 维度下限 → 合成 overlap
+   阈值剔除，**采纳决定权在 Gate**（LLM 不做取舍）。
+
+fail-open（设计 §3.6）：judge 失败/超时/非 JSON/漏判 ⇒ 回退生成器 ``dims``/``overlap`` 继续走 Gate，
+notes 记 ``judge_degraded``，**绝不**据此置 ``no_peers``；``no_peers=True`` 仅当生成器与 judge
+**均有效响应且无保留**（judge 未接线时沿用生成器口径，见 :func:`_run_judge` 与 Gate 清空分支）。
 """
 
 from __future__ import annotations
@@ -180,6 +192,61 @@ def _format_dropped(dropped: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _judge_pool(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """候选 → judge 入参池（``{code, name}``；E 特征 ``same_l3/same_l2`` 本步暂无数据 ⇒ 不注入）。"""
+    return [{"code": str(c.get("code") or ""), "name": str(c.get("name") or "")} for c in candidates]
+
+
+def _with_judge_verdict(candidates: list[dict[str, Any]], results: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """把 judge 的 ``verdict`` / ``dims`` 挂到候选上（**判定 D 生效口径**）。
+
+    只有 ``JudgeReport.ok`` 时才调用本函数（全覆盖：池内每只都有可用判定）；
+    生成的候选 dict 供 :func:`gate_candidates` 使用 —— Gate 的规则①消费 ``verdict``、
+    合成分消费 ``dims``，从而把「生成者自评」换成「独立评审的维度」。
+    """
+    merged: list[dict[str, Any]] = []
+    for cand in candidates:
+        code = str(cand.get("code") or "").strip().upper()
+        row = results.get(code)
+        if not row:
+            merged.append(cand)
+            continue
+        # ``verdict`` 供 Gate 规则①（先否决）；``dims`` 换成 judge 的四维分（合成分 → scores/match_dims）
+        merged.append({**cand, "verdict": row.get("verdict"), "dims": row.get("dims")})
+    return merged
+
+
+def _run_judge(
+    candidates: list[dict[str, Any]],
+    business_description: str,
+    warnings: list[str],
+    *,
+    batch_size: int = peer_judge.JUDGE_BATCH_SIZE_DEFAULT,
+    model: Any = None,
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    """独立批量评审（判定 D）：返回 ``(候选, judge_ok, judge_called)``。
+
+    - ``judge_ok``：judge 有效响应且**池内全覆盖** ⇒ 候选挂上 judge 的 ``verdict`` / ``dims``；
+    - ``judge_called``：是否真的发起了判定（空候选池 / 空业务描述 ⇒ ``False``，此时既未判定
+      也不算降级，``no_peers`` 判据按生成器口径处理）。
+
+    fail-open（设计 §3.6）：judge 调用失败 / 超时 / 非 JSON / 漏判 ⇒ **不静默采纳生成分**：
+    回退生成器的 ``dims`` / ``overlap`` 继续走 Gate，notes 记 ``judge_degraded``，
+    **绝不**据此置 ``no_peers``（可重试）。
+    """
+    if not candidates or not str(business_description or "").strip():
+        return candidates, False, False
+    report = peer_judge.judge_peer_candidates_batched(
+        business_description, _judge_pool(candidates), batch_size=batch_size, model=model
+    )
+    if not report.ok:
+        note = report.note()
+        if note:
+            warnings.append(note)
+        return candidates, False, report.called
+    return _with_judge_verdict(candidates, report.results), True, True
+
+
 def build_peer_group(
     symbol: str,
     *,
@@ -242,7 +309,9 @@ def build_peer_group(
             warnings.append(meta["note"])
         if not candidates:
             warnings.append("在线推断未产出直接对标（不编造），空对标组")
-            # LLM 有效响应且无候选 ⇒ 判定「确无 A 股直接对标」终态，避免每次分析重复调用 LLM
+            # LLM 有效响应且无候选 ⇒ 判定「确无 A 股直接对标」终态，避免每次分析重复调用 LLM。
+            # 判定 D 的 judge 面**不参与**本条：生成器零候选 ⇒ 无候选池可判（``called=False``），
+            # 故终态判据沿用生成器口径（judge 的「双有效」口径见下方 Gate 清空分支）。
             no_peers = bool(use_llm and meta.get("llm_ok"))
             group = PeerGroup(symbol=symbol, name=name, source="manual", notes=list(warnings), no_peers=no_peers)
             store.save(group)
@@ -252,10 +321,24 @@ def build_peer_group(
     if candidates:
         _extend_unique(warnings, _format_dropped(meta.get("dropped") or []))
 
-    # ── C（判定）：确定性质量闸（权重/阈值唯一处 = peer_extract + 配置） ──
+    # ── D（判定）：独立 batch judge（生成/判定解耦，贯穿「生成器出分 → judge 复判 → Gate 采纳」） ──
+    # 只对**生成器推断路径**（business_description ⇒ infer_peer_candidates）接线：judge 的输入是
+    # 「标的业务描述 + 生成器候选池（闭集）」，与生成器同模型同组件（设计 §8 决策 1，无第二模型项）。
+    # judge 降级 ⇒ 回退生成器 dims/overlap（判定 C 口径），notes 记 judge_degraded（见 :func:`_run_judge`）。
+    gate_cfg = _peer_quality_settings()
+    judge_called = False
+    judge_ok = False
+    if infer_used and candidates and bool(gate_cfg.get("judge_enabled", True)):
+        candidates, judge_ok, judge_called = _run_judge(
+            list(candidates),
+            business_description or "",
+            warnings,
+            batch_size=int(gate_cfg.get("judge_batch_size", peer_judge.JUDGE_BATCH_SIZE_DEFAULT)),
+        )
+
+    # ── C（判定）：确定性质量闸（权重/阈值唯一处 = peer_judge） ──
     # 只对 **LLM 产出** 的候选做剔除：``candidates`` 直传是调用方（人工/分析师）给定的白名单，
     # 按来源优先级最高、不经质量闸（否则会反向覆盖人工判断）。
-    gate_cfg = _peer_quality_settings()
     # 判定 C 打分来源（LLM 推断）⇒ 严格口径（缺分即不可评估，与 harness 同源）；
     # 无分数来源（研报片段抽取 / 闭集择优 / 调用方直传）⇒ require_score=False（保持既有行为）
     scored_source = infer_used
@@ -276,8 +359,9 @@ def build_peer_group(
         warnings.append("质量闸后无保留候选（不编造），空对标组")
         # 设计 §3.6「全空 ⇒ ``no_peers = 生成器与 judge 均有效响应且无保留``」：Gate 把候选
         # 全部剔除与「生成器零候选」同属**终态空组**，必须同样置位，否则每次分析都会重复
-        # 调用 LLM 走在线兜底。本步尚无独立 judge ⇒ 以生成器的 ``meta.llm_ok`` 为过渡口径。
-        no_peers = bool(use_llm and meta.get("llm_ok"))
+        # 调用 LLM 走在线兜底。判定 D 接通后：judge 面（生成器推断路径 + judge_enabled）要求
+        # **judge 也有效响应**；judge 未接线（非推断路径 / 配置关闭 / 空池）则沿用生成器口径。
+        no_peers = bool(use_llm and meta.get("llm_ok") and (judge_ok if judge_called else True))
         group = PeerGroup(
             symbol=symbol,
             name=name,

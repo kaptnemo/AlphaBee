@@ -213,10 +213,13 @@ class PeerQualityConfidenceSettings(BaseModel):
 
 
 class PeerQualitySettings(BaseModel):
-    """对标组候选质量闸（判定 C，设计 §3.3/§3.5）。
+    """对标组候选质量闸（判定 C）与独立 batch judge（判定 D，设计 §3.3/§3.5/§3.6）。
 
     读写口径：权重/阈值的**唯一处**在 ``alphabee/company_track/peer_judge.py`` 的默认常量，
     本段用于**覆盖**；缺段 ⇒ 全部取默认值（旧 config 仍可 import，行为不变）。
+
+    阈值来源（设计 §8 决策 3）：由标注集 **train 段**标定，生产生效阈值 = 标定点
+    （标定点与 holdout 验收数字见 `outputs/peer_group_eval.md` 的 DoD 复核章节）。
     """
 
     enabled: bool = Field(default=True, description="质量闸总开关（false ⇒ 只用结构性下限判定）")
@@ -228,8 +231,20 @@ class PeerQualitySettings(BaseModel):
     product_floor: float = Field(default=0.20, description="product 维度下限（train 段标定）")
     customer_floor: float = Field(default=0.20, description="customer 维度下限")
     residual_l3_min_constituents: int = Field(default=15, description="残差桶判定：L3 成分数低于该值 ⇒ 分类学不可信")
-    judge_enabled: bool = Field(default=True, description="独立 batch judge 开关（与生成同模型）")
-    judge_batch_size: int = Field(default=20, description="judge 单批候选数")
+    judge_enabled: bool = Field(
+        default=False,
+        description=(
+            "独立 batch judge 开关（与生成同模型，不新增模型配置项）。**默认 false**：Step 2 的 DoD 复核为"
+            "**负结果**——F1 判据在标定点/生产生效点成立（0.702 ≥ 0.685），但稳定性判据不成立"
+            "（judge 策略保留集 Jaccard 相对生成器口径 train/holdout/all 三段均略降 −0.009~−0.025）⇒ "
+            "按设计 §6 Step 2 的负结果路径**不得默认启用**；接线与配置保留，置 true 即启用（Gate 改消费"
+            "judge 的 verdict/dims）。judge 失败/超时/非 JSON/漏判 ⇒ fail-open：回退生成器分继续走 Gate "
+            "并记 judge_degraded，绝不已此置 no_peers"
+        ),
+    )
+    judge_batch_size: int = Field(
+        default=20, description="judge 单批候选数上限（唯一默认处 = peer_judge.JUDGE_BATCH_SIZE_DEFAULT）"
+    )
     min_peers: int = Field(default=2, description="消费侧最小对标数：低于该值不注入 peer_*、回退 industry")
     confidence: PeerQualityConfidenceSettings = Field(default_factory=PeerQualityConfidenceSettings)
 

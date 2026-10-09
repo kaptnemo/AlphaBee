@@ -48,19 +48,33 @@ report_window:
 # 五段全部带默认值 ⇒ 本段可以整段省略（缺段时各读取点 fail-open 取内置默认，import 期不读配置）。
 # 此处显式列出便于运维调整与回滚；数值与 alphabee.config.DeviationSettings() 的默认值逐项一致
 # （由测试程序化比对，防"文档写一套、代码是另一套"的漂移）。
-# 公司赛道：对标组候选判定质量闸（判定 C）。
-# 权重/阈值的唯一处在 alphabee/company_track/peer_quality.py 的默认常量，本段用于覆盖；
+# 公司赛道：对标组候选判定质量闸（判定 C）与独立 batch judge（判定 D）。
+# 权重/阈值的唯一处在 alphabee/company_track/peer_judge.py 的默认常量，本段用于覆盖；
 # 整段缺省时全部取默认值（旧 config 仍可 import，行为不变）。
+# 阈值口径（设计 §8 决策 3）：**由标注集 train 段标定**，生产生效阈值 = 标定点
+#（占位默认 0.50/0.30/0.20 在 holdout 上不成立，只是 sweep 起点；敏感性表见评测报告）。
 company_track:
   peer_quality:
     enabled: true
+    # 阈值来源：标注集 **train 段**标定；现行值 = 上一版 train 标定点（0.40/0.20/0.20，即"生产生效点"）。
+    # 判定 D 接通后本版在 train 段重标定得到 0.40/0.40/0.10，但相对现行点 train F1 仅 +0.004（噪声级）
+    # 而 holdout 明显下降（0.608 < 0.685）⇒ **不采纳**新点、保留现行生产点（待样本扩大后重标定）；
+    # 占位默认 0.50/0.30/0.20 不生效（仅作 sweep 起点）。逐点对照表见
+    # outputs/peer_group_eval.md 的 DoD「阈值点对照」章节。
     min_overlap: 0.40           # 合成 overlap 下限（overlap = Σ w_i·dim_i；由 train 段标定）
     weights: {product: 0.40, customer: 0.30, business_model: 0.20, material_tech: 0.10}
     product_floor: 0.20         # product 维度下限（由 train 段标定）
     customer_floor: 0.20        # customer 维度下限
     residual_l3_min_constituents: 15   # 残差桶判定：L3 成分数不足 ⇒ 分类学不可信
-    judge_enabled: true         # 独立 batch judge（与生成同模型，无独立模型配置项）
-    judge_batch_size: 20
+    judge_enabled: false        # 独立 batch judge（与生成同模型，无独立模型配置项）。
+                                # 默认 false（= 判定 C 口径）：评测 DoD 为负结果——F1 判据在标定点/
+                                # 生产生效点成立（0.702 ≥ 0.685），但稳定性判据不成立（保留集 Jaccard
+                                # 相对生成器口径 train/holdout/all 三段均略降 −0.009~−0.025）
+                                # ⇒ 按设计 §6 Step 2 不默认启用；置 true 即启用（复核见
+                                # outputs/peer_group_eval.md 的 DoD 章节）。
+                                # judge 失败/超时/非 JSON/漏判 ⇒ fail-open：回退生成器分、
+                                # 记 judge_degraded，**不置** no_peers（可重试）
+    judge_batch_size: 20        # judge 单批候选数上限（超出按批切分调用）
     min_peers: 2                # 消费侧最小对标数：低于该值不注入 peer_*、回退 industry
     confidence: {low: 0.4, medium: 0.7}
 
