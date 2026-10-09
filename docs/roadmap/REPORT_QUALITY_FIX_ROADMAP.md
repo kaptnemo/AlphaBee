@@ -564,6 +564,27 @@ class InsightArtifact(...):
 - 在线兜底：`PeerGroupStore().load()` 未命中时尝试 `build_peer_group(...)`，失败才走 `peer_group_missing` 降级。
 - 批量回填脚本（`scripts/`）为历史标的补配置。
 
+> **实施说明（在线兜底，2026-10）**：候选来源落地为**本地财报「管理层讨论与分析」+ LLM 推断**——
+> `resolve_company_track` 在存储未命中/空对标组时，用 `peer_report.fetch_local_report_fragments`
+> 取标的最近一期本地年报/半年报的「管理层讨论与分析」章节（`reports/` 的 manifest →
+> `reports_full/` 全文，节内截取），交 `peer_extract.infer_peer_candidates` 让 LLM **依据业务描述
+> 推断同环节 A 股直接竞对**（显式排除上下游，代码经 Tushare 校验），`build_peer_group` 持久化。
+> 并有**两重质量闸**：LLM 逐条自评 `overlap`（0–1，低于 `DEFAULT_MIN_OVERLAP=0.5` 剔除）+
+> **理由自洽否决**（理由自曝「下游/终端偏移、以碳钢为主、而非、部分重叠」等实质差异即剔除，
+> 防「理由自相矛盾却仍入选」）；被剔除项写入 `notes`（`code/name/drop/reason` 明细，可审计）。
+> 另修两处：① **空组终态** `PeerGroup.no_peers`——LLM 有效响应却无候选时置位，`resolve_company_track`
+> 据此不再每次分析重复调用 LLM（如 301029 怡合达的目录平台业态确无同模式 A 股对标）；
+> ② **陈旧代码按名回查**——A 股校验失败时用 `peer_universe.resolve_current_code_by_name` 回查当前代码
+> （修复北交所迁移假阴性，如 `873593.BJ → 920593.BJ` 鼎智科技）。
+> 无本地报告时退而同行业成分股闭集（`IndustryContextArtifact.peer_universe` + `select_peer_candidates`
+> 闭集择优）；两者皆无可选才走 `peer_group_missing`（不编造）。
+>
+> **为何不用东财研报正文**：实测东财研报 `detail.content` 只是「投资要点」摘要（约 700–1400 字），
+> 且 002916 半年报正文也**不点名**竞对（实测无「沪电/胜宏/兴森」等字样）——故以「公司自身业务描述
+> + LLM 领域推断」逼近人工选股（002916 的 `data/peer_groups/002916.SZ.json` 即此口径的人工版）。
+> 顺带修掉 `alphabee.tools.eastmoney` ↔ `alphabee.collectors` 的循环 import（前者对
+> `collectors.eastmoney.helper` 的依赖改为 `TYPE_CHECKING` + 函数内延迟 import）。
+
 ---
 
 ## 12. 全局验证策略
