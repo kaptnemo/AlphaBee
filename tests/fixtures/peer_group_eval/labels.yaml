@@ -1,16 +1,46 @@
-# 对标组判定策略回归标注集（scripts/peer_group_eval.py 的 §8 输入）。
+# 对标组判定策略回归标注集（scripts/peer_group_eval.py 的输入；设计 docs/design/PEER_GROUP_JUDGMENT_DESIGN.md §5/§6）。
 #
 # 每个 case：一个标的 + 一个**冻结候选池** + 逐候选 ground truth（label: keep/drop）。
-# 候选池来源 = 历史 LLM 产出 ∪ 同 L2/L3 成分，冻结以隔离"生成漂移"；E 的 same_l3/same_l2
-# 由脚本从 alphabee/static/all_stocks.csv 现算（不写进本文件）。
 #
-# 覆盖四类：同质 L3（易，002916/603986）、分类冲突（难，002318）、残差桶+精度（难，301029）。
+# 候选池来源（pool_source 字段逐例写明，**不由本次 LLM 现场生成**）：
+#   - `harness 首采缓存 ∪ 同 L3 成分`：来自 data/peer_eval_cache/<symbol>.json 的历史 LLM 产出
+#     （2026-10 首采），并按 alphabee/static/all_stocks.csv 的申万 L3 成分补齐；
+#   - `同 L2/L3 公开分类冻结`：未做过 LLM 首采的 case，按 alphabee/static/all_stocks.csv 的
+#     申万 L2/L3 成分（公开分类，非 LLM 现生成）取真实同行业公司，冻结在文件内。
+# E 的 same_l3/same_l2 由脚本从 alphabee/static/all_stocks.csv 现算（不写进本文件）。
+#
+# 划分依据（split 字段）：**按业态分层**而非按行业单堆——六个业态各 ≥1 例，且 holdout 覆盖
+#   同质 L3 / 分类冲突 / 残差桶 / 境内外混合 / 无对标空组 / 跨行业 六类中的五类（跨行业与空组
+#   各只 2 例，按分层各拿 1 例）；holdout 共享同一套候选池（同行业）会系统性偏乐观，故按业态分层。
+#
+# 元数据自洽（**下列分账行与机器可读字段程序化一致，由 tests/company_track/test_peer_group_labels.py 现算校验**；
+# 改动任一 case 的 split/segment 必须同步下列数字，否则该测试必红。禁止在测试里硬编码例数）：
+#   split_counts: total=19, train=13, holdout=6, holdout_ratio=31.6%
+#   segment_counts: 同质 L3=4, 分类冲突=4, 残差桶=4, 境内外混合=2, 无对标空组=2, 跨行业=3
+#   holdout_segments: 同质 L3, 分类冲突, 残差桶, 境内外混合, 无对标空组, 跨行业
+#   **阈值/权重只能看 train 段，holdout 仅用于验收。**
+#
+# 六类业态（segment 字段）：
+#   - 同质 L3：候选池基本落在同一申万 L3，真对标与同 L3 假对标混在一起（考 D 的区分力）；
+#   - 分类冲突：同 L3 里有必须 drop 的候选、跨 L3 里反而有必须 keep 的候选（考 E 不能硬闸）；
+#   - 残差桶：L3 名以「其他」开头，或 L3 成分数少（< 15）导致同 L3 严重异质（考分类学不可信时的降级）；
+#   - 境内外混合：候选含非 A 股代码（TW/US/HK），考跨市场同行的处理；
+#   - 无对标空组：expect_empty: true（考「宁可不给」而不是硬凑对标组）；
+#   - 跨行业：与既有四例不同的一级行业（银行/保险/煤炭/乳品 等非电子制造）。
+#
+# 边界争议候选以 `disputed: true` 标注（可选字段，缺省 False）：其 keep/drop 需独立分析师确认（设计 §5.2）。
+# 报告对每个 split 同时给出『排除 disputed』与『未排除 disputed』两套数字，本文件不做单口径定论。
+
+# ── 同质 L3（train）─────────────────────────────────────────────────────────
 
 - symbol: "002916.SZ"
   name: 深南电路
   industry: 印制电路板
   taxonomy_l3: "850822.SI"
   taxonomy_l2: "801083.SI"
+  segment: 同质 L3
+  split: train
+  pool_source: "harness 首采缓存 ∪ 同 L3 成分"
   business_description_source: local_report
   candidates:
     - {code: "002463.SZ", name: 沪电股份, label: keep, rationale: "通信设备/数据中心高多层板，同环节最直接"}
@@ -28,6 +58,9 @@
   industry: 数字芯片设计
   taxonomy_l3: "850814.SI"
   taxonomy_l2: "801081.SI"
+  segment: 同质 L3
+  split: train
+  pool_source: "harness 首采缓存 ∪ 同 L3 成分"
   business_description_source: local_report
   candidates:
     - {code: "300223.SZ", name: 君正股份, label: keep, rationale: "存储/MCU 同环节"}
@@ -35,26 +68,139 @@
     - {code: "688110.SH", name: 东芯股份, label: keep, rationale: "存储芯片设计"}
     - {code: "688416.SH", name: 恒烁股份, label: keep, rationale: "NOR Flash"}
     - {code: "688123.SH", name: 聚辰股份, label: keep, rationale: "EEPROM/存储"}
+    - {code: "688333.SH", name: 铂力特, label: drop, rationale: "金属 3D 打印设备，误召回的同 L2 非同行"}
+    - {code: "603501.SH", name: 韦尔股份, label: drop, rationale: "CIS 图像传感器设计，产品线不同"}
 
-- symbol: "002318.SZ"
-  name: 久立特材
-  industry: 工业不锈钢管
-  taxonomy_l3: "850412.SI"
-  taxonomy_l2: "801045.SI"
+- symbol: "000651.SZ"
+  name: 格力电器
+  industry: 空调
+  taxonomy_l3: "851112.SI"
+  taxonomy_l2: "801111.SI"
+  segment: 同质 L3
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    格力电器以家用与商用空调为核心主业（家用空调、中央空调、空气能热泵），自研自产压缩机、电机等核心部件，
+    并以自建专卖渠道销售；同时延伸到冰箱、洗衣机、生活电器与工业制品（智能装备、精密模具、制冷压缩机外供）。
+  candidates:
+    - {code: "000333.SZ", name: 美的集团, label: keep, rationale: "家用空调同环节双雄，产品/渠道高度可比"}
+    - {code: "600690.SH", name: 海尔智家, label: keep, rationale: "空调品类直接竞争（冰洗为主但空调同环节）"}
+    - {code: "000921.SZ", name: 海信家电, label: keep, rationale: "家用/中央空调同环节"}
+    - {code: "600854.SH", name: 春兰股份, label: drop, rationale: "空调业务已缩至极小规模，盈利结构不可比", disputed: true}
+    - {code: "002032.SZ", name: 苏泊尔, label: drop, rationale: "厨房小家电，非空调同环节", disputed: true}
+    - {code: "002959.SZ", name: 小熊电器, label: drop, rationale: "创意小家电，非空调同环节"}
+
+
+# ── 同质 L3（holdout）───────────────────────────────────────────────────────
+
+- symbol: "300760.SZ"
+  name: 迈瑞医疗
+  industry: 医疗设备
+  taxonomy_l3: "851532.SI"
+  taxonomy_l2: "801153.SI"
+  segment: 同质 L3
+  split: holdout
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    迈瑞医疗三大业务：生命信息与支持（监护仪、呼吸机、除颤仪等院前院内设备）、体外诊断（血球/生化/发光
+    仪器与试剂）、医学影像（彩超、便携超声）。以自研自产仪器+配套耗材/试剂、医院终端直销与经销结合的模式盈利。
+  candidates:
+    - {code: "688271.SH", name: 联影医疗, label: keep, rationale: "医学影像设备（CT/MR/超声）同环节"}
+    - {code: "300633.SZ", name: 开立医疗, label: keep, rationale: "彩超/内窥镜设备同环节"}
+    - {code: "600055.SH", name: 万东医疗, label: keep, rationale: "医学影像设备（DR/MR）同环节"}
+    - {code: "688581.SH", name: 安杰思, label: drop, rationale: "内镜诊疗耗材，属医疗耗材非设备"}
+    - {code: "300396.SZ", name: ST迪瑞, label: drop, rationale: "体外诊断仪器+试剂，与监护/影像主业不同"}
+    - {code: "688617.SH", name: 惠泰医疗, label: drop, rationale: "电生理/介入耗材，非设备"}
+
+
+# ── 分类冲突（train）──────────────────────────────────────────────────────────
+
+- symbol: "000777.SZ"
+  name: 中核科技
+  industry: 金属制品（工业阀门）
+  taxonomy_l3: "850751.SI"
+  taxonomy_l2: "801072.SI"
+  segment: 分类冲突
+  split: train
+  pool_source: "harness 首采缓存 ∪ 同 L3 成分"
   business_description_source: local_report
   candidates:
-    - {code: "603878.SH", name: 武进不锈, label: keep, rationale: "工业不锈钢管双龙头最直接（申万归普钢）"}
-    - {code: "002478.SZ", name: 常宝股份, label: keep, rationale: "能源装备用管同环节"}
-    - {code: "300881.SZ", name: 盛德鑫泰, label: keep, rationale: "电站锅炉无缝管"}
-    - {code: "300963.SZ", name: 中洲特材, label: keep, rationale: "特种合金管件法兰（相邻，边界）"}
-    - {code: "002443.SZ", name: 金洲管道, label: drop, rationale: "同 L3 但碳钢焊管，盈利结构不同"}
-    - {code: "300260.SZ", name: 新莱应材, label: drop, rationale: "高洁净不锈钢管件，下游半导体/医药，终端错配"}
+    - {code: "002438.SZ", name: 江苏神通, label: keep, rationale: "核电/冶金阀门同环节（同 L3）"}
+    - {code: "603699.SH", name: 纽威股份, label: keep, rationale: "工业阀门同环节（跨 L3：通用设备）"}
+    - {code: "002595.SZ", name: 豪迈科技, label: keep, rationale: "工业专用装备+精密机械件（跨 L3：专用设备）"}
+    - {code: "603308.SH", name: 应流股份, label: drop, rationale: "同 L3 但是铸锻件，非阀门"}
+
+- symbol: "601899.SH"
+  name: 紫金矿业
+  industry: 铜
+  taxonomy_l3: "850552.SI"
+  taxonomy_l2: "801055.SI"
+  segment: 分类冲突
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    紫金矿业以铜、金为核心，兼产锌、锂、钼、银等金属矿产，业务为境外与境内矿山勘探、采选与冶炼一体化；
+    盈利主要来自自产铜金精矿与阴极铜、合质金销售，矿产金铜产量位居国内前列。
+  candidates:
+    - {code: "600547.SH", name: 山东黄金, label: keep, rationale: "金矿采选龙头，资源型矿企同环节（跨 L3：黄金）"}
+    - {code: "000630.SZ", name: 铜陵有色, label: drop, rationale: "同 L3 但以铜冶炼加工为主，毛利结构与矿企不同"}
+    - {code: "600362.SH", name: 江西铜业, label: drop, rationale: "同 L3 但冶炼加工占主体，资源自给率低"}
+    - {code: "603993.SH", name: 洛阳钼业, label: drop, rationale: "同 L3（铜）但以钼钨及海外贸易为主，盈利结构不同", disputed: true}
+
+- symbol: "600276.SH"
+  name: 恒瑞医药
+  industry: 化学制剂
+  taxonomy_l3: "851512.SI"
+  taxonomy_l2: "801151.SI"
+  segment: 分类冲突
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    恒瑞医药为创新药企：以肿瘤、麻醉镇痛、造影剂、自身免疫等治疗领域创新药（小分子+生物药）研发、生产与销售为主，
+    研发投入占收入比重高，收入来自创新药放量与对外授权（license-out），集采影响下仿制药占比持续下降。
+  candidates:
+    - {code: "688278.SH", name: 特宝生物, label: keep, rationale: "创新生物药（长效干扰素）同环节（跨 L3：生物制品）"}
+    - {code: "600196.SH", name: 复星医药, label: drop, rationale: "同 L3 但走并购+仿制药+器械多元路线，创新药占比低"}
+    - {code: "000513.SZ", name: 丽珠集团, label: drop, rationale: "同 L3 但以仿制/原料药与中药注射剂为主", disputed: true}
+    - {code: "600867.SH", name: 通化东宝, label: drop, rationale: "生物制品（胰岛素），与创新药研发路线不同", disputed: true}
+
+
+# ── 分类冲突（holdout）────────────────────────────────────────────────────────
+
+- symbol: "600036.SH"
+  name: 招商银行
+  industry: 股份制银行
+  taxonomy_l3: "857831.SI"
+  taxonomy_l2: "801783.SI"
+  segment: 分类冲突
+  split: holdout
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    招商银行从事商业银行业务：以零售金融（财富管理、私人银行、信用卡、按揭）为特色，公司与投行业务覆盖对公
+    存贷、交易银行与资产管理；收入以净息差为主，非息收入占比高，客群与渠道显著偏零售。
+  candidates:
+    - {code: "000001.SZ", name: 平安银行, label: keep, rationale: "同 L3 零售转型银行，客群与业务结构可比"}
+    - {code: "601128.SZ", name: 常熟银行, label: keep, rationale: "农商行（跨 L3）但以零售/小微为主，盈利模式接近", disputed: true}
+    - {code: "601398.SH", name: 工商银行, label: drop, rationale: "大行以对公与规模驱动为主，跨 L2 客群结构差异明显"}
+    - {code: "601988.SH", name: 中国银行, label: drop, rationale: "大行国际化/对公为主，零售结构不同"}
+    - {code: "002807.SZ", name: 江阴银行, label: drop, rationale: "农商行区域对公为主，业务结构与招行差异大", disputed: true}
+
+
+# ── 残差桶（train）───────────────────────────────────────────────────────────
 
 - symbol: "301029.SZ"
   name: 怡合达
   industry: 其他自动化设备
   taxonomy_l3: "850784.SI"
   taxonomy_l2: "801078.SI"
+  segment: 残差桶
+  split: train
+  pool_source: "harness 首采缓存 ∪ 同 L3 成分"
   business_description_source: local_report
   candidates:
     - {code: "920593.BJ", name: 鼎智科技, label: keep, rationale: "直线运动零件相邻（北交所迁移码）"}
@@ -65,3 +211,214 @@
     - {code: "688160.SH", name: 步科股份, label: drop, rationale: "工控部件"}
     - {code: "300124.SZ", name: 汇川技术, label: drop, rationale: "控制驱动为主"}
     - {code: "603416.SH", name: 信捷电气, label: drop, rationale: "工控控制类"}
+
+- symbol: "600309.SH"
+  name: 万华化学
+  industry: 聚氨酯
+  taxonomy_l3: "850372.SI"
+  taxonomy_l2: "801034.SI"
+  segment: 残差桶
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    万华化学是全球 MDI/TDI 龙头，业务含聚氨酯（MDI、TDI、多元醇）、石化（乙烯及下游）、精细化学品与
+    新材料（尼龙 12、POE、可降解塑料等）。模式为大规模一体化基地自产自销，成本与规模是核心壁垒。
+  candidates:
+    - {code: "002064.SZ", name: 华峰化学, label: keep, rationale: "聚氨酯原料（氨纶/聚氨酯原液）上下游同环节", disputed: true}
+    - {code: "600426.SH", name: 华鲁恒升, label: keep, rationale: "化工一体化平台，煤气化+新材料路线接近（跨 L3）"}
+    - {code: "600143.SH", name: 金发科技, label: drop, rationale: "改性塑料加工，与 MDI 一体化的原料型模式不同"}
+    - {code: "600346.SH", name: 恒力石化, label: drop, rationale: "炼化一体化为主，产品链与聚氨酯龙头不同"}
+
+- symbol: "600176.SH"
+  name: 中国巨石
+  industry: 玻纤制造
+  taxonomy_l3: "857122.SI"
+  taxonomy_l2: "801712.SI"
+  segment: 残差桶
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    中国巨石主营玻璃纤维及制品（无碱粗纱、电子布、热塑短切、风电纱），产能规模全球领先，
+    以池窑拉丝一体化生产、向覆铜板/风电/汽车轻量化/建筑等下游直销与经销结合的模式盈利。
+  candidates:
+    - {code: "002080.SZ", name: 中材科技, label: keep, rationale: "玻纤+风电叶片，玻纤同环节（同 L3）"}
+    - {code: "300196.SZ", name: 长海股份, label: keep, rationale: "玻纤纱/制品同环节（同 L3）"}
+    - {code: "600801.SH", name: 华新水泥, label: drop, rationale: "同 L2（建筑材料）但水泥制造，完全不同环节"}
+    - {code: "000786.SZ", name: 北新建材, label: drop, rationale: "石膏板/防水材料，非玻纤"}
+
+
+# ── 残差桶（holdout）─────────────────────────────────────────────────────────
+
+- symbol: "002318.SZ"
+  name: 久立特材
+  industry: 工业不锈钢管
+  taxonomy_l3: "850412.SI"
+  taxonomy_l2: "801045.SI"
+  segment: 残差桶
+  split: holdout
+  pool_source: "harness 首采缓存 ∪ 同 L3 成分"
+  business_description_source: local_report
+  candidates:
+    - {code: "603878.SH", name: 武进不锈, label: keep, rationale: "工业不锈钢管双龙头最直接（申万归普钢）"}
+    - {code: "002478.SZ", name: 常宝股份, label: keep, rationale: "能源装备用管同环节"}
+    - {code: "300881.SZ", name: 盛德鑫泰, label: keep, rationale: "电站锅炉无缝管"}
+    - {code: "300963.SZ", name: 中洲特材, label: keep, rationale: "特种合金管件法兰（相邻，边界）", disputed: true}
+    - {code: "002443.SZ", name: 金洲管道, label: drop, rationale: "同 L3 但碳钢焊管，盈利结构不同"}
+    - {code: "300260.SZ", name: 新莱应材, label: drop, rationale: "高洁净不锈钢管件，下游半导体/医药，终端错配"}
+
+
+# ── 境内外混合（train）─────────────────────────────────────────────────────────
+
+- symbol: "000977.SZ"
+  name: 浪潮信息
+  industry: 其他计算机设备
+  taxonomy_l3: "850703.SI"
+  taxonomy_l2: "801101.SI"
+  segment: 境内外混合
+  split: train
+  pool_source: "harness 首采缓存 ∪ 同 L3 成分"
+  business_description_source: local_report
+  candidates:
+    - {code: "601138.SH", name: 工业富联, label: keep, rationale: "AI 服务器代工/整机同环节"}
+    - {code: "603019.SH", name: 中科曙光, label: keep, rationale: "服务器与高性能计算整机同环节"}
+    - {code: "000938.SZ", name: 紫光股份, label: keep, rationale: "新华三服务器业务，整机同环节"}
+    - {code: "2382.TW", name: 纬创, label: keep, rationale: "服务器 ODM，同环节（境外 TW）"}
+    - {code: "3231.TW", name: 广达, label: keep, rationale: "AI 服务器 ODM 龙头，同环节（境外 TW）"}
+    - {code: "DELL", name: 戴尔科技, label: keep, rationale: "服务器整机品牌商，同环节（境外 US）"}
+    - {code: "FLEX", name: 伟创力, label: drop, rationale: "EMS 代工，服务器占比低且产品结构不同（境外 US）"}
+    - {code: "0992.HK", name: 联想集团, label: keep, rationale: "服务器整机（HK 上市）同环节"}
+    - {code: "300308.SZ", name: 中际旭创, label: drop, rationale: "光模块，服务器上游部件而非整机"}
+    - {code: "300383.SZ", name: 光环新网, label: drop, rationale: "IDC 运营（客户侧），非服务器制造"}
+
+
+# ── 境内外混合（holdout）───────────────────────────────────────────────────────
+
+- symbol: "601138.SH"
+  name: 工业富联
+  industry: 消费电子零部件及组装
+  taxonomy_l3: "850854.SI"
+  taxonomy_l2: "801085.SI"
+  segment: 境内外混合
+  split: holdout
+  pool_source: "harness 首采缓存 ∪ 同 L3 成分"
+  business_description_source: local_report
+  candidates:
+    - {code: "002475.SZ", name: 立讯精密, label: keep, rationale: "消费电子精密制造/组装同环节"}
+    - {code: "000977.SZ", name: 浪潮信息, label: keep, rationale: "AI 服务器整机同环节（跨 L3，客户与产品重叠）"}
+    - {code: "002241.SZ", name: 歌尔股份, label: keep, rationale: "声学/精密零组件及整机组装同环节"}
+    - {code: "3231.TW", name: 纬创, label: keep, rationale: "服务器/终端 ODM 直接竞对（境外 TW）"}
+    - {code: "4938.TW", name: 和硕, label: keep, rationale: "消费电子 ODM 直接竞对（境外 TW）"}
+    - {code: "FLEX", name: 伟创力, label: keep, rationale: "全球 EMS 同环节（境外 US）"}
+    - {code: "JBL", name: 捷普, label: drop, rationale: "EMS 但以医疗/汽车为主，消费电子占比低（境外 US）", disputed: true}
+    - {code: "603986.SH", name: 兆易创新, label: drop, rationale: "上游芯片设计，非制造/组装"}
+
+
+# ── 无对标空组（train）─────────────────────────────────────────────────────────
+
+- symbol: "601288.SH"
+  name: 农业银行
+  industry: 国有大型银行
+  taxonomy_l3: "857821.SI"
+  taxonomy_l2: "801782.SI"
+  segment: 无对标空组
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    农业银行是国有大型商业银行，以县域与“三农”金融为最大特色（县域网点与涉农贷款占比高），
+    同时经营对公、零售与金融市场业务；规模驱动、净息差收入为主，同业差异主要体现在客群与区域结构。
+  expect_empty: true
+  candidates:
+    - {code: "601398.SH", name: 工商银行, label: drop, rationale: "同为大行但客群/区域结构不同，且「银行无同环节对标」"}
+    - {code: "601988.SH", name: 中国银行, label: drop, rationale: "国际化结构差异大"}
+    - {code: "601328.SH", name: 交通银行, label: drop, rationale: "规模与客群定位不同"}
+    - {code: "600036.SH", name: 招商银行, label: drop, rationale: "零售股份行，业务结构不可比"}
+    - {code: "002142.SZ", name: 宁波银行, label: drop, rationale: "城商行，区域集中度高"}
+
+
+# ── 无对标空组（holdout）───────────────────────────────────────────────────────
+
+- symbol: "600030.SH"
+  name: 中信证券
+  industry: 证券
+  taxonomy_l3: "851931.SI"
+  taxonomy_l2: "801193.SI"
+  segment: 无对标空组
+  split: holdout
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    中信证券为综合类头部券商：经纪、投行、资管、自营与信用业务并举，其中投行与机构业务份额领先，
+    重资本业务（自营/两融/衍生品）贡献主要利润；规模与牌照壁垒是核心特征，同业可比性集中在前述结构差异上。
+  expect_empty: true
+  candidates:
+    - {code: "601688.SH", name: 华泰证券, label: drop, rationale: "同为头部券商但业务组合（财富管理/科技投入）差异明显"}
+    - {code: "601211.SH", name: 国泰海通, label: drop, rationale: "合并后结构变化大，当期不可比"}
+    - {code: "000776.SZ", name: 广发证券, label: drop, rationale: "公募/资管权重高，结构不同"}
+    - {code: "600958.SH", name: 东方证券, label: drop, rationale: "资管+自营结构，非综合投行主导"}
+    - {code: "002736.SZ", name: 国信证券, label: drop, rationale: "经纪为主，投行/机构权重不同"}
+
+
+# ── 跨行业（train）───────────────────────────────────────────────────────────
+
+- symbol: "603288.SH"
+  name: 海天味业
+  industry: 调味发酵品
+  taxonomy_l3: "851242.SI"
+  taxonomy_l2: "801129.SI"
+  segment: 跨行业
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    海天味业主营酱油、蚝油、酱类等调味品：以大规模自建产能 + 覆盖全国的经销网络（餐饮渠道为核心）销售，
+    品牌与渠道效率驱动市占率，近年拓展醋、料酒、复合调味料与粮油产品。
+  candidates:
+    - {code: "603317.SH", name: 天味食品, label: keep, rationale: "复合调味料同环节（同 L3）"}
+    - {code: "002507.SZ", name: 涪陵榨菜, label: keep, rationale: "佐餐调味发酵品，渠道结构可比（同 L2）"}
+    - {code: "603886.SH", name: 元祖股份, label: drop, rationale: "烘焙连锁，非调味品"}
+    - {code: "603711.SH", name: 香飘飘, label: drop, rationale: "冲泡饮品，非调味品"}
+    - {code: "600298.SH", name: 安琪酵母, label: drop, rationale: "酵母及食品原料，下游客户不同"}
+
+- symbol: "600887.SH"
+  name: 伊利股份
+  industry: 乳品
+  taxonomy_l3: "851243.SI"
+  taxonomy_l2: "801127.SI"
+  segment: 跨行业
+  split: train
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    伊利股份主营液体乳（常温/低温白奶、酸奶）、奶粉及奶制品、冷饮：全国化产能布局 + 深度分销渠道，
+    以品牌与规模效应驱动，上游自有/合作牧场保障奶源，盈利来自乳制品销售与品牌溢价。
+  candidates:
+    - {code: "600429.SH", name: 三元股份, label: keep, rationale: "液体乳同环节（同 L3）"}
+    - {code: "002732.SZ", name: 燕塘乳业, label: keep, rationale: "区域乳企，液体乳同环节（同 L3）"}
+    - {code: "002557.SZ", name: 洽洽食品, label: drop, rationale: "休闲食品（瓜子坚果），非乳品"}
+    - {code: "603288.SH", name: 海天味业, label: drop, rationale: "调味品，非乳品"}
+    - {code: "000895.SZ", name: 双汇发展, label: drop, rationale: "肉制品加工，非乳品"}
+
+
+# ── 跨行业（holdout）─────────────────────────────────────────────────────────
+
+- symbol: "601088.SH"
+  name: 中国神华
+  industry: 动力煤
+  taxonomy_l3: "859511.SI"
+  taxonomy_l2: "801951.SI"
+  segment: 跨行业
+  split: holdout
+  pool_source: "同 L2/L3 公开分类冻结（alphabee/static/all_stocks.csv）"
+  business_description_source: inline
+  business_description: >-
+    中国神华是煤电路港航一体化能源企业：以动力煤开采销售为主体，配套自有铁路/港口/航运与燃煤发电，
+    长协煤占比高、成本与运输一体化带来稳定盈利，收入结构以煤炭为主、发电与运输为辅。
+  candidates:
+    - {code: "601225.SH", name: 陕西煤业, label: keep, rationale: "动力煤开采同环节（同 L3）"}
+    - {code: "600188.SH", name: 兖矿能源, label: keep, rationale: "动力煤+煤化工同环节（同 L3）"}
+    - {code: "601001.SH", name: 晋控煤业, label: keep, rationale: "动力煤开采同环节（同 L3）"}
+    - {code: "300124.SZ", name: 汇川技术, label: drop, rationale: "工控设备，与煤炭无关（误召回防护项）"}
+    - {code: "600585.SH", name: 海螺水泥, label: drop, rationale: "下游水泥（煤炭客户），非煤炭生产"}

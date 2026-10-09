@@ -50,6 +50,15 @@ from alphabee.company_track.peer_extract import (
 )
 from alphabee.company_track.peer_group_build import build_peer_group
 from alphabee.company_track.peer_group_store import PeerGroup, PeerGroupStore
+from alphabee.company_track.peer_judge import (
+    DIMS as PEER_JUDGE_DIMS,
+)
+from alphabee.company_track.peer_judge import (
+    build_judge_prompt,
+    build_scoring_prompt,
+    infer_peer_scoring,
+    judge_peer_candidates,
+)
 from alphabee.company_track.peer_report import fetch_local_report_fragments
 from alphabee.company_track.peer_universe import build_peer_universe
 from alphabee.company_track.peer_validate import (
@@ -61,6 +70,7 @@ from alphabee.company_track.track import build_company_track
 
 __all__ = [
     "CompanyTrackArtifact",
+    "PEER_JUDGE_DIMS",
     "PeerGroup",
     "PeerGroupStore",
     "SegmentCollection",
@@ -71,8 +81,10 @@ __all__ = [
     "BUSINESS_MODELS",
     "assess_period_consistency",
     "build_company_track",
+    "build_judge_prompt",
     "build_peer_group",
     "build_peer_universe",
+    "build_scoring_prompt",
     "classify_business_model",
     "derive_peer_benchmarks",
     "derive_segment_yoy",
@@ -80,6 +92,8 @@ __all__ = [
     "extract_peer_candidates",
     "fetch_local_report_fragments",
     "infer_peer_candidates",
+    "infer_peer_scoring",
+    "judge_peer_candidates",
     "select_peer_candidates",
     "detect_track_drift",
     "fetch_business_segments",

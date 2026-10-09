@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from alphabee.company_track.contracts import SegmentSnapshot
+from alphabee.company_track.peer_judge import coerce_overlap as _coerce_overlap
 
 #: 直接对标的最低业务重叠度（LLM 自评 0–1）。对标组用于**同业中位数**基准，宁可少选：
 #: 低于此值即使被 LLM 选中也应剔除，避免不同终端/不同材料的公司污染基准。
@@ -238,19 +239,6 @@ def infer_peer_candidates(
     except Exception as exc:
         meta["note"] = f"LLM 推断失败: {exc}"
         return [], meta
-
-
-def _coerce_overlap(value: Any) -> float | None:
-    """``overlap`` 归一化到 [0,1]；缺失/非法 → ``None``（不因此剔除，交给理由自洽兜底）。"""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number != number:  # NaN
-        return None
-    if number > 1.0:  # 容忍 LLM 用百分数（85 → 0.85）
-        number = number / 100.0
-    return max(0.0, min(1.0, number))
 
 
 def select_peer_candidates(
