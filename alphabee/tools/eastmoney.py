@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 from pydantic import BaseModel, Field
 
-from alphabee.collectors.eastmoney.helper import (
-    EastmoneyHelper,
-    EastmoneyReportDetail,
-    EastmoneyReportResult,
-)
 from alphabee.utils.storage import get_data_root
+
+if TYPE_CHECKING:  # 仅类型标注用：运行时不 import，避免 alphabee.collectors ↔ tools.eastmoney 循环
+    from alphabee.collectors.eastmoney.helper import (
+        EastmoneyHelper,
+        EastmoneyReportDetail,
+        EastmoneyReportResult,
+    )
 
 DEFAULT_EASTMONEY_OUTPUT_DIR = get_data_root() / "eastmoney_reports"
 SKILLS_PATH = Path(__file__).resolve().parents[2] / "skills" / "eastmoney"
@@ -77,6 +79,8 @@ def _to_report_list_payload(result: EastmoneyReportResult) -> EastmoneyReportLis
 
 
 def _helper() -> EastmoneyHelper:
+    from alphabee.collectors.eastmoney.helper import EastmoneyHelper
+
     return EastmoneyHelper()
 
 

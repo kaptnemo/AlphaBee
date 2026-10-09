@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import alphabee.tools.eastmoney as eastmoney_tools
+from alphabee.collectors.eastmoney import helper as eastmoney_helper
 
 
 class _DummySession:
@@ -24,7 +25,7 @@ def test_get_eastmoney_report_list(monkeypatch):
 
     monkeypatch.setattr(eastmoney_tools.requests, "Session", lambda: _DummySession())
     monkeypatch.setattr(
-        eastmoney_tools.EastmoneyHelper,
+        eastmoney_helper.EastmoneyHelper,
         "fetch_report_list",
         fake_fetch_report_list,
     )
@@ -47,7 +48,7 @@ def test_get_eastmoney_report_detail_by_info_code(monkeypatch):
 
     monkeypatch.setattr(eastmoney_tools.requests, "Session", lambda: _DummySession())
     monkeypatch.setattr(
-        eastmoney_tools.EastmoneyHelper,
+        eastmoney_helper.EastmoneyHelper,
         "fetch_report_detail_by_info_code",
         fake_fetch_report_detail_by_info_code,
     )
@@ -66,7 +67,7 @@ def test_download_eastmoney_report_pdf_by_info_code(monkeypatch, tmp_path):
 
     monkeypatch.setattr(eastmoney_tools.requests, "Session", lambda: _DummySession())
     monkeypatch.setattr(
-        eastmoney_tools.EastmoneyHelper,
+        eastmoney_helper.EastmoneyHelper,
         "download_report_pdf_by_info_code",
         fake_download,
     )
