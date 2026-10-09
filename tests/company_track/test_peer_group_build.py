@@ -1379,3 +1379,187 @@ def _mutant_module(path, old: str, new: str, name: str):
         sys.modules[name] = module
         spec.loader.exec_module(module)
     return module
+
+
+# ── 质量闸总开关（company_track.peer_quality.enabled，t24 / 设计 §3.5/§3.6） ──────
+
+
+def _gate_off(monkeypatch) -> None:
+    """把 ``company_track.peer_quality.enabled``（质量闸总开关）置 False。"""
+    from alphabee import config as config_module
+
+    settings = config_module.get_settings().model_copy(deep=True)
+    settings.company_track.peer_quality.enabled = False
+    monkeypatch.setattr(config_module, "get_settings", lambda: settings)
+    build_module._PEER_QUALITY_CACHE.clear()
+
+
+def test_gate_disabled_keeps_all_candidates_and_leaves_note(tmp_path, monkeypatch):
+    """``enabled=false`` ⇒ 本闸不做任何剔除：reject 与低分候选全部保留，并在 notes 留痕一行。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_infer(
+        monkeypatch,
+        [
+            _gen_candidate("002463.SZ", "低分", 0.05),
+            {**_gen_candidate("300476.SZ", "判否决", 0.95), "verdict": "reject"},
+            _gen_candidate("600183.SH", "高分", 0.9),
+        ],
+    )
+    _judge_off(monkeypatch)
+    _taxonomy_off(monkeypatch)
+    _gate_off(monkeypatch)
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    assert group.codes == ["002463.SZ", "300476.SZ", "600183.SH"], "停用后仍发生剔除"
+    assert any("质量闸已停用" in note and "peer_quality.enabled=false" in note for note in warnings)
+    assert not [note for note in warnings if "质量闸剔除" in note], "停用后不应有剔除明细"
+    assert not group.no_peers, "停用不是终态，不得置 no_peers"
+
+
+def test_gate_disabled_not_no_peers_even_when_all_would_be_dropped(tmp_path, monkeypatch):
+    """停用 ⇒ 全部候选都会保留 ⇒ 不会因闸门剔除而进入「空组 ⇒ no_peers」分支。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "全低分", 0.05)])
+    _judge_off(monkeypatch)
+    _taxonomy_off(monkeypatch)
+    _gate_off(monkeypatch)
+    group, _ = build_peer_group("002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path))
+
+    assert group.codes == ["300260.SZ"]
+    assert group.no_peers is False
+    # 对照口径（enabled=true 下同一输入会被剔空）由 test_gate_enabled_default_keeps_baseline_behaviour 钉住
+
+
+def test_gate_disabled_keeps_empty_pool_no_peers_semantics(tmp_path, monkeypatch):
+    """输入候选池为空时的既有 ``no_peers`` 语义逐字不变（LLM 有效响应且无候选 ⇒ 终态）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_infer(monkeypatch, [])
+    _judge_off(monkeypatch)
+    _taxonomy_off(monkeypatch)
+    _gate_off(monkeypatch)
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    assert group.is_empty() and group.no_peers is True
+    assert any("在线推断未产出直接对标（不编造），空对标组" in note for note in warnings)
+
+
+def test_gate_disabled_does_not_affect_min_peers(tmp_path, monkeypatch):
+    """总开关只门控质量闸：消费侧 ``min_peers`` 闸照旧（1 只 ⇒ 记「对标组不足」）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "唯一候选", 0.9)])
+    _judge_off(monkeypatch)
+    _taxonomy_off(monkeypatch)
+    _gate_off(monkeypatch)
+    group, warnings = build_peer_group(
+        "002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path)
+    )
+
+    assert len(group.codes) == 1
+    assert any("对标组不足" in note and "中位数不可比" in note for note in warnings)
+
+
+def test_gate_disabled_does_not_affect_taxonomy_and_confidence(tmp_path, monkeypatch):
+    """总开关不影响分类学（召回池/特征）与置信度：停用闸门后二者照常工作。"""
+    from alphabee.company_track import peer_confidence_for_group
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_snapshot(monkeypatch, tmp_path, _pcb_rows(20))
+    _patch_infer(monkeypatch, [_gen_candidate("002463.SZ", "候选", 0.9)])
+    _judge_off(monkeypatch)
+    _gate_off(monkeypatch)  # 分类学保持默认开启
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    assert any(note.startswith("分类学召回池并入") for note in warnings), "总开关不应影响召回池并入"
+    confidence = peer_confidence_for_group("002916.SZ", group)
+    assert confidence.level in {"低", "中", "高"} and confidence.signals["mean_overlap"] is not None
+
+
+def test_gate_enabled_default_keeps_baseline_behaviour(tmp_path, monkeypatch):
+    """对照：``enabled`` 缺省（true）⇒ 与提交 ``ec09d81`` 的闸门口径一致（reject/低分被剔、无停用留痕）。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_infer(
+        monkeypatch,
+        [
+            _gen_candidate("002463.SZ", "低分", 0.05),
+            {**_gen_candidate("300476.SZ", "判否决", 0.95), "verdict": "reject"},
+            _gen_candidate("600183.SH", "高分", 0.9),
+        ],
+    )
+    _judge_off(monkeypatch)
+    _taxonomy_off(monkeypatch)  # 不设置 enabled ⇒ 读真实缺省 true
+    build_module._PEER_QUALITY_CACHE.clear()
+    group, warnings = build_peer_group("002916.SZ", business_description="PCB", store=PeerGroupStore(root=tmp_path))
+
+    assert group.codes == ["600183.SH"]
+    assert not [note for note in warnings if "质量闸已停用" in note]
+    drops = {note.split()[1]: note for note in warnings if "质量闸剔除" in note}
+    assert "300476.SZ" in drops and "judge reject" in drops["300476.SZ"]
+    assert "002463.SZ" in drops and "产品重叠不足" in drops["002463.SZ"]
+
+
+def test_m7_ignoring_gate_enabled_is_killed():
+    """M7：``gate_candidates`` 忽略总开关（只看 ``bypass``）⇒ 停用态仍剔除 ⇒ 必红。"""
+    from alphabee.company_track.peer_group_build import gate_candidates
+
+    cands = [{"code": "A.SZ", "name": "低分", "overlap": 0.05, "verdict": "reject"}]
+    kept_ref, dropped_ref, _, _ = gate_candidates(cands, enabled=False)
+    assert [c["code"] for c in kept_ref] == ["A.SZ"] and dropped_ref == []
+
+    mutant = _mutant_module(
+        PROJECT_ROOT / "alphabee" / "company_track" / "peer_group_build.py",
+        "        if bypass or not enabled:",
+        "        if bypass:  # M7 忽略总开关",
+        "pbg_mutant_m7_enabled",
+    )
+    kept_m, dropped_m, _, _ = mutant.gate_candidates(cands, enabled=False)
+    assert kept_m == [] and len(dropped_m) == 1, "M7 未被杀死：变异体仍执行剔除"
+
+
+def test_m8_gate_enabled_hardcoded_true_is_killed(tmp_path, monkeypatch):
+    """M8：接线处把 ``enabled`` 写死 True（无视配置）⇒ 停用态失效 ⇒ 必红。"""
+    from alphabee.company_track.peer_group_store import PeerGroupStore
+
+    _patch_validation(monkeypatch)
+    _patch_infer(monkeypatch, [_gen_candidate("300260.SZ", "低分", 0.05)])
+    _judge_off(monkeypatch)
+    _taxonomy_off(monkeypatch)
+    _gate_off(monkeypatch)
+    _mutate_build(
+        '    gate_enabled = bool(gate_cfg.get("enabled", True))',
+        "    gate_enabled = True  # M8 写死 True（无视配置）",
+        "pbg_mutant_m8_gate_enabled",
+        monkeypatch,
+    )
+    import sys as _sys
+
+    mutant = _sys.modules["pbg_mutant_m8_gate_enabled"]
+    monkeypatch.setattr(
+        mutant,
+        "infer_peer_candidates",
+        lambda *a, **k: (
+            [_gen_candidate("300260.SZ", "低分", 0.05)],
+            {"note": "", "llm_ok": True, "dropped": []},
+        ),
+    )
+    group_m, warnings_m = mutant.build_peer_group(
+        "002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path)
+    )
+    assert group_m.is_empty(), "M8 未被杀死：变异体仍按 enabled=true 剔空候选"
+    assert not [note for note in warnings_m if "质量闸已停用" in note]
+
+    group_ref, warnings_ref = build_peer_group(
+        "002318.SZ", business_description="工业不锈钢管", store=PeerGroupStore(root=tmp_path)
+    )
+    assert group_ref.codes == ["300260.SZ"]
+    assert any("质量闸已停用" in note for note in warnings_ref)

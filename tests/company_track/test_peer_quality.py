@@ -472,8 +472,12 @@ def test_m5_keyword_table_residue_is_killed():
     mutant_source = _QUALITY_MODULE.read_text(encoding="utf-8")
     # 模拟"把关键词表加回来"：在闸门里按理由文本否决
     mutated = mutant_source.replace(
-        "        if bypass:\n            pass  # 人工候选白名单：只记分不剔除",
-        "        if bypass:\n            pass  # 人工候选白名单：只记分不剔除\n"
+        "        if bypass or not enabled:\n"
+        "            # 人工候选白名单 / 质量闸总开关停用：只归一化与记分，不做任何剔除\n"
+        "            pass",
+        "        if bypass or not enabled:\n"
+        "            # 人工候选白名单 / 质量闸总开关停用：只归一化与记分，不做任何剔除\n"
+        "            pass\n"
         '        elif "而非" in str(cand.get("reason") or ""):  # M5 关键词表残留\n'
         '            drop = "理由自曝实质差异"',
         1,
@@ -1078,3 +1082,97 @@ def test_m6_missing_ratio_counted_as_nonzero_is_killed():
     assert forged_half.synthesize_peer_confidence(
         taxonomy_reliable=True, judge_direct_ratio=None
     ).score == pytest.approx(0.55)
+
+
+# ── 质量闸总开关（company_track.peer_quality.enabled，t24 / 设计 §3.5/§3.6） ──────
+
+
+def test_gate_disabled_keeps_everything_and_keeps_scoring():
+    """``enabled=False`` ⇒ ``dropped`` 恒空、``kept`` 等于全部输入（含 reject 与低分/缺分）。"""
+    from alphabee.company_track.peer_group_build import gate_candidates
+
+    inputs = [
+        {"code": "A.SZ", "name": "高分", "dims": _dims(0.9, 0.9), "verdict": "direct"},
+        {"code": "B.SZ", "name": "判否决", "dims": _dims(0.9, 0.9), "verdict": "reject"},
+        {"code": "C.SZ", "name": "产品不足", "dims": _dims(product=0.05, customer=0.9), "verdict": "direct"},
+        {"code": "D.SZ", "name": "低分自评", "overlap": 0.05, "verdict": "adjacent"},
+        {"code": "E.SZ", "name": "缺分数", "reason": "无分数来源"},
+    ]
+    kept, dropped, scores, match_dims = gate_candidates(inputs, enabled=False)
+
+    assert dropped == [], "停用后仍有剔除明细"
+    assert [c["code"] for c in kept] == ["A.SZ", "B.SZ", "C.SZ", "D.SZ", "E.SZ"], "停用后候选不齐全或乱序"
+    # 分数/维度照常记录（只对有分数候选）⇒ 与 enabled=true 的记分语义一致
+    assert scores == {
+        "A.SZ": pytest.approx(0.89),
+        "B.SZ": pytest.approx(0.89),
+        "C.SZ": pytest.approx(0.55),
+        "D.SZ": pytest.approx(0.05),
+    }
+    assert match_dims["A.SZ"] == _dims(0.9, 0.9)
+    # 对照：默认（enabled=true）下 B/C/D 会被剔
+    kept_on, dropped_on, _, _ = gate_candidates(inputs)
+    assert [c["code"] for c in kept_on] == ["A.SZ"] and len(dropped_on) == 4
+
+
+def test_gate_disabled_scoring_matches_enabled_scoring():
+    """停用只改「剔不剔」，不改「怎么记分」：两侧 ``scores`` / ``match_dims`` 逐条相同。"""
+    from alphabee.company_track.peer_group_build import gate_candidates
+
+    inputs = [
+        {"code": "A.SZ", "name": "甲", "dims": _dims(0.8, 0.7), "verdict": "direct"},
+        {"code": "B.SZ", "name": "乙", "overlap": 0.6, "verdict": "adjacent"},
+        {"code": "C.SZ", "name": "丙", "overlap": 0.2, "verdict": "reject"},
+    ]
+    _, _, scores_on, dims_on = gate_candidates(inputs)
+    kept_off, dropped_off, scores_off, dims_off = gate_candidates(inputs, enabled=False)
+
+    assert dropped_off == []
+    assert [c["code"] for c in kept_off] == ["A.SZ", "B.SZ", "C.SZ"]
+    assert scores_off == scores_on or set(scores_off) >= set(scores_on)
+    # 有分数候选的记分值必须逐条一致（停用不改变权重/归一化口径）
+    for code, value in scores_on.items():
+        assert scores_off[code] == pytest.approx(value)
+    for code, dims in dims_on.items():
+        assert dims_off[code] == dims
+
+
+def test_gate_enabled_default_matrix_is_frozen_against_baseline():
+    """默认口径（``enabled=True``）行为冻结：同一矩阵的 kept/dropped/scores/match_dims 逐字固定。"""
+    from alphabee.company_track.peer_group_build import gate_candidates
+
+    inputs = [
+        {"code": "A.SZ", "name": "边界 product", "dims": _dims(product=0.20, customer=0.9), "verdict": "direct"},
+        {"code": "B.SZ", "name": "边界 overlap", "dims": _dims(0.5, 0.5, 0.5, 0.5), "verdict": "direct"},
+        {"code": "C.SZ", "name": "reject 优先", "dims": _dims(1.0, 1.0), "verdict": "reject"},
+        {"code": "D.SZ", "name": "缺 dims 回落自评", "overlap": 0.9, "verdict": "direct"},
+        {"code": "E.SZ", "name": "两者皆缺", "verdict": "direct"},
+    ]
+    kept, dropped, scores, match_dims = gate_candidates(inputs)
+
+    assert [c["code"] for c in kept] == ["A.SZ", "B.SZ", "D.SZ"]
+    assert [(d["code"], d["drop"]) for d in dropped] == [
+        ("C.SZ", "judge reject"),
+        ("E.SZ", "overlap 0.00 < 0.40"),
+    ]
+    assert scores == {"A.SZ": pytest.approx(0.61), "B.SZ": pytest.approx(0.5), "D.SZ": pytest.approx(0.9)}
+    # 既有行为：score-only 候选（D）也会落 match_dims（值为全 0 的四维占位）——本步**不改**该行为
+    assert set(match_dims) == {"A.SZ", "B.SZ", "D.SZ"}
+
+
+def test_enabled_config_description_and_example_match_semantics():
+    """配置面：``PeerQualitySettings.enabled`` 描述与 ``config.yaml.example`` 注释都写清 false 的含义。"""
+    import yaml
+
+    from alphabee.config import PeerQualitySettings
+
+    description = PeerQualitySettings.model_fields["enabled"].description or ""
+    for token in ("不做任何剔除", "全部候选直接保留", "min_peers", "taxonomy_enabled", "置信度"):
+        assert token in description, f"enabled 描述缺少语义说明：{token}"
+
+    example_text = (PROJECT_ROOT / "config.yaml.example").read_text(encoding="utf-8")
+    assert "enabled: true" in example_text
+    assert "不做任何剔除" in example_text and "全部候选直接保留" in example_text
+
+    section = yaml.safe_load(example_text)["company_track"]["peer_quality"]
+    assert PeerQualitySettings(**section).enabled is True  # 默认口径仍为 true

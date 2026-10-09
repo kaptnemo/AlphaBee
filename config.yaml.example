@@ -55,7 +55,10 @@ report_window:
 #（占位默认 0.50/0.30/0.20 在 holdout 上不成立，只是 sweep 起点；敏感性表见评测报告）。
 company_track:
   peer_quality:
-    enabled: true
+    enabled: true               # 候选质量闸总开关：false ⇒ 本闸**不做任何剔除**（全部候选直接保留，含
+                                # verdict=reject 与低分/缺分候选），仅在对标组 notes 记一行「质量闸已停用」；
+                                # 分数与维度仍照常记录。只门控本闸，不影响 min_peers 消费侧闸、分类学开关
+                                # （taxonomy_enabled）与置信度三档。回滚 = 该键置 false。
     # 阈值来源：标注集 **train 段**标定；现行值 = 上一版 train 标定点（0.40/0.20/0.20，即"生产生效点"）。
     # 判定 D 接通后本版在 train 段重标定得到 0.40/0.40/0.10，但相对现行点 train F1 仅 +0.004（噪声级）
     # 而 holdout 明显下降（0.608 < 0.685）⇒ **不采纳**新点、保留现行生产点（待样本扩大后重标定）；

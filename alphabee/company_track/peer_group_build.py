@@ -72,6 +72,9 @@ DIMS = peer_judge.DIMS
 REASON_MAX_CHARS = peer_judge.REASON_MAX_CHARS
 
 # ── 判定 E（分类学召回池）与对标组置信度 ─────────────────────────────
+#: 质量闸总开关（``company_track.peer_quality.enabled``）停用时的 notes 留痕（**唯一处**，可被测试与审计引用）。
+GATE_DISABLED_NOTE = "质量闸已停用（peer_quality.enabled=false），全部候选直接保留、不做任何剔除"
+
 #: 分类学召回池并入的候选来源标记（与生成器/研报/闭集来源区分，用于 notes 聚合与置信度口径）。
 TAXONOMY_SOURCE = "taxonomy"
 #: 分类学召回池候选**未经判分**时的剔除标记（``require_score=True`` 下不可评估）。
@@ -104,12 +107,19 @@ def gate_candidates(
     customer_floor: float = DEFAULT_CUSTOMER_FLOOR,
     bypass: bool = False,
     require_score: bool = True,
+    enabled: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, float], dict[str, dict[str, float]]]:
     """确定性质量闸：按序剔除并返回保留者 + 明细 + 分数/维度持久化表。
 
     剔除规则（命中即 drop，设计 §3.3）：① ``verdict == "reject"`` ② ``product < product_floor``
     ③ ``customer < customer_floor`` ④ 合成 ``overlap < min_overlap``；E 特征只作提示、不参与硬闸。
     ``bypass=True`` 只归一化/记分不剔除（调用方直传的人工白名单）。
+
+    **总开关**（``company_track.peer_quality.enabled``，设计 §3.5/§3.6）：``enabled=False`` ⇒ 本闸
+    **不做任何剔除** —— ``dropped`` 恒为空、``kept`` 等于全部输入候选（含 ``verdict="reject"`` 与低分/缺分
+    候选），但**分数/维度照常记录**（``scores`` / ``match_dims`` 语义不变，供审计与对标组置信度使用）；
+    调用方应记一行 :data:`GATE_DISABLED_NOTE` 作为可观测留痕。该开关**只**门控本闸的剔除，不影响
+    消费侧 ``min_peers`` 闸、分类学开关（``taxonomy_enabled``）与置信度三档（各自独立语义）。
 
     - **合成分**：``overlap`` 一律 = Σ w_i·dim_i（权重唯一处）；候选缺 dims 时回落到其自评
       ``overlap``（历史/手工候选兼容），两者皆缺 ⇒ 0。
@@ -141,8 +151,9 @@ def gate_candidates(
         verdict = str(cand.get("verdict") or "").strip().lower()
 
         drop = ""
-        if bypass:
-            pass  # 人工候选白名单：只记分不剔除
+        if bypass or not enabled:
+            # 人工候选白名单 / 质量闸总开关停用：只归一化与记分，不做任何剔除
+            pass
         elif verdict == "reject":
             drop = DROP_JUDGE_REJECT
         elif has_dims and dims["product"] < product_floor:
@@ -636,7 +647,13 @@ def build_peer_group(
     # 判定 C 打分来源（LLM 推断）⇒ 严格口径（缺分即不可评估，与 harness 同源）；
     # 无分数来源（研报片段抽取 / 闭集择优 / 调用方直传）⇒ require_score=False（保持既有行为）
     scored_source = infer_used
+    # 质量闸总开关（``company_track.peer_quality.enabled``，设计 §3.5）：缺段/异常 ⇒ 默认 true（行为不变）；
+    # ``false`` ⇒ 闸门不做任何剔除，并在 notes 留一行可观测留痕（「没剔除明细」与「本来就没被剔」必须可区分）。
+    gate_enabled = bool(gate_cfg.get("enabled", True))
+    if not gate_enabled:
+        warnings.append(GATE_DISABLED_NOTE)
     gate_kwargs: dict[str, Any] = {
+        "enabled": gate_enabled,
         "require_score": scored_source,
         "weights": gate_cfg.get("weights"),
         "min_overlap": float(gate_cfg.get("min_overlap", DEFAULT_MIN_OVERLAP)),

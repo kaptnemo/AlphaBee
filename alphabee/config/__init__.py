@@ -240,7 +240,14 @@ class PeerQualitySettings(BaseModel):
     （标定点与 holdout 验收数字见 `outputs/peer_group_eval.md` 的 DoD 复核章节）。
     """
 
-    enabled: bool = Field(default=True, description="质量闸总开关（false ⇒ 只用结构性下限判定）")
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "候选质量闸总开关（设计 §3.5）。false ⇒ 闸门**不做任何剔除**：全部候选直接保留"
+            "（含 verdict=reject 与低分/缺分候选），仅在 notes 记一行「质量闸已停用（peer_quality.enabled=false）」；"
+            "数值与维度仍照常记分。**只门控本闸**，不影响消费侧 min_peers 闸、taxonomy_enabled 与置信度三档"
+        ),
+    )
     min_overlap: float = Field(default=0.40, description="合成 overlap 下限（0–1；train 段标定）")
     weights: dict[str, float] = Field(
         default_factory=lambda: {"product": 0.40, "customer": 0.30, "business_model": 0.20, "material_tech": 0.10},
