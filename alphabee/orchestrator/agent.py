@@ -1,6 +1,7 @@
 """Orchestrator — top-level entry point for AlphaBee.
 
 Simplified pipeline:
+0. prepare_analysis_context  — extract user query + stock symbol, build/merge run context
 1. collect_raw_facts      — FactCollector + structured model extraction (concurrent)
 2. run_analysis_engines   — DerivedFacts + SignalEngine + AnomalyEngine
 3. explore_conflicts      — ConflictExplorer: identify contradictions and gaps
@@ -58,6 +59,7 @@ from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.insights import synthesize_insights
 from alphabee.orchestrator.nodes.midterm import resolve_midterm_decision
 from alphabee.orchestrator.nodes.midterm_reporter import report_midterm_decision
+from alphabee.orchestrator.nodes.prepare_analysis_context import prepare_analysis_context
 from alphabee.orchestrator.nodes.record_deviations import record_deviations
 from alphabee.orchestrator.nodes.resolve_company_track import resolve_company_track
 from alphabee.orchestrator.nodes.resolve_driver_profile import resolve_driver_profile
@@ -463,6 +465,7 @@ def route_after_thesis(state: OrchestratorState) -> str:
 
 _graph = StateGraph(OrchestratorState)
 
+_graph.add_node("prepare_analysis_context", prepare_analysis_context)
 _graph.add_node("collect_raw_facts", collect_raw_facts)
 _graph.add_node("resolve_industry_context", resolve_industry_context)
 _graph.add_node("resolve_company_track", resolve_company_track)
@@ -482,7 +485,8 @@ _graph.add_node("review_report", with_deviation_detection("review_report", revie
 _graph.add_node("record_deviations", record_deviations)
 _graph.add_node("finalize_message", finalize_message)
 
-_graph.add_edge(START, "collect_raw_facts")
+_graph.add_edge(START, "prepare_analysis_context")
+_graph.add_edge("prepare_analysis_context", "collect_raw_facts")
 _graph.add_edge("collect_raw_facts", "resolve_industry_context")
 _graph.add_edge("resolve_industry_context", "resolve_company_track")
 _graph.add_edge("resolve_company_track", "resolve_driver_profile")

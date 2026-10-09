@@ -790,9 +790,9 @@ def test_tracking_does_not_touch_node_contracts_or_detectors():
     from alphabee.orchestrator.detectors import DETECTORS
     from alphabee.orchestrator.node_contracts import NODE_CONTRACTS, validate_contracts
 
-    assert len(NODE_CONTRACTS) == 16
+    assert len(NODE_CONTRACTS) == 17
     fingerprint = hashlib.sha256("|".join(sorted(NODE_CONTRACTS)).encode()).hexdigest()[:16]
-    assert fingerprint == "90bd2190b86f1186"  # 键集合指纹（count 相等但键被换位也抓得到）
+    assert fingerprint == "1857784a5cb634e3"  # 键集合指纹（count 相等但键被换位也抓得到）
     assert sorted(DETECTORS) == [
         "artifact_schema_valid",
         "assumption_still_valid",
@@ -866,6 +866,7 @@ def test_f4_does_not_touch_node_contracts():
         "finalize_message",
         "generate_report",
         "midterm_decision_reporter",
+        "prepare_analysis_context",
         "record_deviations",
         "resolve_company_track",
         "resolve_driver_profile",
@@ -878,7 +879,7 @@ def test_f4_does_not_touch_node_contracts():
         "synthesize_insights",
         "verify_hypotheses",
     ]
-    assert sorted(NODE_CONTRACTS) == expected, "F4 不得新增/删除/替换任何节点契约键"
-    assert hashlib.sha256("|".join(expected).encode()).hexdigest()[:16] == "90bd2190b86f1186"
+    assert sorted(NODE_CONTRACTS) == expected, "不得新增/删除/替换任何节点契约键"
+    assert hashlib.sha256("|".join(expected).encode()).hexdigest()[:16] == "1857784a5cb634e3"
     assert len(DETECTORS) == 6
     assert validate_contracts() == []

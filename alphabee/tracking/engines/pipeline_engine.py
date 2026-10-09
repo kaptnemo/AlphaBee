@@ -21,9 +21,9 @@
 **不注入** ``evidence_ids`` / ``open_questions``（主图当前无消费者，注入即 dead-end）。
 主图要真正消费这些键属**后续独立一期**（需按 steward 流程登记 ``OrchestratorState`` / 节点契约变更）。
 
-本适配器注入的 ``run`` 之所以能生效，是因为 ``collectors.collect_raw_facts`` 已改为
-"**已有 run 则复用/合并 context**"（§15.6-C 的落地细节，同属 P6；见 ``collectors.py`` 与
-``tests/tracking/test_engine.py::test_collect_raw_facts_merges_incoming_run_context``）。
+本适配器注入的 ``run`` 之所以能生效，是因为 ``orchestrator.nodes.prepare_analysis_context`` 已实现
+"**已有 run 则复用/合并 context**"（§15.6-C 的落地细节，同属 P6；见 ``prepare_analysis_context.py`` 与
+``tests/tracking/test_engine.py::test_prepare_analysis_context_merges_incoming_run_context``）。
 """
 
 from __future__ import annotations

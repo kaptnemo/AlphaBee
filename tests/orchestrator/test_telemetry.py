@@ -402,8 +402,8 @@ def test_recovery_rate_none_when_denominator_missing(ledger):
 def test_recovery_half_life_is_median_node_distance_from_detection_to_resolution():
     """恢复半衰期 = 各 resolved 行的「末位节点序 − 检测端节点序」**中位数**。
 
-    末位节点 = ``record_deviations``（序 14）；检测端 = ``collect_raw_facts``(0) / ``run_thesis``(8) /
-    ``review_thesis``(9) ⇒ 跨度 {14, 6, 5} ⇒ 中位数 **6.0**；未 resolved 的行**不参与**。
+    末位节点 = ``record_deviations``（序 15）；检测端 = ``collect_raw_facts``(1) / ``run_thesis``(9) /
+    ``review_thesis``(10) ⇒ 跨度 {14, 6, 5} ⇒ 中位数 **6.0**；未 resolved 的行**不参与**。
 
     这里刻意取 3 条跨度（奇数、且**不对称**）而非 2 条：2 条时中位数与均值恒等（如 {14, 5} → 9.5 / 9.5），
     "median → mean" 变异会**存活**；本用例下均值 = 8.3333 ≠ 6.0 ⇒ 该变异必被杀死。
@@ -416,7 +416,7 @@ def test_recovery_half_life_is_median_node_distance_from_detection_to_resolution
         _event(fingerprint="fp-hl-4", detected_at_step="review_report"),  # 未 resolved → 不参与
     ]
     metrics = telemetry.compute_deviation_metrics(state, ledger)
-    assert NODE_INDEX["record_deviations"] == 14  # 口径锚点（NODE_ORDER 由 F0 冻结）
+    assert NODE_INDEX["record_deviations"] == 15  # 口径锚点（NODE_ORDER 由 F0 冻结）
     assert metrics.recovery_half_life == 6.0  # 中位数（均值会是 8.3333）
 
 

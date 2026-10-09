@@ -101,6 +101,7 @@ _TRULY_UNKNOWN_CATEGORIES = ("", "   ", "totally_unknown", "legacy_category_x", 
 
 # §14.1-B 的节点序（与 agent.py 实装逐项一致）；F0b 追加 run 尾部账本 sink。
 _EXPECTED_NODE_ORDER: tuple[str, ...] = (
+    "prepare_analysis_context",
     "collect_raw_facts",
     "resolve_industry_context",
     "resolve_company_track",
@@ -177,7 +178,7 @@ def _graph_edges_in_source_order() -> list[tuple[str, str]]:
 
 def test_node_order_matches_contract():
     assert NODE_ORDER == _EXPECTED_NODE_ORDER
-    assert len(NODE_ORDER) == 16
+    assert len(NODE_ORDER) == 17
     assert len(set(NODE_ORDER)) == len(NODE_ORDER)
     # 图哨兵不应登记为节点
     assert not [node for node in NODE_ORDER if node.startswith("__")]
@@ -191,7 +192,8 @@ def test_node_order_matches_agent_registration_order():
 
 def test_node_index_is_complete_and_zero_based():
     assert NODE_INDEX == {node: index for index, node in enumerate(NODE_ORDER)}
-    assert NODE_INDEX["collect_raw_facts"] == 0
+    assert NODE_INDEX["prepare_analysis_context"] == 0
+    assert NODE_INDEX["collect_raw_facts"] == 1
     assert NODE_INDEX["finalize_message"] == len(NODE_ORDER) - 1
 
 
@@ -494,7 +496,7 @@ def test_detection_latency_keeps_negative_for_miswired_detector():
     """检测器接线早于偏离产生地 → 负数暴露问题，不静默夹取为 0。"""
     issue = _legacy_issue("missing_data", related_step="finalize_message", detected_at_step="collect_raw_facts")
     latency = detection_latency(issue)
-    assert latency == -NODE_INDEX["finalize_message"]
+    assert latency == NODE_INDEX["collect_raw_facts"] - NODE_INDEX["finalize_message"]
     assert latency is not None and latency < 0
 
 
@@ -506,7 +508,7 @@ def test_detection_latency_for_record_deviation_output():
         detected_at_step="run_analysis_engines",
         related_step="collect_raw_facts",
     )
-    assert detection_latency(issue) == NODE_INDEX["run_analysis_engines"] == 4
+    assert detection_latency(issue) == NODE_INDEX["run_analysis_engines"] - NODE_INDEX["collect_raw_facts"] == 4
 
 
 # ── 依赖方向（§14.0） ────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@
   ``WEIGHTED``（α>1 加权，必须被审计）/ ``OVERRIDE``（可推翻上游）；
 * :class:`NodeContract` —— 单节点契约（§6.1）：前置条件、后置条件、出口检测器名、
   允许的恢复阶梯 Tier（§7.1）、消费边的放大标注（§8.1）、回环预算；
-* :data:`NODE_CONTRACTS` —— 全部流水线节点登记（键集 == :data:`NODE_ORDER`，现 16 条，含 F0b 的 run 尾部账本 sink ``record_deviations``）；
+* :data:`NODE_CONTRACTS` —— 全部流水线节点登记（键集 == :data:`NODE_ORDER`，现 17 条，含 F0b 的 run 尾部账本 sink ``record_deviations``）；
 * :data:`AMPLIFICATION_AUDIT` —— 每条 ``WEIGHTED`` 边的审计覆盖表（§8.1「审计要求」列的代码投影，
   由 F3 的 ``audit_amplification`` 实装）；
 * :data:`NODE_BUDGETS` —— 回环预算与 ``OrchestratorState`` 计数器的绑定（§14.2-A 断言 2）；
@@ -119,9 +119,23 @@ class AmplificationAuditBinding:
     requirement: str  # §8.1 原文要求（CI 失败时用于定位设计条目）
 
 
-# ── 契约登记（16 节点；阶梯值见 §7.1，放大标注见 §8.1） ─────────────────────
+# ── 契约登记（17 节点；阶梯值见 §7.1，放大标注见 §8.1） ─────────────────────
 
 NODE_CONTRACTS: dict[str, NodeContract] = {
+    "prepare_analysis_context": NodeContract(
+        node_id="prepare_analysis_context",
+        preconditions=["messages 可读（无人类消息时 query 允许为空）"],
+        postconditions=[
+            "run 已建立或复用，且 run.context.query 已写入",
+            "查询串可解析出标的口径下 run.context.symbol 已写入",
+            "命中带陈旧/未对账状态启动时显式产 stale_state_run issue，采集不阻断",
+        ],
+        # 纯解析 + 纯规则入口前置校验（只读既有帧/告警产物，无网络/LLM）：解析不出标的即由下游
+        # 按缺数据降级；陈旧记录由节点自身 issue 上报，故不挂检测器。
+        detectors=[],
+        recovery_ladder=(0, 3),  # §7.1：无 IO 可重试价值，解析失败即骨架跳过
+        amplification_labels={},
+    ),
     "collect_raw_facts": NodeContract(
         node_id="collect_raw_facts",
         preconditions=[

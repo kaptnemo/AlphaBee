@@ -17,7 +17,7 @@
     hit      = checked and (stale or pending)   # 命中"带陈旧/未对账状态启动"
     blocking = hit and block_enabled            # 该次调用是否**允许阻断**
 
-* **记录侧**（``orchestrator/collectors.py::collect_raw_facts``）以 ``block_enabled=False`` 调用
+* **记录侧**（``orchestrator/nodes/prepare_analysis_context.py``）以 ``block_enabled=False`` 调用
   ⇒ 该次调用**永不阻断**，只取"命中与否"决定是否把这次启动写进账本（§15.2 设计决策 3：
   "记录恒发生"）；
 * **阻断侧**（CLI 入口 gate，``apps/cli/main.py``）把配置 ``deviation.tracking.block_stale_runs``
@@ -35,7 +35,7 @@
 入口校验绝不打断主链。这与"无帧 ⇒ 不阻断"（§15.2 设计决策 2：首次研究必须放行）同向。
 
 **依赖方向**：本模块只 import 标准库 + Pydantic；``midterm.persistence`` 的 import 推迟到函数体内
-（本模块会被 ``orchestrator.collectors`` 在分析主链上 import，避免 import 期副作用）。帧目录/告警
+（本模块会被 ``orchestrator.nodes.prepare_analysis_context`` 在分析主链上 import，避免 import 期副作用）。帧目录/告警
 目录的缺省值在此以常量声明而不 import ``midterm`` / ``tracking``（后者会把 ``tushare`` 链拉进
 分析主链），两处口径由 ``tests/orchestrator/test_preflight.py::test_default_dirs_match_upstream_owners``
 钉住，防漂移。

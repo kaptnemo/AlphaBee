@@ -6,7 +6,7 @@
 1. **无帧不阻断**：``checked=False`` 且 ``blocking=False``（首次研究必须放行）；
 2. **陈旧/触发 → ``blocking``**：帧 ``stale_after`` 到期，或告警末行有未消费触发；
 3. **CLI 两路径**：``--allow-stale`` 放行（且**仍命中**）/ 缺省拒绝（``SystemExit(3)``）；
-4. **``stale_state_run`` 入账**：节点级跑 ``collect_raw_facts`` 产 D5/MEDIUM issue 且采集继续。
+4. **``stale_state_run`` 入账**：节点级跑 ``prepare_analysis_context`` 产 D5/MEDIUM issue 且采集继续。
 
 外加 §15.2-E 的其余行（告警损坏行只跳过、配置缺段仍可 import、``block_stale_runs=false`` 只记录
 不阻断）与两条口径钉子（``days_since`` = 帧龄、``stale_after == today`` 不算陈旧）。
@@ -517,14 +517,18 @@ class _StubFacts:
         return {"revenue": 1.0}
 
 
-async def _run_collector(
+async def _run_entry_nodes(
     monkeypatch: pytest.MonkeyPatch,
     *,
     state_dir: Path,
     alert_dir: Path,
     query: str = QUERY,
-) -> dict[str, Any]:
-    """真跑 ``collect_raw_facts``：只打桩三个外部依赖（LLM agent / 两个结构化事实模型）。"""
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """真跑入口两节点 ``prepare_analysis_context`` → ``collect_raw_facts``，返回两份 partial state。
+
+    只打桩三个外部依赖（LLM agent / 两个结构化事实模型）；前置校验是 ``prepare_analysis_context``
+    的职责，故把它的帧/告警目录指到 tmp，再按图顺序跑到采集节点，验证"入账且采集继续"。
+    """
     collectors = importlib.import_module("alphabee.orchestrator.collectors")
     monkeypatch.setattr(collectors, "fact_collector_agent_factory", lambda: _StubAgent())
     monkeypatch.setattr(collectors, "get_financial_facts_model", lambda symbol: _StubFacts())
@@ -534,47 +538,53 @@ async def _run_collector(
 
     from langchain_core.messages import HumanMessage
 
-    return await collectors.collect_raw_facts({"messages": [HumanMessage(content=query)]}, {})
+    from alphabee.orchestrator.nodes.prepare_analysis_context import prepare_analysis_context
+
+    state: dict[str, Any] = {"messages": [HumanMessage(content=query)]}
+    ctx = await prepare_analysis_context(state, {})
+    collected = await collectors.collect_raw_facts({**state, "run": ctx["run"]}, {})
+    return ctx, collected
 
 
-async def test_collect_raw_facts_records_stale_state_run_issue(tmp_path, monkeypatch):
-    """陈旧帧 ⇒ 产 ``stale_state_run``（D5/MEDIUM/planning）issue，且**采集继续**。"""
+async def test_prepare_analysis_context_records_stale_state_run_issue(tmp_path, monkeypatch):
+    """陈旧帧 ⇒ 入口节点产 ``stale_state_run``（D5/MEDIUM/planning）issue，且**采集继续**。"""
     state_dir, alert_dir = tmp_path / "state", tmp_path / "alerts"
     _frame(state_dir, as_of="2026-09-01", stale_after="2026-09-08")
 
-    result = await _run_collector(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
+    ctx, collected = await _run_entry_nodes(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
 
-    recorded = [issue for issue in result["issues"] if issue.category == "stale_state_run"]
+    recorded = [issue for issue in ctx["issues"] if issue.category == "stale_state_run"]
     assert len(recorded) == 1
     issue = recorded[0]
     assert issue.deviation_class is DeviationClass.D5_CONTROL
     assert issue.severity is IssueSeverity.MEDIUM
     assert issue.scope is IssueScope.PLANNING
-    assert issue.detected_at_step == "collect_raw_facts"
-    assert issue.related_step == "collect_raw_facts"
+    assert issue.detected_at_step == "prepare_analysis_context"
+    assert issue.related_step == "prepare_analysis_context"
     assert issue.recovery_action == "proceeded_without_reconcile"
     assert f"{SYMBOL}:2026-09-01" in issue.message
     assert "待消费触发 0 条" in issue.message
-    # 采集继续：artifact 照产、Step 因"有 issue 有产物"落 PARTIAL（既有 _finalize_step 语义）
-    assert result["artifacts"]
-    assert result["steps"][0].status is StepStatus.PARTIAL
-    assert result["fact_values"] == {"revenue": 1.0}
+    # 入口 Step 因"命中记录"落 PARTIAL；采集继续：artifact 照产、采集 Step 仍 SUCCEEDED
+    assert ctx["steps"][0].status is StepStatus.PARTIAL
+    assert collected["artifacts"]
+    assert collected["steps"][0].status is StepStatus.SUCCEEDED
+    assert collected["fact_values"] == {"revenue": 1.0}
 
 
-async def test_collect_raw_facts_records_pending_triggers_even_when_frame_fresh(tmp_path, monkeypatch):
+async def test_prepare_analysis_context_records_pending_triggers_even_when_frame_fresh(tmp_path, monkeypatch):
     """未消费触发（帧不陈旧）同样入账：判定复用告警末行，不新增条件。"""
     state_dir, alert_dir = tmp_path / "state", tmp_path / "alerts"
-    _frame(state_dir, as_of="2026-09-20", stale_after="2026-10-08")
+    _frame(state_dir, as_of="2026-09-20", stale_after="2099-01-01")  # 远期 stale_after ⇒ 帧真正保鲜
     _write_alert_lines(alert_dir, [_alert_row(triggers=(_trigger(),), exit_reasons=("SENTINEL_EXIT",))])
 
-    result = await _run_collector(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
+    ctx, _ = await _run_entry_nodes(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
 
-    recorded = [issue for issue in result["issues"] if issue.category == "stale_state_run"]
+    recorded = [issue for issue in ctx["issues"] if issue.category == "stale_state_run"]
     assert len(recorded) == 1
     assert "待消费触发 2 条" in recorded[0].message
 
 
-async def test_collect_raw_facts_calls_preflight_with_block_disabled(tmp_path, monkeypatch):
+async def test_prepare_analysis_context_calls_preflight_with_block_disabled(tmp_path, monkeypatch):
     """§15.2-B 的调用形状：``check_preflight(symbol, block_enabled=False)``——记录侧**永不阻断**。
 
     判别力：若把 ``block_enabled`` 丢掉（或记录侧误传 True），这一条即红；若把记账判据从"命中"
@@ -583,7 +593,8 @@ async def test_collect_raw_facts_calls_preflight_with_block_disabled(tmp_path, m
     state_dir, alert_dir = tmp_path / "state", tmp_path / "alerts"
     _frame(state_dir, as_of="2026-09-01", stale_after="2026-09-08")
 
-    collectors = importlib.import_module("alphabee.orchestrator.collectors")
+    from alphabee.orchestrator.nodes import prepare_analysis_context as rqc
+
     calls: list[tuple[Any, dict[str, Any]]] = []
     real = pf.check_preflight
 
@@ -591,29 +602,31 @@ async def test_collect_raw_facts_calls_preflight_with_block_disabled(tmp_path, m
         calls.append((symbol, kwargs))
         return real(symbol, **kwargs)
 
-    monkeypatch.setattr(collectors, "check_preflight", _spy)
-    await _run_collector(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
+    monkeypatch.setattr(rqc, "check_preflight", _spy)
+    await _run_entry_nodes(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
 
     assert calls == [(SYMBOL, {"block_enabled": False})]
 
 
-async def test_collect_raw_facts_silent_for_first_run(tmp_path, monkeypatch):
+async def test_prepare_analysis_context_silent_for_first_run(tmp_path, monkeypatch):
     """无帧（首次研究）⇒ 不产任何 ``stale_state_run`` issue，也不改 Step 状态（零回归面）。"""
     state_dir, alert_dir = tmp_path / "state", tmp_path / "alerts"
 
-    result = await _run_collector(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
+    ctx, collected = await _run_entry_nodes(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
 
-    assert [issue.category for issue in result["issues"]] == []
-    assert result["steps"][0].status is StepStatus.SUCCEEDED
+    assert [issue.category for issue in ctx["issues"]] == []
+    assert ctx["steps"][0].status is StepStatus.SUCCEEDED
+    assert collected["steps"][0].status is StepStatus.SUCCEEDED
 
 
-async def test_collect_raw_facts_silent_for_fresh_frame_without_triggers(tmp_path, monkeypatch):
+async def test_prepare_analysis_context_silent_for_fresh_frame_without_triggers(tmp_path, monkeypatch):
     state_dir, alert_dir = tmp_path / "state", tmp_path / "alerts"
-    _frame(state_dir, as_of="2026-09-20", stale_after="2026-10-08")
+    # 节点内 check_preflight 用系统当日；stale_after 取远期值以与运行日期解耦（避免时间炸弹）。
+    _frame(state_dir, as_of="2026-09-20", stale_after="2099-01-01")
 
-    result = await _run_collector(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
+    ctx, _ = await _run_entry_nodes(monkeypatch, state_dir=state_dir, alert_dir=alert_dir)
 
-    assert [issue.category for issue in result["issues"]] == []
+    assert [issue.category for issue in ctx["issues"]] == []
 
 
 def test_stale_state_run_category_is_registered_as_d5():
@@ -650,11 +663,11 @@ def _patch_preflight_dirs(monkeypatch: pytest.MonkeyPatch, state_dir: Path, aler
 
 
 def test_symbol_from_query_matches_collectors_source(monkeypatch):
-    """入口 gate 的符号解析与 ``collectors._first_symbol`` 同源（同函数、同取值顺序）。"""
+    """入口 gate 的符号解析与 ``prepare_analysis_context._first_symbol`` 同源（同函数、同取值顺序）。"""
     cli_main = importlib.import_module("alphabee.apps.cli.main")
-    collectors = importlib.import_module("alphabee.orchestrator.collectors")
+    from alphabee.orchestrator.nodes.prepare_analysis_context import _first_symbol
 
-    assert cli_main.symbol_from_query(QUERY) == collectors._first_symbol(QUERY) == SYMBOL
+    assert cli_main.symbol_from_query(QUERY) == _first_symbol(QUERY) == SYMBOL
     assert cli_main.symbol_from_query("") is None
 
 

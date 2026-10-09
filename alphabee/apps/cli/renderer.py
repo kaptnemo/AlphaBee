@@ -19,6 +19,7 @@ from alphabee.apps.cli.parsing import classify_call, truncate_json
 # ---------------------------------------------------------------------------
 
 STAGE_MAP: dict[str, tuple[str, str, str]] = {
+    "prepare_analysis_context": ("📌", "问题与标的解析", Color.CYAN),
     "collect_raw_facts": ("📊", "事实采集", Color.CYAN),
     "resolve_industry_context": ("🏭", "行业语境解析", Color.CYAN),
     "resolve_company_track": ("🏷", "公司赛道解析", Color.CYAN),

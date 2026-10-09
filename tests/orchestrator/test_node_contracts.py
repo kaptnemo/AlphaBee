@@ -47,6 +47,7 @@ _AGENT_PATH = Path(nc.__file__).with_name("agent.py")
 
 # §7.1「各节点阶梯配置」+ 回环预算列（含 F0b 后追加的 run 尾部账本 sink）。
 _EXPECTED_LADDERS: dict[str, tuple[int, ...]] = {
+    "prepare_analysis_context": (0, 3),
     "collect_raw_facts": (0, 4, 2),
     "resolve_industry_context": (0, 2, 3),
     "resolve_company_track": (0, 2, 3),
@@ -193,9 +194,9 @@ def _replace(
 
 
 def test_node_contracts_cover_every_pipeline_node():
-    """契约键集 == NODE_ORDER（16 节点，F0b 后含 ``record_deviations``）。"""
+    """契约键集 == NODE_ORDER（17 节点，F0b 后含 ``record_deviations``）。"""
     assert set(NODE_CONTRACTS) == set(NODE_ORDER)
-    assert len(NODE_CONTRACTS) == len(NODE_ORDER) == 16
+    assert len(NODE_CONTRACTS) == len(NODE_ORDER) == 17
     assert len(NODE_CONTRACTS) != 15, "文档 §14.2-A 的 15 节点是 F0b 之前的口径"
     for node_id, contract in NODE_CONTRACTS.items():
         assert contract.node_id == node_id

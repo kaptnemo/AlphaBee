@@ -372,10 +372,17 @@ async def _collect(monkeypatch, state: dict) -> dict:
     monkeypatch.setattr(collectors, "fact_collector_agent_factory", lambda: _StubSubAgent())
     monkeypatch.setattr(collectors, "get_financial_facts_model", lambda symbol: _StubFacts())
     monkeypatch.setattr(collectors, "get_market_facts_model", lambda symbol: _StubFacts())
-    return await collectors.collect_raw_facts(state, {})
+
+    # query / symbol 抽取与 run 建立已拆到上游 prepare_analysis_context 节点，这里按图顺序先跑它。
+    from alphabee.orchestrator.nodes.prepare_analysis_context import prepare_analysis_context
+
+    ctx = await prepare_analysis_context(state, {})
+    result = await collectors.collect_raw_facts({**state, "run": ctx["run"]}, {})
+    result["run"] = ctx["run"]
+    return result
 
 
-def test_collect_raw_facts_merges_incoming_run_context(monkeypatch):
+def test_prepare_analysis_context_merges_incoming_run_context(monkeypatch):
     """run 复用回归（§15.6-C 的落地细节）：已有 run ⇒ **保留** id/goal/status/started_at + 合并 context。"""
     from langchain_core.messages import HumanMessage
 
@@ -407,7 +414,7 @@ def test_collect_raw_facts_merges_incoming_run_context(monkeypatch):
     assert run.context["symbol"] == SYMBOL
 
 
-def test_collect_raw_facts_keeps_injected_symbol_when_query_has_none(monkeypatch):
+def test_prepare_analysis_context_keeps_injected_symbol_when_query_has_none(monkeypatch):
     """查询串里解析不到标的时**保留**注入的 symbol（不写成 ``None``）。"""
     from langchain_core.messages import HumanMessage
 
@@ -421,7 +428,7 @@ def test_collect_raw_facts_keeps_injected_symbol_when_query_has_none(monkeypatch
     assert result["run"].context["query"] == "护城河如何？"
 
 
-def test_collect_raw_facts_without_incoming_run_keeps_legacy_semantics(monkeypatch):
+def test_prepare_analysis_context_without_incoming_run_keeps_legacy_semantics(monkeypatch):
     """零回归：调用方未提供 run ⇒ 与既有实现逐字同形（新建 run，context 恰为 query/symbol）。"""
     from langchain_core.messages import HumanMessage
 
@@ -436,20 +443,26 @@ def test_collect_raw_facts_without_incoming_run_keeps_legacy_semantics(monkeypat
 # ── ⑥ v1 非目标钉子 ────────────────────────────────────────────────────────
 
 
-def test_node_order_and_graph_untouched():
-    """非目标：不改 ``NODE_ORDER``、不改 ``agent.py`` 图结构（键集指纹仍为既有值）。"""
+def test_node_order_and_graph_baseline():
+    """基线锚：``NODE_ORDER`` / 图结构 / 契约键集指纹必须与当前实现一致。
+
+    说明：``prepare_analysis_context`` 已从 ``collect_raw_facts`` 拆出并登记为**首个**节点
+    （query/symbol 抽取 + run 建立），因此原 v1 的"不改图结构"钉子已随该架构变更更新为新基线。
+    """
     import hashlib
 
     from alphabee.orchestrator.agent import alphabee_agent
     from alphabee.orchestrator.node_contracts import NODE_CONTRACTS, validate_contracts
     from alphabee.orchestrator.services.deviation import NODE_ORDER
 
-    assert len(NODE_CONTRACTS) == 16
-    assert hashlib.sha256("|".join(sorted(NODE_CONTRACTS)).encode()).hexdigest()[:16] == "90bd2190b86f1186"
+    assert len(NODE_CONTRACTS) == 17
+    assert hashlib.sha256("|".join(sorted(NODE_CONTRACTS)).encode()).hexdigest()[:16] == "1857784a5cb634e3"
     assert validate_contracts() == []
-    assert NODE_ORDER[0] == "collect_raw_facts" and NODE_ORDER[-1] == "finalize_message"
-    assert len(NODE_ORDER) == 16
+    assert NODE_ORDER[0] == "prepare_analysis_context" and NODE_ORDER[1] == "collect_raw_facts"
+    assert NODE_ORDER[-1] == "finalize_message"
+    assert len(NODE_ORDER) == 17
     assert "collect_raw_facts" in alphabee_agent.get_graph().nodes
+    assert "prepare_analysis_context" in alphabee_agent.get_graph().nodes
 
 
 def test_no_external_engine_dependency_is_introduced():

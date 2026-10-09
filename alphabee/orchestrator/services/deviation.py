@@ -39,6 +39,7 @@ __all__ = [
 #: 主流水线节点序（与 ``orchestrator/agent.py`` 的 ``_graph.add_node`` 顺序一致）。
 #: 检测时延按本序取下标；**新增节点必须同步登记**（frozen contract test 断言）。
 NODE_ORDER: tuple[str, ...] = (
+    "prepare_analysis_context",
     "collect_raw_facts",
     "resolve_industry_context",
     "resolve_company_track",

@@ -59,7 +59,7 @@ def print_deviations_view(run_id: str | None) -> None:
 
 
 def symbol_from_query(query: str) -> str | None:
-    """从查询串提取**首个**股票代码（与 ``collectors._first_symbol`` 同源：``extract_symbols_from_query``）。
+    """从查询串提取**首个**股票代码（与 ``prepare_analysis_context._first_symbol`` 同源：``extract_symbols_from_query``）。
 
     fail-open：股票清单缺失/读取失败/查询为空 → ``None``（空标的在入口校验里**不阻断**），
     入口 gate 绝不因符号解析问题崩溃或误拦。
