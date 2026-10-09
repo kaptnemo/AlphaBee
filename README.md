@@ -1,6 +1,6 @@
 # 🐝 AlphaBee
 
-**AlphaBee** 是一个面向 A 股市场的多智能体投资分析系统。基于 LangGraph + DeepAgents 构建，将个股分析拆解为 **事实采集 → 衍生指标 → 信号检测 → 异常发现 → 冲突探索 → 假设验证 → 论点生成 → 报告输出** 的分层流水线。
+**AlphaBee** 是一个面向 A 股市场的多智能体投资分析系统。基于 LangGraph + DeepAgents 构建，将个股分析拆解为 **事实采集 → 上下文注入 → 衍生指标 → 信号检测 → 异常发现 → 冲突探索 → 假设验证 → 洞察综合 → 论点生成 → 报告输出** 的分层流水线，并可通过中期决策节点与公司跟踪连续体把一次性分析延伸为持续研究。
 
 [![Python](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/)
 [![Poetry](https://img.shields.io/badge/dependency-Poetry-cyan.svg)](https://python-poetry.org/)
@@ -13,13 +13,15 @@
 
 ## 核心能力
 
-- **分层可独立运行的流水线**：事实采集(8 工具) → 衍生指标(21 条) → 信号(20 条) → 勾稽异常(10 条) → 冲突探索 → 证据验证 → 洞察综合 → 论点(8 维度) → 报告审查，每层可独立测试
-- **财务造假侦查**：《手把手教你读财报》框架 —— 10 条勾稽关系 z-score 检测 + 9 个异常模式（虚增收入、大存大贷、折旧调节等），基于近 4 期历史基线(μ±σ)区分偶然波动与真实异常，每条异常附带附注排查路径
+- **分层可独立运行的流水线**：事实采集(8 工具) → 行业/公司赛道/驱动因子语境注入 → 衍生指标(21 条) → 信号(22 条) → 勾稽异常(10 条) → 冲突探索 → 证据验证 → 洞察综合 → 论点(8 维度) → 报告生成，每层可独立测试
+- **财务造假侦查**：《手把手教你读财报》框架 —— 10 条勾稽关系 z-score 检测 + 异常模式信号（虚增收入、大存大贷、折旧调节等），基于近 4 期历史基线(μ±σ)区分偶然波动与真实异常，每条异常附带附注排查路径
 - **LLM 证据验证**：跨维度冲突探索（盈利 vs 现金流等 5 大模式）+ `web_search` / Tushare / 东方财富研报 / **本地财报检索** 工具驱动的假设验证，坚持"唯证据论"
 - **本地财报检索**：已解析的公司公告/财报 markdown 按章节拆分，`query_financial_report` 用受限 deep agent 核验公司一手披露内容
+- **中期决策与研究连续体**：`--midterm` 在论点审查后接入中期决策层（公司状态机 + 贝叶斯信念更新 + 仓位带）；公司跟踪通过 `python -m alphabee.tracking` 做跨期对账（状态帧持久化 → thesis 版本反漂移 → 偏离账本 → 跟踪告警 + `research_status` 派生视图）
 - **YAML 驱动的规则引擎**：指标/信号/异常规则均为声明式 YAML，拓扑排序依赖解析 + 安全 AST 公式求值
 - **统一字段适配层**：Tushare/AkShare 原始字段经 Adapter + Schema Registry 映射为规范字段（7 大领域、125 字段），业务逻辑不依赖数据源字段名
 - **任务记录与规则自蒸馏**：每次运行自动保存 TaskRecord → 确定性统计分析 → LLM 蒸馏建议（新信号/行业校准/阈值调整）
+- **双形态交互**：终端流式 CLI（多轮对话 + 框架监控 + 只读账本/告警视图）+ Web 前端（FastAPI + Next.js 流式问答）
 - **可观测性**：Langfuse 全链路追踪 + structlog 结构化日志
 
 ## 快速开始
@@ -56,6 +58,9 @@ poetry run python main.py --chat
 # 启用 LLM 增强层与审查（--enhance / --llm-review）
 poetry run python main.py --enhance --llm-review "分析比亚迪"
 
+# 启用中期决策节点（review_thesis 后接入决策层，默认关闭）
+poetry run python main.py --midterm "分析 002916.SZ"
+
 # 基于预定义监控框架持续评估特定标的
 poetry run python main.py --monitor-framework monitor_framework.md --symbol 300760.SZ
 
@@ -63,6 +68,21 @@ poetry run python main.py --monitor-framework monitor_framework.md --symbol 3007
 poetry run python main.py --task-stats
 poetry run python main.py --distill            # LLM 规则蒸馏建议
 poetry run python main.py --task-history 600519.SH
+poetry run python main.py --task-record task-a1b2c3d4e5f6
+```
+
+### 公司跟踪与只读视图
+
+```bash
+# 跨期对账：触发判定 + 五层差分 + 退出检查 + bayes 更新 + 告警落盘
+poetry run python -m alphabee.tracking --symbol 600519.SH --once --json
+
+# 偏离账本时间线 / 跟踪告警（只读视图，不运行流水线）
+poetry run python main.py --deviations
+poetry run python main.py --track-alerts 600519.SH
+
+# 最新帧陈旧/存在未对账触发时默认阻断，可用 --allow-stale 显式放行（仍留痕）
+poetry run python main.py --allow-stale "分析 600519.SH"
 ```
 
 ### 启动 web 界面流式问答交互
@@ -83,11 +103,12 @@ cd web && npm install && npm run dev   # http://localhost:3000
 
 | 文档 | 内容 |
 |------|------|
-| [架构与流水线详解](docs/ARCHITECTURE.md) | 节点说明、指标/信号/异常规则、多期趋势、报告结构 |
-| [使用指南](docs/USAGE.md) | 全部 CLI 命令、多轮对话、框架监控、任务记录 |
-| [配置说明](docs/CONFIGURATION.md) | `config.yaml` 与全部环境变量 |
-| [开发者环境](docs/DEVELOPMENT.md) | 开发命令、AI skills 约定、目录结构、后续工作 |
-| [概念速查](docs/CONCEPTS.md) | Fact / DerivedFact / Signal / Thesis 等术语 |
+| [架构与流水线详解](docs/guide/ARCHITECTURE.md) | 节点说明、指标/信号/异常规则、多期趋势、报告结构 |
+| [使用指南](docs/guide/USAGE.md) | 全部 CLI 命令、多轮对话、框架监控、任务记录 |
+| [配置说明](docs/guide/CONFIGURATION.md) | `config.yaml` 与全部环境变量 |
+| [开发者环境](docs/guide/DEVELOPMENT.md) | 开发命令、AI skills 约定、目录结构、后续工作 |
+| [概念速查](docs/guide/CONCEPTS.md) | Fact / DerivedFact / Signal / Thesis 等术语 |
+| [路线图与专项设计](docs/README.md) | 路线图、行业语境、中期项目、偏离控制 / 研究连续体等设计文档 |
 
 ## 测试
 
