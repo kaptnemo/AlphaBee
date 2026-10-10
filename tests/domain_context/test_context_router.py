@@ -29,17 +29,33 @@ def test_muyuan_routes_to_hog_cycle():
 
 
 def test_jinchengxin_routes_to_mining_services():
+    # 生产形状：INDUSTRY_CONTEXT.sub_industry 恒为空串（只解析到申万一级），
+    # 故路由只能靠真实赛道（track_label）命中——夹具不得注入数据源给不出的二级行业名。
     result = route(
         RouterInput(
             symbol="603979.SH",
             track_label="矿业服务",
-            sub_industry="采掘服务",
+            industry="建筑装饰",
+            sub_industry="",
         )
     )
     assert result.playbook_id == "mining_services"
     assert result.fallback is False
+    assert result.why_selected == ["track_label_match"]
+    assert result.anchor_strength == "strong"
     contexts = {c.context for c in result.activated_contexts}
     assert contexts == {"commodity_cycle", "project_delivery", "cost_curve", "capacity_cycle"}
+
+
+def test_jinchengxin_track_label_alone_decides_mining_services():
+    # 「仅 track_label 命中」回归钉（G-1）：宽 L1 行业名（建筑装饰）对 mining_services 无效，
+    # 命中完全来自真实赛道，且因此拿到强锚。
+    result = route(RouterInput(symbol="603979.SH", track_label="矿业服务", industry="建筑装饰", sub_industry=""))
+    assert result.playbook_id == "mining_services"
+    assert "track_label_match" in result.why_selected
+    assert "sub_industry_match" not in result.why_selected
+    assert "sw_code_match" not in result.why_selected
+    assert result.anchor_strength == "strong"
 
 
 def test_no_match_falls_back_to_generic_not_degraded():

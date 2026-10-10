@@ -76,10 +76,11 @@ def test_muyuan_routes_to_hog_cycle():
 
 
 def test_jinchengxin_routes_to_mining_services():
+    # 生产形状：sub_industry 恒为空串，命中只能来自 track_label（夹具保真，G-2）
     state = _state(
         symbol="603979.SH",
         artifacts=[
-            _industry_artifact(industry="建筑装饰", sub_industry="采掘服务", sw_code="801720.SI"),
+            _industry_artifact(industry="建筑装饰", sub_industry="", sw_code="801720.SI"),
             _track_artifact(track_label="矿业服务", business_model="integrator"),
         ],
     )
@@ -88,6 +89,8 @@ def test_jinchengxin_routes_to_mining_services():
     profile = _find_driver_profile(result)
     assert profile.playbook == "mining_services"
     assert profile.fallback is False
+    assert profile.why_selected == ["track_label_match"]
+    assert profile.anchor_strength == "strong"
 
 
 def test_no_identity_signals_degrades():
