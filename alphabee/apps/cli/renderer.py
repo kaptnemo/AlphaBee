@@ -296,12 +296,21 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
         )
         fallback = dp.get("fallback", False) if isinstance(dp, dict) else getattr(dp, "fallback", False)
         degraded = dp.get("degraded", False) if isinstance(dp, dict) else getattr(dp, "degraded", False)
+        anchor = dp.get("anchor_strength", "") if isinstance(dp, dict) else getattr(dp, "anchor_strength", "")
+        provenance = dp.get("provenance", "") if isinstance(dp, dict) else getattr(dp, "provenance", "")
+        why_selected = dp.get("why_selected", []) if isinstance(dp, dict) else getattr(dp, "why_selected", [])
+        agenda = dp.get("research_agenda", []) if isinstance(dp, dict) else getattr(dp, "research_agenda", [])
+        novel_drivers = dp.get("novel_drivers", []) if isinstance(dp, dict) else getattr(dp, "novel_drivers", [])
         fb_tag = color("（兜底）", Color.DIM) if fallback else ""
         deg_tag = color("  ⚠ 降级", Color.YELLOW) if degraded else ""
+        # 锚定强度决定"这条主线有多可信"：strong 可直接采用，weak/none 需进一步复核或兜底；
+        # provenance 标出画像来源（rule/llm/hybrid），灰显避免给常规规则路径增加噪声。
+        anchor_tag = f"  │ 锚定: {anchor}" if anchor else ""
+        prov_tag = color(f"  │ 来源: {provenance}", Color.DIM) if provenance else ""
         driver_str = "、".join(drivers[:5]) if drivers else color("—", Color.DIM)
         print(
             f"  🧭 框架: {color(playbook, Color.BOLD, Color.WHITE) if playbook else color('—', Color.DIM)}"
-            f"{fb_tag}  │ 驱动: {driver_str}{deg_tag}{issue_tag}"
+            f"{fb_tag}{anchor_tag}{prov_tag}  │ 驱动: {driver_str}{deg_tag}{issue_tag}"
         )
         # 激活原语：框架展开出的分析积木，让用户看到「为什么用这套框架」
         prim_ids = [p.get("id", "") if isinstance(p, dict) else getattr(p, "id", "") for p in primitives]
@@ -315,6 +324,20 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
                 print(f"         {color('▪', Color.DIM)} {color(pid, Color.CYAN)}: {questions[0]}")
         if secondary:
             print(f"       次驱动: {color('、'.join(secondary[:4]), Color.DIM)}")
+        # 为什么选中这套框架（可解释性）：此前只在 artifact 里，CLI 看不到
+        if why_selected:
+            print(f"       命中依据: {color('、'.join(why_selected[:4]), Color.DIM)}")
+        # 候选驱动（尚未证实）：明确标注"候选"，避免与主驱动混淆
+        if novel_drivers:
+            print(f"       候选驱动: {color('、'.join(novel_drivers[:4]), Color.DIM)}")
+        # 研究议程：这家公司该先回答哪些问题（D1 研究层产出，D0 下为空不打印）
+        agenda_lines = [
+            f"{q.get('question')}({q.get('priority', '')})"
+            for q in agenda[:4]
+            if isinstance(q, dict) and q.get("question")
+        ]
+        if agenda_lines:
+            print(f"       研究议程: {color('；'.join(agenda_lines), Color.DIM)}")
         print()
 
     # ─────────────────────────────────────────────────────────────────

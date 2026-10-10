@@ -60,7 +60,12 @@ def _build_track_summary(artifacts: list[Artifact]) -> dict[str, Any] | None:
 
 
 def _build_driver_profile_summary(artifacts: list[Artifact]) -> dict[str, Any]:
-    """公司驱动画像摘要（DOMAIN_CONTEXT P0）：供 InsightAgent 写 main_driver / central_tension。"""
+    """公司驱动画像摘要（DOMAIN_CONTEXT P0）：供 InsightAgent 写 main_driver / central_tension。
+
+    这是画像知识的**唯一出口**：InsightAgent 提示词要的 ``key_variables`` / ``causal_paths``
+    等此前没进 payload（知识到不了下游），这里按编码设计 §9.1 补齐；D1 研究层字段
+    （``driver_hypotheses`` / ``research_agenda``）也一并截断传入（D0 下恒为空）。
+    """
     profile = find_artifact_model(artifacts, ArtifactType.DRIVER_PROFILE, DriverProfile)
     if profile is None:
         return {}
@@ -73,11 +78,24 @@ def _build_driver_profile_summary(artifacts: list[Artifact]) -> dict[str, Any]:
         "activated_primitives": [
             {
                 "id": ap.id,
-                "priority_questions": ap.priority_questions,
-                "report_angles": ap.report_angles,
+                "key_variables": list(ap.key_variables),
+                "causal_paths": list(ap.causal_paths),
+                "disconfirming_signals": list(ap.disconfirming_signals),
+                "preferred_sources": list(ap.preferred_sources),
+                "priority_questions": list(ap.priority_questions),
+                "report_angles": list(ap.report_angles),
             }
             for ap in profile.activated_primitives
         ],
+        # 画像来源与锚定强度：让下游知道"这条主线有多可信"（rule/llm/hybrid；strong/weak/none）
+        "provenance": profile.provenance,
+        "anchor_strength": profile.anchor_strength,
+        "why_selected": list(profile.why_selected),
+        # D1 研究层产出（D0 恒空）：只传下游写观点骨架要用的字段，并截断控制 prompt 体积
+        "driver_hypotheses": [{"variable": h.variable, "role": h.role} for h in profile.driver_hypotheses[:8]],
+        "research_agenda": [{"question": q.question, "priority": q.priority} for q in profile.research_agenda[:6]],
+        "unverified_drivers": list(profile.unverified_drivers),
+        "novel_drivers": list(profile.novel_drivers),
     }
 
 

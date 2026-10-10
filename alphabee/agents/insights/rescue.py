@@ -315,6 +315,20 @@ def _pick_main_driver(key_derived: dict[str, dict[str, Any]], signals: list[dict
     return ""
 
 
+def _pick_main_driver_from_profile(driver_profile: dict[str, Any]) -> str:
+    """兜底场景下的主驱动：优先取画像的 ``primary_drivers[0]``。
+
+    业务动机（G-4）：驱动画像已经把「这家公司的盈利由什么驱动」确定性推导出来了
+    （专用框架的主驱动变量，或兜底框架的结构事实），但 Tier 2 兜底此前只看
+    derived_facts / signals，导致降级路径下 ``main_driver`` 与画像的 ``primary_drivers``
+    不一致、甚至为「—」。画像缺失或为空时返回空串，由调用方回退旧逻辑。
+    """
+    primary_drivers = driver_profile.get("primary_drivers") or []
+    if not primary_drivers:
+        return ""
+    return _coerce_text(primary_drivers[0])
+
+
 def _supporting_evidence(signals: list[dict[str, Any]]) -> list[EvidenceItem]:
     out: list[EvidenceItem] = []
     for sig in signals:
@@ -439,6 +453,7 @@ def build_fallback_insight(context: dict[str, Any], symbol: str | None) -> Insig
     conflicts: list[dict[str, Any]] = context.get("conflicts") or []
     company: dict[str, Any] = context.get("company") or {}
     snapshot: dict[str, Any] = context.get("latest_snapshot") or {}
+    driver_profile: dict[str, Any] = context.get("driver_profile") or {}
 
     # 上下文完全没有数据时，连"未检出高风险信号"这类断言也不该输出
     # （数据缺失 ≠ 数据健康），整体返回空骨架，由调用方判定为 Tier 3。
@@ -506,7 +521,9 @@ def build_fallback_insight(context: dict[str, Any], symbol: str | None) -> Insig
     output = InsightOutput(
         core_view=core_view,
         central_tension=central_tension,
-        main_driver=_pick_main_driver(key_derived, signals),
+        # G-4：画像的主驱动优先（它是"这家公司由什么驱动"的确定性结论）；
+        # 画像缺失/为空时回退到衍生指标 / 信号。
+        main_driver=_pick_main_driver_from_profile(driver_profile) or _pick_main_driver(key_derived, signals),
         supporting_evidence=_supporting_evidence(signals),
         counter_evidence=_counter_evidence(conflicts, anomaly),
         materiality_rank=_materiality_rank(key_derived),
