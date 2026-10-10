@@ -1,4 +1,4 @@
-"""F1b 检测器测试：6 个确定性检测器的"触发 / 不触发"双例与 fail-open（§14.2-B、§14.7）。
+"""F1b 检测器测试：7 个确定性检测器的"触发 / 不触发"双例与 fail-open（§14.2-B、§14.7）。
 
 覆盖要点：
 
@@ -29,6 +29,7 @@ from alphabee.orchestrator import detectors as det
 from alphabee.orchestrator.contracts import (
     AssumptionEntry,
     AssumptionRegistryArtifact,
+    DriverProfile,
 )
 from alphabee.orchestrator.detectors import DETECTORS, NodeContext, run_detectors
 
@@ -391,6 +392,7 @@ def test_detector_registry_contains_only_deterministic_functions():
         "insight_artifacts_present",
         "evidence_refs_present",
         "downstream_inputs_present",
+        "driver_profile_evidence_present",
         "assumption_still_valid",
     }
     for name, func in DETECTORS.items():
@@ -707,3 +709,219 @@ def test_id_occurs_boundary_matrix(blob: str, expected: bool):
     扫描面（``ctx.new_decisions``），而本函数仍服务 ``assumption_still_valid`` 的文本面。
     """
     assert det._id_occurs(blob, "h1") is expected, f"blob={blob!r} 期望 {expected}"
+
+
+# ── driver_profile_evidence_present（D2 §8 / t21 裁定：provenance!=rule 才要求可溯） ──
+
+
+def _driver_payload(**overrides: object) -> dict:
+    base: dict = {
+        "symbol": "002916.SZ",
+        "playbook": "generic_fundamental",
+        "provenance": "llm",
+        "fallback": False,
+        "driver_hypotheses": [
+            {
+                "variable": "高频高速 CCL 收入占比 × 铜箔-树脂价差",
+                "role": "primary",
+                "evidence": [{"kind": "annual_report", "ref": "2025 年报 第三节", "quote": "收入占比提升"}],
+            }
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def _driver_ctx(payload: dict | None = None, *, status: StepStatus = StepStatus.RUNNING) -> NodeContext:
+    artifacts = [] if payload is None else [_artifact(ArtifactType.DRIVER_PROFILE, payload)]
+    return NodeContext(
+        node_id="resolve_driver_profile",
+        step=Step(id="resolve_driver_profile", kind="resolve_driver_profile", status=status),
+        new_artifacts=artifacts,
+        view={},
+    )
+
+
+# ①（blocder 复现，单元级）flag 关 + 命中专有框架：fallback=false + provenance=rule ⇒ pass
+def test_driver_profile_evidence_present_noop_for_rule_even_when_fallback_false():
+    payload = _driver_payload(provenance="rule", fallback=False, driver_hypotheses=[])
+    assert det.driver_profile_evidence_present(_driver_ctx(payload)).passed is True
+
+
+# ② flag 关 + fallback=true + provenance=rule ⇒ pass
+def test_driver_profile_evidence_present_noop_for_rule_fallback():
+    payload = _driver_payload(provenance="rule", fallback=True, driver_hypotheses=[])
+    assert det.driver_profile_evidence_present(_driver_ctx(payload)).passed is True
+
+
+# 补充：研究层跑了但没产出可溯驱动（converge 已把 provenance 回退 rule）⇒ 不双报
+def test_driver_profile_evidence_present_noop_for_rule_with_llm_attempted():
+    payload = _driver_payload(
+        provenance="rule",
+        fallback=False,
+        driver_hypotheses=[],
+        research_meta={"llm_attempted": True, "unverified_count": 2},
+    )
+    assert det.driver_profile_evidence_present(_driver_ctx(payload)).passed is True
+
+
+# ③ provenance=llm/hybrid 但 hypotheses 为空 ⇒ fail（D3）
+def test_driver_profile_evidence_present_fails_when_drivers_empty():
+    payload = _driver_payload(provenance="llm", fallback=False, driver_hypotheses=[])
+    result = det.driver_profile_evidence_present(_driver_ctx(payload))
+    assert result.passed is False
+    assert result.deviation_class is DeviationClass.D3_ARGUMENT
+    assert result.category == "driver_profile_evidence_missing"
+
+
+def test_driver_profile_evidence_present_checks_when_provenance_not_rule():
+    """触发条件只看 provenance：fallback=true 但 provenance=hybrid 仍受检。"""
+    payload = _driver_payload(provenance="hybrid", fallback=True, driver_hypotheses=[])
+    result = det.driver_profile_evidence_present(_driver_ctx(payload))
+    assert result.passed is False
+    assert result.deviation_class is DeviationClass.D3_ARGUMENT
+    assert "driver_hypotheses 为空" in result.message
+
+
+# ④ 任一 hypothesis 无 evidence 或 ref 空 ⇒ fail（D3）
+def test_driver_profile_evidence_present_fails_when_evidence_ref_blank():
+    payload = _driver_payload(
+        driver_hypotheses=[
+            {"variable": "产能利用率", "role": "primary", "evidence": [{"kind": "annual_report", "ref": "   "}]},
+            {"variable": "铜箔-树脂价差", "role": "secondary", "evidence": []},
+        ]
+    )
+    result = det.driver_profile_evidence_present(_driver_ctx(payload))
+    assert result.passed is False
+    assert result.deviation_class is DeviationClass.D3_ARGUMENT
+    assert result.category == "driver_profile_evidence_missing"
+    assert "2/2" in result.message
+    assert "产能利用率" in result.message
+
+
+# ⑤ provenance=llm/hybrid + 全部可溯 ⇒ pass
+def test_driver_profile_evidence_present_passes_with_traceable_hypotheses():
+    assert det.driver_profile_evidence_present(_driver_ctx(_driver_payload())).passed is True
+    hybrid = _driver_payload(provenance="hybrid", fallback=False)
+    assert det.driver_profile_evidence_present(_driver_ctx(hybrid)).passed is True
+
+
+# 无产出（含 SKIPPED）⇒ pass：本检测器只管"已产出的画像证据是否可溯"
+def test_driver_profile_evidence_present_noop_without_artifact():
+    assert det.driver_profile_evidence_present(_driver_ctx(None, status=StepStatus.SKIPPED)).passed is True
+    assert det.driver_profile_evidence_present(_driver_ctx(None, status=StepStatus.RUNNING)).passed is True
+
+
+def test_driver_profile_evidence_issue_flows_through_runner_with_stable_category():
+    ctx = _driver_ctx(_driver_payload(driver_hypotheses=[]))
+    issues = run_detectors(_contract(["driver_profile_evidence_present"]), ctx)
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.category == "driver_profile_evidence_missing"
+    assert issue.deviation_class is DeviationClass.D3_ARGUMENT
+    assert issue.detected_at_step == "resolve_driver_profile"
+
+
+def test_flag_off_hog_cycle_rule_profile_produces_no_deviation(monkeypatch: pytest.MonkeyPatch):
+    """t21-a 端到端：flag 关（enabled=false）+ 命中专有框架（002714/hog_cycle，fallback=False）
+    经 with_deviation_detection 跑**真实节点** ⇒ 零 deviation issue（修复前必红）。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from alphabee.company_track.contracts import CompanyTrackArtifact
+    from alphabee.core.schemas import Run, RunStatus
+    from alphabee.orchestrator.contracts import IndustryContextArtifact
+    from alphabee.orchestrator.nodes.resolve_driver_profile import resolve_driver_profile
+    from alphabee.orchestrator.services.detection import with_deviation_detection
+
+    monkeypatch.setattr(
+        "alphabee.config.get_settings",
+        lambda: SimpleNamespace(domain_context=SimpleNamespace(research=SimpleNamespace(enabled=False))),
+    )
+    state = {
+        "run": Run(
+            id="run-1",
+            goal="分析牧原股份",
+            status=RunStatus.RUNNING,
+            context={"symbol": "002714.SZ", "query": "分析牧原股份"},
+        ),
+        "steps": [],
+        "issues": [],
+        "decisions": [],
+        "artifacts": [
+            _artifact(
+                ArtifactType.INDUSTRY_CONTEXT,
+                IndustryContextArtifact(industry="农林牧渔", sub_industry="养殖业", sw_code="801010.SI").model_dump(
+                    mode="json"
+                ),
+                artifact_id="a-ind",
+            ),
+            _artifact(
+                ArtifactType.COMPANY_TRACK,
+                CompanyTrackArtifact(symbol="002714.SZ", track_label="生猪养殖", business_model="other").model_dump(
+                    mode="json"
+                ),
+                artifact_id="a-track",
+            ),
+        ],
+    }
+    wrapped = with_deviation_detection("resolve_driver_profile", resolve_driver_profile)
+    update = asyncio.run(wrapped(state, {}))
+
+    profile_values = [a.value for a in update["artifacts"] if a.type == ArtifactType.DRIVER_PROFILE]
+    assert len(profile_values) == 1, "节点必须产出 DRIVER_PROFILE artifact"
+    profile = DriverProfile.model_validate(profile_values[0])
+    assert profile.playbook == "hog_cycle"
+    assert profile.fallback is False  # 命中专有框架（正是修复前被误报的人群）
+    assert profile.provenance == "rule"
+    assert profile.driver_hypotheses == []
+    assert list(update.get("issues") or []) == [], "规则路径不得产生任何 deviation issue"
+
+
+# ── G-3：驱动画像链路的 schema 登记 + 节点包装 ───────────────────────────────
+
+
+def test_artifact_models_register_driver_profile_chain():
+    """G-3：DRIVER_PROFILE / INDUSTRY_CONTEXT / COMPANY_TRACK 必须登记 typed model（否则 schema 检测空操作）。"""
+    from alphabee.company_track.contracts import CompanyTrackArtifact
+    from alphabee.orchestrator.contracts import IndustryContextArtifact
+    from alphabee.orchestrator.detectors import _ARTIFACT_MODELS
+
+    assert _ARTIFACT_MODELS[ArtifactType.DRIVER_PROFILE] is DriverProfile
+    assert _ARTIFACT_MODELS[ArtifactType.INDUSTRY_CONTEXT] is IndustryContextArtifact
+    assert _ARTIFACT_MODELS[ArtifactType.COMPANY_TRACK] is CompanyTrackArtifact
+
+
+def test_artifact_schema_valid_is_not_a_noop_for_driver_profile():
+    """登记之后 artifact_schema_valid 对 DRIVER_PROFILE 真正生效：好载荷不报、坏载荷报 D2。"""
+    contract = _contract(["artifact_schema_valid"])
+    assert run_detectors(contract, _driver_ctx(_driver_payload())) == []
+
+    broken = _artifact(ArtifactType.DRIVER_PROFILE, {"driver_hypotheses": [{"role": 123}]})
+    issues = run_detectors(contract, _ctx(node_id="resolve_driver_profile", new_artifacts=[broken]))
+    assert len(issues) == 1
+    assert issues[0].category == "artifact_schema_invalid"
+    assert issues[0].deviation_class is DeviationClass.D2_STRUCTURE
+
+
+def test_resolve_driver_profile_node_is_wrapped_for_deviation_detection():
+    """G-3：``resolve_driver_profile`` 必须在注册处以 ``with_deviation_detection`` 包装。"""
+    import ast
+    from pathlib import Path
+
+    import alphabee.orchestrator.agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    wrapped: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or len(node.args) < 2:
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "add_node"):
+            continue
+        first, second = node.args[0], node.args[1]
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue
+        if isinstance(second, ast.Call) and getattr(second.func, "id", "") == "with_deviation_detection":
+            wrapped.add(first.value)
+    assert "resolve_driver_profile" in wrapped

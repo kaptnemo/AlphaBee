@@ -469,7 +469,7 @@ _graph.add_node("prepare_analysis_context", prepare_analysis_context)
 _graph.add_node("collect_raw_facts", collect_raw_facts)
 _graph.add_node("resolve_industry_context", resolve_industry_context)
 _graph.add_node("resolve_company_track", resolve_company_track)
-_graph.add_node("resolve_driver_profile", resolve_driver_profile)
+_graph.add_node("resolve_driver_profile", with_deviation_detection("resolve_driver_profile", resolve_driver_profile))
 # 契约声明的出口检测器在**注册处**包装（§14.2-C）：零侵入节点函数体、可全局开关
 # （`deviation.detection.enabled`，F2 落配置前由 fail-open 读取默认开启）。
 _graph.add_node("run_analysis_engines", with_deviation_detection("run_analysis_engines", run_analysis_engines))

@@ -82,6 +82,8 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "artifact_schema_invalid": DeviationClass.D2_STRUCTURE,
     "insight_missing": DeviationClass.D2_STRUCTURE,
     "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
+    # D2（驱动画像证据检测器）：声称有研究产出但驱动为空 / 假设无证据引用
+    "driver_profile_evidence_missing": DeviationClass.D3_ARGUMENT,
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8.1 加权边审计的方向不一致上报（review_thesis 节点）
     "amplification_direction_conflict": DeviationClass.D3_ARGUMENT,

@@ -784,7 +784,7 @@ def test_no_auto_execution_path_in_tracking():
 
 
 def test_tracking_does_not_touch_node_contracts_or_detectors():
-    """★ F4 不接节点契约：`NODE_CONTRACTS` **键集合指纹**与 `DETECTORS` 键集合不变 + 契约层零违规。"""
+    """★ F4 不接节点契约：`NODE_CONTRACTS` **键集合指纹**不变 + `DETECTORS` 键集合以实测为准 + 契约层零违规。"""
     import hashlib
 
     from alphabee.orchestrator.detectors import DETECTORS
@@ -798,6 +798,7 @@ def test_tracking_does_not_touch_node_contracts_or_detectors():
         "assumption_still_valid",
         "derived_facts_nonempty",
         "downstream_inputs_present",
+        "driver_profile_evidence_present",
         "evidence_refs_present",
         "insight_artifacts_present",
     ]
@@ -881,5 +882,5 @@ def test_f4_does_not_touch_node_contracts():
     ]
     assert sorted(NODE_CONTRACTS) == expected, "不得新增/删除/替换任何节点契约键"
     assert hashlib.sha256("|".join(expected).encode()).hexdigest()[:16] == "1857784a5cb634e3"
-    assert len(DETECTORS) == 6
+    assert len(DETECTORS) == 7
     assert validate_contracts() == []

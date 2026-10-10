@@ -112,7 +112,7 @@ _EXPECTED_DETECTORS: dict[str, tuple[str, ...]] = {
     "run_analysis_engines": ("derived_facts_nonempty", "artifact_schema_valid"),
     "resolve_industry_context": ("artifact_schema_valid",),
     "resolve_company_track": ("artifact_schema_valid",),
-    "resolve_driver_profile": ("artifact_schema_valid",),
+    "resolve_driver_profile": ("artifact_schema_valid", "driver_profile_evidence_present"),
     "explore_conflicts": ("artifact_schema_valid",),
     "verify_hypotheses": ("artifact_schema_valid",),
     "synthesize_insights": ("insight_artifacts_present", "artifact_schema_valid", "assumption_still_valid"),
@@ -238,7 +238,7 @@ def test_amplification_labels_match_documented_edges():
 
 
 def test_detectors_match_documented_first_batch():
-    """§6.2：六个首批检测器的挂载节点与文档一致。"""
+    """§6.2：首批检测器（D2 后 7 个）的挂载节点与文档一致。"""
     declared = {
         node_id: tuple(contract.detectors) for node_id, contract in NODE_CONTRACTS.items() if contract.detectors
     }
@@ -248,6 +248,7 @@ def test_detectors_match_documented_first_batch():
         "assumption_still_valid",
         "derived_facts_nonempty",
         "downstream_inputs_present",
+        "driver_profile_evidence_present",
         "evidence_refs_present",
         "insight_artifacts_present",
     ]

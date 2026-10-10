@@ -122,6 +122,8 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "artifact_schema_invalid": DeviationClass.D2_STRUCTURE,
     "insight_missing": DeviationClass.D2_STRUCTURE,
     "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
+    # D2（驱动画像证据检测器）：声称有研究产出但驱动为空 / 假设无证据引用 ⇒ 论证层偏离
+    "driver_profile_evidence_missing": DeviationClass.D3_ARGUMENT,
     # 现网（F1b）：报告结论可能依赖已证伪假设（gates.py 的 §6.3 检查）
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8 加权边审计（audit_amplification 的方向不一致上报）

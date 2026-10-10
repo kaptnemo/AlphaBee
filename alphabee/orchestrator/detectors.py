@@ -1,4 +1,4 @@
-"""后置检测器注册表与首批 6 个确定性检测器（F1b / §6.2、§14.2-B）。
+"""后置检测器注册表与首批 7 个确定性检测器（F1b / §6.2、§14.2-B；D2 追加驱动画像证据检测器）。
 
 **职责**：在节点出口立即执行契约声明的检测器（检测时延 O(流水线) → O(1)），把"偏离"
 转成统一的 :class:`~alphabee.core.schemas.Issue`（经 ``services.deviation.record_deviation``）。
@@ -34,6 +34,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from alphabee.company_track.contracts import CompanyTrackArtifact
 from alphabee.core.schemas import (
     Artifact,
     ArtifactType,
@@ -49,7 +50,9 @@ from alphabee.orchestrator.contracts import (
     AssumptionRegistryArtifact,
     ConflictAnalysisArtifact,
     DerivedFactsArtifact,
+    DriverProfile,
     FactCollectionArtifact,
+    IndustryContextArtifact,
     InsightArtifact,
     ReportArtifact,
     SignalAnalysisArtifact,
@@ -72,6 +75,7 @@ __all__ = [
     "artifact_schema_valid",
     "derived_facts_nonempty",
     "detector",
+    "driver_profile_evidence_present",
     "DETECTOR_CATEGORIES",
     "detector_categories",
     "downstream_inputs_present",
@@ -149,6 +153,11 @@ _ARTIFACT_MODELS: dict[ArtifactType, type[BaseModel]] = {
     ArtifactType.THESIS_ANALYSIS: ThesisArtifact,
     ArtifactType.REPORT: ReportArtifact,
     ArtifactType.ASSUMPTION_REGISTRY: AssumptionRegistryArtifact,
+    # D2（G-3）：公司驱动画像链路此前**根本没登记** ⇒ artifact_schema_valid 对它们恒为空操作。
+    # 登记后 DRIVER_PROFILE / INDUSTRY_CONTEXT / COMPANY_TRACK 的载荷才真正被 schema 校验。
+    ArtifactType.DRIVER_PROFILE: DriverProfile,
+    ArtifactType.INDUSTRY_CONTEXT: IndustryContextArtifact,
+    ArtifactType.COMPANY_TRACK: CompanyTrackArtifact,
 }
 
 #: 报告生成所需的下游段落（§6.2 ``downstream_inputs_present``）。
@@ -379,7 +388,70 @@ def downstream_inputs_present(ctx: NodeContext) -> DetectionResult:
     )
 
 
-# ── 检测器 6：assumption_still_valid（§6.2，D4） ────────────────────────────
+# ── 检测器 6：driver_profile_evidence_present（D2 §8 / G-3；统一 D3） ───────
+
+
+@detector("driver_profile_evidence_present", "driver_profile_evidence_missing")
+def driver_profile_evidence_present(ctx: NodeContext) -> DetectionResult:
+    """``resolve_driver_profile`` 出口：**Tier B 真的产出了驱动时，驱动必须可溯**（设计 §8 / §D2.3）。
+
+    **触发条件（t21 队长裁定，与设计稿 §D2.3-3 的字面口径刻意不同）**：只看
+    ``provenance != "rule"``（即 ``llm`` / ``hybrid`` —— Tier B 真实产出并收敛进画像）。
+    为什么不用 ``fallback``：flag 关（默认配置）下命中 ``hog_cycle`` / ``mining_services`` 的
+    规则路径正是 ``fallback=False`` + ``provenance="rule"`` + ``driver_hypotheses=[]``
+    （没跑研究层，自然没有 LLM 驱动假设，属 D0 既定行为）；若按"``fallback=false`` 或
+    ``provenance!=rule``"的字面判据，这一**最大人群**会被误判为 LLM 产物，违反本步验收的
+    「flag 关不得误报」。为什么也不看 ``research_meta["llm_attempted"]``：Tier B 跑了但没产出
+    可溯驱动时，``converge`` 已把 ``provenance`` 如实回退为 ``rule`` 并产 MEDIUM issue
+    （``driver_profile_research_evidence_insufficient``），检测器再报一次属同因双报。
+
+    触发后要求：``driver_hypotheses`` 非空 且**每条**假设至少 1 条 ``evidence`` 的 ``ref`` 非空
+    （可回源）。两个失败面**统一用 D3_ARGUMENT**（t21 补充裁定）：无论"驱动为空"还是"证据不可溯"，
+    都是「无证据支撑的论点层缺陷」，统一归一类才满足既有约定「一个 category ↔ 一个 DeviationClass」
+    （``driver_profile_evidence_missing`` 在 ``CLASS_BY_CATEGORY`` 登记为 D3，F0 惰性解析不会错类）。
+
+    刻意宽松面（四条，避免误报）：
+
+    1. ``provenance == "rule"``（含 flag 关的规则路径与"研究跑了但没产出可溯驱动"）⇒ pass；
+    2. 无 ``DRIVER_PROFILE`` artifact（节点 SKIPPED / 未产出）⇒ pass —— 本检测器的职责是
+       "已产出的画像其驱动证据是否可溯"；"恒产出"由契约 postconditions 与节点自身的
+       ``driver_profile_degraded`` 记账覆盖，不在此重复判罚（也保证本检测器失败面只有一个 class）；
+    3. 每条假设只要**任意一条** evidence 的 ref 非空即可（与 Tier C 的 C2「证据可溯」同口径）；
+    4. 检测器**只读**：不改 artifact、不做隐式恢复（§14.0 约定 3）。
+    """
+    name = "driver_profile_evidence_present"
+    artifact = find_artifact_model(ctx.new_artifacts, ArtifactType.DRIVER_PROFILE, DriverProfile)
+    if artifact is None:
+        return _passed(name)  # 未产出（含 SKIPPED）：无可检测产出
+    if (artifact.provenance or "rule") == "rule":
+        return _passed(name)  # 无 LLM 驱动假设可要求证据（flag 关的默认形态）
+
+    hypotheses = list(artifact.driver_hypotheses)
+    if not hypotheses:
+        return _failed(
+            name,
+            DeviationClass.D3_ARGUMENT,
+            IssueSeverity.MEDIUM,
+            f"Tier B 产出（provenance={artifact.provenance}）但 driver_hypotheses 为空"
+            "——无证据支撑的驱动结论，后置条件「驱动非空且可溯」未满足",
+        )
+    untraceable = [
+        (hypothesis.variable or "<未命名变量>")
+        for hypothesis in hypotheses
+        if not any((evidence.ref or "").strip() for evidence in hypothesis.evidence)
+    ]
+    if untraceable:
+        return _failed(
+            name,
+            DeviationClass.D3_ARGUMENT,
+            IssueSeverity.MEDIUM,
+            f"{len(untraceable)}/{len(hypotheses)} 条驱动假设无证据引用（evidence.ref 全为空）："
+            f"{untraceable[:3]}——驱动只能来自可回源的证据，无证据者应进 unverified_drivers",
+        )
+    return _passed(name)
+
+
+# ── 检测器 7：assumption_still_valid（§6.2，D4） ────────────────────────────
 
 
 def _id_occurs(blob: str, assumption_id: str) -> bool:

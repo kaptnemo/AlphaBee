@@ -178,12 +178,20 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
     ),
     "resolve_driver_profile": NodeContract(
         node_id="resolve_driver_profile",
-        preconditions=["fact_values 已提供公司标识", "驱动因子画像资产可读（不可用走降级）"],
+        # G-10 修正（原文两处与实装不符）：
+        # ① 标的来自 ``run.context["symbol"]``（不是 fact_values）；缺 symbol 时本节点 SKIPPED、不产 artifact；
+        # ② 画像构建要读 playbook/primitive 目录，**目录不可用不是阻断条件**——节点 catch 后落降级画像
+        #    + MEDIUM issue（"资产可读"这种无法保证的条件不能写成前置条件）。
+        preconditions=[
+            'run.context["symbol"] 非空（缺失则本节点 SKIPPED，不产 artifact）',
+            "playbook/primitives 目录可读；不可用时节点降级为 fallback 画像并产 MEDIUM issue（不阻断 run）",
+        ],
         postconditions=[
             "DriverProfile schema 合法",
             "画像不可用即显式降级（degraded=true + driver_profile_degraded issue）",
+            "驱动非空且证据可溯（provenance!=rule —— Tier B 真实产出 —— 时 driver_hypotheses 非空且每条带非空 evidence.ref；provenance=rule 的规则路径不要求）",
         ],
-        detectors=["artifact_schema_valid"],
+        detectors=["artifact_schema_valid", "driver_profile_evidence_present"],
         recovery_ladder=(0, 2, 3),
         amplification_labels={},
     ),
