@@ -4,25 +4,26 @@
 按章节解析成 ``reports/`` 文件夹结构（复用 :mod:`alphabee.financial_report.report_parser`）
 → 在解析结果上搜索回答问题」串成一条可直接调用的管线，并提供 CLI。
 
-典型用法（CLI）::
+典型用法（CLI，基于 ``typer``；``python -m alphabee.financial_report.pipeline --help``）::
 
-    # 按公司获取最新财报下载链接 → 下载 + OCR + 解析 + 问答
-    python -m alphabee.financial_report.pipeline \\
+    # 单/多份报告全链路（report 子命令）：链接 → 下载 → OCR → 解析 →（可选）问答
+    python -m alphabee.financial_report.pipeline report \\
         --company-code 300750 --company-name 宁德时代 \\
         --link-kind financial --report-type semiannual \\
         --question "宁德时代 2026 年上半年营业收入和净利润分别是多少？"
 
     # 从东方财富 infoCode 下载 + OCR + 解析 + 问答
-    python -m alphabee.financial_report.pipeline \\
+    python -m alphabee.financial_report.pipeline report \\
         --info-code AP202607101826864211 \\
-        --report-name "宁德时代：2026年半年度报告" \\
-        --question "宁德时代 2026 年上半年营业收入和净利润分别是多少？"
+        --report-name "宁德时代：2026年半年度报告" --question "..."
 
-    # 本地 PDF
-    python -m alphabee.financial_report.pipeline --pdf-path ./report.pdf --question "..."
+    # 本地 PDF / 直链
+    python -m alphabee.financial_report.pipeline report --pdf-path ./report.pdf --question "..."
+    python -m alphabee.financial_report.pipeline report --pdf-url "https://..." --question "..."
 
-    # 直链下载
-    python -m alphabee.financial_report.pipeline --pdf-url "https://..." --question "..."
+    # 沪深300成分股财报批量同步（带记账去重、断点续跑）
+    python -m alphabee.financial_report.pipeline sync-csi300 \\
+        --start-date 2024-01-01 --end-date 2026-10-09 --max-stocks 20
 
 代码用法（async）::
 
@@ -49,15 +50,15 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
+import datetime as dt
 import json
-import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
 import requests
+import typer
 
 from alphabee.financial_report.fetch_deepagents import create_report_fetch_agent
 from alphabee.financial_report.links import (
@@ -567,94 +568,304 @@ async def run_report_pipeline(
     return results
 
 
-# ── CLI ────────────────────────────────────────────────────────────────────
+# ── 沪深300 成分股财报批量同步（下载 → OCR → 解析 markdown，带记账去重） ──────
+
+CSI300_INDEX_CODE = "000300"
+#: 批量同步记账文件（记录已同步的标的，默认落 ``data/financial_report_sync/``）
+DEFAULT_SYNC_RECORD = get_data_root() / "financial_report_sync" / "csi300.json"
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="python -m alphabee.financial_report.pipeline",
-        description="财报处理全链路：（可选）获取链接 → 下载 → OCR → 解析成 reports/ 文件夹结构 → 搜索回答问题",
-    )
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument("--info-code", help="东方财富研报 infoCode")
-    source.add_argument("--encoded-url", help="东方财富研报 encodeUrl")
-    source.add_argument("--pdf-url", help="PDF 直链（http/https）")
-    source.add_argument("--pdf-path", help="本地 PDF 文件路径")
-    parser.add_argument("--report-name", help="reports/ 下的报告目录名（缺省取 PDF 文件名/链接标题）")
-    parser.add_argument(
-        "--company-name",
-        help="公司中文简称（提供时报告目录落入 <公司名>(<代码>)/财报/ 嵌套结构；无 PDF 来源时用于获取链接）",
-    )
-    parser.add_argument("--company-code", help="6 位股票代码，如 300750（无 PDF 来源时用于获取链接）")
-    parser.add_argument(
-        "--link-kind",
-        choices=["financial", "research"],
-        default="financial",
-        help="链接类型：financial=财报（巨潮）、research=研报（东方财富）",
-    )
-    parser.add_argument(
-        "--report-type", default="all", help="财报报告类型：all/annual/semiannual/q1/q3（仅 financial 生效）"
-    )
-    parser.add_argument("--link-start-date", default=None, help="链接披露/发布日期范围起（YYYY-MM-DD）")
-    parser.add_argument("--link-end-date", default=None, help="链接披露/发布日期范围止（YYYY-MM-DD）")
-    parser.add_argument("--question", help="在解析结果上搜索回答的问题（可选）")
-    parser.add_argument("--ocr-server-url", default=None, help="PaddleOCR-VL vLLM 服务地址")
-    parser.add_argument("--no-keep-pages", action="store_true", help="不保留每页 OCR 原始结果")
-    parser.add_argument("--no-overwrite", action="store_true", help="同名报告目录已存在时不覆盖")
-    parser.add_argument("--save-dir", default=None, help="reports/ 根目录（默认 <PROJECT_ROOT>/reports）")
-    parser.add_argument("--max-steps", type=int, default=40, help="问答阶段检索步数上限")
-    parser.add_argument("--quiet", action="store_true", help="不打印进度")
-    return parser.parse_args()
+def get_csi300_constituents() -> list[dict[str, str]]:
+    """获取沪深300当前成分股 ``[{code, name, exchange}]``。
+
+    数据源为 akshare 中证指数官网成分（``index_stock_cons_csindex``）；``code`` 为补零后的
+    6 位代码，``name`` 为简称（供报告目录命名），``exchange`` 为交易所名。失败抛异常，由调用方
+    自行降级或重试。
+    """
+    import akshare as ak  # 惰性导入：akshare 首次导入较慢，避免拖慢本模块 import
+
+    df = ak.index_stock_cons_csindex(symbol=CSI300_INDEX_CODE)
+    if df is None or df.empty:
+        raise RuntimeError("akshare 未返回沪深300成分股")
+
+    constituents: list[dict[str, str]] = []
+    for _, row in df.iterrows():
+        code = str(row.get("成分券代码") or "").strip()
+        if not code:
+            continue
+        constituents.append(
+            {
+                "code": code.zfill(6),
+                "name": str(row.get("成分券名称") or "").strip(),
+                "exchange": str(row.get("交易所") or "").strip(),
+            }
+        )
+    return constituents
 
 
-def main() -> None:
-    args = _parse_args()
-    if not any(
-        [
-            args.info_code,
-            args.encoded_url,
-            args.pdf_url,
-            args.pdf_path,
-            args.company_code,
-            args.company_name,
-        ]
-    ):
+def _sync_record_path(record_path: str | Path | None) -> Path:
+    return Path(record_path).expanduser() if record_path else DEFAULT_SYNC_RECORD
+
+
+def _load_sync_record(path: Path) -> dict[str, Any]:
+    """读取同步记账（``{code: {...}}``）；文件缺失/损坏 → 空表。"""
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    stocks = data.get("stocks") if isinstance(data, dict) else None
+    return stocks if isinstance(stocks, dict) else {}
+
+
+def _save_sync_record(path: Path, stocks: dict[str, Any]) -> None:
+    """写回同步记账（含更新时间戳）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "index": CSI300_INDEX_CODE,
+        "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "stocks": stocks,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+async def sync_csi300_reports(
+    start_date: str,
+    end_date: str,
+    max_stocks: int,
+    *,
+    report_type: str | list[str] | None = "all",
+    save_dir: str | Path | None = None,
+    record_path: str | Path | None = None,
+    ocr_server_url: str | None = None,
+    keep_pages: bool = True,
+    overwrite: bool = True,
+    verbose: bool = True,
+) -> dict[str, Any]:
+    """批量同步沪深300成分股的定期报告：下载 → OCR → 解析成 markdown 目录，带记账去重。
+
+    每次调用按 ``max_stocks`` 限量处理**尚未记账**的成分股；每只处理完成后写记账文件
+    （默认 ``data/financial_report_sync/csi300.json``），下次调用自动跳过已记账标的，
+    保证可断点续跑。**记账以标的为键**（同一标的换区间不会再处理；如需重跑可换
+    ``record_path`` 或删除记账文件）。
+
+    单只失败（链接获取/下载/OCR/解析异常）不中断整批：该标的**不记账**，下次调用会重试；
+    区间内无可下载报告则记为已同步（0 份），避免反复查询。
+
+    Args:
+        start_date / end_date: 财报**披露日期**范围（``YYYY-MM-DD``），透传巨潮链接查询。
+        max_stocks: 本次最多处理的标的数；``<=0`` 表示不限制（处理全部未记账标的）。
+        report_type: 报告类型（``all``/``annual``/``semiannual``/``q1``/``q3`` 及别名）。
+        save_dir: ``reports/`` 根目录（缺省 ``<PROJECT_ROOT>/reports``）。
+        record_path: 记账文件路径（缺省 ``data/financial_report_sync/csi300.json``）。
+        ocr_server_url / keep_pages / overwrite: 透传 :func:`run_report_pipeline`。
+        verbose: 是否打印进度。
+
+    Returns:
+        dict：``index`` / ``total``（成分股总数）/ ``processed``（本次处理数）/ ``synced``
+        （本次成功数）/ ``remaining``（处理后仍未记账数）/ ``results``
+        （逐股 ``{code, name, status, report_count, report_dirs, error?}``）。
+    """
+    constituents = get_csi300_constituents()
+    record_file = _sync_record_path(record_path)
+    record = _load_sync_record(record_file)
+
+    pending = [c for c in constituents if c["code"] not in record]
+    limit = max_stocks if max_stocks and max_stocks > 0 else len(pending)
+    batch = pending[:limit]
+
+    results: list[dict[str, Any]] = []
+    for index, stock in enumerate(batch, 1):
+        code, name = stock["code"], stock["name"]
+        if verbose:
+            print(f"[{index}/{len(batch)}] {code} {name}")
+        entry: dict[str, Any] = {"code": code, "name": name, "status": "", "report_count": 0, "report_dirs": []}
+        try:
+            links = get_report_links(
+                kind="financial",
+                code=code,
+                name=name,
+                report_type=report_type,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            downloadable = [
+                report
+                for report in links.get("reports", [])
+                if report.get("download_url") and "摘要" not in report.get("title", "")
+            ]
+            if not downloadable:
+                entry["status"] = "ok"
+                if verbose:
+                    print("    区间内无可下载报告，记为已同步（0 份）")
+            else:
+                if verbose:
+                    print(f"    可下载报告 {len(downloadable)} 份，下载 → OCR → 解析")
+                pipeline_results = await run_report_pipeline(
+                    company_code=code,
+                    company_name=name,
+                    link_kind="financial",
+                    report_type=report_type,
+                    link_start_date=start_date,
+                    link_end_date=end_date,
+                    ocr_server_url=ocr_server_url,
+                    keep_pages=keep_pages,
+                    save_dir=save_dir,
+                    overwrite=overwrite,
+                    verbose=verbose,
+                )
+                entry["status"] = "ok"
+                entry["report_count"] = len(pipeline_results)
+                entry["report_dirs"] = [r.get("report_dir") for r in pipeline_results]
+        except Exception as exc:  # noqa: BLE001 - 单只失败不中断整批，且不记账（下次重试）
+            entry["status"] = "failed"
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+            results.append(entry)
+            if verbose:
+                print(f"    失败：{entry['error']}")
+            continue
+
+        # 成功（含 0 报告）→ 立即记账并落盘，保证中断后可续跑
+        record[code] = {
+            "name": name,
+            "status": entry["status"],
+            "report_count": entry["report_count"],
+            "synced_at": dt.datetime.now().isoformat(timespec="seconds"),
+        }
+        _save_sync_record(record_file, record)
+        results.append(entry)
+
+    remaining = len([c for c in constituents if c["code"] not in record])
+    summary = {
+        "index": CSI300_INDEX_CODE,
+        "total": len(constituents),
+        "processed": len(batch),
+        "synced": sum(1 for r in results if r["status"] == "ok"),
+        "remaining": remaining,
+        "results": results,
+    }
+    if verbose:
         print(
+            f"完成：成分股 {summary['total']} 只，本次处理 {summary['processed']} 只"
+            f"（成功 {summary['synced']}），剩余未同步 {remaining} 只；记账 → {record_file}"
+        )
+    return summary
+
+
+# ── CLI（typer）─────────────────────────────────────────────────────────────
+
+app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="财报处理全链路：获取链接 → 下载 → OCR → 解析成 reports/ 文件夹结构 →（可选）问答；"
+    "以及沪深300成分股财报批量同步。",
+)
+
+
+@app.command("report")
+def report_command(
+    pdf_path: str | None = typer.Option(None, "--pdf-path", help="本地 PDF 文件路径"),
+    info_code: str | None = typer.Option(None, "--info-code", help="东方财富研报 infoCode"),
+    encoded_url: str | None = typer.Option(None, "--encoded-url", help="东方财富研报 encodeUrl"),
+    pdf_url: str | None = typer.Option(None, "--pdf-url", help="PDF 直链（http/https）"),
+    report_name: str | None = typer.Option(
+        None, "--report-name", help="reports/ 下的报告目录名（缺省取 PDF 文件名/链接标题）"
+    ),
+    company_name: str | None = typer.Option(None, "--company-name", help="公司中文简称（用于报告目录命名/获取链接）"),
+    company_code: str | None = typer.Option(None, "--company-code", help="6 位股票代码，如 300750"),
+    link_kind: str = typer.Option("financial", "--link-kind", help="financial=财报（巨潮）、research=研报（东方财富）"),
+    report_type: str = typer.Option("all", "--report-type", help="all/annual/semiannual/q1/q3（仅 financial 生效）"),
+    link_start_date: str | None = typer.Option(None, "--link-start-date", help="链接披露/发布日期范围起（YYYY-MM-DD）"),
+    link_end_date: str | None = typer.Option(None, "--link-end-date", help="链接披露/发布日期范围止（YYYY-MM-DD）"),
+    question: str | None = typer.Option(None, "--question", help="在解析结果上搜索回答的问题（可选）"),
+    ocr_server_url: str | None = typer.Option(None, "--ocr-server-url", help="PaddleOCR-VL vLLM 服务地址"),
+    no_keep_pages: bool = typer.Option(False, "--no-keep-pages", help="不保留每页 OCR 原始结果"),
+    no_overwrite: bool = typer.Option(False, "--no-overwrite", help="同名报告目录已存在时不覆盖"),
+    save_dir: str | None = typer.Option(None, "--save-dir", help="reports/ 根目录（默认 <PROJECT_ROOT>/reports）"),
+    max_steps: int = typer.Option(40, "--max-steps", help="问答阶段检索步数上限"),
+    quiet: bool = typer.Option(False, "--quiet", help="不打印进度"),
+) -> None:
+    """单/多份报告全链路：获取链接 → 下载 → OCR → 解析 →（可选）问答。"""
+    if not any([info_code, encoded_url, pdf_url, pdf_path, company_code, company_name]):
+        typer.echo(
             "错误：必须提供 PDF 来源之一（--info-code / --encoded-url / --pdf-url / --pdf-path）"
             "或公司信息（--company-code / --company-name，用于获取下载链接）",
-            file=sys.stderr,
+            err=True,
         )
-        sys.exit(2)
+        raise typer.Exit(code=2)
+    if link_kind not in ("financial", "research"):
+        typer.echo("错误：--link-kind 只能是 financial 或 research", err=True)
+        raise typer.Exit(code=2)
 
     results = asyncio.run(
         run_report_pipeline(
-            pdf_path=args.pdf_path,
-            info_code=args.info_code,
-            encoded_url=args.encoded_url,
-            pdf_url=args.pdf_url,
-            report_name=args.report_name,
-            company_name=args.company_name,
-            company_code=args.company_code,
-            link_kind=args.link_kind,
-            report_type=args.report_type,
-            link_start_date=args.link_start_date,
-            link_end_date=args.link_end_date,
-            question=args.question,
-            ocr_server_url=args.ocr_server_url,
-            keep_pages=not args.no_keep_pages,
-            save_dir=args.save_dir,
-            overwrite=not args.no_overwrite,
-            max_steps=args.max_steps,
-            verbose=not args.quiet,
+            pdf_path=pdf_path,
+            info_code=info_code,
+            encoded_url=encoded_url,
+            pdf_url=pdf_url,
+            report_name=report_name,
+            company_name=company_name,
+            company_code=company_code,
+            link_kind=link_kind,
+            report_type=report_type,
+            link_start_date=link_start_date,
+            link_end_date=link_end_date,
+            question=question,
+            ocr_server_url=ocr_server_url,
+            keep_pages=not no_keep_pages,
+            save_dir=save_dir,
+            overwrite=not no_overwrite,
+            max_steps=max_steps,
+            verbose=not quiet,
         )
     )
-    if args.question:
-        print("\n==== 问答结果 ====")
+    if question:
+        typer.echo("\n==== 问答结果 ====")
         for r in results:
-            print(f"\n【{r['report_name']}】\n{r['answer']}")
+            typer.echo(f"\n【{r['report_name']}】\n{r['answer']}")
     else:
         for r in results:
-            print(f"\n报告目录：{r['report_dir']}")
+            typer.echo(f"\n报告目录：{r['report_dir']}")
+
+
+@app.command("sync-csi300")
+def sync_csi300_command(
+    start_date: str = typer.Option(..., "--start-date", help="财报披露日期起（YYYY-MM-DD）"),
+    end_date: str = typer.Option(..., "--end-date", help="财报披露日期止（YYYY-MM-DD）"),
+    max_stocks: int = typer.Option(20, "--max-stocks", help="本次处理标的数；<=0 表示不限制"),
+    report_type: str = typer.Option("all", "--report-type", help="all/annual/semiannual/q1/q3"),
+    save_dir: str | None = typer.Option(None, "--save-dir", help="reports/ 根目录（默认 <PROJECT_ROOT>/reports）"),
+    record_path: str | None = typer.Option(
+        None, "--record-path", help="同步记账文件路径（默认 data/financial_report_sync/csi300.json）"
+    ),
+    ocr_server_url: str | None = typer.Option(None, "--ocr-server-url", help="PaddleOCR-VL vLLM 服务地址"),
+    no_keep_pages: bool = typer.Option(False, "--no-keep-pages", help="不保留每页 OCR 原始结果"),
+    no_overwrite: bool = typer.Option(False, "--no-overwrite", help="同名报告目录已存在时不覆盖"),
+    quiet: bool = typer.Option(False, "--quiet", help="不打印进度"),
+) -> None:
+    """批量同步沪深300成分股财报（下载 → OCR → 解析 markdown，带记账去重/断点续跑）。"""
+    summary = asyncio.run(
+        sync_csi300_reports(
+            start_date,
+            end_date,
+            max_stocks,
+            report_type=report_type,
+            save_dir=save_dir,
+            record_path=record_path,
+            ocr_server_url=ocr_server_url,
+            keep_pages=not no_keep_pages,
+            overwrite=not no_overwrite,
+            verbose=not quiet,
+        )
+    )
+    typer.echo(json.dumps({k: v for k, v in summary.items() if k != "results"}, ensure_ascii=False))
+    if any(r.get("status") == "failed" for r in summary["results"]):
+        raise typer.Exit(code=1)
+
+
+def main() -> None:
+    app()
 
 
 if __name__ == "__main__":

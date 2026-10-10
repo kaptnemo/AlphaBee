@@ -519,3 +519,177 @@ async def test_run_report_pipeline_skips_processed(tmp_path, monkeypatch):
         company_code="300750", company_name="宁德时代", link_kind="financial", save_dir=save_dir, verbose=False
     )
     assert second == []
+
+
+# ── 沪深300 成分股财报批量同步（sync_csi300_reports） ──────────────────────
+
+
+class _FakeDF:
+    """最小 DataFrame 替身：仅暴露 ``empty`` 与 ``iterrows``（够 get_csi300_constituents 用）。"""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    @property
+    def empty(self) -> bool:
+        return not self._rows
+
+    def iterrows(self):
+        return iter(list(enumerate(self._rows)))
+
+
+def _patch_akshare(monkeypatch, rows: list[dict]) -> None:
+    import sys
+    import types
+
+    fake = types.ModuleType("akshare")
+    fake.index_stock_cons_csindex = lambda symbol: _FakeDF(rows)
+    monkeypatch.setitem(sys.modules, "akshare", fake)
+
+
+def _patch_sync(monkeypatch, stocks, links_by_code, pipeline_result):
+    monkeypatch.setattr(pipeline, "get_csi300_constituents", lambda: stocks)
+
+    def fake_links(*, code, name, **kwargs):
+        value = links_by_code.get(code)
+        if isinstance(value, Exception):
+            raise value
+        return {"reports": value}
+
+    async def fake_run(**kwargs):
+        return pipeline_result
+
+    monkeypatch.setattr(pipeline, "get_report_links", fake_links)
+    monkeypatch.setattr(pipeline, "run_report_pipeline", fake_run)
+
+
+def test_get_csi300_constituents_parses_akshare(monkeypatch):
+    _patch_akshare(
+        monkeypatch,
+        [{"成分券代码": "1", "成分券名称": "平安银行", "交易所": "深圳证券交易所"}],
+    )
+    constituents = pipeline.get_csi300_constituents()
+    assert constituents == [{"code": "000001", "name": "平安银行", "exchange": "深圳证券交易所"}]
+
+
+def test_get_csi300_constituents_empty_raises(monkeypatch):
+    _patch_akshare(monkeypatch, [])
+    with pytest.raises(RuntimeError):
+        pipeline.get_csi300_constituents()
+
+
+async def test_sync_csi300_records_and_resumes(tmp_path, monkeypatch):
+    stocks = [
+        {"code": "000001", "name": "A", "exchange": ""},
+        {"code": "000002", "name": "B", "exchange": ""},
+        {"code": "000003", "name": "C", "exchange": ""},
+    ]
+    links = {
+        "000001": [{"download_url": "https://x/1.PDF", "title": "2024年年报"}],
+        "000002": [],  # 区间内无可下载报告 → 记为已同步（0 份）
+        "000003": [{"download_url": "https://x/3.PDF", "title": "2024年年报"}],
+    }
+    _patch_sync(monkeypatch, stocks, links, [{"report_dir": str(tmp_path / "reports" / "A")}])
+    record = tmp_path / "rec.json"
+
+    first = await pipeline.sync_csi300_reports("2024-01-01", "2024-12-31", 1, record_path=record, verbose=False)
+    assert first["processed"] == 1 and first["synced"] == 1
+    assert first["remaining"] == 2
+    assert set(pipeline._load_sync_record(record)) == {"000001"}  # 断点：只记 1 只
+
+    second = await pipeline.sync_csi300_reports("2024-01-01", "2024-12-31", 5, record_path=record, verbose=False)
+    assert second["processed"] == 2  # 000002（0 报告）+ 000003
+    assert second["remaining"] == 0
+    assert set(pipeline._load_sync_record(record)) == {"000001", "000002", "000003"}
+
+
+async def test_sync_csi300_failure_not_recorded(tmp_path, monkeypatch):
+    stocks = [{"code": "000001", "name": "A", "exchange": ""}]
+    _patch_sync(monkeypatch, stocks, {"000001": RuntimeError("boom")}, [])
+    record = tmp_path / "rec.json"
+
+    result = await pipeline.sync_csi300_reports("2024-01-01", "2024-12-31", 1, record_path=record, verbose=False)
+    assert result["results"][0]["status"] == "failed"
+    assert "boom" in result["results"][0]["error"]
+    assert pipeline._load_sync_record(record) == {}  # 失败不记账
+    assert result["remaining"] == 1  # 下次仍会被挑中
+
+
+async def test_sync_csi300_skips_already_recorded(tmp_path, monkeypatch):
+    stocks = [{"code": "000001", "name": "A", "exchange": ""}, {"code": "000002", "name": "B", "exchange": ""}]
+    _patch_sync(monkeypatch, stocks, {"000001": [], "000002": []}, [])
+    record = tmp_path / "rec.json"
+    pipeline._save_sync_record(record, {"000001": {"name": "A", "status": "ok", "report_count": 0}})
+
+    result = await pipeline.sync_csi300_reports("2024-01-01", "2024-12-31", 5, record_path=record, verbose=False)
+    assert result["processed"] == 1  # 000001 已记账 → 只处理 000002
+    assert result["results"][0]["code"] == "000002"
+
+
+# ── CLI（typer） ───────────────────────────────────────────────────────────
+
+
+def test_cli_sync_csi300_ok(monkeypatch):
+    from typer.testing import CliRunner
+
+    async def fake_sync(*args, **kwargs):
+        return {
+            "index": "000300",
+            "total": 300,
+            "processed": 2,
+            "synced": 2,
+            "remaining": 298,
+            "results": [{"code": "000001", "status": "ok"}],
+        }
+
+    monkeypatch.setattr(pipeline, "sync_csi300_reports", fake_sync)
+    result = CliRunner().invoke(
+        pipeline.app, ["sync-csi300", "--start-date", "2024-01-01", "--end-date", "2024-12-31", "--max-stocks", "2"]
+    )
+    assert result.exit_code == 0
+    assert '"index": "000300"' in result.stdout
+
+
+def test_cli_sync_csi300_failure_exit_code(monkeypatch):
+    from typer.testing import CliRunner
+
+    async def fake_sync(*args, **kwargs):
+        return {
+            "index": "000300",
+            "total": 1,
+            "processed": 1,
+            "synced": 0,
+            "remaining": 1,
+            "results": [{"code": "000001", "status": "failed"}],
+        }
+
+    monkeypatch.setattr(pipeline, "sync_csi300_reports", fake_sync)
+    result = CliRunner().invoke(
+        pipeline.app, ["sync-csi300", "--start-date", "2024-01-01", "--end-date", "2024-12-31", "--quiet"]
+    )
+    assert result.exit_code == 1
+
+
+def test_cli_report_requires_source():
+    from typer.testing import CliRunner
+
+    result = CliRunner().invoke(pipeline.app, ["report"])
+    assert result.exit_code == 2
+    combined = result.stdout + (getattr(result, "stderr", "") or "")
+    assert "必须提供 PDF 来源" in combined
+
+
+def test_cli_report_dispatches(monkeypatch):
+    from typer.testing import CliRunner
+
+    captured = {}
+
+    async def fake_pipeline(**kwargs):
+        captured.update(kwargs)
+        return [{"report_name": "X", "report_dir": "/tmp/x"}]
+
+    monkeypatch.setattr(pipeline, "run_report_pipeline", fake_pipeline)
+    result = CliRunner().invoke(pipeline.app, ["report", "--company-code", "300750", "--company-name", "宁德时代"])
+    assert result.exit_code == 0
+    assert captured["company_code"] == "300750"
+    assert captured["link_kind"] == "financial"

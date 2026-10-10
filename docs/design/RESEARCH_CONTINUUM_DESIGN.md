@@ -715,7 +715,7 @@ def _default_evidence_provider(symbol: str, *, thesis: str = "", as_of_date: str
 
 ```bash
 # 既有能力（financial_report.pipeline 的 CLI），按季度/年度节奏离线执行：
-python -m alphabee.financial_report.pipeline --company-code 601138 --company-name 工业富联 \
+python -m alphabee.financial_report.pipeline report --company-code 601138 --company-name 工业富联 \
     --link-kind financial --report-type annual --question "……"
 ```
 
