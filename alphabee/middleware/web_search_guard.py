@@ -4,7 +4,9 @@
 
 1. **调用前（pre-call）**：检测 query 中是否包含被禁止的意图关键词
    （股价、价格、财务数字类词汇），若触发则直接短路，返回拒绝消息，
-   不发起实际网络请求。
+   不发起实际网络请求。其中「行业/商品驱动变量」的纯定性查询（R-2 窄白名单
+   `_DRIVER_VARIABLE_ALLOW`）不受拦截；`pe|pb|ps` 用词边界匹配（R-1），
+   避免 `capex` / `pipeline` 等被误判为估值指标。
 
 2. **调用后·免责声明（post-call disclaimer）**：统一在结果末尾追加
    数据来源声明，提醒模型该结果仅供定性参考。
@@ -27,14 +29,38 @@ from langgraph.types import Command
 
 # ---------------------------------------------------------------------------
 # Pre-call：禁止通过 web_search 查询的关键词模式
-# 匹配到任意一条 → 短路拦截
+# 匹配到任意一条 → 短路拦截（驱动变量定性查询走 R-2 白名单放行）
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("股票价格/涨跌", re.compile(r"(股价|现价|最新价|收盘价|开盘价|涨跌幅|涨停|跌停|今日.*价|当前.*价|price)", re.I)),
-    ("市值/估值指标", re.compile(r"(pe|pb|ps|市盈率|市净率|市销率|总市值|流通市值|估值)", re.I)),
+    # R-1：pe/pb/ps 由子串改为词边界（\b...\b），中文禁词逐字不变。
+    # 否则 capex / pipeline 等驱动变量查询会被误拦（§7.7-3）。
+    # 「行业行情数据」先于「市值/估值指标」判定：query 同时含「行业 + PE/估值」时归属行业分支。
+    ("行业行情数据", re.compile(r"(行业.*涨跌|板块.*涨幅|行业.*\bpe\b|行业.*估值|板块.*市值)", re.I)),
+    ("市值/估值指标", re.compile(r"(\b(?:pe|pb|ps)\b|市盈率|市净率|市销率|总市值|流通市值|估值)", re.I)),
     ("财务数字", re.compile(r"(营收|净利润|毛利率|roe|roa|eps|每股收益|现金流|负债率|利润率)", re.I)),
-    ("行业行情数据", re.compile(r"(行业.*涨跌|板块.*涨幅|行业.*pe|行业.*估值|板块.*市值)", re.I)),
+]
+
+# ---------------------------------------------------------------------------
+# R-2：驱动变量查询窄白名单（行业/商品变量词表，不含任何财务数字语义）
+# 命中白名单 **且** 不命中任何 _FORBIDDEN_PATTERNS 时才视为可放行的定性驱动变量查询。
+# 词表是「可编辑常量 + 测试」，随行业扩展；不写每行业硬编码分支。
+# ---------------------------------------------------------------------------
+
+_DRIVER_VARIABLE_ALLOW: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "商品价格",
+        re.compile(
+            r"(猪价|仔猪价|猪周期|能繁母猪|生猪存栏|铜价|铝价|锂价|碳酸锂|镍价|钴价|黄金|白银|原油|天然气|动力煤|焦煤|螺纹钢|钢铁|水泥|玻璃|纸浆)",
+            re.I,
+        ),
+    ),
+    (
+        "供需/库存/产能",
+        re.compile(r"(产能利用率|开工率|库存|去库|累库|排产|出栏|存栏|需求|供给|景气度|在手订单|新签订单)", re.I),
+    ),
+    ("周期/事件", re.compile(r"(减产|扩产|投产|检修|OPEC|地缘)", re.I)),
 ]
 
 # 结果末尾追加的免责声明
@@ -139,6 +165,21 @@ def _detect_forbidden(query: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _is_driver_variable_query(query: str) -> bool:
+    """判定 query 是否为「行业/商品驱动变量」的纯定性查询。
+
+    判据（全部满足才为 True）：
+    1. 命中 `_DRIVER_VARIABLE_ALLOW` 词表（行业/商品变量）；
+    2. 不命中任何 `_FORBIDDEN_PATTERNS`（财务/估值/股价禁词）。
+
+    只放行定性语义：命中放行后，post-call 的 `_scan_numeric_hits` 仍照旧执行，
+    结果里出现数字照样注入核验指令。
+    """
+    if not any(pattern.search(query) for _, pattern in _DRIVER_VARIABLE_ALLOW):
+        return False
+    return not any(pattern.search(query) for _, pattern in _FORBIDDEN_PATTERNS)
+
+
 def _scan_numeric_hits(content: str) -> list[dict[str, Any]]:
     """扫描 web_search 结果中出现的数值型金融数据。
 
@@ -232,9 +273,9 @@ async def web_search_guard(
 
     query: str = request.tool_call.get("args", {}).get("query", "")
 
-    # ── 1. Pre-call：禁词拦截 ────────────────────────────────────────────────
+    # ── 1. Pre-call：禁词拦截（驱动变量定性查询放行）─────────────────────────
     triggered, reason = _detect_forbidden(query)
-    if triggered:
+    if triggered and not _is_driver_variable_query(query):
         blocked_msg = (
             f"[web_search 已被拦截]\n"
             f"查询意图「{reason}」属于结构化数据范畴，禁止通过 web_search 获取。\n\n"
