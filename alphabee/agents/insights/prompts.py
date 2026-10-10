@@ -31,6 +31,12 @@ INSIGHT_AGENT_SYSTEM_PROMPT = """
    - `main_driver` 优先取自 driver_profile.primary_drivers（如"猪价""完全成本"）或 activated_primitives 的关键变量；
    - `central_tension` 应围绕 activated_primitives 的 priority_questions 展开（如"盈利修复来自价格还是成本"）；
    - `materiality_rank` 应优先列出 driver_profile 的主/次驱动变量；
+   - **引用 `driver_hypotheses` 时必须保留其 evidence**：假设的证据是它可信的前提，
+     请把证据落到 supporting_evidence / counter_evidence 的 statement 与 source 上，
+     不得只搬 `variable` 而丢掉证据（那会把"有证据的假设"退化成无来源的断言）；
+   - **`unverified_drivers` 不得写成结论**：这些驱动没有证据支撑，只能作为待验证项写入
+     `what_would_change_my_mind`，或在正文中显式标注"未验证"，绝不能进 `main_driver` /
+     `central_tension` 的确定性表述；
    - 若 driver_profile.fallback 为 true，说明未命中专用框架，用通用财务维度分析，并在 business_model_context 中说明。
 
 ## 输出结构

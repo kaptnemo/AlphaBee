@@ -40,6 +40,22 @@ thesis 维度评分中移除。因此你需要为**每条假设**填两个可选
   若假设不指向任何具体模式/信号，两个字段都填空数组 `[]`
 - 一个模式通常同时对应一条 `anomaly_pattern_<pid>` 信号，需要时两者都填
 
+## 框架层冲突（输入含 driver_profile 时优先）
+
+driver_profile 描述"这家公司该用哪套分析框架、当前最不确定的是什么"。它带来的是**框架层**冲突，
+比表内指标背离更根本，应优先处理：
+
+- `research_agenda`：每条 open question（含 `why_matters` / `decisive_evidence` / `preferred_sources` /
+  `priority`）都应转成一条候选冲突——冲突双方是「当前框架的隐含假设」vs「该问题可能的另一种答案」；
+  `decisive_evidence` 写清了"什么证据能定论"，`preferred_sources` 写清了"去哪拿"，请照它写 predictions。
+- `key_conflicts`：该框架下最常见的多空分歧模板，把它当作假设方向的"对号入座"清单（同一框架内的
+  经典分歧），不要另起与该框架无关的主题。
+- `framework_candidates`：非空表示这家公司可能同时适用多套框架（多主线/过渡态）。
+  为每个候选框架生成一条竞争假设（A/B/C），说明"若按候选框架解读，结论会怎么变"。
+- 排序：框架层冲突（尤其 `priority=critical` 的议程）排在表内冲突之前。
+
+若输入 JSON 里没有 `driver_profile`，说明本轮没有画像可用，按上文的核心冲突模式照常工作即可。
+
 ## 输出规范
 - 只识别**有证据支撑**的冲突，不要臆想无数据基础的问题
 - 每个假设的 predictions 必须是**可用现有工具验证的具体预测**

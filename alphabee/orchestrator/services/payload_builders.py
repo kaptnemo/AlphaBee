@@ -110,6 +110,97 @@ def _bounded_texts(items: list[str], limit: int = 200, max_items: int = 5) -> li
     return [_bounded_text(item, limit) for item in (items or [])[:max_items]]
 
 
+# ── 驱动画像 → 冲突探索 / 假设验证（D2 下游接线）─────────────────────────
+#: 研究议程注入 prompt 的条数上限（议程是"最该先回答的问题"，全量注入会稀释注意力）。
+_MAX_AGENDA_IN_PROMPT = 6
+#: ``key_conflicts`` 模板注入条数上限。
+_MAX_KEY_CONFLICTS = 5
+#: 验证优先级排序（critical 最先）——与 ``ResearchQuestion.priority`` 的取值域一致。
+_VERIFICATION_PRIORITY_RANK = {"critical": 0, "high": 1, "medium": 2}
+
+#: 输入含 driver_profile 时追加的冲突探索指引（框架层冲突 / 框架竞争）。
+#: 刻意只在有 driver_profile 时拼接：无画像时 prompt 与旧版逐字一致（不回归）。
+_FRAMEWORK_CONFLICT_GUIDANCE = (
+    "\n\n框架层冲突（输入含 driver_profile 时**优先**）：\n"
+    "1. 把 driver_profile.research_agenda 的每条 open question 转成一条「框架层冲突」假设——"
+    "冲突双方是「当前分析框架的隐含假设」vs「该问题可能的另一种答案」，"
+    "并用其 decisive_evidence / preferred_sources 写清「什么证据能定论、去哪拿」；\n"
+    "2. driver_profile.key_conflicts 是该分析框架下最常见的多空分歧模板，"
+    "把它当成假设方向的「对号入座」清单，不要另起与该框架无关的主题；\n"
+    "3. driver_profile.framework_candidates 非空 ⇒ 这家公司可能同时适用多套框架（多主线/过渡态）："
+    "为每个候选框架生成一条竞争假设（A/B/C），说明「若按候选框架解读，结论会怎么变」；\n"
+    "4. 框架层冲突与表内指标冲突都要保留，但框架层冲突（尤其 critical 议程）排在前面。"
+)
+
+
+def _build_driver_profile_conflict_summary(profile: DriverProfile) -> dict[str, Any] | None:
+    """驱动画像 → 冲突探索输入（框架层冲突 / 框架竞争；设计 §9）。
+
+    业务动机：冲突探索此前只吃"财务/估值/信号"这类**表内**背离，而画像里的
+    ``research_agenda`` 是"最不确定、一旦定论就会改变结论"的问题清单（如"公司自称 AI 服务器
+    龙头而该分部收入占比仅 8%"），``candidates`` 是备选框架——它们才是框架层面的冲突来源；
+    ``key_conflicts`` 则是 playbook 声明的多空分歧模板，供假设"对号入座"。
+
+    只取 ``status == "open"`` 的议程（已回答的问题不再是冲突来源）；议程/模板/候选全空时返回
+    ``None``，调用方据此**不注入该字段、也不追加指引**（与旧版一致，不回归）。
+    """
+    open_agenda = [item for item in profile.research_agenda if item.status == "open"]
+    if not open_agenda and not profile.key_conflicts and not profile.candidates:
+        return None
+    return {
+        "playbook": profile.playbook,
+        "provenance": profile.provenance,
+        "anchor_strength": profile.anchor_strength,
+        "primary_drivers": list(profile.primary_drivers)[:8],
+        "research_agenda": [
+            {
+                "question": _bounded_text(item.question),
+                "why_matters": _bounded_text(item.why_matters),
+                "decisive_evidence": _bounded_texts(item.decisive_evidence),
+                "preferred_sources": _bounded_texts(item.preferred_sources),
+                "priority": item.priority,
+            }
+            for item in open_agenda[:_MAX_AGENDA_IN_PROMPT]
+        ],
+        "key_conflicts": _bounded_texts(profile.key_conflicts, max_items=_MAX_KEY_CONFLICTS),
+        # 非空 ⇒ 多主线/过渡态：生成 A/B/C 框架竞争假设（复用 ConflictAnalysisResult，不新建模型）
+        "framework_candidates": list(profile.candidates),
+    }
+
+
+def _build_verification_plan(profile: DriverProfile) -> dict[str, Any] | None:
+    """驱动画像 → 验证顺序（``recommended_verification_order`` 首次被消费；设计 §9）。
+
+    两个输入合起来决定"先验证什么"：
+
+    * ``recommended_verification_order``：playbook 声明的框架级验证优先级；
+    * ``research_agenda``：本轮研究提出的问题，按 ``priority``（critical → high → medium）排序。
+
+    业务动机：验证预算有限（每个 conflict 一次取证回合），先验证"一旦定论就会改变结论"的问题
+    比按输入顺序验证更划算。两者都缺时返回 ``None``（不注入，保持与旧版一致）。
+    """
+    open_agenda = [item for item in profile.research_agenda if item.status == "open"]
+    if not open_agenda and not profile.recommended_verification_order:
+        return None
+    ordered = sorted(open_agenda, key=lambda item: _VERIFICATION_PRIORITY_RANK.get(item.priority, 1))
+    return {
+        "playbook": profile.playbook,
+        "recommended_verification_order": list(profile.recommended_verification_order),
+        "research_agenda": [
+            {
+                "question": _bounded_text(item.question),
+                "why_matters": _bounded_text(item.why_matters),
+                "decisive_evidence": _bounded_texts(item.decisive_evidence),
+                "preferred_sources": _bounded_texts(item.preferred_sources),
+                "priority": item.priority,
+            }
+            for item in ordered[:_MAX_AGENDA_IN_PROMPT]
+        ],
+        # 显式顺序清单：让 agent 不必自己推导优先级（priority 已经在这里落到顺序上）
+        "verification_sequence": [item.question for item in ordered[:_MAX_AGENDA_IN_PROMPT]],
+    }
+
+
 def default_anomaly_fact_values() -> dict[str, float]:
     """Return neutral anomaly facts so anomaly signal rules can evaluate."""
     from alphabee.agents.anomaly.registry import ANOMALY_PATTERNS, ensure_loaded
@@ -231,6 +322,9 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
     # 冲突探索 prompt 只携带最能暴露背离关系的摘要层信息：
     # 最新财务快照、估值、关键衍生指标、风险信号、异常模式。
     # 这样 agent 会优先寻找“逻辑打架”的点，而不是泛泛复述公司概况。
+    driver_profile = find_artifact_model(artifacts, ArtifactType.DRIVER_PROFILE, DriverProfile)
+    conflict_summary = _build_driver_profile_conflict_summary(driver_profile) if driver_profile is not None else None
+
     payload = {
         "symbol": symbol or "unknown",
         "query": query,
@@ -242,6 +336,9 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
         "disputed_candidates": disputed_candidates,
         "company_track": _build_track_summary(artifacts),
     }
+    if conflict_summary is not None:
+        # 有画像（且含可用于框架层冲突的信息）时才注入：无画像 ⇒ prompt 与旧版逐字一致。
+        payload["driver_profile"] = conflict_summary
 
     return (
         "请对以下数据进行冲突探索分析，识别背离和矛盾，输出结构化的 ConflictAnalysisResult。\n\n"
@@ -249,8 +346,9 @@ def generate_explore_conflicts_prompt(state: OrchestratorState, query: str, symb
         "若 company_track 为 null 表示无对标组，仅可用行业基线。\n"
         "重要：这是探索阶段（provisional）。你输出的所有冲突和假设都是「候选线索 / 待验证怀疑」，"
         "尚未经过证据验证，不要把它们表述为已成立的事实结论；每条假设请给出可验证的 predictions，"
-        "供后续 verify_hypotheses 阶段裁决。\n\n"
-        f"```json\n{_json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
+        "供后续 verify_hypotheses 阶段裁决。"
+        + (_FRAMEWORK_CONFLICT_GUIDANCE if conflict_summary is not None else "")
+        + f"\n\n```json\n{_json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
     )
 
 
@@ -288,8 +386,10 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict[s
 
     anomaly_report = find_artifact_model(state.get("artifacts", []), ArtifactType.ANOMALY_REPORT, AnomalyReportArtifact)
     track_summary = _build_track_summary(state.get("artifacts", []))
+    profile = find_artifact_model(state.get("artifacts", []), ArtifactType.DRIVER_PROFILE, DriverProfile)
+    verification_plan = _build_verification_plan(profile) if profile is not None else None
 
-    return {
+    context: dict[str, Any] = {
         "symbol": symbol or "unknown",
         "company_track": track_summary,
         "financial_snapshots": snapshots_summary,
@@ -304,6 +404,10 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict[s
         if anomaly_report
         else {},
     }
+    if verification_plan is not None:
+        # 有可用于排序的信息（推荐验证顺序 / 研究议程）时才注入：无画像 ⇒ context 与旧版一致。
+        context["driver_profile"] = verification_plan
+    return context
 
 
 def build_report_generation_payload(state: Mapping[str, Any]) -> ReportGenerationPayload:

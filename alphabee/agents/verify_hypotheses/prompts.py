@@ -9,6 +9,11 @@ VERIFY_HYPOTHESES_PROMPT = """
 4. **证据不足就明确说明**：如果关键事实缺失、冲突或只能间接推断，必须写进 gaps，不要强行给出结论。
 5. **结论要可执行**：输出应能直接告诉下游“这个假设现在支持到什么程度、还缺什么证据”。
 6. **禁止自行浏览本地目录**：不要使用 ls/glob/grep/read_file 去扫描或读取 `reports/` 等本地文件系统中的财报文件，也不要在目录树里翻找。公司财报内容一律通过 query_financial_report 工具获取，工具内部会自行检索对应报告。
+7. **按驱动画像决定验证顺序**：若上下文提供 `driver_profile`，按 `recommended_verification_order`
+   （该分析框架声明的验证优先级）与 `research_agenda` 的 `priority`（critical → high → medium）安排
+   取证顺序——先验证“一旦定论就会改变结论”的问题；`decisive_evidence` / `preferred_sources`
+   已写明“什么证据能定论、去哪拿”，取证时优先照它执行。`research_agenda` 中无法用现有工具定论的
+   问题，写进 gaps 并说明缺什么，不要静默跳过。
 
 ## 评估标准
 
@@ -39,6 +44,9 @@ VERIFY_HYPOTHESES_USER_TEMPLATE = """请验证以下假设，输出 Verification
 ```
 
 ## 验证提示
+- 若上下文含 `driver_profile`：先按 `recommended_verification_order` 与 `research_agenda` 的
+  `priority`（critical → high → medium）决定验证顺序，优先验证"一旦定论就会改变结论"的问题；
+  `decisive_evidence` 说明什么证据能定论、`preferred_sources` 说明去哪拿，取证时按它执行
 - 优先使用 query_tushare 拉取财务/行情结构化数据
 - **query_tushare 必须用 fields 只请求当前假设直接需要的列**（如只取应收、营收、现金流相关列），
   不确定可用列时先 preview=True 获取列名清单再传 fields，禁止拉取全量列进入上下文
