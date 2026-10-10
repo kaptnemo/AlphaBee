@@ -287,6 +287,37 @@ class CompanyTrackSettings(BaseModel):
     peer_quality: PeerQualitySettings = Field(default_factory=PeerQualitySettings)
 
 
+class DomainContextResearchSettings(BaseModel):
+    """Tier B 模型研究层（domain_context.research）的开关与预算（DRIVER_PROFILE_RESEARCH_DESIGN §7.6）。
+
+    **默认 ``enabled=False``（flag 门控起步，§14.2 决议 1）**：关时节点严格 no-op——
+    不产 LLM 调用、``provenance="rule"``、行为与 D0 逐字段一致（回滚方式即关此开关）。
+
+    预算三件套的意义（此前全仓库没有 run 级工具/时长预算）：
+    * ``max_tool_calls``：工具调用硬上界，超限即按已有输出收口（``research_meta["truncated"]``）；
+    * ``wall_timeout_s``：墙钟超时（``asyncio.wait_for``），到期走降级链；
+    * ``recursion_limit``：LangGraph 步数上界，**必须显式设**（既有研究节点全部未设）。
+
+    ``cache_dir`` 相对路径按 ``PROJECT_ROOT`` 解析；缓存失效条件 =
+    新报告期 / track_label 漂移 / playbook 版本升级（见 ``domain_context.research.research_cache_key``）。
+    """
+
+    enabled: bool = Field(default=False, description="Tier B 总开关（flag 门控，false = 严格 no-op 回退 D0）")
+    max_hypotheses: int = Field(default=7, description="驱动假设条数上限（超出按 confidence 截断）")
+    max_agenda_items: int = Field(default=6, description="研究议程条数上限（按 priority 截断）")
+    max_tool_calls: int = Field(default=20, description="单标的工具调用硬上界（超限按已有输出收口）")
+    wall_timeout_s: float = Field(default=180.0, description="单标的墙钟超时（秒），到期走降级链")
+    cache_ttl_days: int = Field(default=90, description="研究结果缓存 TTL（天）")
+    cache_dir: str = Field(default="data/driver_profiles", description="研究结果缓存目录（相对 PROJECT_ROOT）")
+    recursion_limit: int = Field(default=40, description="LangGraph 递归步数上界（显式设置，勿依赖默认值）")
+
+
+class DomainContextSettings(BaseModel):
+    """domain_context 配置总段（缺段 ⇒ 全部内置默认，旧 config 仍可 import）。"""
+
+    research: DomainContextResearchSettings = Field(default_factory=DomainContextResearchSettings)
+
+
 class Settings(BaseModel):
     llm: LLMConfig
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
@@ -300,6 +331,8 @@ class Settings(BaseModel):
     report_window: ReportWindowSettings = Field(default_factory=ReportWindowSettings)
     # 公司赛道：对标组候选判定（判定 C；缺段 ⇒ 全默认值，旧 config 行为不变）
     company_track: CompanyTrackSettings = Field(default_factory=CompanyTrackSettings)
+    # 驱动画像 Tier B 模型研究层（缺段 ⇒ 全默认值：enabled=false，即 D0 行为）
+    domain_context: DomainContextSettings = Field(default_factory=DomainContextSettings)
 
 
 def get_settings() -> Settings:

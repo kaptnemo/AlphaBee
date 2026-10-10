@@ -90,6 +90,23 @@ company_track:
       medium: 0.7               # score < medium ⇒ 中；否则高
       weights: {taxonomy_reliable: 0.4, judge_direct_ratio: 0.3, mean_overlap: 0.3}   # 和 = 1
 
+# 驱动画像 Tier B 模型研究层（docs/design/DRIVER_PROFILE_RESEARCH_DESIGN.md §7.6）。
+# 整段缺省 ⇒ 全部取内置默认（旧 config 仍可 import，行为 = D0 纯规则路由）。
+# **默认 `enabled: false`（flag 门控起步，§14.2 决议 1）**：关时 resolve_driver_profile 严格
+# no-op（不产 LLM 调用、provenance="rule"）；验证后再默认开。回滚方式 = 该键置 false。
+# 预算三件套此前全仓库没有：工具调用硬上界 / 墙钟超时 / 显式 LangGraph recursion_limit。
+# 注意 2 × max_tool_calls + 余量必须 < message_limit（否则工具预算被消息上限静默接管）。
+domain_context:
+  research:
+    enabled: false            # Tier B 总开关（flag 门控起步；false = 严格 no-op 回退 D0）
+    max_hypotheses: 7         # 驱动假设条数上限（超出按 confidence 截断）
+    max_agenda_items: 6       # 研究议程条数上限（按 priority 截断）
+    max_tool_calls: 20        # 单标的工具调用硬上界（超限按已有输出收口 + truncated 留痕）
+    wall_timeout_s: 180      # 单标的墙钟超时（秒），到期走降级链
+    cache_ttl_days: 90        # 研究结果缓存 TTL（天）；失效条件 = 新报告期 / track 漂移 / playbook 升版
+    cache_dir: "data/driver_profiles"   # 缓存目录（相对 PROJECT_ROOT；每标的一个 JSON）
+    recursion_limit: 40       # LangGraph 递归步数上界（显式设置，勿依赖默认值）
+
 deviation:
   detection:                 # §6 即时检测（F1：with_deviation_detection 包装器读这里）
     enabled: true            # 检测器总开关：关闭 ⇒ 整层 no-op（回滚用，不影响业务节点行为）
