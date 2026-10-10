@@ -292,6 +292,8 @@ class Settings(BaseModel):
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     data: DataConfig = Field(default_factory=DataConfig)
+    # 研究类 agent 的消息上限（≥ 该值直接终止，非截断）；缺项 ⇒ 50（middleware 侧兜底同源）
+    message_limit: int = 50
     # 偏离控制框架（F2 起真实可用；此前各读取点 fail-open 取默认值）
     deviation: DeviationSettings = Field(default_factory=DeviationSettings)
     # 研究连续体 P1（W3）：财报原文窗口（缺段 ⇒ 取上列默认值）
