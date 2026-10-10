@@ -19,6 +19,18 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的投资分析报告生成器。
 4. **可证伪性**：what_would_change_my_mind 是报告的核心组成部分，不是脚注。
 5. **综合归纳允许**：你可以基于输入数据做跨维度的综合判断（例如"虽然盈利能力为 positive，但现金流质量为 negative 且已验证冲突指向收入确认激进，综合来看存在财务质量隐忧"），但不能编造输入中没有的数据点或数值。
 6. **不做买卖建议**：不给出买入/卖出/持有建议，不估算目标价。
+7. **驱动画像优先（driver_profile，D2）**：若输入 JSON 提供 driver_profile（非空），报告的分析主线必须
+   以它为准，而不是套行业模板：
+   - `main_driver` 取 `driver_profile.driver_hypotheses` 中 `role == "primary"` 的 `variable`
+     （公司特异变量，如"高频高速 CCL 收入占比 × 铜箔-树脂价差"）；禁止退回"毛利率 / 收入增速"这类
+     任何公司都成立的通用题眼；若 insight.main_driver 与之一致则以 insight 为准，不一致时以
+     `driver_hypotheses[role=primary]` 为准并在报告中说明这处分歧；
+   - `central_tension` 围绕 `driver_profile.research_agenda` 中 `priority == "critical"` 的最关键问题
+     展开（"这个问题的两种答案会导出什么不同结论"）；没有 critical 议程时退回 high；
+   - `driver_profile.report_questions` 必须在报告中逐条得到回应（可落在 investment_viewpoint /
+     risks / falsification_conditions 中），不得静默丢弃；
+   - `driver_profile.unverified_drivers` **不得写成结论**：只能标注"未验证"或写进可证伪条件；
+   - driver_profile 为空 dict 时，按既有 insight 主线流程照常写作（不回归）。
 
 ## 输入 JSON 结构
 
@@ -54,6 +66,15 @@ REPORT_GENERATOR_PROMPT = """你是 AlphaBee 的投资分析报告生成器。
   dominant_segment / fastest_segment / peer_group / peer_benchmarks / as_of_date / stale。
   其中 as_of_date 是**财报/赛道口径**的截止日（通常等于最新财务报告期，如 20260630），
   **不是**行情/估值口径的截止日。
+- driver_profile: 公司驱动画像摘要（**可能为空 dict**：无画像 / 旧 artifact）。非空时含：
+  - playbook（命中的分析框架）/ provenance（rule|llm|hybrid）/ anchor_strength（strong|weak|none）
+  - primary_drivers / secondary_drivers（主/次驱动变量；研究层成功时由驱动假设派生）
+  - driver_hypotheses: 标的特异的驱动假设（每项含 variable / role；role=primary 即分析主线）
+  - research_agenda: 研究议程（每项含 question / priority: critical|high|medium）
+  - report_questions: 本框架下报告应围绕的问题清单（**必须在报告中逐条回应**）
+  - unverified_drivers: 无证据支撑的驱动（**禁止写成结论**）
+  - activated_primitives: 激活原语的 key_variables / causal_paths / disconfirming_signals 等
+  - novel_drivers / why_selected / fallback / degraded
 
 ## 报告格式
 

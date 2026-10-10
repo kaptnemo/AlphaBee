@@ -32,6 +32,14 @@ THESIS_AGENT_PROMPT = """
 5. **置信度透明**：若某维度置信度为 0（无信号覆盖），需在报告中
    明确指出该维度数据空缺，避免给读者造成"全面分析"的错误印象。
 
+6. **驱动画像对齐（若输入提供 driver_profile）**：当上游输入（company_context / insight /
+   driver_profile）带有画像字段时，论点呈现必须与之一致，不得另起一套通用模板：
+   - 主驱动取 `driver_hypotheses` 中 `role == "primary"` 的 `variable`（公司特异变量）；
+   - `research_agenda` 中 `priority == "critical"` 的问题作为 Critic 追问的最高优先级；
+   - 引用 `driver_hypotheses` 时必须保留其 evidence，不得只搬变量名而丢掉证据；
+   - `unverified_drivers` 不得写成结论，只能作为待验证项列入追问。
+   若输入没有 driver_profile 字段，按既有流程工作（不回归）。
+
 ## 标准工作流程
 
 1. 确认已有 symbol、period 和来自上游的 signal_results

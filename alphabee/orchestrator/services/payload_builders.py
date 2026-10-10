@@ -91,6 +91,8 @@ def _build_driver_profile_summary(artifacts: list[Artifact]) -> dict[str, Any]:
         "provenance": profile.provenance,
         "anchor_strength": profile.anchor_strength,
         "why_selected": list(profile.why_selected),
+        # playbook 级"报告应围绕的问题"（G-7 字段）：报告层据此写正文，此前没进任何 payload。
+        "report_questions": list(profile.report_questions),
         # D1 研究层产出（D0 恒空）：只传下游写观点骨架要用的字段，并截断控制 prompt 体积
         "driver_hypotheses": [{"variable": h.variable, "role": h.role} for h in profile.driver_hypotheses[:8]],
         "research_agenda": [{"question": q.question, "priority": q.priority} for q in profile.research_agenda[:6]],
@@ -620,6 +622,11 @@ def build_report_generation_payload(state: Mapping[str, Any]) -> ReportGeneratio
         for issue in issues
     ]
     payload.required_issue_disclosures = [issue for issue in payload.issues if issue.severity in {"high", "critical"}]
+
+    # 驱动画像 → 报告层（G-5）：复用 D0 已补全的摘要（含 key_variables / causal_paths /
+    # driver_hypotheses / research_agenda / report_questions / unverified_drivers），不重复取数；
+    # 无画像时 summary 为 {} ⇒ payload.driver_profile 保持默认空 dict（不回归）。
+    payload.driver_profile = _build_driver_profile_summary(artifacts)
 
     return payload
 

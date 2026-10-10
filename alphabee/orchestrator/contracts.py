@@ -378,6 +378,9 @@ class ReportGenerationPayload(BaseModel):
     conflict_analysis: ReportConflictAnalysisPayload | None = None
     insight: ReportInsightPayload | None = None
     company_track: ReportCompanyTrackPayload | None = None
+    # 驱动画像摘要（D1/D2 G-5：报告层此前**零通路**）。空 dict = 无画像（旧 artifact / 未命中），
+    # 消费方必须容忍空 dict——与 ``company_track=None`` 同级的"可能缺席"语义。
+    driver_profile: dict[str, Any] = Field(default_factory=dict)
     issues: list[ReportIssuePayload] = Field(default_factory=list)
     required_issue_disclosures: list[ReportIssuePayload] = Field(default_factory=list)
 
