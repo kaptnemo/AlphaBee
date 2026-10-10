@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -24,6 +26,55 @@ class ActivatedPrimitive(BaseModel):
     disconfirming_signals: list[str] = Field(default_factory=list)
     preferred_sources: list[str] = Field(default_factory=list)
     report_angles: list[str] = Field(default_factory=list)
+    # 因果链与激活条件此前在快照展开时被丢弃，导致下游只能看到"看什么变量"而看不到
+    # "为什么看"和"什么情况下适用"。补进快照让画像自洽（无需回查原语目录）。
+    causal_paths: list[str] = Field(default_factory=list)
+    when_to_activate: list[str] = Field(default_factory=list)
+
+
+class DriverObservable(BaseModel):
+    """一个驱动变量的可观测指标（研究/验证任务的取数落点）。"""
+
+    name: str
+    source: str = ""  # 数据来源（如 tushare:index_classify / 年报 / 行业协会）
+    cadence: str = ""  # 观测频率（月度/季度/年度）
+
+
+class DriverEvidence(BaseModel):
+    """一条驱动假设的证据引用（可溯源：谁说的、在哪、原文片段）。"""
+
+    kind: str = ""  # 证据类型（如 结构化事实 / 年报原文 / 行业数据）
+    ref: str = ""  # 引用定位（artifact id / 报告章节 / URL）
+    quote: str = ""
+
+
+class DriverHypothesis(BaseModel):
+    """一条标的特异的驱动假设（D1 研究层产出；D0 只声明契约、不生成）。
+
+    与 playbook 的 ``primary_drivers``（框架级变量名）不同，本模型描述的是"这家公司的
+    这个变量"：机制、在本公司的表现形式、可观测指标、证伪条件与证据。
+    """
+
+    variable: str
+    role: str = "primary"  # primary / secondary / risk
+    mechanism: str = ""  # 传导机制（如 猪价上行 → 售价抬升 → 头均利润修复）
+    company_form: str = ""  # 该变量在本公司的具体表现（分部/产品线/口径）
+    observables: list[DriverObservable] = Field(default_factory=list)
+    falsifiers: list[str] = Field(default_factory=list)  # 证伪信号
+    evidence: list[DriverEvidence] = Field(default_factory=list)
+    confidence: float = 0.0
+    matched_primitive: str = ""  # 命中的分析原语 id（与框架对齐）
+
+
+class ResearchQuestion(BaseModel):
+    """一条研究议程问题（决定报告要回答什么、优先看什么证据）。"""
+
+    question: str
+    why_matters: str = ""
+    decisive_evidence: list[str] = Field(default_factory=list)  # 能区分多空的关键证据
+    preferred_sources: list[str] = Field(default_factory=list)
+    priority: str = "high"  # critical / high / medium
+    status: str = "open"  # open / answered
 
 
 class DriverProfile(BaseModel):
@@ -33,7 +84,7 @@ class DriverProfile(BaseModel):
     展开后的原语完整内容，使下游无需回查 primitives/playbooks。
     """
 
-    schema_version: str = "1"
+    schema_version: str = "2"
     symbol: str = ""
     generated_at: str = ""
     # 命中的组合框架 id。业务含义：这是「这家公司该用哪套分析框架」的最终裁决——
@@ -56,3 +107,23 @@ class DriverProfile(BaseModel):
     fallback: bool = False
     degraded: bool = False
     degraded_reason: str = ""
+
+    # ── v2（只增不减，全部带默认值，旧 artifact 反序列化不受影响）──────────
+    # 画像来源：rule = 纯规则路由（D0 现状）；llm = 研究层生成；hybrid = 规则打底 + 研究补充。
+    provenance: str = "rule"
+    # 锚定强度（strong / weak / none）："命中/未命中"二元判据无法表达"靠什么命中的"，
+    # 而锚太弱（仅 archetype / 仅宽 L1 行业）时应当让研究层复核。
+    anchor_strength: str = ""
+    # playbook 级框架知识（此前只存在于 YAML，未进画像快照，下游拿不到）。
+    key_conflicts: list[str] = Field(default_factory=list)
+    recommended_verification_order: list[str] = Field(default_factory=list)
+    report_questions: list[str] = Field(default_factory=list)
+    # D1 研究层产出（D0 只声明契约与默认值，不生成）：
+    driver_hypotheses: list[DriverHypothesis] = Field(default_factory=list)
+    research_agenda: list[ResearchQuestion] = Field(default_factory=list)
+    novel_drivers: list[str] = Field(default_factory=list)
+    candidates: list[str] = Field(default_factory=list)
+    unverified_drivers: list[str] = Field(default_factory=list)
+    research_confidence: float = 0.0
+    # 研究元信息（预算/耗时/降级原因等自由结构）；类型取 dict[str, Any] 以满足 strict mypy。
+    research_meta: dict[str, Any] = Field(default_factory=dict)

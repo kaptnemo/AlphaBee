@@ -44,6 +44,11 @@ _WEIGHT_TRACK_LABEL = 3
 _WEIGHT_SUB_INDUSTRY = 2
 _WEIGHT_BUSINESS_MODEL = 1
 
+# 结构信号（申万代码 / 分部结构 / 财务结构）各 +1：它们不是"更高可信度的身份信号"，
+# 而是**锚强度的判据**——用于区分「靠真实赛道/精确代码命中」（强锚）与「靠宽行业名命中」
+# （弱锚）。权重与会变动的身份信号解耦，避免改变既有打分语义。
+_WEIGHT_STRUCTURE_SIGNAL = 1
+
 
 class ActivatedContext(BaseModel):
     """一个已激活的分析原语（playbook 已展开为 primitive）。"""
@@ -62,6 +67,14 @@ class RouterInput(BaseModel):
     sub_industry: str = ""  # INDUSTRY_CONTEXT.sub_industry
     business_model: str = ""  # COMPANY_TRACK.business_model（archetype）
     business_model_summary: str = ""  # 公司业务描述（P0 暂不参与匹配，保留字段）
+    # ── 结构信号（全部来自已落地产物，供锚强度判据与结构性兜底驱动使用）──
+    sw_code: str = ""  # INDUSTRY_CONTEXT.sw_code（申万 L1/L2/L3 代码，如 801010.SI）
+    dominant_segment: str = ""  # COMPANY_TRACK.dominant_segment
+    dominant_share: float | None = None  # 主力分部收入占比（0~100）
+    fastest_segment: str = ""  # 最快增速分部
+    fastest_yoy: float | None = None  # 最快分部同比（%）
+    segment_summary: list[str] = Field(default_factory=list)  # ["云计算/服务器 42%(+58%)", ...]
+    financial_structure: dict[str, float] = Field(default_factory=dict)  # gross_margin/rnd_ratio/…
 
     def has_identity_signals(self) -> bool:
         """是否携带任何可用于匹配的身份信号（全空 = 输入缺失，应标记降级）。"""
@@ -83,6 +96,10 @@ class RouterResult(BaseModel):
     primary_drivers: list[str] = Field(default_factory=list)
     secondary_drivers: list[str] = Field(default_factory=list)
     why_selected: list[str] = Field(default_factory=list)
+    # 锚定强度（strong / weak / none）：表达"靠什么命中的"。strong = 靠真实赛道或申万代码
+    # 精确前缀命中，且公司结构事实不与框架声明矛盾；weak = 只有 archetype 或宽行业名命中
+    # （生产环境 sub_industry 恒空，用它识别"仅一级行业"命中）；none = 无命中（走 fallback）。
+    anchor_strength: str = ""
     fallback: bool = False  # True = 未命中任何专用 playbook，回退 generic_fundamental
     degraded: bool = False  # True = 输入缺失导致无法正常匹配（非"普通无命中"）
     degraded_reason: str = ""
@@ -103,12 +120,114 @@ def _contains(a: str, b: str) -> bool:
     return a in b or b in a
 
 
+def _threshold_hit(fin: dict[str, float], spec: dict[str, dict[str, float]]) -> bool:
+    """财务结构阈值判定：``spec`` 形如 ``{"inventory_ratio": {"gt": 0.25}}``。
+
+    ``{"gt": x}`` / ``{"lt": x}`` 为字段级比较规则；声明多个字段时需全部命中。
+    缺失字段视为未命中（而非 0）："没拿到这个财务口径"与"这个口径不达标"是两件事，
+    但都不构成"命中该框架的财务形态"。空 spec 不命中（避免无声明即命中）。
+    """
+    if not spec:
+        return False
+    for field, rule in spec.items():
+        value = fin.get(field)
+        if value is None:
+            return False
+        if "gt" in rule and not value > rule["gt"]:
+            return False
+        if "lt" in rule and not value < rule["lt"]:
+            return False
+    return True
+
+
+def _sw_code_matches(inp: RouterInput, pb: PlaybookSchema) -> bool:
+    """申万代码前缀命中（L1/L2/L3 均可，代码自带层级）。
+
+    业务动机：行业「名称」匹配会被分类改名/口径差异影响（申万"电力设备" vs 证监会
+    "电气设备"），代码则稳定；且代码能把"宽 L1 行业名命中"与"精确行业命中"分开。
+    """
+    return bool(inp.sw_code) and any(inp.sw_code.startswith(code) for code in pb.match_sw_codes if code)
+
+
+def _segment_candidates(inp: RouterInput) -> list[str]:
+    return [inp.dominant_segment, inp.fastest_segment, *inp.segment_summary]
+
+
+def _segment_matches(inp: RouterInput, pb: PlaybookSchema) -> bool:
+    """分部结构命中（主力/最快分部名 + 分部摘要，复用 ``_contains`` 双向匹配）。"""
+    if not pb.match_segments:
+        return False
+    candidates = [c for c in _segment_candidates(inp) if (c or "").strip()]
+    return any(_contains(c, s) for c in candidates for s in pb.match_segments)
+
+
+def _financial_structure_matches(inp: RouterInput, pb: PlaybookSchema) -> bool:
+    """财务结构阈值命中（声明多组阈值时需全部命中）。"""
+    return _threshold_hit(inp.financial_structure, pb.match_financial_structures)
+
+
+def _structure_conflicts(inp: RouterInput, pb: PlaybookSchema) -> bool:
+    """框架声明的结构条件与公司结构事实是否矛盾。
+
+    只在**公司确实提供了该维度数据**时才算矛盾（拿不到数据 ≠ 矛盾，否则几乎所有缺
+    分部数据的公司都会被降级）；playbook 未声明该维度时一律视为不矛盾。
+    """
+    if pb.match_segments and any((c or "").strip() for c in _segment_candidates(inp)):
+        if not _segment_matches(inp, pb):
+            return True
+    if pb.match_financial_structures and inp.financial_structure:
+        if not _financial_structure_matches(inp, pb):
+            return True
+    return False
+
+
+def _derive_anchor_strength(inp: RouterInput, pb: PlaybookSchema, reasons: list[str]) -> str:
+    """据命中理由推导锚定强度（strong / weak / none）。
+
+    - strong：靠真实赛道（track_label）或申万代码精确前缀命中，且结构事实不与框架矛盾；
+    - weak：只有 archetype（business_model）或只有宽行业名命中，或强信号被结构事实推翻
+      —— 仍然采用该框架，但 D1 研究层需要复核；
+    - none：无任何命中（走 fallback 路径）。
+
+    注意：weak 的"仅一级行业命中"用 ``sub_industry == ""`` 识别，**不依赖 sub_industry
+    字段值**（生产环境该字段恒空，行业名只在 industry 里）。
+    """
+    if not reasons:
+        return "none"
+    if "track_label_match" in reasons or "sw_code_match" in reasons:
+        if not _structure_conflicts(inp, pb):
+            return "strong"
+    return "weak"
+
+
+def _structural_drivers(inp: RouterInput) -> list[str]:
+    """从公司结构化事实确定性推导兜底框架的主驱动（D0-c）。
+
+    业务动机：兜底框架 ``generic_fundamental`` 的 ``primary_drivers`` 是空的，导致画像
+    出现「驱动: —」。与其编造，不如把**已经落地的结构事实**转述成驱动变量（source 口径
+    内嵌在字符串里，如"主力分部 …收入占比 …%"）。没有结构事实就返回空列表，由调用方
+    回退旧行为——**绝不编造**。
+    """
+    drivers: list[str] = []
+    if inp.dominant_segment and inp.dominant_share is not None:
+        drivers.append(f"主力分部 {inp.dominant_segment} 收入占比 {inp.dominant_share:.0f}%")
+    if inp.fastest_segment and inp.fastest_yoy is not None:
+        drivers.append(f"{inp.fastest_segment} 同比 {inp.fastest_yoy:.0f}%（快于主力）")
+    gm = inp.financial_structure.get("gross_margin")
+    bench = inp.financial_structure.get("peer_gross_margin")
+    if gm is not None and bench is not None:
+        drivers.append(f"毛利率 {gm:.1f}%（行业基准 {bench:.1f}%，差 {gm - bench:+.1f}pp）")
+    return drivers
+
+
 def _score_playbook(inp: RouterInput, pb: PlaybookSchema) -> tuple[int, list[str]]:
     """对单个 playbook 打分，返回 (score, 命中理由)。score=0 表示未命中。
 
     业务语义：
     - track_label 命中：公司真实赛道（如"生猪养殖"）直接落在该框架的适用范围内，最可信；
+    - sw_code 命中：申万代码前缀精确命中（比行业名匹配稳定，也更能区分层级）；
     - industry/sub_industry 命中：申万行业落在框架范围内（如"养殖业"），次可信；
+    - segment/financial_structure 命中：公司的分部结构/财务形态与框架声明一致；
     - business_model 命中：archetype 恰好匹配（如"integrator"），最弱的佐证。
     每个信号维度只加一次分（任一关键词命中即可），避免同一 playbook 因为写了多个同义
     匹配词而重复加分、虚高排名。
@@ -120,12 +239,24 @@ def _score_playbook(inp: RouterInput, pb: PlaybookSchema) -> tuple[int, list[str
         score += _WEIGHT_TRACK_LABEL
         reasons.append("track_label_match")
 
+    if _sw_code_matches(inp, pb):
+        score += _WEIGHT_STRUCTURE_SIGNAL
+        reasons.append("sw_code_match")
+
     # industry / sub_industry 任一命中即 +2（不重复计）：申万一、二级任一层对上都算命中，
     # 因为 sub_industry 目前常为空（industry-context 只解析到申万一级），不能强求二级。
     industries = [x for x in (inp.industry, inp.sub_industry) if (x or "").strip()]
     if industries and any(_contains(x, s) for x in industries for s in pb.match_sub_industries):
         score += _WEIGHT_SUB_INDUSTRY
         reasons.append("sub_industry_match")
+
+    if _segment_matches(inp, pb):
+        score += _WEIGHT_STRUCTURE_SIGNAL
+        reasons.append("segment_match")
+
+    if _financial_structure_matches(inp, pb):
+        score += _WEIGHT_STRUCTURE_SIGNAL
+        reasons.append("financial_structure_match")
 
     if inp.business_model and inp.business_model in pb.match_business_models:
         score += _WEIGHT_BUSINESS_MODEL
@@ -142,14 +273,22 @@ def _build_result(
     fallback: bool,
     degraded: bool,
     degraded_reason: str = "",
+    inp: RouterInput | None = None,
+    anchor_strength: str = "",
 ) -> RouterResult:
+    primary_drivers = list(playbook.primary_drivers)
+    if fallback and inp is not None:
+        # D0-c：兜底框架没有专用驱动变量，改用公司结构化事实确定性推导；
+        # 无任何结构事实时保持旧行为（playbook 的空驱动），不编造。
+        primary_drivers = _structural_drivers(inp) or primary_drivers
     return RouterResult(
         playbook_id=playbook_id,
         playbook_version=playbook.version,
         activated_contexts=[ActivatedContext(context=c) for c in playbook.primitives],
-        primary_drivers=list(playbook.primary_drivers),
+        primary_drivers=primary_drivers,
         secondary_drivers=list(playbook.secondary_drivers),
         why_selected=why_selected,
+        anchor_strength=anchor_strength,
         fallback=fallback,
         degraded=degraded,
         degraded_reason=degraded_reason,
@@ -163,11 +302,13 @@ def route(
     """规则版路由：公司 → 命中 playbook（展开为 primitive）。
 
     Args:
-        inp: 公司身份信号（track_label / industry / sub_industry / business_model）。
+        inp: 公司身份/结构信号（track_label / industry / sub_industry / business_model
+            + sw_code / 分部结构 / 财务结构）。
         playbooks: 覆盖默认加载的 playbook（None 时用 ``load_playbooks()``，供测试注入）。
 
     Returns:
-        ``RouterResult``。无命中时回退 ``generic_fundamental`` 并置 ``fallback=True``；
+        ``RouterResult``。命中则置 ``anchor_strength``（strong/weak）；无命中时回退
+        ``generic_fundamental`` 并置 ``fallback=True`` + ``anchor_strength="none"``；
         身份信号全空时额外置 ``degraded=True``（输入缺失，区别于"普通无命中"）。
     """
     playbooks = playbooks if playbooks is not None else load_playbooks()
@@ -185,7 +326,15 @@ def route(
 
     if scored:
         score, playbook_id, playbook, reasons = scored[0]
-        return _build_result(playbook_id, playbook, reasons, fallback=False, degraded=False)
+        return _build_result(
+            playbook_id,
+            playbook,
+            reasons,
+            fallback=False,
+            degraded=False,
+            inp=inp,
+            anchor_strength=_derive_anchor_strength(inp, playbook, reasons),
+        )
 
     # ── 未命中任何专用框架 → 兜底 ──────────────────────────────────────
     fallback = playbooks.get(GENERIC_FALLBACK_ID)
@@ -207,4 +356,6 @@ def route(
         fallback=True,
         degraded=degraded,
         degraded_reason="identity_signals_missing" if degraded else "",
+        inp=inp,
+        anchor_strength="none",
     )

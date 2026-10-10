@@ -46,6 +46,11 @@ def test_hog_cycle_primitive_set():
     ]
 
 
+def test_hog_cycle_sw_codes_are_verified_shenwan_codes():
+    # tushare index_classify(src="SW2021") 实查：农林牧渔 L1=801010.SI、养殖业 L2=801017.SI
+    assert load_playbooks()["hog_cycle"].match_sw_codes == ["801010.SI", "801017.SI"]
+
+
 def test_generic_fundamental_is_fallback():
     playbooks = load_playbooks()
     assert playbooks["generic_fundamental"].primitives == [

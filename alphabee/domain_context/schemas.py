@@ -82,6 +82,15 @@ class PlaybookSchema(DomainSchemaBase):
     match_track_labels: list[str] = Field(default_factory=list)
     match_sub_industries: list[str] = Field(default_factory=list)
     match_business_models: list[str] = Field(default_factory=list)
+    # 申万代码前缀（L1/L2/L3 均可，如 "801010.SI"）。相比行业「名称」匹配，代码匹配
+    # 不受分类改名/口径差异影响；同时它能把「宽 L1 行业命中」与「精确代码命中」区分开，
+    # 支撑 anchor_strength 判据（L1 名称命中只算弱锚，代码精确前缀命中才算强锚）。
+    match_sw_codes: list[str] = Field(default_factory=list)
+    # 分部结构匹配（主力/最快分部名，来自业务线收入解构）：如 "生猪养殖"、"服务器"。
+    match_segments: list[str] = Field(default_factory=list)
+    # 财务结构阈值匹配：{"inventory_ratio": {"gt": 0.25}}；缺失字段视为未命中。
+    # 用于「营收结构之外还看财务形态」的框架（如高存货/高研发费率才适用）。
+    match_financial_structures: dict[str, dict[str, float]] = Field(default_factory=dict)
     # 主/次驱动变量：报告主线的「题眼」（变量名，如"猪价""能繁母猪"），
     # 是 DriverProfile 下游写 main_driver/central_tension 的直接素材。
     primary_drivers: list[str] = Field(default_factory=list)

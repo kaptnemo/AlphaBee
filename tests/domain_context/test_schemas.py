@@ -38,3 +38,27 @@ def test_playbook_requires_id():
 def test_playbook_rejects_unknown_field():
     with pytest.raises(ValidationError):
         PlaybookSchema(id="p", primitive=["a"])  # 单数拼写错误
+
+
+def test_playbook_match_extension_defaults_empty():
+    pb = PlaybookSchema(id="p")
+    assert pb.match_sw_codes == []
+    assert pb.match_segments == []
+    assert pb.match_financial_structures == {}
+
+
+def test_playbook_accepts_match_extension_fields():
+    pb = PlaybookSchema(
+        id="p",
+        match_sw_codes=["801010.SI"],
+        match_segments=["生猪养殖"],
+        match_financial_structures={"inventory_ratio": {"gt": 0.25}},
+    )
+    assert pb.match_sw_codes == ["801010.SI"]
+    assert pb.match_financial_structures["inventory_ratio"]["gt"] == 0.25
+
+
+def test_playbook_rejects_unknown_match_extension_field():
+    # extra="forbid" 仍然生效：拼错的匹配字段必须被拦，而不是静默变成"永不命中"
+    with pytest.raises(ValidationError):
+        PlaybookSchema(id="p", match_sw_code=["801010.SI"])
