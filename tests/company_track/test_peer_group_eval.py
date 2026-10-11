@@ -640,7 +640,7 @@ _ONLINE_MODULE = PROJECT_ROOT / "alphabee" / "company_track" / "peer_extract.py"
 #: 旧→新逐字 diff 存于 ``tmp/certified/pj1_peer_quality_prereview/prompt_diff_old_to_new.json``：
 #: 新增行仅为「第 4 条 dims 要求」与「输出 schema 增加 dims 字段」，无第三条语义被改写。
 """
-_FROZEN_INFER_PROMPT = '你是买方研究员。根据下面这家公司的业务描述，识别其在 **A 股市场**中的**同产业链环节的竞争对手/可比公司**，给出 5–8 家并按可比度降序。\n要求：\n1. 排除上游供应商与下游客户（如 PCB 公司不要选上游覆铜板、下游封测）；\n2. 优先给 A 股上市公司，代码带交易所后缀（如 002463.SZ / 603228.SH）；不确定的代码填空串，**不要编造**；\n3. 每条必须诚实给出 `overlap`（0–1，与标的在**同环节业务/产品/客户**上的重叠度）：越接近直接竞对越接近 1.0；若候选主要在材料（如碳钢 vs 不锈钢）、终端（如半导体/医药洁净 vs 石化/核电）或盈利模式上与标的不同，请**如实给低分**（由下游按阈值过滤，不要因为拿不准就直接省略）。\n4. 每条还要给出**结构化维度** `dims`（各自 0–1，按证据独立打分、不要一律同值）：product(产品/服务重叠)、customer(客户/终端重叠)、material_tech(材料/技术路线相近度)、business_model(盈利模式/业态相近度)。\n只输出 JSON 数组（确实无候选才输出 []），每条：{"name": "公司名", "code": "股票代码", "exchange": "SH/SZ/BJ", "overlap": 0.0-1.0, "dims": {"product":0.0,"customer":0.0,"material_tech":0.0,"business_model":0.0}, "reason": "为什么是同环节竞对（业务/产品/客户重叠）"}。\n行业（供参考）: PCB\n业务线构成（供参考）:\n（无业务线数据）\n\n公司业务描述:\n印制电路板与封装基板'
+_FROZEN_INFER_PROMPT = '标的公司：深南电路（002916.SZ）。\n你是买方研究员。根据下面这家公司的业务描述，识别其在 **A 股市场**中的**同产业链环节的竞争对手/可比公司**，给出 5–8 家并按可比度降序。\n要求：\n1. 排除上游供应商与下游客户（如 PCB 公司不要选上游覆铜板、下游封测）；\n2. 优先给 A 股上市公司，代码带交易所后缀（如 002463.SZ / 603228.SH）；不确定的代码填空串，**不要编造**；\n3. 每条必须诚实给出 `overlap`（0–1，与标的在**同环节业务/产品/客户**上的重叠度）：越接近直接竞对越接近 1.0；若候选主要在材料（如碳钢 vs 不锈钢）、终端（如半导体/医药洁净 vs 石化/核电）或盈利模式上与标的不同，请**如实给低分**（由下游按阈值过滤，不要因为拿不准就直接省略）。\n4. 每条还要给出**结构化维度** `dims`（各自 0–1，按证据独立打分、不要一律同值）：product(产品/服务重叠)、customer(客户/终端重叠)、material_tech(材料/技术路线相近度)、business_model(盈利模式/业态相近度)。\n5. reason 里请用「深南电路」指代标的公司，不要写「标的」这个占位词。\n只输出 JSON 数组（确实无候选才输出 []），每条：{"name": "公司名", "code": "股票代码", "exchange": "SH/SZ/BJ", "overlap": 0.0-1.0, "dims": {"product":0.0,"customer":0.0,"material_tech":0.0,"business_model":0.0}, "reason": "为什么是同环节竞对（业务/产品/客户重叠）"}。\n行业（供参考）: PCB\n业务线构成（供参考）:\n（无业务线数据）\n\n公司业务描述:\n印制电路板与封装基板'
 
 #: 在线模块 token 流签名（去注释/换行后 sha256）：生产 judge 入口若被误接进在线路径必然变化。
 #: **重定标沿革（旧→新；均属本步有意变更，不是删除守护）**：
@@ -649,7 +649,9 @@ _FROZEN_INFER_PROMPT = '你是买方研究员。根据下面这家公司的业�
 #:   → ``785d4e94a1f0b6c90f253b7ca25f85855cdac51c892de5fde2193211edcd7fd6``（生成器改为产出结构化 ``dims``）
 #:   → ``fe5a7b8fe600acc996addc8f0cd0d253583705ee050bf520d4ca19e94586c131``（阈值常量统一为单一权威定义：
 #:     ``peer_extract`` 删除自带 ``= 0.5`` 的同名常量，改为再导出 ``peer_judge.DEFAULT_MIN_OVERLAP``）
-_FROZEN_ONLINE_TOKEN_SIGNATURE = "4860511395f508c0f8c6201c3e496f9043dd1b91b3351eead1beb723b0b8ee73"
+#:   → ``986268bc7389e83cdedca8dea22e1dca0a5cbf8487ab8baa5d42ef7c808c88e9``（生成器 prompt 注入标的名称：
+#:     新增 ``resolve_name_by_code`` + 「标的公司」行 + 第 5 条「reason 用公司名指代标的」）
+_FROZEN_ONLINE_TOKEN_SIGNATURE = "986268bc7389e83cdedca8dea22e1dca0a5cbf8487ab8baa5d42ef7c808c88e9"
 
 
 def _online_source() -> str:

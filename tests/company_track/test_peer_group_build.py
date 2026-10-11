@@ -401,6 +401,26 @@ def _fake_infer(monkeypatch, content: str):
     monkeypatch.setattr(llm_module, "create_chat_model", lambda component, **kw: FakeModel())
 
 
+def test_infer_prompt_includes_target_name(monkeypatch):
+    """生成器 prompt 注入标的名称，令 reason 用公司名指代标的、而非「标的」占位词。"""
+    import alphabee.utils.llm as llm_module
+    from alphabee.company_track import infer_peer_candidates
+
+    captured: dict[str, str] = {}
+
+    class FakeModel:
+        def invoke(self, prompt):
+            captured["prompt"] = prompt
+            return type("R", (), {"content": "[]"})()
+
+    monkeypatch.setattr(llm_module, "create_chat_model", lambda component, **kw: FakeModel())
+    infer_peer_candidates("002916.SZ", [], "印制电路板与封装基板", industry="PCB")
+
+    prompt = captured["prompt"]
+    assert "标的公司：深南电路（002916.SZ）" in prompt
+    assert "不要写「标的」这个占位词" in prompt
+
+
 def test_generator_emits_all_scored_candidates_and_gate_does_the_dropping(tmp_path, monkeypatch):
     """判定分工（设计 §4）：**生成器只产出候选**（带 overlap），**剔除由构建阶段 Gate 执行**。
 

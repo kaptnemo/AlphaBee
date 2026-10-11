@@ -15,7 +15,7 @@ from functools import lru_cache
 
 from alphabee import PROJECT_ROOT
 
-__all__ = ["build_peer_universe", "resolve_current_code_by_name"]
+__all__ = ["build_peer_universe", "resolve_current_code_by_name", "resolve_name_by_code"]
 
 _ALL_STOCKS_CSV = PROJECT_ROOT / "alphabee" / "static" / "all_stocks.csv"
 
@@ -54,6 +54,14 @@ def resolve_current_code_by_name(name: str) -> str | None:
     if not key:
         return None
     return _name_to_code().get(key)
+
+
+def resolve_name_by_code(code: str) -> str:
+    """按股票代码反查公司名（静态股票表；未命中 → 空串）。"""
+    key = str(code or "").strip().upper()
+    if not key:
+        return ""
+    return _code_to_name().get(key, "")
 
 
 def build_peer_universe(

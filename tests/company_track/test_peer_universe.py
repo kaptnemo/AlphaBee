@@ -28,3 +28,11 @@ def test_build_peer_universe_respects_limit():
 def test_build_peer_universe_lowercase_normalized():
     universe = build_peer_universe(["300223.sz"])
     assert universe[0]["code"] == "300223.SZ"
+
+
+def test_resolve_name_by_code():
+    from alphabee.company_track.peer_universe import resolve_name_by_code
+
+    assert resolve_name_by_code("603259.SH") == "药明康德"
+    assert resolve_name_by_code("999999.SH") == ""
+    assert resolve_name_by_code("") == ""

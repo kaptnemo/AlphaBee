@@ -13,6 +13,7 @@ from typing import Any
 from alphabee.company_track.contracts import SegmentSnapshot
 from alphabee.company_track.peer_judge import DEFAULT_MIN_OVERLAP, normalize_dims
 from alphabee.company_track.peer_judge import coerce_overlap as _coerce_overlap
+from alphabee.company_track.peer_universe import resolve_name_by_code
 
 #: 阈值（``min_overlap``）的**权威定义只有一处** = :data:`alphabee.company_track.peer_judge.DEFAULT_MIN_OVERLAP`；
 #: 生产生效值另有配置覆盖（``company_track.peer_quality.min_overlap``），缺段即取该默认。
@@ -153,7 +154,9 @@ def infer_peer_candidates(
         空 → 不编造。**候选缺 dims** 时由构建阶段 Gate 只按 overlap 阈值判定（旧存量数据兼容）。
         ``meta["dropped"]`` 记录被质量闸剔除的候选（``{name, code, overlap, reason, drop}``）。
     """
-    del symbol  # 血缘信息，仅日志用
+    symbol = (symbol or "").strip()
+    target_name = resolve_name_by_code(symbol)
+    target_label = f"{target_name}（{symbol}）" if target_name else symbol
     meta: dict[str, Any] = {"note": "", "raw": None, "dropped": [], "llm_ok": False}
     if not use_llm:
         meta["note"] = "LLM 推断关闭"
@@ -167,6 +170,7 @@ def infer_peer_candidates(
         from alphabee.utils.pipeline import parse_json
 
         prompt = (
+            f"标的公司：{target_label}。\n"
             "你是买方研究员。根据下面这家公司的业务描述，识别其在 **A 股市场**中的"
             "**同产业链环节的竞争对手/可比公司**，给出 5–8 家并按可比度降序。\n"
             "要求：\n"
@@ -180,6 +184,7 @@ def infer_peer_candidates(
             "4. 每条还要给出**结构化维度** `dims`（各自 0–1，按证据独立打分、不要一律同值）："
             "product(产品/服务重叠)、customer(客户/终端重叠)、material_tech(材料/技术路线相近度)、"
             "business_model(盈利模式/业态相近度)。\n"
+            f"5. reason 里请用「{target_name or target_label}」指代标的公司，不要写「标的」这个占位词。\n"
             "只输出 JSON 数组（确实无候选才输出 []），每条："
             '{"name": "公司名", "code": "股票代码", "exchange": "SH/SZ/BJ", '
             '"overlap": 0.0-1.0, "dims": {"product":0.0,"customer":0.0,"material_tech":0.0,"business_model":0.0}, '
@@ -281,7 +286,9 @@ def select_peer_candidates(
         ``(candidates, meta)``：candidates 每条为
         ``{"name", "code", "reason", "source": "universe"}``；空 → 不编造。
     """
-    del symbol  # 血缘信息，仅日志用
+    symbol = (symbol or "").strip()
+    target_name = resolve_name_by_code(symbol)
+    target_label = f"{target_name}（{symbol}）" if target_name else symbol
     meta: dict[str, Any] = {"note": "", "raw": None, "llm_ok": False}
     if not use_llm:
         meta["note"] = "LLM 择优关闭"
@@ -303,11 +310,13 @@ def select_peer_candidates(
             str(item.get("code") or "").strip().upper(): str(item.get("name") or "").strip() for item in universe
         }
         prompt = (
+            f"标的公司：{target_label}。\n"
             "你是买方研究员。下面是标的所属行业"
             f"（{industry or '未标注'}）的候选公司清单（申万行业成分股，格式：代码 名称）。\n"
             "请结合标的业务线构成，从**候选清单中**选出与该标的最直接竞争/可比的 A 股公司"
             "（同一产业链环节的真对手；不要选只是同行业但业务不同者）。\n"
             "**只能从候选清单里选择，不得新增、改动或猜测任何代码**；无合适者输出 []。\n"
+            f"reason 里请用「{target_name or target_label}」指代标的公司，不要写「标的」这个占位词。\n"
             "只输出 JSON 数组（无命中输出 []），每条："
             '{"code": "候选清单中的代码", "reason": "为什么是对标（产业链环节/业务重叠）"}。\n'
             f"标的业务线构成（参考）:\n{_segment_lines(segments)}\n\n候选公司清单:\n{universe_lines}"
