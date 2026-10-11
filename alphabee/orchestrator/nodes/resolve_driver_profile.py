@@ -143,7 +143,11 @@ def _financial_structure(fact_values: dict[str, float]) -> dict[str, float]:
     for field in _PEER_GROSS_MARGIN_FIELDS:
         value = fact_values.get(field)
         if isinstance(value, int | float):
-            structure[_PEER_GROSS_MARGIN_KEY] = float(value)
+            # 单位归一：``peer_avg_gross_margin`` / ``industry_avg_gross_margin`` 是 **RATIO**，
+            # 而 ``gross_margin`` 是 **PERCENT**（schemas/financial.yaml vs industry.yaml）。
+            # 结构性兜底驱动按百分数拼「毛利率 x%（行业基准 y%，差 z pp）」，故这里把基准
+            # RATIO → PERCENT（×100），避免「行业基准 0.3%」这类单位错配。
+            structure[_PEER_GROSS_MARGIN_KEY] = float(value) * 100.0
             break
     return structure
 

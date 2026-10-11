@@ -122,8 +122,9 @@ def test_no_identity_signals_degrades():
     assert issues[0].severity == IssueSeverity.MEDIUM
 
 
-def test_normal_no_match_is_fallback_not_degraded():
+def test_normal_no_match_is_fallback_not_degraded(monkeypatch):
     # 有身份信号但命中不了专用框架（白酒）→ fallback，但不降级、不产 issue
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: _config_stub(enabled=False))
     state = _state(
         symbol="600519.SH",
         artifacts=[
@@ -224,8 +225,8 @@ def test_node_assembles_structure_signals_into_router_input(monkeypatch):
     state["fact_values"] = {
         "gross_margin": 35.0,
         "roe": 12.0,
-        # canonical 基准键 → 进 RouterInput 的 peer_gross_margin
-        "peer_avg_gross_margin": 30.0,
+        # canonical 基准键 → 进 RouterInput 的 peer_gross_margin（RATIO → ×100 归一为 PERCENT）
+        "peer_avg_gross_margin": 0.30,
         # 外部/非 canonical 键名必须被丢弃（不泄漏数据源字段名）
         "grossprofit_margin": 999.0,
     }
@@ -262,8 +263,9 @@ def test_node_sw_code_upgrades_anchor_to_strong():
     assert "sw_code_match" in profile.why_selected
 
 
-def test_node_structure_facts_drive_fallback_primary_drivers():
+def test_node_structure_facts_drive_fallback_primary_drivers(monkeypatch):
     # 白酒命中不了专用框架 → 兜底；主驱动由分部结构 + 毛利率差（含 canonical 基准）确定性推导
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: _config_stub(enabled=False))
     state = _state(
         symbol="600519.SH",
         artifacts=[
@@ -271,7 +273,7 @@ def test_node_structure_facts_drive_fallback_primary_drivers():
             _track_artifact_with_segments(),
         ],
     )
-    state["fact_values"] = {"gross_margin": 35.0, "peer_avg_gross_margin": 30.0}
+    state["fact_values"] = {"gross_margin": 35.0, "peer_avg_gross_margin": 0.30}
     result = asyncio.run(node.resolve_driver_profile(state, {}))
 
     profile = _find_driver_profile(result)
