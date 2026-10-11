@@ -1022,7 +1022,9 @@ def _implied_total_contradictions(
     for (base, period), claims in sorted(groups.items()):
         if len(claims) < 2:
             continue
-        totals = [claim.amount_yi / claim.pct * 100.0 for claim in claims]
+        # 入组时已按 truthy 过滤（amount_yi 非 None），这里的 `is not None` 只为 mypy 收窄
+        # float | None；两种过滤下实际参与计算的集合相同，运行语义不变。
+        totals = [claim.amount_yi / claim.pct * 100.0 for claim in claims if claim.amount_yi is not None]
         lo, hi = min(totals), max(totals)
         if lo <= 0 or (hi - lo) / lo <= _IMPLIED_TOTAL_TOLERANCE:
             continue
