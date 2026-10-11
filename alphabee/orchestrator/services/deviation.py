@@ -124,6 +124,10 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
     # D2（驱动画像证据检测器）：声称有研究产出但驱动为空 / 假设无证据引用 ⇒ 论证层偏离
     "driver_profile_evidence_missing": DeviationClass.D3_ARGUMENT,
+    # 收敛层数值可靠性（P0-1A/P0-1B，DRIVER_PROFILE_P0_FIX_PLAN §7）：同一基数/期别的占比声明
+    # 互相矛盾（无法判定孰对孰错，双方同时降权）；占比从句内的财务数字无同值同期出处 ⇒ 论证层偏离
+    "driver_profile_research_internal_inconsistency": DeviationClass.D3_ARGUMENT,
+    "driver_profile_research_claim_uncovered": DeviationClass.D3_ARGUMENT,
     # 现网（F1b）：报告结论可能依赖已证伪假设（gates.py 的 §6.3 检查）
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8 加权边审计（audit_amplification 的方向不一致上报）

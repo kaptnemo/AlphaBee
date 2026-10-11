@@ -153,7 +153,7 @@ AlphaBee 在两个时间尺度上执行，偏离控制必须分层定义：
 |---|---|---|---|
 | D1 | 数据偏离 | `missing_data`、`blocked`、`stale`、`numeric_inconsistency`、`cross_source_conflict`、`company_track_missing`、`company_track_stale`、`peer_group_missing`、`peer_group_benchmarks_missing`、`industry_context_missing`、`industry_benchmarks_missing` | 采集缺字段、数据陈旧、跨源数字打架 |
 | D2 | 结构偏离 | `parse_error`、`schema` 缺失、降级（`degraded`）、`insight_degraded`、`driver_profile_degraded`、`context_build_failure`、`empty_response` | LLM JSON 漂移、字段枚举漂移、降级产出、上下文构建失败 |
-| D3 | 论证偏离 | `thesis_gap`、`thesis_conflict`、`evidence_chain_incomplete`、`unverified_claim`、`thesis_warning`、`verified_conflict`、`conflict`、`verification_needed` | 无证据结论、论点与已验证冲突矛盾、证据链断裂 |
+| D3 | 论证偏离 | `thesis_gap`、`thesis_conflict`、`evidence_chain_incomplete`、`unverified_claim`、`thesis_warning`、`verified_conflict`、`conflict`、`verification_needed`、`driver_profile_research_internal_inconsistency`、`driver_profile_research_claim_uncovered` | 无证据结论、论点与已验证冲突矛盾、证据链断裂、同一基数的占比声明互相矛盾、财务数字无同值同期出处 |
 | D4 | 状态偏离 | （暂无，需新增）`assumption_invalidated`、`context_truncated`、`state_drift`、`market_regime` | 忘记约束、假设被证伪却未感知、环境状态迁移、重复调查 |
 | D5 | 控制偏离 | `report_rewrite_needed`、`subagent_failure`、`midterm_decision_failed`、`midterm_decision_report_failed`、`failure`、预算超限（需新增 `budget_exhausted`） | 回环次数打满、验证预算耗尽、子代理/决策节点调用失败 |
 
@@ -641,6 +641,9 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "market_regime": D4_STATE,
     "subagent_failure": D5_CONTROL, "midterm_decision_failed": D5_CONTROL,
     "midterm_decision_report_failed": D5_CONTROL, "failure": D5_CONTROL,
+    # ── 收敛层数值可靠性（P0-1A/P0-1B，DRIVER_PROFILE_P0_FIX_PLAN §7）──
+    "driver_profile_research_internal_inconsistency": D3_ARGUMENT,
+    "driver_profile_research_claim_uncovered": D3_ARGUMENT,
 }
 # 覆盖守卫：扫描 alphabee/ 全部 Issue(category=...) 生产点，未登记即测试失败
 # （tests/orchestrator/test_deviation_service.py::test_every_produced_issue_category_is_registered）

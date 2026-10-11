@@ -84,6 +84,9 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "verdict_without_evidence": DeviationClass.D3_ARGUMENT,
     # D2（驱动画像证据检测器）：声称有研究产出但驱动为空 / 假设无证据引用
     "driver_profile_evidence_missing": DeviationClass.D3_ARGUMENT,
+    # 收敛层数值可靠性（P0-1A/P0-1B，DRIVER_PROFILE_P0_FIX_PLAN §7）
+    "driver_profile_research_internal_inconsistency": DeviationClass.D3_ARGUMENT,
+    "driver_profile_research_claim_uncovered": DeviationClass.D3_ARGUMENT,
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8.1 加权边审计的方向不一致上报（review_thesis 节点）
     "amplification_direction_conflict": DeviationClass.D3_ARGUMENT,
@@ -348,6 +351,9 @@ def test_unknown_category_falls_back_to_d2(category: str):
         ("subagent_failure", DeviationClass.D5_CONTROL),
         ("midterm_decision_failed", DeviationClass.D5_CONTROL),
         ("market_regime", DeviationClass.D4_STATE),
+        # 驱动画像收敛层（P0-1A/P0-1B）新增的两条稳定 category
+        ("driver_profile_research_internal_inconsistency", DeviationClass.D3_ARGUMENT),
+        ("driver_profile_research_claim_uncovered", DeviationClass.D3_ARGUMENT),
     ],
 )
 def test_real_world_category_extension(category: str, expected: DeviationClass):
