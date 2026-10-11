@@ -32,6 +32,19 @@
    无分部基准的分部毛利率一律跳过；只会产生确定性的真冲突。
 3. **纯函数、可单测**——所有新校验无 I/O、无随机源，直接单测穷举；符合仓库"确定性内核"约束。
 
+> **实现偏离登记（t2/t10 审查 R1/R2 授权，代码为准）**：P0-2 的口径分流在实现与回归中暴露了
+> 「期别/语境前缀被 `_MARGIN_NAMED_RE` 当成业务名（如 `2025年毛利率30%` ⇒ name=`2025年`）」
+> 的**静默漏检**，实现按审查要求做了三处增强（§5 代码块因此与实现不同，差异以本条为准）：
+> 1. **期别前缀词表剥离**：name 先剥离 `_PERIOD_CONTEXT_TOKENS` 与 `_PERIOD_TOKEN_RE`
+>    （年份/H1·H2/Q1–Q4/季度/半年报/年报/季报/一季报/三季报/中报/月报/本月/本季/上季/本报告期…）；
+> 2. **非业务名兜底归零**：剥离后为空、长度 < 2、或仅由期别量词字符（年|月|季|报|度|期）构成
+>    （`2025年报`⇒`报`）⇒ 视为"非业务名"，不吞 named span，回到残余文本按无名/集团口径与集团值比；
+> 3. **冲突文案带后缀**：`_MARGIN_NAMED_RE` 捕获 `业务|分部` 后缀，冲突文案为
+>    `{name}{suffix}毛利率: …`（不再输出被截断的「生物学毛利率:」）。
+>
+> 上述增强不改变 P0-1A/P0-1B 的语义与本表行为列，也不改变"无同名分部基准 ⇒ 跳过"的 P0-2 防误报性质；
+> 边界见 §9 第 6/7 条。
+
 ---
 
 ## 2. 新增常量与正则（`research.py` 常量区，现 105–130 行附近追加）
@@ -431,6 +444,18 @@ def _margin_contradictions(
 **签名向后兼容**：`segment_margins` 为新增可选参数，现有调用方零改动；
 现有测试若直接调旧签名（2 参）行为不变（`segment_margins` 空表 ⇒ 具名分部匹配不到 ⇒ 走旧路径）。
 
+> **本代码块为初始方案；实现的授权偏离（§1 末尾登记，R1/R2 审查要求）如下**——阅读实现请以
+> `alphabee/domain_context/research.py` 为准：
+> - `_MARGIN_NAMED_RE` 的 `(?:业务|分部)?` 改为 `(?P<suffix>业务|分部)?`（匹配语义不变，仅供文案）；
+> - 新增 `_PERIOD_CONTEXT_TOKENS` / `_PERIOD_TOKEN_RE` / `_PERIOD_QUANTIFIER_CHARS` /
+>   `_MIN_BUSINESS_NAME_LEN` / `_is_business_name()` / `_strip_period_tokens()`；
+> - 循环里 name 先 `_strip_period_tokens(match.group("name"))`：**剥空（含期别量词字符残余、<2 字）⇒
+>   `continue` 且不记 named span**，交回残余文本按无名/集团口径与集团值比；否则用剥离后的业务名做
+>   集团口径判定与 `segment_margins` 同名比对；
+> - 分部冲突文案：`f"{name}{suffix}毛利率: 假设声称 …"`。
+> 语义结果：`生物学业务毛利率34.92%`（基准 34.9）无冲突、基准 60 有冲突、`TIDES业务毛利率45%`
+> 无 TIDES 基准仍跳过、集团/当年口径仍与集团值比；`2025年毛利率30%`+集团 53.9 ⇒ 报冲突（初始方案漏检）。
+
 ---
 
 ## 6. `converge()` 统一接线（替换现 C2 尾部 + C3 块，约 986–1013 行）
@@ -534,6 +559,12 @@ def _margin_contradictions(
 > "占集团 86.46%"这类分母形态**不属于**分部占比语义，交给 P0-1A 的隐含总量校验处理，
 > 混入分部占比校验会产生语义错配（"占化学业务收入 29.0%"的分母是化学业务，而不是
 > "化学业务的占比"）。
+>
+> **实现同步（R1/R2 授权偏离，以代码为准）**：C2.1 与 C3 的接线与上面代码块逐行一致
+> （`uncovered_map` → `downgrade` + 两条 issue；降权条件 `conflicts or downgrade.get(index)`），
+> 唯一差异在 `_margin_contradictions` 内部——它对 name 先做期别前缀剥离与"非业务名"兜底归零
+> （§5 末尾与 §9 第 6/7 条），因此 C3 传给它的 `texts`/`financials`/`segment_margins` 不变，
+> 而"期别标签当前缀"的毛利率句不再被静默吞掉（回到集团口径比较）。
 
 ---
 
@@ -542,7 +573,7 @@ def _margin_contradictions(
 | 文件 | 改动 |
 |---|---|
 | `alphabee/orchestrator/services/deviation.py`（现 92/126 行附近） | 追加两行分类登记：`"driver_profile_research_internal_inconsistency": DeviationClass.D3_ARGUMENT`、`"driver_profile_research_claim_uncovered": DeviationClass.D3_ARGUMENT`（与既有 `driver_profile_evidence_missing: D3_ARGUMENT` 同族——都是"论点可信度"层面缺陷） |
-| `tests/orchestrator/test_deviation_service.py` | `_EXPECTED_CATEGORY_CLASSES`（55/86 行附近）与 `test_real_world_category_extension`（345 行附近的参数化）同步补两条 |
+| `tests/orchestrator/test_deviation_service.py` | `_EXPECTED_CLASS_BY_CATEGORY`（55/86 行附近）与 `test_real_world_category_extension`（345 行附近的参数化）同步补两条 |
 | `docs/design/DEVIATION_CONTROL_FRAMEWORK.md` | 分类表补两行（仓库惯例：category → 类别的文档表与代码同源） |
 
 > `research_meta["issues"]` 的 dict 会在 `finalize_research_artifact`（research.py:1161）中
@@ -614,6 +645,13 @@ def _margin_contradictions(
    （如 ref 同时列了 2025/2026 两期数值时，只要求"数值出现过 + 期别出现过"）。
 5. 万→亿换算、输入包兜底容差（2pp / 3%）可能放过少量边缘口径差异——容差是刻意放宽的，
    收敛层目标是抓"差一个数量级"的矛盾，不追 1pp 级口径差。
+6. **期别标签恰好等于分部名**（分部就叫 `H1`/`H2`/`Q3`）时，该名会被期别词表剥成"非业务名"，
+   从而按无名/集团口径与集团值比，而**不是**与同名分部基准比——与修复前（HEAD）行为一致，
+   属防漏检增强带来的已知退化边界（真实分部名不会取报告期标签，故判为可接受）。
+7. **分部名含 `_MARGIN_NAMED_RE` 字符类之外的字符**（如「小分子D&M」的 `&`）时无法被具名匹配，
+   整句按无名回退与集团值比——同样与 HEAD 行为一致；若该句数字与集团值差 > 15pp 会报一条
+   `fact_conflict`（口径错配方向的误报），需按 §8.3 的口径分流补 `segment_margins` 或后续放宽
+   字符类才能消除。
 
 ---
 
