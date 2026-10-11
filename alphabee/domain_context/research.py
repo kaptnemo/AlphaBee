@@ -121,6 +121,108 @@ _OBSERVABLE_SOURCE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ══════════════════════════════════════════════════════════════════════════
+# P0-1/P0-2 修复：数值声明抽取与口径感知校验（药明康德 run 暴露的收敛层缺口）
+# ══════════════════════════════════════════════════════════════════════════
+
+#: P0-1A：同一 (基数, 期别) 的隐含总量相对差超过此值 ⇒ 判定互相矛盾。
+_IMPLIED_TOTAL_TOLERANCE = 0.05
+#: P0-1B：输入包权威值兜底的容差（占比/毛利率用绝对百分点，金额用相对差）。
+_INPUT_PCT_TOLERANCE_PP = 2.0
+_INPUT_AMOUNT_TOLERANCE = 0.03
+#: P0-1B：不检查的单位（运营性口径，非财务声明）。
+_IGNORED_UNITS = {"倍", "kL", "L", "个"}
+
+# 期别归一：年份 + 报告期形态
+_YEAR_RE = re.compile(r"(20\d{2})")
+_END_DATE_RE = re.compile(r"(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])")
+
+# 「X 亿(元/人民币)」——隐含总量的分子
+_AMOUNT_YI_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)\s*亿(?:元|人民币)?")
+
+# 「占<base><收入|营收>?<P>%」——隐含总量的分母声明（base 归一后作为分组键）
+# 注：只覆盖"占+基数+数字%相邻"的形态；「占持续经营收入 434.2 亿的约 72%」这类
+# 分母金额在前、占比在后的形态**故意不覆盖**（保守漏检，见 §9）。
+_ZHAN_RE = re.compile(r"占(?P<base>[\u4e00-\u9fa5]{1,12}?)(?:收入|营收)?\s*(?P<pct>\d+(?:\.\d+)?)\s*%")
+#: 「占比」形态中 base 会误抓到的废词（"占比86.46%" → base="比"）。
+_ZHAN_BASE_STOP = {"比", "比重", "例", "比例", "率"}
+
+# 财务类数字声明（P0-1B 的声明单元；company_form 侧的声明必须带单位）
+_NUMBER_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>亿(?:元|人民币)?|万(?:元)?|%|％|倍|kL|L|个)")
+#: 证据侧的裸数值抽取（tushare ref 的值是无单位形态："netprofit_margin=42.53"，
+#: 不能用 _NUMBER_RE；裸抽取会顺带收进 603259/end_date 等无害串，不影响同值匹配）
+_RAW_NUMBER_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)")
+
+# 具名毛利率（P0-2）：「<名>业务/分部?毛利率 P%」；名称为集团口径词时走集团校验。
+# ``suffix`` 单独捕获（展示用）：不改写匹配语义，只让冲突文案带上被消费的「业务/分部」。
+_MARGIN_NAMED_RE = re.compile(
+    r"(?P<name>[\u4e00-\u9fa5A-Za-z0-9/·\-]{2,20}?)\s*(?P<suffix>业务|分部)?毛利率\s*(?P<value>-?\d+(?:\.\d+)?)\s*%"
+)
+_GROUP_SCOPE_NAMES = ("集团", "公司", "整体", "综合", "当年", "上年")
+
+#: 「毛利率」前缀里的期别/语境 token（不是业务名）：出现即剥离，剥空 ⇒ 该声明按
+#: 「无名/集团口径」走残余文本检查（P0-2 修复二轮：旧实现把「2025年毛利率30%」的
+#: 名判成 "2025年" 并吞掉 span，导致与集团值的偏差被静默漏检）。
+#: 三轮补全：词表与 :func:`_period_tags` 的既有期别词对齐（H1/H2、Q1–Q4、半年报/年报/
+#: 季报/一季报/三季报/中报/月报、本月/本季/上季/本报告期…），避免任何期别标签形态漏网。
+_PERIOD_CONTEXT_TOKENS = (
+    "本报告期",
+    "报告期内",
+    "报告期",
+    "上年同期",
+    "去年同期",
+    "第一季度",
+    "第二季度",
+    "第三季度",
+    "第四季度",
+    "前三季度",
+    "一季度",
+    "二季度",
+    "三季度",
+    "四季度",
+    "上半年",
+    "下半年",
+    "半年度",
+    "半年报",
+    "一季报",
+    "三季报",
+    "本年度",
+    "年报",
+    "中报",
+    "季报",
+    "月报",
+    "本季",
+    "上季",
+    "本月",
+    "年度",
+    "全年",
+    "中期",
+    "季度",
+    "当期",
+    "本期",
+    "半年",
+    "报告",
+    "H1",
+    "H2",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+)
+#: 前缀/内嵌的期别形态：``2025``、``2025年``、``2026H1``、``2025Q3``、``1-9月``、``9月``。
+_PERIOD_TOKEN_RE = re.compile(
+    r"(?:20\d{2}|\d{4})(?:年|H[12]|Q[1-4])?"
+    r"|\d{1,2}\s*[-~至]\s*\d{1,2}\s*月"
+    r"|\d{1,2}\s*月"
+)
+#: 期别量词字符：剥离后残余若只由它们构成（「2025年报」⇒「报」、「半年报」⇒「报」），
+#: 仍不是业务名；长度 < 2 同理（P0-2 修复三轮的兜底规则）。
+_PERIOD_QUANTIFIER_CHARS = frozenset("年月季报度期")
+#: 业务名最短长度（1 字残余按"非业务名"处理，走残余文本与集团值比）。
+_MIN_BUSINESS_NAME_LEN = 2
+
+_SENTENCE_SPLIT_RE = re.compile(r"[。；;，,\n]")
+
 #: 重试时的追加指令（把解析错误回灌给模型：只说"错了"模型无法自我纠正）。
 _RETRY_INSTRUCTION = (
     "上一次的回复无法被解析为合法 JSON（错误：{error}）。"
@@ -811,6 +913,249 @@ def _contains(a: str, b: str) -> bool:
     return left in right or right in left
 
 
+@dataclass
+class _ShareClaim:
+    """一条「X 亿 + 占<base>Y%」配对声明：隐含总量 = X / Y × 100。"""
+
+    amount_yi: float | None  # 分子（亿元）；同句找不到分子 ⇒ None（不参与校验）
+    pct: float  # 占比（%）
+    base: str  # 归一化基数名（"集团"/"化学业务"…）
+    period: str | None  # 单一期别标签；None = 一句含多个期别（歧义，跳过）
+    hypothesis_index: int  # 归属假设序号（降权定位）
+    snippet: str  # 所在句（issue 展示）
+
+
+def _period_tags(text: str) -> set[str]:
+    """提取文本中的期别标签，归一为 ``{year}{H1|Q1|Q3|FY}`` 集合。
+
+    顺序敏感：先判半年报（"2026年半年度报告" 含 "年度" 子串）、再判季度、其余归全年；
+    ``end_date`` 形态（``20260630``）按月份映射，且其区间**遮蔽**年份扫描，避免
+    "2026" 被同时归成 FY 与 H1 两个标签。
+    """
+    text = text or ""
+    masked: list[tuple[int, int]] = []
+    tags: set[str] = set()
+    for match in _END_DATE_RE.finditer(text):
+        masked.append(match.span())
+        year, month = match.group(1), int(match.group(2))
+        if month <= 3:
+            tags.add(f"{year}Q1")
+        elif month <= 6:
+            tags.add(f"{year}H1")
+        elif month <= 9:
+            tags.add(f"{year}Q3")
+        else:
+            tags.add(f"{year}FY")
+    for match in _YEAR_RE.finditer(text):
+        if any(start <= match.start() < end for start, end in masked):
+            continue
+        year = match.group(1)
+        window = text[max(0, match.start() - 8) : match.end() + 12]
+        if re.search(r"半年度|上半年|半年报|中期|H1", window):
+            tags.add(f"{year}H1")
+        elif re.search(r"第一季度|一季度|Q1", window):
+            tags.add(f"{year}Q1")
+        elif re.search(r"第三季度|三季度|Q3", window):
+            tags.add(f"{year}Q3")
+        else:
+            tags.add(f"{year}FY")
+    return tags
+
+
+def _extract_share_claims(text: str, hypothesis_index: int) -> list[_ShareClaim]:
+    """从 company_form 抽取「X 亿 + 占<base>P%」配对（P0-1A 的分子分母素材）。
+
+    配对规则：同一句内，「占…%」向左找最近的「X 亿」，没有再向右找最近的；
+    无分子 ⇒ 该声明不参与隐含总量校验（交由 P0-1B 出处检查兜底）。
+    一句含多个期别 ⇒ 整句声明 ``period=None``（归属歧义，不参与跨句比较）。
+    """
+    claims: list[_ShareClaim] = []
+    for sentence in _SENTENCE_SPLIT_RE.split(text or ""):
+        sentence_periods = sorted(_period_tags(sentence))
+        if len(sentence_periods) > 1:
+            continue  # 期别归属歧义：宁可漏检不可误报
+        period = sentence_periods[0] if sentence_periods else ""
+        for zhan in _ZHAN_RE.finditer(sentence):
+            base = (zhan.group("base") or "").strip()
+            if base in _ZHAN_BASE_STOP:
+                continue
+            amount: float | None = None
+            for match in _AMOUNT_YI_RE.finditer(sentence):
+                if match.end() <= zhan.start():
+                    amount = float(match.group("value"))
+                else:
+                    break
+            if amount is None:
+                for match in _AMOUNT_YI_RE.finditer(sentence):
+                    if match.start() >= zhan.end():
+                        amount = float(match.group("value"))
+                        break
+            claims.append(
+                _ShareClaim(
+                    amount_yi=amount,
+                    pct=float(zhan.group("pct")),
+                    base=base,
+                    period=period,
+                    hypothesis_index=hypothesis_index,
+                    snippet=sentence.strip()[:120],
+                )
+            )
+    return claims
+
+
+def _implied_total_contradictions(
+    hypotheses: Sequence[ResearchHypothesis],
+) -> list[dict[str, Any]]:
+    """P0-1A：同一 (基数, 期别) 下「X 亿 + 占Y%」的隐含总量必须自洽。
+
+    药明康德真实案例：H3「美国客户收入 140.3 亿、占集团收入 67.45%」⇒ 隐含集团 ≈ 208 亿；
+    H1「化学业务收入 249.9 亿（占集团 86.46%）」⇒ 隐含集团 ≈ 289 亿——同一基数互相矛盾。
+    本检查只**发现并降权**（无法判定孰对孰错），不替下游裁决。
+    """
+    groups: dict[tuple[str, str], list[_ShareClaim]] = {}
+    for index, hypothesis in enumerate(hypotheses):
+        for claim in _extract_share_claims(hypothesis.company_form, index):
+            if claim.amount_yi and claim.amount_yi > 0 and claim.pct > 0:
+                groups.setdefault((claim.base, claim.period or ""), []).append(claim)
+
+    findings: list[dict[str, Any]] = []
+    for (base, period), claims in sorted(groups.items()):
+        if len(claims) < 2:
+            continue
+        totals = [claim.amount_yi / claim.pct * 100.0 for claim in claims]
+        lo, hi = min(totals), max(totals)
+        if lo <= 0 or (hi - lo) / lo <= _IMPLIED_TOTAL_TOLERANCE:
+            continue
+        findings.append(
+            {
+                "base": base,
+                "period": period or "期别未标注",
+                "implied_totals": [round(value, 1) for value in totals],
+                "hypothesis_indices": sorted({claim.hypothesis_index for claim in claims}),
+                "snippets": [claim.snippet for claim in claims],
+            }
+        )
+    return findings
+
+
+@dataclass
+class _NumericClaim:
+    """company_form 里的一条财务类数字声明（P0-1B 的声明单元）。"""
+
+    value: str  # 原样数值串（issue 展示）
+    unit: str
+    period: str  # 单一期别标签；"" = 未标注（同值即算有出处）
+    in_share_clause: bool  # 该数字位于「占…%」从句内部 ⇒ 无出处时升级为降权
+    snippet: str
+
+
+def _normalize_number(text: str) -> str:
+    """归一化数值串（去尾零）："140.3" 与 "140.30" 视为同值。"""
+    value = (text or "").strip()
+    if "." in value:
+        value = value.rstrip("0").rstrip(".")
+    return value or "0"
+
+
+def _input_pack_numbers(research_input: Mapping[str, Any] | None) -> dict[str, list[float]]:
+    """输入包中的权威数值（P0-1B 出处兜底：结构化事实与证据同权）。
+
+    ``pct`` 桶：financials 全部值 + 分部 revenue_share / gross_margin；
+    ``amount_yi`` 桶：分部 revenue（元）折算亿元。
+    """
+    out: dict[str, list[float]] = {"pct": [], "amount_yi": []}
+    if not research_input:
+        return out
+    financials = research_input.get("financials")
+    if isinstance(financials, Mapping):
+        for value in financials.values():
+            if isinstance(value, int | float):
+                out["pct"].append(float(value))
+    items = research_input.get("latest_segments")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            for key in ("revenue_share", "gross_margin"):
+                value = item.get(key)
+                if isinstance(value, int | float):
+                    out["pct"].append(float(value))
+            revenue = item.get("revenue")
+            if isinstance(revenue, int | float) and revenue > 0:
+                out["amount_yi"].append(float(revenue) / 1e8)
+    return out
+
+
+def _uncovered_claims(
+    hypothesis: ResearchHypothesis,
+    research_input: Mapping[str, Any] | None,
+) -> list[_NumericClaim]:
+    """P0-1B：company_form 的财务类数字声明必须有出处。
+
+    出处判定（按序，任一命中即视为覆盖）：
+    1. **证据同值同期**：数值出现在任一 evidence 的 quote/ref 中，且声明期别
+       ∈ 证据期别集（未标注期别的声明只看同值）；
+    2. **输入包同值**：数值与输入包权威值之差在容差内（期别无关：输入包即结构化事实）。
+    规则：运营单位（倍/kL/个）不查；一句含多个期别 ⇒ 整句跳过；数字 0 跳过。
+    """
+    evidence_periods: set[str] = set()
+    evidence_numbers: set[str] = set()
+    for item in hypothesis.evidence:
+        evidence_periods |= _period_tags(item.ref)
+        evidence_periods |= _period_tags(item.quote)
+        # 裸数值抽取：tushare ref（"netprofit_margin=42.53"）与 quote 中的数字都收进来；
+        # 顺带收进的 symbol/end_date 等无害串不会与任何财务声明同值。
+        for match in _RAW_NUMBER_RE.finditer(f"{item.ref} {item.quote}"):
+            evidence_numbers.add(_normalize_number(match.group("value")))
+
+    input_numbers = _input_pack_numbers(research_input)
+    uncovered: list[_NumericClaim] = []
+    for sentence in _SENTENCE_SPLIT_RE.split(hypothesis.company_form or ""):
+        sentence_periods = sorted(_period_tags(sentence))
+        if len(sentence_periods) > 1:
+            continue  # 期别归属歧义：宁可漏检不可误报
+        period = sentence_periods[0] if sentence_periods else ""
+        zhan_spans = [match.span() for match in _ZHAN_RE.finditer(sentence)]
+        for match in _NUMBER_RE.finditer(sentence):
+            unit = match.group("unit")
+            if unit in _IGNORED_UNITS:
+                continue
+            normalized = _normalize_number(match.group("value"))
+            if normalized == "0":
+                continue
+            # ① 证据同值同期
+            if normalized in evidence_numbers and (not period or period in evidence_periods):
+                continue
+            # ② 输入包同值
+            numeric = float(match.group("value"))
+            if unit in {"%", "％"}:
+                if any(abs(numeric - ref) <= _INPUT_PCT_TOLERANCE_PP for ref in input_numbers["pct"]):
+                    continue
+            elif unit.startswith("亿"):
+                if any(
+                    ref > 0 and abs(numeric - ref) / ref <= _INPUT_AMOUNT_TOLERANCE
+                    for ref in input_numbers["amount_yi"]
+                ):
+                    continue
+            elif unit.startswith("万"):
+                amount_yi = numeric / 1e4
+                if any(
+                    ref > 0 and abs(amount_yi - ref) / ref <= _INPUT_AMOUNT_TOLERANCE
+                    for ref in input_numbers["amount_yi"]
+                ):
+                    continue
+            uncovered.append(
+                _NumericClaim(
+                    value=match.group("value"),
+                    unit=unit,
+                    period=period,
+                    in_share_clause=any(start <= match.start() < end for start, end in zhan_spans),
+                    snippet=sentence.strip()[:120],
+                )
+            )
+    return uncovered
+
+
 def _segment_shares(research_input: Mapping[str, Any] | None) -> dict[str, float]:
     """最新报告期的分部占比（C3 事实交叉校验的基准；无结构事实 ⇒ 空表 = 不校验）。"""
     if not research_input:
@@ -854,17 +1199,117 @@ def _share_contradictions(texts: Sequence[str], shares: Mapping[str, float]) -> 
     return conflicts
 
 
-def _margin_contradictions(texts: Sequence[str], financials: Mapping[str, float]) -> list[str]:
-    """C3：公司整体毛利率口径的声称值与 ``fact_values.gross_margin`` 相差超过容差 ⇒ 矛盾。"""
-    actual = financials.get("gross_margin")
-    if actual is None:
-        return []
+def _segment_margins(research_input: Mapping[str, Any] | None) -> dict[str, float]:
+    """最新报告期分部毛利率（P0-2：分部口径校验的基准；无 ⇒ 空表 = 不校验分部口径）。"""
+    if not research_input:
+        return {}
+    items = research_input.get("latest_segments")
+    if not isinstance(items, list):
+        return {}
+    margins: dict[str, float] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        name = str(item.get("segment_name") or "").strip()
+        margin = item.get("gross_margin")
+        if name and isinstance(margin, int | float):
+            margins[name] = float(margin)
+    return margins
+
+
+def _without_spans(text: str, spans: Sequence[tuple[int, int]]) -> str:
+    """挖掉给定区间后的残余文本（具名毛利率已被口径分流，无名检查只看残余）。"""
+    out: list[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        out.append(text[cursor:start])
+        cursor = end
+    out.append(text[cursor:])
+    return "".join(out)
+
+
+def _is_business_name(name: str) -> bool:
+    """残余名是否可能是业务名（P0-2 修复三轮的兜底规则）。
+
+    仅由期别量词字符（年|月|季|报|度|期）构成，或长度 < 2 ⇒ **不是**业务名：
+    「2025年报」剥成年「报」、「半年报」剥成「报」都不该被当成具名分部去匹配
+    ``segment_margins``（匹配不上就会把整句静默吞掉）。
+    """
+    text = (name or "").strip()
+    if len(text) < _MIN_BUSINESS_NAME_LEN:
+        return False
+    return any(char not in _PERIOD_QUANTIFIER_CHARS for char in text)
+
+
+def _strip_period_tokens(name: str) -> str:
+    """剥离毛利率前缀名里的期别/语境 token，返回**业务名**（无业务名 ⇒ ``""``）。
+
+    「2025年」/「2026H1」/「1-9月」/「半年度」/「前三季度」/「上年同期」/「2025年报」
+    都是期别口径，不是业务名：它们充当 name 时会被当成"具名分部"，既吞掉 named span
+    又在 ``segment_margins`` 里匹配不上 ⇒ 静默漏检（既不比分部也不比集团）。
+    剥空或残余只剩期别量词字符（≥ :func:`_is_business_name`）⇒ 归零，调用方交回
+    残余文本按「无名/集团口径」与集团值比较（保留 C3 闸门）。
+    期别 token 与业务名粘连时（「2026H1化学业务毛利率」）只剥前缀，业务名照常做同名比对。
+    """
+    text = (name or "").strip()
+    changed = True
+    while changed and text:
+        changed = False
+        stripped = _PERIOD_TOKEN_RE.sub("", text).strip()
+        if stripped != text:
+            text, changed = stripped, True
+        for token in _PERIOD_CONTEXT_TOKENS:
+            if text.startswith(token):
+                text, changed = text[len(token) :].strip(), True
+    return text if _is_business_name(text) else ""
+
+
+def _margin_contradictions(
+    texts: Sequence[str],
+    financials: Mapping[str, float],
+    segment_margins: Mapping[str, float] | None = None,
+) -> list[str]:
+    """C3（P0-2 修复）：毛利率**口径感知**校验——分部值与集团值不再混比。
+
+    - 「<名>业务毛利率 P%」：只与**同名分部**的毛利率基准比；无同名分部基准 ⇒ 跳过
+      （不比较 ≠ 不矛盾；旧实现拿分部值比集团值，是药明康德 FX 假设误报的根源）；
+    - 名字里只有期别/语境 token（「2025年毛利率30%」「半年度毛利率」）⇒ **不算具名**：
+      不吞 named span，回到残余文本按「无名/集团口径」与集团值比（否则整句被静默漏检）；
+    - 「毛利率 P%」（无名）与集团口径（集团/公司/整体/当年…）：与 ``financials.gross_margin`` 比
+      （保留原行为）。
+    """
+    segment_margins = segment_margins or {}
+    actual_group = financials.get("gross_margin")
     conflicts: list[str] = []
     for text in texts:
-        for match in _MARGIN_RE.finditer(text or ""):
+        named_spans: list[tuple[int, int]] = []
+        for match in _MARGIN_NAMED_RE.finditer(text or ""):
+            suffix = (match.group("suffix") or "").strip()
+            name = _strip_period_tokens(match.group("name"))
+            if not name:
+                continue  # 期别/语境 token 不是业务名：不记 span，交残余检查比集团值
+            named_spans.append(match.span())
             claimed = float(match.group("value"))
+            if any(_contains(name, scope) for scope in _GROUP_SCOPE_NAMES):
+                if actual_group is not None and abs(claimed - actual_group) > _MARGIN_TOLERANCE_PP:
+                    conflicts.append(f"集团毛利率: 假设声称 {claimed:.1f}% vs 实测 {actual_group:.1f}%")
+                continue
+            actual = None
+            for segment_name, margin in segment_margins.items():
+                if _contains(name, segment_name):
+                    actual = margin
+                    break
+            if actual is None:
+                continue  # 未知分部/无分部基准 ⇒ 跳过（不误报）
             if abs(claimed - actual) > _MARGIN_TOLERANCE_PP:
-                conflicts.append(f"毛利率: 假设声称 {claimed:.1f}% vs 实测 {actual:.1f}%")
+                conflicts.append(f"{name}{suffix}毛利率: 假设声称 {claimed:.1f}% vs 实测 {actual:.1f}%")
+        if actual_group is None:
+            continue
+        residual = _without_spans(text or "", named_spans)
+        for match in _MARGIN_RE.finditer(residual):
+            claimed = float(match.group("value"))
+            if abs(claimed - actual_group) > _MARGIN_TOLERANCE_PP:
+                conflicts.append(f"毛利率: 假设声称 {claimed:.1f}% vs 实测 {actual_group:.1f}%")
     return conflicts
 
 
@@ -992,17 +1437,74 @@ def converge(
         else:
             unverified.append(hypothesis.variable)
 
+    # ── C2.1：数字出处强度（P0-1B）──────────────────────────────────────
+    # ref 非空只保证"有引用"，不保证 company_form 里的数字被引用覆盖
+    # （药明康德 H3：2026H1 的 140.3 亿 / 67.45% 只有一条 2025 年报 quote 支撑）。
+    uncovered_map: dict[int, list[_NumericClaim]] = {
+        index: _uncovered_claims(hypothesis, research_input) for index, hypothesis in enumerate(verified)
+    }
+
     # ── C3：事实交叉校验（矛盾 ⇒ 降权 + 显式 issue，不静默）────────────
     shares = _segment_shares(research_input)
     financials = _financial_facts(research_input)
+    segment_margins = _segment_margins(research_input)  # P0-2 新增
+    consistency = _implied_total_contradictions(verified)  # P0-1A 新增
+    downgrade: dict[int, list[str]] = {}
+
+    # P0-1A：同一基数/期别的占比声明互相矛盾 ⇒ 相关假设同时降权
+    for finding in consistency:
+        for index in finding["hypothesis_indices"]:
+            downgrade.setdefault(index, []).append(
+                f"内部不一致：基数「{finding['base']}」（{finding['period']}）隐含总量 {finding['implied_totals']} 亿"
+            )
+        issues.append(
+            {
+                "severity": "medium",
+                "category": "driver_profile_research_internal_inconsistency",
+                "message": (
+                    f"同一基数「{finding['base']}」（{finding['period']}）的占比声明互相矛盾："
+                    f"「{'」 vs 「'.join(finding['snippets'])}」⇒ 隐含总量分别为 "
+                    f"{finding['implied_totals']} 亿（相对差 > {_IMPLIED_TOTAL_TOLERANCE:.0%}）。"
+                    "无法判定孰对孰错，相关假设已同时降权，请下游据此裁决。"
+                ),
+            }
+        )
+
+    # P0-1B：占比从句内的无出处数字 ⇒ 降权；其余无出处数字只留痕
+    for index, claims in uncovered_map.items():
+        if not claims:
+            continue
+        escalated = [claim for claim in claims if claim.in_share_clause]
+        if escalated:
+            downgrade.setdefault(index, []).append(
+                "数字无出处："
+                + "；".join(f"{claim.value}{claim.unit}（{claim.period or '期别未标注'}）" for claim in escalated)
+            )
+        issues.append(
+            {
+                "severity": "medium",
+                "category": "driver_profile_research_claim_uncovered",
+                "message": (
+                    f"假设「{verified[index].variable}」的 company_form 有 {len(claims)} 处"
+                    "财务数字声明无出处（证据同值同期不覆盖，输入包也无同值）："
+                    + "；".join(
+                        f"{claim.value}{claim.unit}（{claim.period or '期别未标注'}）：{claim.snippet}"
+                        for claim in claims
+                    )
+                    + ("。其中含占比从句数字，已降权。" if escalated else "。")
+                ),
+            }
+        )
+
     checked: list[ResearchHypothesis] = []
-    for hypothesis in verified:
+    for index, hypothesis in enumerate(verified):
         texts = [hypothesis.company_form, hypothesis.variable, *hypothesis.observables]
-        conflicts = _share_contradictions(texts, shares) + _margin_contradictions(texts, financials)
-        if conflicts:
+        conflicts = _share_contradictions(texts, shares) + _margin_contradictions(texts, financials, segment_margins)
+        if conflicts or downgrade.get(index):
             hypothesis = hypothesis.model_copy(
                 update={"confidence": min(hypothesis.confidence, _CONTRADICTION_MAX_CONFIDENCE)}
             )
+        if conflicts:
             issues.append(
                 {
                     "severity": "medium",
