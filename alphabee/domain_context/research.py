@@ -41,13 +41,13 @@ from alphabee.agents.driver_profile.output import (
 from alphabee.config import DomainContextResearchSettings, get_settings
 from alphabee.domain_context.context_router import RouterInput
 from alphabee.domain_context.contracts import (
-    ActivatedPrimitive,
     DriverEvidence,
     DriverHypothesis,
     DriverObservable,
     DriverProfile,
     ResearchQuestion,
 )
+from alphabee.domain_context.loader import load_playbooks, load_primitives
 from alphabee.utils.pipeline import parse_json
 from alphabee.utils.storage import normalize_symbol
 
@@ -392,7 +392,8 @@ def build_research_input(
     组成：公司身份 / **多期分部结构**（最关键）/ ``fact_values`` 关键项 + ``peer_*`` 基准 /
     Tier A 激活原语（``key_variables`` + ``causal_paths`` + ``disconfirming_signals``，
     **首次真正被消费**）/ ``COMPANY_TRACK.review_notes``（漂移线索）/ 本地年报 MD&A 片段
-    （``fetch_local_report_fragments``，上限 ``max_report_chars`` 字符）。
+    （``fetch_local_report_fragments``，上限 ``max_report_chars`` 字符）/ **可用 playbook 目录**
+    （P1-3：``available_playbooks`` = id + description 截断 160 字，``candidates`` 的合法取值域）。
 
     ``report_fragments`` 显式给出时不读盘（测试与离线回放用）。
     """
@@ -425,9 +426,17 @@ def build_research_input(
         "review_notes": list(track.review_notes) if track else [],
         "report_fragments": joined,
         "report_meta": report_meta,
+        # P1-3：把**目录内可用的 playbook id** 显式给到模型——否则模型只能凭记忆编框架名
+        # （药明康德 run 的 candidates 混进目录里不存在的 id 正是这么来的），收敛层的闭包
+        # 校验就只能事后踢人而无法事前约束。
+        "available_playbooks": [
+            {"id": playbook_id, "description": (playbook.description or "")[:160]}
+            for playbook_id, playbook in sorted(load_playbooks().items())
+        ],
         "notes": [
             "数字只能来自 tushare / 年报工具或本输入包的结构化事实；搜索结果不得当财务数据使用。",
             "分部结构必须与盈利公式自洽；矛盾必须写进 research_agenda。",
+            "candidates 只能引用 available_playbooks 中的 id；新框架提案走 proposed_frameworks。",
         ],
     }
 
@@ -964,6 +973,27 @@ def _period_tags(text: str) -> set[str]:
     return tags
 
 
+def _period_mix_sentences(hypotheses: Sequence[ResearchHypothesis]) -> list[str]:
+    """P2-6 辅助检测：同一句内出现 ≥2 个期别标签且 ≥2 处数字声明 ⇒ 疑似期别混用。
+
+    只查同句（确定性可判）；跨句的期别对照是正常的趋势讨论，不做机器裁决——
+    主要防线在 prompt 的标注条款（药明康德 case 里模型在 agenda 中已展示它知道期别，
+    只是 company_form 没写清：FY2025 的 51.89% 与 H1 同比 +7.48pp 无标注并列、
+    年化 ROE 27.69% 与半年 ROE 13.59% 相邻放置）。
+
+    判据刻意与 P0-1A/P0-1B 的「一句多期别 ⇒ 跳过校验」互补：那边为避免误报而放弃，
+    这边只留一条 LOW 留痕，把"期别没写清"这件事显式交给下游裁决。
+    """
+    hits: list[str] = []
+    for hypothesis in hypotheses:
+        for sentence in _SENTENCE_SPLIT_RE.split(hypothesis.company_form or ""):
+            periods = sorted(_period_tags(sentence))
+            numbers = list(_NUMBER_RE.finditer(sentence))
+            if len(periods) >= 2 and len(numbers) >= 2:
+                hits.append(f"「{hypothesis.variable}」：{sentence.strip()[:120]}")
+    return hits
+
+
 def _extract_share_claims(text: str, hypothesis_index: int) -> list[_ShareClaim]:
     """从 company_form 抽取「X 亿 + 占<base>P%」配对（P0-1A 的分子分母素材）。
 
@@ -1317,12 +1347,51 @@ def _margin_contradictions(
     return conflicts
 
 
-def _match_primitive(variable: str, primitives: Mapping[str, ActivatedPrimitive]) -> ActivatedPrimitive | None:
-    """C4：驱动变量与 primitive 的 ``key_variables`` 语义对齐（双向子串，确定性取首个命中）。"""
-    for primitive in primitives.values():
-        if any(_contains(variable, key) for key in primitive.key_variables):
-            return primitive
-    return None
+#: P1-5：对齐的最短共享连续子串（字符数；< 4 视为偶合不匹配，如"产能"/"成本"这类双字词）。
+_MATCH_MIN_CHARS = 4
+
+
+def _longest_shared_substring(a: str, b: str) -> str:
+    """两串的**最长公共连续子串**（滑动窗口，输入均为短串，无需 DP 优化）。
+
+    只回报长度 ≥ ``_MATCH_MIN_CHARS`` 的共享子串：更短的（"产能"/"成本"这类双字词）
+    属于普遍存在的偶合，一律返回 ``""``（判据下界与函数返回面一致，调用方不必再判长度）。
+
+    语义对齐的判据是「连续子串」：变量「持续经营业务在手订单余额及其同比」与
+    key_variable「新签订单与在手订单」共享「在手订单」（4 字）⇒ 对齐；
+    旧实现的整串双向子串（``_contains``）要求整个 key_variable 成为子串，导致 7/7 未命中。
+    """
+    a, b = (a or "").strip(), (b or "").strip()
+    if not a or not b:
+        return ""
+    if len(a) > len(b):
+        a, b = b, a
+    for length in range(len(a), _MATCH_MIN_CHARS - 1, -1):
+        for start in range(len(a) - length + 1):
+            chunk = a[start : start + length]
+            if chunk in b:
+                return chunk  # 从最长到最短，首个命中即最长
+    return ""
+
+
+def _match_primitive(variable: str, primitives: Mapping[str, Any]) -> tuple[Any | None, str, str]:
+    """C4（P1-5 重写）：驱动变量 → primitive 语义对齐。
+
+    返回 ``(primitive|None, 命中 key_variable, 共享子串)``：取**全候选池**内共享子串
+    最长的命中；< ``_MATCH_MIN_CHARS`` 视为未对齐；同长按 primitive id 升序决平
+    （迭代 ``sorted(primitives)``，仅严格更长才替换 ⇒ 天然确定性，不依赖 loader 目录序）。
+
+    池内元素同构取 ``key_variables``：目录 ``PrimitiveSchema`` 与激活快照
+    ``ActivatedPrimitive`` 该字段同名同义，故类型取 ``Any``（mypy strict 下由调用方保证）。
+    """
+    best: tuple[int, Any | None, str, str] = (-1, None, "", "")
+    for primitive_id in sorted(primitives):
+        primitive = primitives[primitive_id]
+        for key in primitive.key_variables:
+            shared = _longest_shared_substring(variable, key)
+            if len(shared) >= _MATCH_MIN_CHARS and len(shared) > best[0]:
+                best = (len(shared), primitive, key, shared)
+    return best[1], best[2], best[3]
 
 
 def _enforce_primary_roles(items: list[_Candidate]) -> list[_Candidate]:
@@ -1404,7 +1473,9 @@ def converge(
     | C1 schema | 逐条重新校验（防御：宽松救援路径可能留下半结构条目） | 单条丢弃并计数 |
     | C2 证据可溯 | 每条假设 ≥1 条 ``evidence`` 且 ``ref`` 非空 | 移入 ``unverified_drivers``，**不得进 primary_drivers**（LLM 自述的 ``open_questions`` 独立落位，P2-7 不再混装） |
     | C3 事实交叉校验 | ``observables``/``company_form`` 的占比、毛利率与结构事实相差超容差 | 降权（conf ≤ 0.3）+ MEDIUM issue |
-    | C4 原语对齐 | ``variable`` 与 primitive ``key_variables`` 对齐 | 填 ``matched_primitive`` + **无条件继承** ``causal_paths``（追加去重）/``disconfirming_signals``；对不上进 ``novel_drivers``（**唯一来源 = C4 推导**；LLM 自述的 ``novel_concepts`` 只进 ``research_meta``，P1-4） |
+    | C3.1 期别混用（P2-6） | ``company_form`` 同一句内 ≥2 个期别标签且 ≥2 处数字声明 | 只留 LOW issue（不降权；主防线在 prompt 的期别标注条款） |
+    | C4.0 candidates 闭包（P1-3） | ``candidates`` ⊆ domain_context 目录（playbook ⊕ primitive 两族 id） | 非法 id 移出 + ``research_meta["candidate_drops"]`` + LOW issue；提案走 ``proposed_frameworks`` |
+    | C4 原语对齐（P1-5） | ``variable`` 与 primitive ``key_variables`` 的**最长公共连续子串 ≥4 字**对齐；候选池 = 全原语目录 ⊕ 激活原语同 id 覆盖 | 填 ``matched_primitive`` + **无条件继承** ``causal_paths``（追加去重）/``disconfirming_signals``；对不上进 ``novel_drivers``（**唯一来源 = C4 推导**；LLM 自述的 ``novel_concepts`` 只进 ``research_meta``，P1-4）；命中细节落 ``research_meta["match_details"]`` |
     | C5 结构约束 | ≥1 primary 且 primary ≤3；条数 ≤ ``max_hypotheses`` | 按 confidence 截断 + 角色修正 |
     | C6 派生 | ``primary_drivers``/``secondary_drivers`` ← ``driver_hypotheses`` | 无可用假设时保留 Tier A 规则驱动（覆盖率不塌） |
 
@@ -1518,18 +1589,81 @@ def converge(
             )
         checked.append(hypothesis)
 
-    # ── C4：原语对齐（对齐 ⇒ 复用 YAML 因果链/证伪信号；对不上 ⇒ novel）──
-    primitives = {primitive.id: primitive for primitive in profile.activated_primitives}
+    # ── C3.1（P2-6）：同句期别混用轻检测（主防线是 prompt 的期别标注硬条款）────
+    # 只留 LOW 留痕：P0-1A/P0-1B 遇到"一句多期别"是**跳过校验**（宁可漏检不可误报），
+    # 这里把同一现象显式登记出来，交给下游裁决"期别口径是否确未标注"。
+    mix_hits = _period_mix_sentences(verified)
+    if mix_hits:
+        issues.append(
+            {
+                "severity": "low",
+                "category": "driver_profile_research_period_mixing",
+                "message": "同一句内混用多个报告期且含多处数字，期别口径疑似未标注：" + "；".join(mix_hits),
+            }
+        )
+
+    # ── C4.0（P1-3）：candidates 闭包校验（非法 id 移出，提案不污染候选）────
+    # loader 只读 YAML、带 lru_cache、无 import 期副作用（故可在模块顶部导入），
+    # 这里的目录读取是纯函数级、可重放的。
+    # 判定面 = 整个 domain_context 目录（playbook ⊕ primitive 两族 id）。为什么不是只认
+    # playbooks：真机缓存的 candidates 里混着 primitive 级分析积木（603259 = generic_fundamental
+    # + capacity_cycle/cost_curve/working_capital_stress），而 P1-3 的病根是「id 在两个目录
+    # **都不存在**」（600519 的 consumer_brand_pricing_power/premium_liquor_brand_franchise、
+    # 文档举例的 capacity_ramp_cdmo/policy_regulatory_risk）——只认 playbooks 会把合法积木误杀。
+    # **有意的不对称（闭包源 ⊋ prompt 提示池）**：prompt 与输入包只给 available_playbooks
+    # （playbook id，§2.2 不额外提供原语 id），闭包却接受 playbook ∪ 原语——这是"宽进严出"
+    # 的设计：提示面窄（防止模型凭空编框架名），校验面宽（只拦"目录里根本不存在"的 id，
+    # 不误杀真实 run 里合法出现的 primitive 级候选）。
+    catalog_ids = {*load_playbooks(), *load_primitives()}
+    valid_candidates: list[str] = []
+    dropped_candidates: list[str] = []
+    for candidate in _dedup(output.candidates):
+        if candidate in catalog_ids:
+            valid_candidates.append(candidate)
+        elif candidate.strip():
+            dropped_candidates.append(candidate)
+    if dropped_candidates:
+        meta["candidate_drops"] = dropped_candidates
+        issues.append(
+            {
+                "severity": "low",
+                "category": "driver_profile_research_invalid_candidate",
+                "message": (
+                    f"candidates 引用了目录（playbook 或原语）中不存在的 id：{dropped_candidates}，已移除。"
+                    "（新框架提案请走 proposed_frameworks 字段，本轮提案已保留："
+                    f"{_dedup(output.proposed_frameworks)}）"
+                ),
+            }
+        )
+
+    # ── C4：原语对齐（P1-5：全目录池 ⊕ 激活原语同 id 覆盖）────────────────
+    # 候选池从"仅 activated_primitives"改为**全原语目录**：
+    # fallback 时激活的只有通用 3 原语，project_delivery 等永远不可能被对齐
+    # （药明康德 run 的 7/7 未命中原因之二）。激活原语按 id 覆盖目录条目——
+    # 这既是"弱锚时锚定知识优先"的业务语义，也保留测试的注入缝
+    # （test_research.py 的 _capacity_primitive() 自定义 fixture 仍生效）。
+    primitives_pool: dict[str, Any] = {primitive.id: primitive for primitive in load_primitives().values()}
+    for activated in profile.activated_primitives:
+        primitives_pool[activated.id] = activated
     candidates: list[_Candidate] = []
     novel: list[str] = []
     matched_ids: list[str] = []
+    match_details: list[dict[str, str]] = []  # P1-5 审计：为什么对齐/对齐到哪
     for hypothesis in checked:
-        primitive = _match_primitive(hypothesis.variable, primitives)
+        primitive, matched_key, shared = _match_primitive(hypothesis.variable, primitives_pool)
         if primitive is None:
             novel.append(hypothesis.variable)
             candidates.append(_Candidate(hypothesis=hypothesis, novel=True))
             continue
         matched_ids.append(primitive.id)
+        match_details.append(
+            {
+                "variable": hypothesis.variable,
+                "primitive": primitive.id,
+                "key_variable": matched_key,
+                "shared": shared,
+            }
+        )
         inherited = [
             *hypothesis.falsifiers,
             *[signal for signal in primitive.disconfirming_signals if signal not in hypothesis.falsifiers],
@@ -1590,6 +1724,9 @@ def converge(
             "unverified_count": len(unverified),
             "llm_attempted": llm_attempted,
             "matched_primitives": _dedup(matched_ids),
+            # P1-5 审计：每条对齐的「变量 → primitive / 命中 key_variable / 共享子串」，
+            # 让"为什么对齐到这套框架"可复核（matched_primitives 键保持不变）。
+            "match_details": match_details,
             # P1-4：LLM 自述的「沉淀概念」只落 meta（契约 novel_drivers 唯一来源是 C4 推导），
             # 供 D3 沉淀工具消费，不混进契约字段。
             "novel_concepts": _dedup(output.novel_concepts),
@@ -1604,7 +1741,10 @@ def converge(
             # LLM 自述的 novel_concepts 不混入（药明康德 run 里 11 条中 7 条是假设变量
             # 逐字副本的根因），其内容进 research_meta 供沉淀工具使用。
             "novel_drivers": _dedup(novel),
-            "candidates": _dedup(output.candidates),
+            # P1-3：只落闭包校验通过的候选；提案（proposed_frameworks）另字段承接、
+            # 不污染 candidates（两者语义分离，见合同与 prompt 条款）。
+            "candidates": valid_candidates,
+            "proposed_frameworks": _dedup(output.proposed_frameworks),
             # P2-7：unverified_drivers 只收 C2 剥夺证据资格的**驱动变量**（隔离区）；
             # open_questions（认知缺口/数据悬疑）语义独立落位，不再混装进同一字段。
             "unverified_drivers": _dedup(unverified),
