@@ -122,6 +122,8 @@ from alphabee.domain_context.loader import load_playbooks  # 模块顶部 import
         )
 ```
 
+> **实现口径（P1-3）**：闭包源取 `load_playbooks() ∪ load_primitives()` **并集**，而非上面代码块字面的 playbooks-only——提示面窄（输入包 `available_playbooks` 仍只给 playbook id、§2.2 不提供原语 id）、校验面宽（只拦"两个目录都不存在"的 id），属有意设计；§10.2 的 `candidates=["capacity_cycle"]` 用例与真实缓存 603259 的 3 个 primitive 级候选均依赖此口径，而文档举例的 `capacity_ramp_cdmo`/`policy_regulatory_risk` 两目录皆无、仍被移出并留痕。
+
 最终落契约（C4/C6 的 update 块）：
 
 ```python

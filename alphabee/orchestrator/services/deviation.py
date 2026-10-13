@@ -92,6 +92,10 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "driver_profile_degraded": DeviationClass.D2_STRUCTURE,
     "context_build_failure": DeviationClass.D2_STRUCTURE,
     "empty_response": DeviationClass.D2_STRUCTURE,
+    # 收敛层候选闭包（P1-3，DRIVER_PROFILE_P1_P2_FIX_PLAN §9）：candidates 引用了
+    # domain_context 目录（playbook ⊕ 原语）中不存在的 id ⇒ **结构**偏离（LLM 输出的框架名
+    # 不在目录内，属输出结构问题，不是论证问题；提案走 proposed_frameworks）。
+    "driver_profile_research_invalid_candidate": DeviationClass.D2_STRUCTURE,
     # ── D3 论证偏离（无证据结论/论点冲突/证据链断裂）
     "thesis_gap": DeviationClass.D3_ARGUMENT,
     "thesis_conflict": DeviationClass.D3_ARGUMENT,
@@ -128,6 +132,9 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     # 互相矛盾（无法判定孰对孰错，双方同时降权）；占比从句内的财务数字无同值同期出处 ⇒ 论证层偏离
     "driver_profile_research_internal_inconsistency": DeviationClass.D3_ARGUMENT,
     "driver_profile_research_claim_uncovered": DeviationClass.D3_ARGUMENT,
+    # 收敛层期别口径（P2-6，同文档 §9）：``company_form`` 同一句内混用多个报告期且含多处
+    # 数字 ⇒ 期别口径疑似未标注——数字本身可能没错，但**论证可复核性**受损，故归论证偏离。
+    "driver_profile_research_period_mixing": DeviationClass.D3_ARGUMENT,
     # 现网（F1b）：报告结论可能依赖已证伪假设（gates.py 的 §6.3 检查）
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8 加权边审计（audit_amplification 的方向不一致上报）

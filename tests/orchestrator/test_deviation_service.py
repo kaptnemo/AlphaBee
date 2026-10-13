@@ -55,6 +55,8 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "driver_profile_degraded": DeviationClass.D2_STRUCTURE,
     "context_build_failure": DeviationClass.D2_STRUCTURE,
     "empty_response": DeviationClass.D2_STRUCTURE,
+    # 收敛层候选闭包（P1-3，DRIVER_PROFILE_P1_P2_FIX_PLAN §9）：candidates 引用目录外 id
+    "driver_profile_research_invalid_candidate": DeviationClass.D2_STRUCTURE,
     # D3
     "thesis_gap": DeviationClass.D3_ARGUMENT,
     "thesis_conflict": DeviationClass.D3_ARGUMENT,
@@ -87,6 +89,8 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     # 收敛层数值可靠性（P0-1A/P0-1B，DRIVER_PROFILE_P0_FIX_PLAN §7）
     "driver_profile_research_internal_inconsistency": DeviationClass.D3_ARGUMENT,
     "driver_profile_research_claim_uncovered": DeviationClass.D3_ARGUMENT,
+    # 收敛层期别口径（P2-6，同文档 §9）：同句内混用多个报告期且含多处数字
+    "driver_profile_research_period_mixing": DeviationClass.D3_ARGUMENT,
     "assumption_based_claim": DeviationClass.D3_ARGUMENT,
     # ── F3：§8.1 加权边审计的方向不一致上报（review_thesis 节点）
     "amplification_direction_conflict": DeviationClass.D3_ARGUMENT,
@@ -354,6 +358,9 @@ def test_unknown_category_falls_back_to_d2(category: str):
         # 驱动画像收敛层（P0-1A/P0-1B）新增的两条稳定 category
         ("driver_profile_research_internal_inconsistency", DeviationClass.D3_ARGUMENT),
         ("driver_profile_research_claim_uncovered", DeviationClass.D3_ARGUMENT),
+        # 驱动画像收敛层（P1-3 候选闭包 / P2-6 期别混用）新增的两条稳定 category
+        ("driver_profile_research_invalid_candidate", DeviationClass.D2_STRUCTURE),
+        ("driver_profile_research_period_mixing", DeviationClass.D3_ARGUMENT),
     ],
 )
 def test_real_world_category_extension(category: str, expected: DeviationClass):
