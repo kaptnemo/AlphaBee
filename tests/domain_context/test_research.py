@@ -480,7 +480,7 @@ def test_converge_c6_derives_drivers_agenda_and_provenance(tmp_path: Path) -> No
             ResearchAgendaItem(question="在建工程何时转固？", priority="medium"),
             ResearchAgendaItem(question="产能利用率是否见底？", priority="critical"),
         ],
-        novel_drivers=["铜箔-树脂价差"],
+        novel_concepts=["铜箔-树脂价差"],
         open_questions=["公司未披露的自研/代工拆分"],
         candidates=["capacity_cycle"],
     )
@@ -489,9 +489,14 @@ def test_converge_c6_derives_drivers_agenda_and_provenance(tmp_path: Path) -> No
 
     assert converged.primary_drivers == ["产能利用率"]
     assert converged.secondary_drivers == ["行业新增产能"]
-    assert converged.novel_drivers == ["铜箔-树脂价差"]
+    # P1-4：契约 novel_drivers 的唯一来源是 C4 推导（本用例两条假设都对齐了 capacity_cycle
+    # ⇒ 推导为空）；LLM 自述的 novel_concepts 只落 research_meta，不混进契约字段。
+    assert converged.novel_drivers == []
+    assert converged.research_meta["novel_concepts"] == ["铜箔-树脂价差"]
     assert converged.candidates == ["capacity_cycle"]
-    assert converged.unverified_drivers == ["公司未披露的自研/代工拆分"]
+    # P2-7：open_questions（认知缺口）与 unverified_drivers（C2 隔离的驱动变量）分列。
+    assert converged.unverified_drivers == []
+    assert converged.open_questions == ["公司未披露的自研/代工拆分"]
     assert converged.provenance == "hybrid"
     assert converged.research_confidence == pytest.approx(0.7)
     # agenda：按 priority 排序后截断（critical 在前）
@@ -606,12 +611,17 @@ def test_finalize_tier2_reverts_to_tier_a_rule_drivers() -> None:
         driver_hypotheses=[],
         candidates=["capacity_cycle"],
         novel_drivers=["新驱动"],
+        open_questions=["未解的认知缺口"],
+        proposed_frameworks=["产能爬坡型CDMO"],
         research_confidence=0.8,
     )
     payload = research.finalize_research_artifact(profile, tier=2, reason="agent_failure:OSError")
     assert payload["provenance"] == "rule"
     assert payload["novel_drivers"] == []
     assert payload["candidates"] == []
+    # §6.3：降级塑形的清空清单补两键（P2-7 open_questions / P1-3 proposed_frameworks）
+    assert payload["open_questions"] == []
+    assert payload["proposed_frameworks"] == []
     assert payload["research_confidence"] == 0.0
     assert payload["degraded"] is True
     assert payload["research_meta"]["fallback_tier"] == 2
@@ -626,6 +636,8 @@ def test_finalize_tier3_minimal_skeleton_keeps_playbook_with_empty_drivers() -> 
         anchor_strength="none",
         activated_primitives=[_capacity_primitive()],
         primary_drivers=["Tier A 兜底"],
+        open_questions=["未解的认知缺口"],
+        proposed_frameworks=["产能爬坡型CDMO"],
     )
     payload = research.finalize_research_artifact(profile, tier=3, reason="empty_context")
     assert payload["playbook"] == "hog_cycle"
@@ -634,6 +646,9 @@ def test_finalize_tier3_minimal_skeleton_keeps_playbook_with_empty_drivers() -> 
     assert payload["activated_primitives"] == []
     assert payload["driver_hypotheses"] == []
     assert payload["research_agenda"] == []
+    # §6.3：Tier 3 最小骨架同样清空 P2-7 / P1-3 两键
+    assert payload["open_questions"] == []
+    assert payload["proposed_frameworks"] == []
     assert payload["degraded"] is True
     assert payload["degradation_reason"] == "empty_context"
     assert payload["research_meta"]["fallback_tier"] == 3
@@ -1091,6 +1106,26 @@ def test_parse_research_output_all_items_invalid_goes_to_ladder() -> None:
 def test_salvage_research_output_rejects_empty_shell() -> None:
     assert research.salvage_research_output({"driver_hypotheses": [], "research_agenda": []}) is None
     assert research.salvage_research_output("不是对象") is None
+
+
+def test_salvage_research_output_syncs_renamed_and_new_fields() -> None:
+    """P1-3/P1-4：宽松救援路径同步契约字段名——``proposed_frameworks`` / ``novel_concepts``
+    原样救回；更名前的旧键 ``novel_drivers`` **不再**被读取（无双读、无静默兼容）。"""
+    rescued = research.salvage_research_output(
+        {
+            "proposed_frameworks": ["产能爬坡型CDMO"],
+            "novel_concepts": ["概念X"],
+            "open_questions": ["缺口Y"],
+        }
+    )
+    assert rescued is not None
+    output, dropped = rescued
+    assert dropped == 0
+    assert output.proposed_frameworks == ["产能爬坡型CDMO"]
+    assert output.novel_concepts == ["概念X"]
+    assert output.open_questions == ["缺口Y"]
+    # 只有旧键的载荷视为空壳 ⇒ 救援失败（否则等于把更名当没发生，静默带回旧语义）
+    assert research.salvage_research_output({"novel_drivers": ["旧概念"]}) is None
 
 
 def test_parse_research_output_empty_text() -> None:

@@ -43,12 +43,15 @@ def test_four_models_ignore_extra_fields_and_carry_json_examples() -> None:
 
 
 def test_driver_research_output_field_contract() -> None:
+    # P1-3/P1-4（t1 revision 1，captain 授权同步）：candidates 之后为 proposed_frameworks
+    # （新框架提案）与 novel_concepts（原 novel_drivers 更名，语义收敛为"沉淀概念"）。
     assert list(DriverResearchOutput.model_fields) == [
         "profit_formula",
         "driver_hypotheses",
         "research_agenda",
         "candidates",
-        "novel_drivers",
+        "proposed_frameworks",
+        "novel_concepts",
         "open_questions",
     ]
     assert list(ResearchHypothesis.model_fields) == [

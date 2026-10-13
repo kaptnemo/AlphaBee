@@ -124,6 +124,19 @@ class DriverProfile(BaseModel):
     novel_drivers: list[str] = Field(default_factory=list)
     candidates: list[str] = Field(default_factory=list)
     unverified_drivers: list[str] = Field(default_factory=list)
+    # 新框架提案（P1-3）：LLM 提出的、现有 playbook 目录无法覆盖的分析框架短名（沉淀原料）。
+    # 与 ``candidates`` 语义分离：candidates 只含目录内 id（收敛层闭包校验保证），本字段
+    # 不写库、不进主线，是 D3「novel 沉淀闭环」的正式输入。
+    # 消费计划：本步（契约先行）只定形状；值由 P1-3 收敛层闭包校验后落位（``converge`` 的
+    # update 块），下游有界摘要注入随 P2-8 的 D2 接线落地——不得做成 silent dead-end。
+    proposed_frameworks: list[str] = Field(default_factory=list)
+    # 研究层自述的"无法验证但影响判断"的开放问题（P2-7 与 ``unverified_drivers`` 语义分离）：
+    # unverified_drivers = 被 C2 剥夺证据资格的**驱动变量**（隔离区，禁止进主线）；
+    # open_questions     = 数据缺口/口径悬疑（如"公司未披露剥离处置收益的一次性占比"），
+    #                      供研究议程补充与 D3 沉淀，不作为"被踢出的驱动"处理。
+    # 消费计划：本步只保证收敛层独立落位（与 unverified_drivers 分列）；下游有界摘要注入
+    # 随 P2-8 的 D2 接线落地。
+    open_questions: list[str] = Field(default_factory=list)
     research_confidence: float = 0.0
     # 研究元信息（预算/耗时/降级原因等自由结构）；类型取 dict[str, Any] 以满足 strict mypy。
     research_meta: dict[str, Any] = Field(default_factory=dict)

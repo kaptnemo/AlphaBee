@@ -837,7 +837,8 @@ def salvage_research_output(parsed: Any) -> tuple[DriverResearchOutput, int] | N
         driver_hypotheses=hypotheses,
         research_agenda=agenda,
         candidates=_coerce_str_list(parsed.get("candidates")),
-        novel_drivers=_coerce_str_list(parsed.get("novel_drivers")),
+        proposed_frameworks=_coerce_str_list(parsed.get("proposed_frameworks")),
+        novel_concepts=_coerce_str_list(parsed.get("novel_concepts")),
         open_questions=_coerce_str_list(parsed.get("open_questions")),
     )
     has_raw_items = bool(parsed.get("driver_hypotheses")) or bool(parsed.get("research_agenda"))
@@ -849,7 +850,8 @@ def salvage_research_output(parsed: Any) -> tuple[DriverResearchOutput, int] | N
             agenda,
             output.profit_formula,
             output.candidates,
-            output.novel_drivers,
+            output.proposed_frameworks,
+            output.novel_concepts,
             output.open_questions,
         )
     ):
@@ -1400,9 +1402,9 @@ def converge(
     | 步骤 | 规则 | 失败行为 |
     |---|---|---|
     | C1 schema | 逐条重新校验（防御：宽松救援路径可能留下半结构条目） | 单条丢弃并计数 |
-    | C2 证据可溯 | 每条假设 ≥1 条 ``evidence`` 且 ``ref`` 非空 | 移入 ``unverified_drivers``，**不得进 primary_drivers** |
+    | C2 证据可溯 | 每条假设 ≥1 条 ``evidence`` 且 ``ref`` 非空 | 移入 ``unverified_drivers``，**不得进 primary_drivers**（LLM 自述的 ``open_questions`` 独立落位，P2-7 不再混装） |
     | C3 事实交叉校验 | ``observables``/``company_form`` 的占比、毛利率与结构事实相差超容差 | 降权（conf ≤ 0.3）+ MEDIUM issue |
-    | C4 原语对齐 | ``variable`` 与 primitive ``key_variables`` 对齐 | 填 ``matched_primitive`` + **无条件继承** ``causal_paths``（追加去重）/``disconfirming_signals``；对不上进 ``novel_drivers`` |
+    | C4 原语对齐 | ``variable`` 与 primitive ``key_variables`` 对齐 | 填 ``matched_primitive`` + **无条件继承** ``causal_paths``（追加去重）/``disconfirming_signals``；对不上进 ``novel_drivers``（**唯一来源 = C4 推导**；LLM 自述的 ``novel_concepts`` 只进 ``research_meta``，P1-4） |
     | C5 结构约束 | ≥1 primary 且 primary ≤3；条数 ≤ ``max_hypotheses`` | 按 confidence 截断 + 角色修正 |
     | C6 派生 | ``primary_drivers``/``secondary_drivers`` ← ``driver_hypotheses`` | 无可用假设时保留 Tier A 规则驱动（覆盖率不塌） |
 
@@ -1588,6 +1590,9 @@ def converge(
             "unverified_count": len(unverified),
             "llm_attempted": llm_attempted,
             "matched_primitives": _dedup(matched_ids),
+            # P1-4：LLM 自述的「沉淀概念」只落 meta（契约 novel_drivers 唯一来源是 C4 推导），
+            # 供 D3 沉淀工具消费，不混进契约字段。
+            "novel_concepts": _dedup(output.novel_concepts),
             "issues": [dict(item) for item in issues],
         }
     )
@@ -1595,9 +1600,15 @@ def converge(
         update={
             "driver_hypotheses": driver_hypotheses,
             "research_agenda": agenda,
-            "novel_drivers": _dedup([*output.novel_drivers, *novel]),
+            # P1-4：契约 novel_drivers **只**保留 C4 推导的「未对齐原语的驱动变量」——
+            # LLM 自述的 novel_concepts 不混入（药明康德 run 里 11 条中 7 条是假设变量
+            # 逐字副本的根因），其内容进 research_meta 供沉淀工具使用。
+            "novel_drivers": _dedup(novel),
             "candidates": _dedup(output.candidates),
-            "unverified_drivers": _dedup([*unverified, *output.open_questions]),
+            # P2-7：unverified_drivers 只收 C2 剥夺证据资格的**驱动变量**（隔离区）；
+            # open_questions（认知缺口/数据悬疑）语义独立落位，不再混装进同一字段。
+            "unverified_drivers": _dedup(unverified),
+            "open_questions": _dedup(output.open_questions),
             "provenance": provenance,
             "research_confidence": confidence,
             "research_meta": meta,
@@ -1630,6 +1641,8 @@ def _shape_for_tier(profile: DriverProfile, tier: int) -> DriverProfile:
                 "novel_drivers": [],
                 "candidates": [],
                 "unverified_drivers": [],
+                "open_questions": [],  # P2-7 新增：降级档位同样清零（与 unverified 分列）
+                "proposed_frameworks": [],  # P1-3 新增
                 "research_confidence": 0.0,
                 "provenance": "rule",
             }
@@ -1645,6 +1658,8 @@ def _shape_for_tier(profile: DriverProfile, tier: int) -> DriverProfile:
             "novel_drivers": [],
             "candidates": [],
             "unverified_drivers": [],
+            "open_questions": [],  # P2-7 新增
+            "proposed_frameworks": [],  # P1-3 新增
             "research_confidence": 0.0,
             "provenance": "rule",
         }

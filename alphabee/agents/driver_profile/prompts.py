@@ -47,6 +47,9 @@ DRIVER_PROFILE_RESEARCH_PROMPT = """你是 AlphaBee 的驱动画像研究代理�
 - `variable`：驱动变量名（公司特异，**不是行业常量**）；
 - `mechanism`：传导链（变量 → 中间环节 → 盈利结果，至少两步）；
 - `company_form`：该变量在本公司的具体形态（带分部/产品线数值，禁止只写形容词）；
+- `company_form` 里每个数字必须标注报告期与口径：同比必须写清基期\
+（如"56.55%（较 2025H1 的 49.07% +7.48pp）"）；年度与半年度数字不得无标注并列；\
+半年度 ROE 不得与年度 ROE 直接相邻比较；
 - `observables`：可观测指标 + 数据源（写成「指标名（来源：api 或 年报章节）」）；
 - `falsifiers`：什么情况这条变量不再主导（可证伪，不能写成"如果业绩变差"）；
 - `evidence`：≥1 条可回源证据（`kind` + 精确定位 `ref` + `quote`）。**没有证据的假设\
@@ -66,9 +69,13 @@ DRIVER_PROFILE_RESEARCH_PROMPT = """你是 AlphaBee 的驱动画像研究代理�
 （如"`query_financial_report` 第三节分产品收入明细"、"`query_tushare` income"）。
 
 同时给出：
-- `candidates`：若这家公司可能同时适用多套分析框架（多主线/过渡态），列出备选 playbook id；
-- `novel_drivers`：无法对齐任何已知分析原语的新驱动变量（供知识库沉淀，不写库）；
-- `open_questions`：你无法验证、但会影响判断的猜测。
+- `candidates`：若这家公司可能同时适用多套分析框架，**只能**列出输入包 available_playbooks\
+ 里给出的 playbook id（目录外的框架不要写进 candidates）；
+- `proposed_frameworks`：若你认为存在现有目录无法覆盖的分析框架，用短名提案\
+（如「产能爬坡型CDMO」），每条 ≤ 12 字——这是知识库沉淀的原料，不是备选框架；
+- `novel_concepts`：这家公司特有的、值得沉淀为分析原语的概念或观测口径（如\
+「R阶段分子向D/M订单的漏斗转化率」），**不要复述 driver_hypotheses 的变量名**；
+- `open_questions`：你无法验证、但会影响判断的猜测或数据缺口。
 
 ## 四、输出
 

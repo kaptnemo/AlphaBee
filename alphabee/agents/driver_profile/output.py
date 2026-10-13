@@ -9,7 +9,11 @@ observable / 证据 / 优先级）；而 LLM 端点的能力受限（不支持 j
   （``driver_hypotheses`` / ``research_agenda`` 字段一一对应，``observables`` 先取字符串
   再在收敛层拆分「名称 + 来源」）；
 - ``model_config = ConfigDict(extra="ignore")``：LLM 多给字段不炸（端点无 schema 约束时
-  模型常自行加字段），缺字段走默认值 + 校验。
+  模型常自行加字段），缺字段走默认值 + 校验；
+- ``novel_concepts`` / ``proposed_frameworks`` 是**沉淀原料**（P1-4 更名 / P1-3 新增），
+  与契约字段**不是**一一对应：``novel_concepts`` 只进 ``research_meta``，契约
+  ``novel_drivers`` 由 C4 对齐结果确定性推导；``proposed_frameworks`` 经收敛层闭包校验后
+  落 ``DriverProfile.proposed_frameworks``，不写库、不进 ``candidates``。
 
 ``json_schema_extra.example`` 是 ``json_instruction()`` 的 few-shot 示例来源；
 改字段时必须同步更新示例，避免 LLM 被过期示例误导。
@@ -110,7 +114,13 @@ class DriverResearchOutput(BaseModel):
     driver_hypotheses: list[ResearchHypothesis] = Field(default_factory=list)
     research_agenda: list[ResearchAgendaItem] = Field(default_factory=list)
     candidates: list[str] = Field(default_factory=list)  # 备选 playbook id（多主线）
-    novel_drivers: list[str] = Field(default_factory=list)
+    # 新框架提案（P1-3）：现有目录无法覆盖的分析框架短名（如「产能爬坡型CDMO」「定点监管风险」）
+    # ——沉淀原料，不写库、不进 ``candidates``
+    proposed_frameworks: list[str] = Field(default_factory=list)
+    # P1-4 更名（原 ``novel_drivers``）：这家公司特有的、值得沉淀为分析原语的**概念**
+    # ——不是 ``driver_hypotheses`` 变量名的复述；收敛层只把它放 ``research_meta``，
+    # 契约的 ``DriverProfile.novel_drivers`` 由 C4 对齐结果确定性推导（唯一来源）
+    novel_concepts: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)  # 无法验证的猜测（不进主线）
 
     model_config = ConfigDict(
@@ -146,7 +156,8 @@ class DriverResearchOutput(BaseModel):
                     }
                 ],
                 "candidates": ["generic_fundamental"],
-                "novel_drivers": ["铜箔-树脂价差"],
+                "proposed_frameworks": ["capacity_ramp_cdmo"],
+                "novel_concepts": ["R阶段分子向D/M订单的漏斗转化率"],
                 "open_questions": ["公司未披露的自研/代工拆分比例"],
             }
         },
