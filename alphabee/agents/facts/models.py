@@ -73,7 +73,7 @@ class FinancialSnapshot(BaseModel):
     revenue_yoy: float | None = None  # 营收同比增速（%）
     net_profit_yoy: float | None = None  # 净利润同比增速（%）
     eps_growth_yoy: float | None = None  # EPS 同比增速（%）
-    free_cashflow: float | None = None  # 自由现金流（tushare fcff）
+    free_cashflow: float | None = None  # 自由现金流 = 经营现金流 - 资本开支
     interest_bearing_debt: float | None = None  # 有息负债
     depreciation_amortization: float | None = None  # 折旧与摊销
     fixed_assets_total: float | None = None  # 固定资产合计

@@ -41,7 +41,6 @@ cashflow:
   n_cashflow_inv_act:        investing_cashflow
   n_cash_flows_fnc_act:      financing_cashflow
   c_pay_acq_const_fiolta:    capex
-  fcff:                      free_cashflow
   c_pay_dist_dpcp_int_pvd:   dividends_paid
   c_paid_to_for_empl:        salary_paid
 
@@ -60,7 +59,6 @@ fina_indicator:
   or_yoy:                 revenue_yoy
   netprofit_yoy:          net_profit_yoy
   basic_eps_yoy:          eps_growth_yoy
-  fcff:                   free_cashflow
   interestdebt:           interest_bearing_debt
   daa:                    depreciation_amortization
   fixed_assets:           fixed_assets_total

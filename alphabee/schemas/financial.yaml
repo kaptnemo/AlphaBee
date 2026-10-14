@@ -340,15 +340,15 @@ free_cashflow:
   type: float
   unit: CNY
   frequency: [quarterly, annual]
-  description: 自由现金流（FCFF）= 经营现金流 - 资本性支出
+  description: 自由现金流（FCF）= 经营现金流 - 资本性支出（购建固定资产等支付的现金）
   aliases:
-    zh: [自由现金流, FCFF, FCF]
-    en: [free cash flow, FCFF]
+    zh: [自由现金流, FCF, 经营自由现金流]
+    en: [free cash flow, FCF]
   required_by:
     derived_facts: []
   source_mappings:
-    tushare: [fcff]
-  notes: Tushare fina_indicator 提供预计算值；若缺失则由 operating_cashflow - capex 计算。
+    tushare: [n_cashflow_act, c_pay_acq_const_fiolta]
+  notes: 由 operating_cashflow - capex 计算。注意区别于 Tushare fina_indicator 的 fcff（企业自由现金流 FCFF，含营运资本变动与利息税盾），两者口径不同，不可混用。
 
 dividends_paid:
   category: financial

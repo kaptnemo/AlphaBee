@@ -310,6 +310,10 @@ def build_fundamental_factor(
     cashflow = _first(data.get("cashflow"))
     fastest, slowest = _segment_extremes(segments)
 
+    op_cf = _opt(cashflow.get("operating_cashflow"))
+    capex = _opt(cashflow.get("capex"))
+    free_cf = (op_cf - capex) if (op_cf is not None and capex is not None) else None
+
     factor = FundamentalFactor(
         revenue_yoy=_opt(fina.get("revenue_yoy")),
         net_profit_yoy=_opt(fina.get("net_profit_yoy")),
@@ -317,8 +321,8 @@ def build_fundamental_factor(
         roe=_opt(fina.get("roe")),
         gross_margin=_opt(fina.get("gross_margin")),
         net_margin=_opt(fina.get("net_margin")),
-        operating_cashflow=_opt(cashflow.get("operating_cashflow")),
-        free_cashflow=_opt(fina.get("free_cashflow")),
+        operating_cashflow=op_cf,
+        free_cashflow=free_cf,
         debt_to_assets=_opt(fina.get("debt_to_assets")),
         current_ratio=_opt(fina.get("current_ratio")),
         goodwill=_opt(balance.get("goodwill")),

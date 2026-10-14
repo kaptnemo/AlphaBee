@@ -70,7 +70,7 @@ def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
                 start_date=start,
                 fields="ts_code,end_date,roe,roa,grossprofit_margin,netprofit_margin,"
                 "current_ratio,quick_ratio,debt_to_assets,"
-                "or_yoy,netprofit_yoy,basic_eps_yoy,fcff,"
+                "or_yoy,netprofit_yoy,basic_eps_yoy,"
                 "interestdebt,daa,fixed_assets,"
                 "saleexp_to_gr,adminexp_of_gr,finaexp_of_gr,rd_exp",
             ).data
@@ -278,6 +278,8 @@ def get_financial_facts_model(symbol: str, periods: int = 24) -> FinancialFacts:
         bal = balance_map.get(period, {})
         cf = cashflow_map.get(period, {})
         fi = fina_map.get(period, {})
+        op_cf = safe_float(cf.get("operating_cashflow"))
+        capex_val = safe_float(cf.get("capex"))
         snapshots.append(
             FinancialSnapshot(
                 period=period,
@@ -302,10 +304,10 @@ def get_financial_facts_model(symbol: str, periods: int = 24) -> FinancialFacts:
                 inventory=safe_float(bal.get("inventory")),
                 goodwill=safe_float(bal.get("goodwill")),
                 # 现金流量表
-                operating_cashflow=safe_float(cf.get("operating_cashflow")),
+                operating_cashflow=op_cf,
                 investing_cashflow=safe_float(cf.get("investing_cashflow")),
                 financing_cashflow=safe_float(cf.get("financing_cashflow")),
-                capex=safe_float(cf.get("capex")),
+                capex=capex_val,
                 dividends_paid=safe_float(cf.get("dividends_paid")),
                 salary_paid=safe_float(cf.get("salary_paid")),
                 # 财务比率
@@ -319,7 +321,7 @@ def get_financial_facts_model(symbol: str, periods: int = 24) -> FinancialFacts:
                 revenue_yoy=safe_float(fi.get("revenue_yoy")),
                 net_profit_yoy=safe_float(fi.get("net_profit_yoy")),
                 eps_growth_yoy=safe_float(fi.get("eps_growth_yoy")),
-                free_cashflow=safe_float(fi.get("free_cashflow")),
+                free_cashflow=(op_cf - capex_val),
                 interest_bearing_debt=safe_float(fi.get("interest_bearing_debt")),
                 depreciation_amortization=safe_float(fi.get("depreciation_amortization")),
                 fixed_assets_total=safe_float(fi.get("fixed_assets_total")),
@@ -406,12 +408,10 @@ def render(data: dict[str, Any]) -> str:
     ]
     for d in ref_dates:
         r = cashflow_map.get(d)
-        fin = fina_map.get(d)
         if r is not None:
             op_cf = safe_float(r["operating_cashflow"])
             capex = safe_float(r["capex"])
-            fcff = safe_float(fin["free_cashflow"]) if fin is not None else 0.0
-            free_cf = fcff if fcff != 0.0 else (op_cf - capex)
+            free_cf = op_cf - capex
             lines.append(
                 f"| {d} "
                 f"| {op_cf / 1e8:.2f} "

@@ -39,13 +39,12 @@ def _fin() -> dict[str, Any]:
                 "roe": 15.2,
                 "gross_margin": 40.0,
                 "net_margin": 12.0,
-                "free_cashflow": 1e8,
                 "debt_to_assets": 45.0,
                 "current_ratio": 1.8,
             }
         ],
         "balance": [{"goodwill": 5e7}],
-        "cashflow": [{"operating_cashflow": 2e8}],
+        "cashflow": [{"operating_cashflow": 2e8, "capex": 1e8}],
     }
 
 
@@ -129,7 +128,7 @@ def test_build_fundamental_factor_maps_nested_tables():
     assert factor.net_margin == 12.0
     assert factor.operating_cashflow == 2e8  # cashflow 表首条
     assert factor.goodwill == 5e7  # balance 表首条
-    assert factor.free_cashflow == 1e8  # fina 表首条
+    assert factor.free_cashflow == 1e8  # operating_cashflow - capex
     assert factor.debt_to_assets == 45.0
     assert factor.current_ratio == 1.8
     # 未传 segments → segment 字段显式缺失（改造 E，不静默回退 0）
@@ -388,9 +387,7 @@ def patch_sources(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     def _fetch_segments(_s: str) -> Any:
-        return SimpleNamespace(
-            segments=[SimpleNamespace(revenue_yoy=35.44), SimpleNamespace(revenue_yoy=2.0)]
-        )
+        return SimpleNamespace(segments=[SimpleNamespace(revenue_yoy=35.44), SimpleNamespace(revenue_yoy=2.0)])
 
     monkeypatch.setattr(factors_mod, "_get_financial_fact", _fin_fact)
     monkeypatch.setattr(factors_mod, "_get_expectation_fact", _exp_fact)
