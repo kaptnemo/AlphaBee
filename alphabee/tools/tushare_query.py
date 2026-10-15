@@ -114,12 +114,14 @@ def _render_preview(api_name: str, normalized_params: str, df: pd.DataFrame) -> 
     lines += [
         "",
         "**使用建议**: 只请求你需要的列，避免全量列进入上下文。",
-        f'示例：`query_tushare(api_name="{api_name}", params=\'{normalized_params}\', fields="{columns[0]}")`',
+        f'示例：`query_tushare(api_name="{api_name}", params={normalized_params}, fields="{columns[0]}")`',
     ]
     return "\n".join(lines)
 
 
-def query_tushare(api_name: str, params: str, fields: str = "", max_rows: int = 50, preview: bool = False) -> str:
+def query_tushare(
+    api_name: str, params: dict[str, Any], fields: str = "", max_rows: int = 50, preview: bool = False
+) -> str:
     """动态调用任意 Tushare 接口获取数据，供 agent 根据问题自主选择接口和参数。
 
     当 agent 需要从 Tushare 获取特定数据时调用，包括但不限于：
@@ -141,9 +143,8 @@ def query_tushare(api_name: str, params: str, fields: str = "", max_rows: int = 
 
     Args:
         api_name: Tushare 接口名称，如 'daily'、'income'、'fina_indicator' 等
-        params:   JSON 格式的接口参数字符串，例如：
-                  '{"ts_code": "600519.SH", "start_date": "20240101", "end_date": "20241231"}'
-                  '{"ts_code": "300750.SZ", "start_date": "20230101"}'
+        params:   接口参数字典，例如：
+                  {"ts_code": "600519.SH", "start_date": "20240101", "end_date": "20241231"}
                   日期格式统一为 YYYYMMDD，如 '20240101'
         fields:   逗号分隔的列名白名单，例如 'end_date,accounts_receivable,total_assets'。
                   只渲染这些列，未传时按该接口的 AlphaBee 关键列投影。可用 preview=True
@@ -158,14 +159,18 @@ def query_tushare(api_name: str, params: str, fields: str = "", max_rows: int = 
     """
     max_rows = max(1, min(max_rows, 200))
 
-    try:
-        params_dict = json.loads(params)
-    except json.JSONDecodeError as e:
-        return (
-            f"❌ 参数解析失败：{e}\n"
-            "请确保 params 是合法的 JSON 字符串，"
-            '例如：\'{"ts_code": "600519.SH", "start_date": "20240101"}\''
-        )
+    # 兼容两种入参形态：正常为 dict；若（直接调用时）传入了 JSON 字符串则解析
+    if isinstance(params, str):
+        try:
+            params_dict = json.loads(params)
+        except json.JSONDecodeError as e:
+            return (
+                f"❌ 参数解析失败：{e}\n"
+                "请确保 params 是合法的 JSON 字符串，"
+                '例如：\'{"ts_code": "600519.SH", "start_date": "20240101"}\''
+            )
+    else:
+        params_dict = dict(params)
 
     # 抓取层参数剥离 fields/preview：同一接口参数只抓一次，不同投影共享缓存
     fetch_params = _fetch_params(params_dict)
