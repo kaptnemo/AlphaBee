@@ -305,7 +305,7 @@ class DomainContextResearchSettings(BaseModel):
     enabled: bool = Field(default=False, description="Tier B 总开关（flag 门控，false = 严格 no-op 回退 D0）")
     max_hypotheses: int = Field(default=7, description="驱动假设条数上限（超出按 confidence 截断）")
     max_agenda_items: int = Field(default=6, description="研究议程条数上限（按 priority 截断）")
-    max_tool_calls: int = Field(default=20, description="单标的工具调用硬上界（超限按已有输出收口）")
+    max_tool_calls: int = Field(default=100, description="单标的工具调用硬上界（超限按已有输出收口）")
     wall_timeout_s: float = Field(default=180.0, description="单标的墙钟超时（秒），到期走降级链")
     cache_ttl_days: int = Field(default=90, description="研究结果缓存 TTL（天）")
     cache_dir: str = Field(default="data/driver_profiles", description="研究结果缓存目录（相对 PROJECT_ROOT）")

@@ -231,7 +231,7 @@ def test_research_switch_defaults_off_and_can_be_enabled(monkeypatch: pytest.Mon
 def test_research_settings_reads_domain_context_section(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(research, "get_settings", lambda: _stub_settings(enabled=True))
     assert research.research_settings().enabled is True
-    assert research.research_settings().max_tool_calls == 20
+    assert research.research_settings().max_tool_calls == 100
 
 
 def test_config_example_registers_every_research_field_with_defaults() -> None:
