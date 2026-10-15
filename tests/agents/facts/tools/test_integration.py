@@ -22,6 +22,11 @@ import pytest
 
 from alphabee.agents.facts.tools._utils import normalize_ts_code, to_pure_code
 
+# 本文件全部用例都跑真实 TUSHARE（见 docstring）→ 按仓库约定标记为 integration：
+# 在 `pytest -m "not integration"`（pre-push）下被跳过，仅 `-m integration` 时运行
+# （避免间歇性空数据/限流把 pre-push 打成红）。
+pytestmark = pytest.mark.integration
+
 # ──────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────
