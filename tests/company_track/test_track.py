@@ -3,6 +3,7 @@
 from datetime import date
 
 import alphabee.company_track.data as data_module
+import alphabee.company_track.track as track_module
 from alphabee.company_track import build_company_track
 from alphabee.company_track.contracts import SegmentCollection, SegmentSnapshot
 
@@ -138,3 +139,114 @@ def test_build_company_track_filters_passthrough(monkeypatch):
     monkeypatch.setattr(data_module, "fetch_business_segments", fake_fetch)
     build_company_track("603986.SH", min_share=5.0, drop_other=False)
     assert captured == {"min_share": 5.0, "drop_other": False}
+
+
+# ── 人工覆盖表兜底（B3 override）────────────────────────────────────────────
+
+
+def _write_overrides(tmp_path, text, name="overrides.yaml"):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_override_hit_takes_precedence(monkeypatch, tmp_path):
+    # 命中：标签取人工确认值，依据记「人工覆盖：」，method=override，notes 留痕
+    monkeypatch.setattr(data_module, "fetch_business_segments", lambda *a, **k: _collection())
+    table = _write_overrides(
+        tmp_path,
+        "601138.SH:\n"
+        "  track_label: 云计算\n"
+        "  basis: 东财按行业分类：云计算 66.75%（同比 +88.7%）主导，产品口径为粗大类单桶\n"
+        "  effective_from: '20251231'\n",
+    )
+    monkeypatch.setattr(track_module, "_OVERRIDES_PATH", table)
+
+    artifact = build_company_track("601138.SH", sw_industry="电子")
+
+    assert artifact.track_label == "云计算"
+    assert artifact.track_method == "override"
+    assert artifact.override_basis == (
+        "人工覆盖：东财按行业分类：云计算 66.75%（同比 +88.7%）主导，产品口径为粗大类单桶"
+    )
+    assert any("人工覆盖生效" in note and "20251231" in note for note in artifact.review_notes)
+    # 覆盖只改标签/依据/方式：结构信号与取数元数据仍来自规则路径
+    assert artifact.dominant_segment == "存储芯片"
+    assert artifact.segments  # 仍是同一批分项
+    assert artifact.sw_industry == "电子"
+    assert artifact.as_of_date == "20251231"
+    # 覆盖后不应再出现 LLM 复核留痕
+    assert not any("LLM" in note for note in artifact.review_notes)
+
+
+def test_override_miss_keeps_rule_behaviour(monkeypatch, tmp_path):
+    # 未命中（表内无该 symbol）：行为与现状完全一致
+    monkeypatch.setattr(data_module, "fetch_business_segments", lambda *a, **k: _collection())
+    table = _write_overrides(
+        tmp_path,
+        "601138.SH:\n  track_label: 云计算\n  basis: 依据\n  effective_from: '20251231'\n",
+    )
+    monkeypatch.setattr(track_module, "_OVERRIDES_PATH", table)
+
+    artifact = build_company_track("603986.SH")
+
+    assert artifact.track_method == "rule"
+    assert artifact.track_label == "存储芯片"
+    assert "71.3%" in artifact.override_basis
+    assert not any("人工覆盖" in note for note in artifact.review_notes)
+    assert artifact.review_status == "approved"
+
+    # 与「空覆盖表」基线逐字段一致（除 generated_at）
+    monkeypatch.setattr(track_module, "_OVERRIDES_PATH", _write_overrides(tmp_path, "{}\n", name="empty.yaml"))
+    baseline = build_company_track("603986.SH")
+    for field in (
+        "track_label",
+        "track_method",
+        "override_basis",
+        "dominant_segment",
+        "fastest_segment",
+        "review_status",
+    ):
+        assert getattr(baseline, field) == getattr(artifact, field)
+    assert baseline.review_notes == artifact.review_notes
+
+
+def test_broken_override_table_degrades_to_rule(monkeypatch, tmp_path):
+    # 无法解析的 YAML / 缺必需字段 / 文件缺失 → 不崩溃，降级规则路径 + 留痕告警
+    monkeypatch.setattr(data_module, "fetch_business_segments", lambda *a, **k: _collection())
+
+    monkeypatch.setattr(track_module, "_OVERRIDES_PATH", _write_overrides(tmp_path, "601138.SH: [未闭合\n"))
+    broken = build_company_track("601138.SH")
+    assert broken.track_method == "rule"
+    assert broken.track_label == "存储芯片"
+    assert any("人工覆盖表解析失败" in note for note in broken.review_notes)
+
+    monkeypatch.setattr(
+        track_module, "_OVERRIDES_PATH", _write_overrides(tmp_path, "601138.SH:\n  track_label: 云计算\n")
+    )
+    missing = build_company_track("601138.SH")
+    assert missing.track_method == "rule"
+    assert missing.track_label == "存储芯片"
+    assert any("缺 basis/effective_from" in note for note in missing.review_notes)
+
+    monkeypatch.setattr(track_module, "_OVERRIDES_PATH", tmp_path / "gone.yaml")
+    absent = build_company_track("601138.SH")
+    assert absent.track_method == "rule"
+    assert absent.track_label == "存储芯片"
+    assert any("人工覆盖表不可读" in note for note in absent.review_notes)
+
+    # 单条非法不影响同表其他合法条目
+    monkeypatch.setattr(
+        track_module,
+        "_OVERRIDES_PATH",
+        _write_overrides(
+            tmp_path,
+            "601138.SH:\n  track_label: 云计算\n  basis: 依据\n  effective_from: '20251231'\n"
+            "603986.SH: 不是映射\n"
+            "002475.SZ:\n  track_label: 消费电子\n  basis: 依据\n  effective_from: '20251231'\n",
+        ),
+    )
+    partial = build_company_track("601138.SH")
+    assert partial.track_method == "override"
+    assert partial.track_label == "云计算"
+    assert any("条目非映射" in note for note in partial.review_notes)

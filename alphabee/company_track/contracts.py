@@ -53,6 +53,8 @@ class CompanyTrackArtifact(BaseModel):
     Phase C-E 填充：business_model / peer_group / peer_benchmarks / peer_group_confidence（三档）。
     B3 override 机制：``track_label``（公司赛道，修正字段）与 ``sw_industry``（申万基线）
     并存；下游引用 track 时必须注明「公司赛道标签（数据截至 X 报告期）」。
+    ``track_method`` 取值为字符串（无枚举强校验）：``rule`` / ``llm`` / ``override``，
+    其中 ``override`` 表示标签来自人工覆盖表（``overrides.yaml``）兜底。
     """
 
     schema_version: str = "1"
@@ -67,9 +69,9 @@ class CompanyTrackArtifact(BaseModel):
     segments: list[SegmentSnapshot] = Field(default_factory=list)
     dominant_segment: str | None = None  # 占比（或收入）最大业务线
     fastest_segment: str | None = None  # 增速最快业务线（占比 ≥ 阈值）
-    track_label: str = ""  # 真实赛道标签（规则或 LLM）
-    track_method: str = "rule"  # rule / llm
-    override_basis: str = ""  # 标签依据（占比/增速数据 + LLM 复核记录）
+    track_label: str = ""  # 真实赛道标签（规则 / LLM / 人工覆盖）
+    track_method: str = "rule"  # rule / llm / override（override=人工覆盖表兜底）
+    override_basis: str = ""  # 标签依据（占比/增速数据 + LLM 复核或人工覆盖记录）
 
     business_model: str = ""  # brand / odm / component / integrator / other（Phase E）
     business_model_evidence: str = ""

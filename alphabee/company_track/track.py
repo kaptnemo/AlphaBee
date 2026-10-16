@@ -5,12 +5,17 @@
 - B3 override 机制：``track_label``（公司赛道，修正字段）与 ``sw_industry``（申万基线）
   并存；下游引用 track 必须注明「公司赛道标签（数据截至 X 报告期）」；
 - B4 新鲜度：``as_of_date`` = 最新报告期；``stale_after`` = 报告期 + 90 天（年报期口径）；
-  跨年报期主线漂移写入 ``review_notes``（业务漂移可观测）。
+  跨年报期主线漂移写入 ``review_notes``（业务漂移可观测）；
+- 人工覆盖兜底：包内 ``overrides.yaml`` 登记的 symbol 直接采用人工确认标签
+  （``track_method="override"``），未登记走规则/LLM；表缺失或损坏时降级规则路径并留痕。
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import yaml
 
 from alphabee.company_track.contracts import CompanyTrackArtifact
 from alphabee.company_track.label import (
@@ -24,6 +29,10 @@ from alphabee.company_track.naming import is_other_placeholder, is_revenue_type_
 
 _STALE_AFTER_DAYS = 90  # 报告期口径：年报披露后 ~3 个月视为需刷新
 
+# 人工覆盖表（包内静态 YAML）与其必需字段
+_OVERRIDES_PATH = Path(__file__).parent / "overrides.yaml"
+_OVERRIDE_FIELDS = ("track_label", "basis", "effective_from")
+
 
 def _stale_after(report_date: str) -> str | None:
     try:
@@ -31,6 +40,45 @@ def _stale_after(report_date: str) -> str | None:
     except ValueError:
         return None
     return (parsed + timedelta(days=_STALE_AFTER_DAYS)).isoformat()
+
+
+def _load_overrides(path: Path | None = None) -> tuple[dict[str, dict[str, str]], str | None]:
+    """加载人工覆盖表 ``{symbol: {track_label, basis, effective_from}}``。
+
+    Returns:
+        ``(table, warning)``：``warning`` 为 None 表示没有异常（含「空表」这一合法状态）。
+        文件缺失/不可读 → 空表 + 告警；无法解析 YAML 或顶层非映射 → 空表 + 告警；
+        单条非映射或缺必需字段 → 跳过该条 + 告警。任何异常都不抛出——人工覆盖是长尾
+        兜底，不得阻断取数与规则标签。
+    """
+    target = path if path is not None else _OVERRIDES_PATH
+    try:
+        raw_text = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {}, f"人工覆盖表不可读（{target.name}），已跳过人工覆盖: {exc}"
+    try:
+        loaded = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        return {}, f"人工覆盖表解析失败（{target.name}），已跳过人工覆盖: {exc}"
+    if loaded is None:
+        return {}, None  # 空表：未登记任何覆盖，合法状态
+    if not isinstance(loaded, dict):
+        return {}, f"人工覆盖表结构非法（{target.name}，顶层应为 symbol → 覆盖项映射），已跳过人工覆盖"
+
+    table: dict[str, dict[str, str]] = {}
+    invalid: list[str] = []
+    for symbol, entry in loaded.items():
+        if not isinstance(entry, dict):
+            invalid.append(f"{symbol}（条目非映射）")
+            continue
+        missing = [field for field in _OVERRIDE_FIELDS if not str(entry.get(field) or "").strip()]
+        if missing:
+            invalid.append(f"{symbol}（缺 {'/'.join(missing)}）")
+            continue
+        table[str(symbol)] = {field: str(entry[field]).strip() for field in _OVERRIDE_FIELDS}
+    if invalid:
+        return table, f"人工覆盖表存在非法条目已跳过: {', '.join(invalid)}"
+    return table, None
 
 
 def build_company_track(
@@ -55,6 +103,10 @@ def build_company_track(
     Returns:
         ``CompanyTrackArtifact``；无业务线数据时 ``degraded=True`` + ``review_status="rejected"``
         并显式留痕（不抛异常）。
+
+    覆盖优先级：``overrides.yaml`` 命中该 symbol 时，``track_label`` 取人工确认值、
+    ``override_basis`` 记「人工覆盖：<basis>」、``track_method="override"``，并跳过 LLM
+    复核（标签与依据均由人工表确定）；未命中时完全走规则/LLM 原路径。
     """
     from alphabee.company_track.data import fetch_business_segments
 
@@ -81,10 +133,24 @@ def build_company_track(
 
     base_segments, base_period = select_label_base(collection.segments)
     rule: TrackLabelResult = derive_track_label(base_segments)
-    track_label, basis, method = synthesize_track_label(collection, rule, use_llm=use_llm)
+    overrides, override_warning = _load_overrides()
+    override = overrides.get(symbol)
+    if override:
+        track_label = override["track_label"]
+        basis = f"人工覆盖：{override['basis']}"
+        method = "override"
+    else:
+        track_label, basis, method = synthesize_track_label(collection, rule, use_llm=use_llm)
     drift_notes = detect_track_drift(collection.segments)
 
     notes = [f"公司赛道标签基于 {base_period} 报告期数据（来源 {collection.source}）"]
+    if override:
+        notes.append(
+            f"人工覆盖生效（effective_from {override['effective_from']}）："
+            f"{override['track_label']}，依据 {override['basis']}"
+        )
+    if override_warning:
+        notes.append(f"人工覆盖表告警: {override_warning}")
     if base_period and collection.latest_period and base_period != collection.latest_period:
         latest_product = [
             s

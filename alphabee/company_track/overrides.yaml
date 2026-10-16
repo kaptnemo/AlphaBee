@@ -1,0 +1,20 @@
+# 人工赛道覆盖表（长尾兜底，非主方案）。
+#
+# 定位约束：只登记「规则判不对、且已人工确认」的个案。规则能判对的公司不得入表——
+# 若某类误判可归纳成通用判据，应回填 label.py 的规则，而不是继续扩充本表。
+#
+# 结构：
+#   <symbol>:
+#     track_label:    人工确认的赛道标签（字符串）
+#     basis:          依据（引用真实数值，写清规则为何判不对）
+#     effective_from: 依据的报告期 YYYYMMDD（供陈旧复核）
+#
+# 三个字段均为必需；任一条目缺失字段会被跳过，整表无法解析时降级为纯规则路径，
+# 两种情况都会在 artifact.review_notes 留痕（见 company_track/track.py::_load_overrides）。
+#
+# 消费方：alphabee/company_track/track.py::build_company_track（命中 → track_method=override）。
+
+601138.SH:
+  track_label: 云计算
+  basis: 东财主营构成「按行业分类」显示 云计算 66.75%（同比 +88.7%）主导、通信及移动网络设备 32.99%；「按产品分类」仅有粗大类单桶 3C电子产品 99.82%，无法区分真实赛道
+  effective_from: "20251231"
