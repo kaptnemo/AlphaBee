@@ -7,6 +7,8 @@ B1 规则层：真实赛道 = 收入占比 top1 且增速非负的业务线；�
 口径稳定化（相对原始设计的关键修正）：
 - 标签基准期用 **最新年报期**（:func:`select_label_base`），而非最新总体期——
   半年报常退化为「销售商品/许可收入」收入性质拆分，年报才是治疗领域/产品组合；
+- 选类判据为**信息量优先**：产品口径退化成粗口径单桶（去「其他」后仅 1 项，或 top1 占比
+  ≥ ``_COARSE_SHARE``）而行业口径仍有区分度时回退行业，否则维持「产品 → 行业」原顺序；
 - 识别**收入性质拆分**与 **EM 匿名占位名**，产出显式告警；
 - 漂移检测区分「业务主线漂移 / 分类口径切换 / 纯改名」，避免把改名当漂移。
 
@@ -31,6 +33,10 @@ from alphabee.company_track.naming import (
 # 分类类型优选顺序：产品分解最能代表业务线；其次行业；再退其他
 _CATEGORY_PREFERENCE = ("按产品分类", "按行业分类")
 
+# 产品口径「粗退化」阈值：去「其他」后 top1 占比 ≥ 该值即视为粗口径（单桶/高度集中）。
+# 与审计脚本 COARSE_PRODUCT_BUCKET 判据同口径，避免两处判据漂移。
+_COARSE_SHARE = 0.95
+
 
 @dataclass
 class TrackLabelResult:
@@ -49,14 +55,14 @@ def _is_other(name: str) -> bool:
     return is_other_placeholder(name)
 
 
-def _pick_category(segments: list[SegmentSnapshot]) -> str:
-    present = sorted({seg.category for seg in segments if seg.category})
-    if not present:
-        return ""
-    for preferred in _CATEGORY_PREFERENCE:
-        if preferred in present:
-            return preferred
-    return present[0]
+def _informative(segments: list[SegmentSnapshot]) -> list[SegmentSnapshot]:
+    """剔除「其他」占位项后的有效业务分项。"""
+    return [seg for seg in segments if not _is_other(seg.segment_name)]
+
+
+def _segments_of(segments: list[SegmentSnapshot], category: str) -> list[SegmentSnapshot]:
+    """指定分类口径下的分项（不剔除「其他」，判据内部自行剔除）。"""
+    return [seg for seg in segments if seg.category == category]
 
 
 def _candidate_segments(segments: list[SegmentSnapshot], category: str) -> list[SegmentSnapshot]:
@@ -73,6 +79,61 @@ def _effective_share(seg: SegmentSnapshot, candidates: list[SegmentSnapshot]) ->
     if total > 0 and seg.revenue is not None:
         return seg.revenue / total * 100.0
     return 0.0
+
+
+def _effective_count(segments: list[SegmentSnapshot]) -> int:
+    """去「其他」后有效分项数（选类判据用）。"""
+    return len(_informative(segments))
+
+
+def _top1_share(segments: list[SegmentSnapshot]) -> float:
+    """去「其他」后 top1 占比（0-1；空集 → 0.0），选类判据用。
+
+    与审计脚本 COARSE_PRODUCT_BUCKET 同口径：数据源直接给占比（EM）时取原值，
+    不按有效分项重新归一；无占比（tushare 兜底）时退化为有效池内收入相对占比。
+    """
+    pool = _informative(segments)
+    if not pool:
+        return 0.0
+    return max(_effective_share(seg, pool) for seg in pool) / 100.0
+
+
+def _product_bucket_degraded(segments: list[SegmentSnapshot]) -> bool:
+    """产品口径粗退化：去「其他」后只剩 1 项，或 top1 占比 ≥ ``_COARSE_SHARE``。"""
+    return _effective_count(segments) == 1 or _top1_share(segments) >= _COARSE_SHARE
+
+
+def _has_distinction(segments: list[SegmentSnapshot]) -> bool:
+    """口径有区分度：去「其他」后 ≥ 2 项，且 top1 占比 < ``_COARSE_SHARE``。"""
+    return _effective_count(segments) >= 2 and _top1_share(segments) < _COARSE_SHARE
+
+
+def _fallback_to_industry(segments: list[SegmentSnapshot]) -> bool:
+    """信息量优先判据：产品口径粗退化，且行业口径更有区分度 → 应由产品回退行业。"""
+    product = _segments_of(segments, "按产品分类")
+    industry = _segments_of(segments, "按行业分类")
+    if not product or not industry:
+        return False
+    return _product_bucket_degraded(product) and _has_distinction(industry)
+
+
+def _pick_category(segments: list[SegmentSnapshot]) -> str:
+    """选分类口径：信息量优先（产品口径粗退化则回退行业），否则维持原「产品 → 行业」。
+
+    产品口径去「其他」后只剩 1 项、或 top1 占比 ≥ ``_COARSE_SHARE``，且行业口径去
+    「其他」后 ≥ 2 项、top1 占比 < ``_COARSE_SHARE``（有区分度）时回退「按行业分类」；
+    否则沿用 ``_CATEGORY_PREFERENCE``——保证「单桶但语义精确」（产品/行业同为单桶）
+    的公司不回归。
+    """
+    present = sorted({seg.category for seg in segments if seg.category})
+    if not present:
+        return ""
+    if _fallback_to_industry(segments):
+        return "按行业分类"
+    for preferred in _CATEGORY_PREFERENCE:
+        if preferred in present:
+            return preferred
+    return present[0]
 
 
 def _weighted_score(seg: SegmentSnapshot, share: float) -> float:
@@ -99,6 +160,16 @@ def _is_rename(a: set[str], b: set[str]) -> bool:
     return SequenceMatcher(None, x, y).ratio() >= 0.5
 
 
+def _fmt_share(share: float) -> str:
+    """占比展示：保留两位小数并去掉尾随 0（66.75 → "66.75"，71.3 → "71.3"，100.0 → "100"）。
+
+    ``override_basis`` 要求引用真实数值（设计 §4.4 以 66.75% 为例），固定一位小数会把
+    66.75 截成 66.8；尾随 0 去除则保持既有「71.3%」这类展示习惯不变。
+    """
+    text = f"{share:.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def derive_track_label(
     segments: list[SegmentSnapshot],
     *,
@@ -123,6 +194,13 @@ def derive_track_label(
 
     share_missing = all(seg.revenue_share is None for seg in candidates)
     warnings: list[str] = []
+    if _fallback_to_industry(segments):
+        product_pool = _segments_of(segments, "按产品分类")
+        warnings.append(
+            f"产品口径粗退化（去「其他」后 {_effective_count(product_pool)} 项，"
+            f"top1 占比 {_fmt_share(_top1_share(product_pool) * 100)}%），"
+            "按信息量优先回退「按行业分类」口径"
+        )
     if share_missing and not category:
         warnings.append("占比缺失（tushare 兜底口径，产品/地区混列），按类别内收入近似排序，仅供参考")
 
@@ -175,7 +253,7 @@ def derive_track_label(
         detail = f"同比 {seg.revenue_yoy:+.1f}%" if seg.revenue_yoy is not None else "增速未知"
         if seg.gross_margin is not None:
             detail += f"，毛利 {seg.gross_margin:.1f}%"
-        basis_parts.append(f"{seg.segment_name} {share:.1f}%（{detail}）")
+        basis_parts.append(f"{seg.segment_name} {_fmt_share(share)}%（{detail}）")
     override_basis = "；".join(basis_parts)
 
     return TrackLabelResult(

@@ -2,6 +2,7 @@
 
 from alphabee.company_track.contracts import SegmentCollection, SegmentSnapshot
 from alphabee.company_track.label import (
+    _COARSE_SHARE,
     derive_track_label,
     detect_track_drift,
     select_label_base,
@@ -106,6 +107,107 @@ def test_category_preference():
     industry_only = derive_track_label([_seg("集成电路", 99.9, 20.0, category="按行业分类")])
     assert industry_only.category == "按行业分类"
     assert industry_only.track_label == "集成电路"
+
+
+# ── 信息量优先选类（产品口径粗退化 → 回退行业）──────────────────────────────
+
+
+def _foxconn_like():
+    """工业富联式：产品口径为粗大类单桶，行业口径有区分度。"""
+    return [
+        _seg("3C电子产品", 99.82, 10.4, category="按产品分类"),
+        _seg("云计算", 66.75, 88.7, category="按行业分类"),
+        _seg("通信及移动网络设备", 32.99, 3.5, category="按行业分类"),
+        _seg("工业互联网", 0.08, None, category="按行业分类"),
+    ]
+
+
+def test_coarse_product_bucket_falls_back_to_industry():
+    result = derive_track_label(_foxconn_like())
+    assert result.category == "按行业分类"
+    assert result.track_label == "云计算"
+    assert result.dominant_segment == "云计算"
+    assert any("产品口径粗退化" in w for w in result.warnings)
+    # 依据必须引用行业口径的真实数值（占比 66.75% / 同比 +88.7%）
+    assert "66.75%" in result.override_basis
+    assert "+88.7%" in result.override_basis
+    assert "3C电子产品" not in result.override_basis
+    assert result.candidates[0]["name"] == "云计算"
+
+
+def test_precise_single_bucket_keeps_product_category():
+    # 中芯国际式：产品单桶但语义精确；行业同为单桶（无更细口径可回退）→ 不回归
+    segments = [
+        _seg("集成电路晶圆制造代工", 93.27, None, category="按产品分类"),
+        _seg("集成电路行业", 98.9, None, category="按行业分类"),
+    ]
+    result = derive_track_label(segments)
+    assert result.category == "按产品分类"
+    assert result.track_label == "集成电路晶圆制造代工"
+    assert not any("产品口径粗退化" in w for w in result.warnings)
+
+    # 行业同为单桶且同名：仍用产品口径
+    same_name = derive_track_label(segments + [_seg("集成电路晶圆制造代工", 100.0, None, category="按行业分类")])
+    assert same_name.category == "按产品分类"
+    assert same_name.track_label == "集成电路晶圆制造代工"
+
+    # 行业口径 top1 ≥ 阈值（无区分度）：同样不触发回退
+    lopsided_industry = derive_track_label(
+        [
+            _seg("集成电路晶圆制造代工", 93.27, None, category="按产品分类"),
+            _seg("集成电路行业", 96.0, None, category="按行业分类"),
+            _seg("技术授权", 4.0, None, category="按行业分类"),
+        ]
+    )
+    assert lopsided_industry.category == "按产品分类"
+    assert lopsided_industry.track_label == "集成电路晶圆制造代工"
+
+
+def test_multi_bucket_product_keeps_product_priority():
+    # 产品口径多桶有区分度 → 维持产品优先（行为与既有实现一致）
+    segments = [
+        _seg("存储芯片", 71.3, 26.4, category="按产品分类"),
+        _seg("微控制器", 20.8, None, category="按产品分类"),
+        _seg("集成电路", 66.75, 88.7, category="按行业分类"),
+        _seg("技术服务", 32.99, 3.5, category="按行业分类"),
+        _seg("其他业务", 0.08, None, category="按行业分类"),
+    ]
+    result = derive_track_label(segments)
+    assert result.category == "按产品分类"
+    assert result.track_label == "存储芯片"
+    assert not any("产品口径粗退化" in w for w in result.warnings)
+
+
+def test_coarse_share_boundary_pins_inequality():
+    # 阈值与 Phase 1 审计脚本 COARSE_PRODUCT_BUCKET 判据同口径
+    assert _COARSE_SHARE == 0.95
+
+    industry = [
+        _seg("云计算", 66.75, 88.7, category="按行业分类"),
+        _seg("通信及移动网络设备", 32.99, 3.5, category="按行业分类"),
+        _seg("工业互联网", 0.08, None, category="按行业分类"),
+    ]
+    at_threshold = [
+        _seg("粗大类", _COARSE_SHARE * 100, 5.0, category="按产品分类"),
+        _seg("零头", 100.0 - _COARSE_SHARE * 100, 5.0, category="按产品分类"),
+        *industry,
+    ]
+    # top1 恰在阈值（≥ 命中）→ 回退行业
+    result = derive_track_label(at_threshold)
+    assert result.category == "按行业分类"
+    assert result.track_label == "云计算"
+    assert any("产品口径粗退化" in w for w in result.warnings)
+
+    # top1 略低于阈值（< 不命中）→ 维持产品优先
+    below = [
+        _seg("粗大类", _COARSE_SHARE * 100 - 0.01, 5.0, category="按产品分类"),
+        _seg("零头", 100.0 - _COARSE_SHARE * 100 + 0.01, 5.0, category="按产品分类"),
+        *industry,
+    ]
+    result_below = derive_track_label(below)
+    assert result_below.category == "按产品分类"
+    assert result_below.track_label == "粗大类"
+    assert not any("产品口径粗退化" in w for w in result_below.warnings)
 
 
 def test_share_missing_uses_revenue_with_warning():
