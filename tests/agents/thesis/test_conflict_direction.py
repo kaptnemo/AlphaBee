@@ -52,6 +52,14 @@ from alphabee.agents.thesis.reviewer import audit_amplification
         ("未发现操纵", "unknown"),  # 否定窗口：不算恶性，也无良性标记
         ("无法排除操纵", "unknown"),  # 双重否定：恶性/良性标记均被否定覆盖
         ("高于正常水平", "unknown"),  # 「高于正常」不算良性
+        # ── F5 补词钉（设计附录 A，t22 F5）：掩盖/弱化/仍在提升/未弱化/未见弱化 ──
+        # 语料出处见 engine.py 词表注释（§3.5.2 逐词披露）。
+        ("产品结构差异：对标组口径下的份额仍在提升，非竞争优势弱化。", "benign"),  # 附录 A 修复目标①
+        ("非经常性收益为证券投资公允价值浮盈，被高利润增速掩盖。", "negative"),  # 附录 A 修复目标②
+        ("正常经营变化：收入确认节奏差异而非操纵，数据自洽性可解释。", "benign"),  # 附录 A 对照（不变）
+        ("毛利率持续弱化，定价权丧失", "negative"),  # 附录 A 对抗：未被否定的弱化
+        ("主业份额未弱化，客户黏性提升", "benign"),  # 附录 A 对抗：未弱化
+        ("毛利率仍在提升但收入确认激进", "negative"),  # 附录 A 对抗：恶性优先
     ],
 )
 def test_conflict_direction_classifier(text: str, expected: str):
