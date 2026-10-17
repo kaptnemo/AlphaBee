@@ -241,9 +241,9 @@ async def review_thesis(
                 rationale=(
                     f"{verdict.dimension_name}: {verdict.status}. "
                     f"证据数={verdict.evidence_count}, "
-                    f"建议={verdict.suggested_action}. " + "; ".join(verdict.issues)
-                    if verdict.issues
-                    else ""
+                    f"建议={verdict.suggested_action}."
+                    + (f" 审查重校={verdict.recalibrated_judgment}" if verdict.recalibrated_judgment else "")
+                    + (" " + "; ".join(verdict.issues) if verdict.issues else "")
                 ),
                 confidence={
                     "confirmed": 0.9,

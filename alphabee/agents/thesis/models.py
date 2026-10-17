@@ -410,6 +410,9 @@ class DimensionVerdict:
     original_score: float = 0.0
     suggested_action: str = ""  # accept | downgrade_confidence | reconsider_with_context | needs_more_data
 
+    # 审查重校后的档位（F3，additive）：空=未重校；``original_judgment`` 保持原值供审计。
+    recalibrated_judgment: str = ""
+
     issues: list[str] = field(default_factory=list)
 
 
@@ -458,6 +461,7 @@ class ThesisReview:
                     "original_judgment": v.original_judgment,
                     "original_score": v.original_score,
                     "suggested_action": v.suggested_action,
+                    "recalibrated_judgment": v.recalibrated_judgment,
                     "issues": v.issues,
                 }
                 for dim_id, v in self.dimension_verdicts.items()

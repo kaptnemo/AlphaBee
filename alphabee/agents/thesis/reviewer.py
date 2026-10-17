@@ -47,6 +47,10 @@ __all__ = [
 
 _STATUS_RANK = {"contested": 3, "insufficient": 2, "qualified": 1, "confirmed": 0}
 
+# F3 重校映射（§3.3）：LLM 提议 + 确定性双条件拍板后才降档。只降强档一档、方向不变、
+# 永不升档；``original_judgment`` 保持原值供审计（``recalibrated_judgment`` 是附加字段）。
+_STRONG_DOWNGRADE: dict[str, str] = {"strong_positive": "positive", "strong_negative": "negative"}
+
 
 class ThesisReviewer:
     """Two-layer thesis quality auditor.
@@ -109,6 +113,8 @@ class ThesisReviewer:
             try:
                 llm_data = self._call_llm(thesis, signals, ctx, peer_context)
                 verdicts = self._merge_llm(verdicts, llm_data)
+                # F3：LLM 只提议（标志 + 反证），确定性双条件拍板降档（仅 use_llm=True 时执行）。
+                self._apply_recalibration(verdicts, thesis)
             except Exception as exc:
                 logger.warning("thesis_reviewer_llm_failed", error=str(exc))
 
@@ -389,6 +395,12 @@ class ThesisReviewer:
                 if v.status == "confirmed":
                     v.status = "contested"
                 v.conflict_description = review.get("consistency_rationale", "")
+                if v.status != "contested":
+                    # F3（缺陷文档 §1.2-3）：一致性发现原本只进 conflict_description、用户不可见，
+                    # 被挤进「语境不适配」单通道；现在并列可见。
+                    v.issues.append(
+                        "信号一致性存疑：" + (review.get("consistency_rationale", "") or "多条信号方向冲突")
+                    )
 
             if not review.get("context_appropriate", True):
                 v.issues.append("语境不适配：" + review.get("context_rationale", "需结合行业背景校准"))
@@ -404,6 +416,32 @@ class ThesisReviewer:
             verdicts[dim_id] = v
 
         return verdicts
+
+    def _apply_recalibration(
+        self,
+        verdicts: dict[str, DimensionVerdict],
+        thesis: InvestmentThesis,
+    ) -> None:
+        """F3：LLM 只提议、确定性双条件拍板的重校（§3.3.3）。
+
+        双条件同时满足才降一档：① LLM 层标志（语境不适配 issue / 信号一致性存疑 conflict_description /
+        Layer 1 contested）；② 维度确有反证文本（``counter_evidence`` 非空）。只降强档（strong_* → 普通档）、
+        方向不变、不升档；``original_judgment`` 保持原值供审计。
+        """
+        for dim_id, v in verdicts.items():
+            if v.recalibrated_judgment or v.original_judgment not in _STRONG_DOWNGRADE:
+                continue
+            dim = thesis.dimensions.get(dim_id)
+            has_counter = bool(dim and dim.counter_evidence)
+            flagged = (
+                any("语境不适配" in issue for issue in v.issues)
+                or bool(v.conflict_description)
+                or v.status == "contested"
+            )
+            if flagged and has_counter:
+                v.recalibrated_judgment = _STRONG_DOWNGRADE[v.original_judgment]
+                if not v.suggested_action:
+                    v.suggested_action = "reconsider_with_context"
 
     def _build_review(
         self,
