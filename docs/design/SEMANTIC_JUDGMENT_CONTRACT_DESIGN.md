@@ -2,7 +2,7 @@
 
 > 目标条目：把流水线里"用中文标记表读自然语言"的判读点（以 `alphabee/agents/thesis/engine.py::conflict_direction` 为代表）改造为**上游结构化契约优先 + 受控 judge 兜底 + 关键词表降级为兜底**的三级判定，并建立可度量的**覆盖度（coverage）**体系。
 > 关联条目：`docs/roadmap/ROADMAP.md` 交叉核对修复 **P0-2**（2026-10-04）、**P0-2R3**（2026-10-04）、**P1-4**（2026-10-04）；残留项 **RC-D3**、**RC-DIR-LOW**（含 finding **F-4**：docstring 零命中计数与实测不符，明文要求"下次因其他原因触碰 `conflict_direction` 时顺带收口，勿为它单独开提交"——**本设计即该"其他原因"**）；`docs/design/DEVIATION_CONTROL_FRAMEWORK.md` §8（放大标注与加权边审计）、§7.2（降级传导阻尼）；`docs/design/INSIGHT_DEGRADATION_DESIGN.md`（相邻但**不在本设计范围**，见附录 B）。
-> 状态：📝 **设计待评审（未实施）**。文中所有"实测"数据均附复现命令，语料范围逐字披露（F-4 纪律）。
+> 状态：📝 **设计待评审（未实施）**。文中所有"实测"数据均附复现命令，语料范围逐字披露（F-4 纪律）。**D-2（维度置信度绝对减法归零）的实施落地方案已拆分独立成文：[`THESIS_CONFIDENCE_DAMPING_DESIGN.md`](THESIS_CONFIDENCE_DAMPING_DESIGN.md)（2026-10-16，含 300760 二次复现证据、B1 补丁草图、判别力测试与验收标准；本文 §6 的 O-3 裁定以该文为准，同样待评审未实施）。**
 
 ---
 
@@ -15,7 +15,7 @@
 | 编号 | 缺陷 | 证据（可直接核对） | 直接后果 |
 |---|---|---|---|
 | **D-1** | Insight 降级口径过宽：Tier 1「宽松救援」与 Tier 2/3「确定性兜底」同标 `degraded=true`，报告层按布尔走死句式 | issue `insight_degraded`：`Insight 降级产出（tier=1）: lenient_rescue: importance coerced: 'important'`；`orchestrator/prompts.py:62` 的降级分支 | 观点层内容 100% 完好却被判"降级"，`investment_viewpoint` 退化为摘要 |
-| **D-2** | 维度置信度被**绝对减法**打穿：覆盖度是**比例**（分母 = 信号总数 22），扣减是**绝对常数**（−0.05/−0.1），且按"每条假设 × 每个相关维度"重复执行、与 severity 无关 | 重放原始覆盖度 0.045~0.545（§1.3 表）；记录值 7 个 `0.0` + 1 个 `0.03`；`engine.py:691/717/727` | 7/8 维度 `insufficient`、8 条 high blocking issue、`_compute_overall` 只用 1 个维度（`overall_score = −0.362` = `credit_risk` 单维得分，见 `alpha_arena.log:887`） |
+| **D-2** | 维度置信度被**绝对减法**打穿：覆盖度是**比例**（分母 = 信号总数 22），扣减是**绝对常数**（−0.05/−0.1），且按"每条假设 × 每个相关维度"重复执行、与 severity 无关 | 重放原始覆盖度 0.045~0.545（§1.3 表）；记录值 7 个 `0.0` + 1 个 `0.03`；`engine.py:691/717/727`。**二次复现 300760.SZ（2026-10-16，`task-623f034dc596`）：7 个 `0.0` + 1 个 `0.12`（`operational_stability`，3/22×0.85 逐位验证），`overall_score=0.2` = 单维得分（`alpha_arena.log:13910`），evidence 4~14 条却报「无信号覆盖」——详见 `THESIS_CONFIDENCE_DAMPING_DESIGN.md` §1.1/附录 A** | 7/8 维度 `insufficient`、8 条 high blocking issue、`_compute_overall` 只用 1 个维度（`overall_score = −0.362` = `credit_risk` 单维得分，见 `alpha_arena.log:887`）；300760 一轮同模式（10 条 blocking） |
 | **D-3** | `unknown` 被**单边映射为负面**：4 个消费点全部按 `!= "benign"` 处理，判据覆盖度的每个缺口都一对一转为扣分 | `engine.py:675-676`、`reviewer.py:657/792/888` | 良性扩张解释被扣到 `earnings_quality/financial_quality = −1.0`；本 run 的维度方向与 `core_view` 全面冲突 |
 
 > D-1 的完整修复由 `INSIGHT_DEGRADATION_DESIGN.md` 已描述的四级阶梯 + 一条"报告层 tier 感知"补充构成，**不在本设计范围**（附录 B 登记）。本设计覆盖 **D-2、D-3 及其根因（语义词表判读）**。
@@ -191,6 +191,8 @@ P0-2R3 明文写的"判不清 ⇒ `unknown` 保守回落既有负贡献语义（
 ---
 
 ## 6. 维度置信度口径修复（D-2）
+
+> 实施落地方案已独立成文：[`THESIS_CONFIDENCE_DAMPING_DESIGN.md`](THESIS_CONFIDENCE_DAMPING_DESIGN.md)（2026-10-16）。本节保留问题算式与方案比较（B1/B2/B3）；**O-3 已在该文 §3.1 裁定为 B1**（乘性 ×0.85、一档封顶、不区分 status），补丁草图、判别力测试与验收标准均以该文为准，两文冲突时以实施文为准。
 
 ### 6.1 问题算式
 
