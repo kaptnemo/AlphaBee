@@ -77,6 +77,7 @@ class ThesisReviewer:
         company_context: CompanyContext | None = None,
         use_llm: bool = False,
         amplification: AmplificationContext | None = None,
+        peer_context: dict[str, Any] | None = None,
     ) -> ThesisReview:
         """Audit thesis quality and produce a ``ThesisReview``.
 
@@ -89,6 +90,9 @@ class ThesisReviewer:
             amplification: §8 放大审计输入（F3）。``None``（缺省）→ **严格 no-op**：
                 不产出 ``amplification_audit`` 字段值，行为与 F3 之前逐字段一致；
                 非 None → 在维度 verdict 之后运行 :func:`attach_amplification_audit`。
+            peer_context: 同行基准上下文（F4，缺陷文档 R6）。``None``（缺省）→
+                行为与现状逐字段一致；非 None → Layer 1 Rule 6 检查同行基准缺口，
+                Layer 2 把 ``peer_context_json`` 传入 reviewer 模板。
 
         Returns:
             ``ThesisReview`` with per-dimension verdicts and overall status.
@@ -98,12 +102,12 @@ class ThesisReviewer:
 
         verdicts: dict[str, DimensionVerdict] = {}
         for dim_id, dim in thesis.dimensions.items():
-            verdicts[dim_id] = self._layer1_check(dim_id, dim, signals, ctx)
+            verdicts[dim_id] = self._layer1_check(dim_id, dim, signals, ctx, peer_context)
 
         # Layer 2 — LLM qualitative review
         if use_llm:
             try:
-                llm_data = self._call_llm(thesis, signals, ctx)
+                llm_data = self._call_llm(thesis, signals, ctx, peer_context)
                 verdicts = self._merge_llm(verdicts, llm_data)
             except Exception as exc:
                 logger.warning("thesis_reviewer_llm_failed", error=str(exc))
@@ -122,6 +126,7 @@ class ThesisReviewer:
         dim: Any,
         signal_results: dict[str, dict[str, Any]],
         ctx: CompanyContext,
+        peer_context: dict[str, Any] | None = None,
     ) -> DimensionVerdict:
         dim_name = dim.name if hasattr(dim, "name") else dim_id
         evidence = dim.evidence if hasattr(dim, "evidence") else []
@@ -288,6 +293,23 @@ class ThesisReviewer:
                     status = "qualified"
                     suggested_action = "reconsider_with_context"
 
+        # ── Rule 6: 同行基准缺口（F4，缺陷文档 R6）──
+        # 估值/资本配置/信用维度在无同行基准时，其判断未经同行校准，应如实提示。
+        # 口径与既有 credit_risk 基准规则（Rule 4）同款：有 evidence 且非 insufficient 才报，
+        # 避免把「无信号覆盖」的维度再叠一条「缺基准」噪声；建议动作不覆盖更强的既有动作。
+        # ``peer_context is None``（缺省，未启用 F4）→ 跳过本规则，保持与现状逐字段一致。
+        if (
+            dim_id in ("capital_efficiency", "valuation_fit")
+            and status != "insufficient"
+            and evidence
+            and peer_context is not None
+        ):
+            peers = peer_context.get("peer_benchmarks") or {}
+            if not peers:
+                issues.append("缺少同行业可比基准（peer_benchmarks），该维度判断未经同行校准")
+                if suggested_action not in ("reconsider_with_context", "needs_more_data"):
+                    suggested_action = "reconsider_with_context"
+
         # Sort by severity: contested > insufficient > qualified > confirmed
         return DimensionVerdict(
             dimension_id=dim_id,
@@ -311,6 +333,7 @@ class ThesisReviewer:
         thesis: InvestmentThesis,
         signal_results: dict[str, dict[str, Any]],
         ctx: CompanyContext,
+        peer_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         thesis_json = json.dumps(thesis.to_dict(), ensure_ascii=False, indent=2)
 
@@ -324,11 +347,13 @@ class ThesisReviewer:
 
         signal_json = json.dumps(signal_details, ensure_ascii=False, indent=2)
         context_json = json.dumps(ctx.to_dict(), ensure_ascii=False, indent=2)
+        peer_context_json = json.dumps(peer_context or {}, ensure_ascii=False, indent=2)
 
         prompt = REVIEWER_USER_TEMPLATE.format(
             thesis_json=thesis_json,
             signal_details_json=signal_json,
             company_context_json=context_json,
+            peer_context_json=peer_context_json,
         )
 
         response = self._llm.invoke(

@@ -178,6 +178,20 @@ async def review_thesis(
         market_facts=state.get("market_facts"),
     )
 
+    # ── F4：同行基准（COMPANY_TRACK）传入 reviewer（缺陷文档 R6）──
+    # 估值/资本配置/信用维度的语境判断需引用同行基准；缺失时如实提示。
+    # 组装口径与 amplification 同款显式传递：无 COMPANY_TRACK artifact 时传 None。
+    from alphabee.company_track.contracts import CompanyTrackArtifact
+
+    track = find_artifact_model(artifacts, ArtifactType.COMPANY_TRACK, CompanyTrackArtifact)
+    peer_context = None
+    if track is not None:
+        peer_context = {
+            "track_label": track.track_label,
+            "peer_group": list(track.peer_group),
+            "peer_benchmarks": dict(track.peer_benchmarks),
+        }
+
     # ── Run reviewer ──
     reviewer = ThesisReviewer()
     use_llm = state.get("llm_review", False)
@@ -202,6 +216,7 @@ async def review_thesis(
         company_context=company_ctx,
         use_llm=use_llm,
         amplification=amplification_ctx,
+        peer_context=peer_context,
     )
     amplification_audit = review.amplification_audit
 
