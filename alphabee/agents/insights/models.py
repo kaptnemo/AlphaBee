@@ -26,6 +26,10 @@ class EvidenceItem(BaseModel):
     statement: str = Field(description="The evidence statement")
     source: str = Field(description="Source of evidence, e.g. 'signal:receivable_quality', 'anomaly:ar_turnover_spike'")
     weight: Literal["strong", "moderate", "weak"] = Field(default="moderate", description="Evidentiary weight")
+    related_dimensions: list[str] = Field(
+        default_factory=list,
+        description="该证据反驳/削弱的 thesis 维度 id 列表；无法归因时留空（留空=下游按全维广播兼容）",
+    )
 
 
 class MaterialityRank(BaseModel):

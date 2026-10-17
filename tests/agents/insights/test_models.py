@@ -31,6 +31,21 @@ class TestEvidenceItem:
         assert d["statement"] == "现金流恶化"
         assert d["weight"] == "strong"
 
+    def test_related_dimensions_defaults_empty(self):
+        item = EvidenceItem(statement="反证", source="insight")
+        assert item.related_dimensions == []
+
+    def test_related_dimensions_roundtrip(self):
+        item = EvidenceItem(
+            statement="反证",
+            source="conflict:c1",
+            related_dimensions=["earnings_quality", "growth_quality"],
+        )
+        d = item.model_dump(mode="json")
+        assert d["related_dimensions"] == ["earnings_quality", "growth_quality"]
+        restored = EvidenceItem.model_validate(d)
+        assert restored.related_dimensions == ["earnings_quality", "growth_quality"]
+
 
 class TestMaterialityRank:
     def test_valid(self):

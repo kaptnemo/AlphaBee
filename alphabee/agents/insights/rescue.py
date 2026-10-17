@@ -100,18 +100,22 @@ def _coerce_enum(value: object, mapping: dict[str, str], default: str) -> str:
     return default
 
 
-def _coerce_evidence_items(value: object, repairs: list[str]) -> list[dict[str, str]]:
-    """Accept both string items and dict items; never fail on structure."""
+def _coerce_evidence_items(value: object, repairs: list[str]) -> list[dict[str, Any]]:
+    """Accept both string items and dict items; never fail on structure.
+
+    ``related_dimensions`` 按「宽进严出」透传：非列表一律丢弃；列表内非字符串 /
+    空串的条目一律丢弃，不报错（是否命中真实维度由下游 engine 按 ``dimensions`` 键过滤）。
+    """
     if not isinstance(value, list):
         return []
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     for item in value:
         if isinstance(item, str):
             text = item.strip()
             if not text:
                 continue
             repairs.append("evidence item was a plain string")
-            out.append({"statement": text, "source": "insight:raw", "weight": "moderate"})
+            out.append({"statement": text, "source": "insight:raw", "weight": "moderate", "related_dimensions": []})
         elif isinstance(item, dict):
             statement = _coerce_text(item.get("statement"))
             if not statement:
@@ -124,7 +128,9 @@ def _coerce_evidence_items(value: object, repairs: list[str]) -> list[dict[str, 
                 != str(item.get("weight", "")).strip().lower()
             ):
                 repairs.append(f"evidence weight coerced: {item.get('weight')!r}")
-            out.append({"statement": statement, "source": source, "weight": weight})
+            raw_dims = item.get("related_dimensions")
+            dims = [str(d) for d in raw_dims if isinstance(d, str) and d.strip()] if isinstance(raw_dims, list) else []
+            out.append({"statement": statement, "source": source, "weight": weight, "related_dimensions": dims})
     return out
 
 
@@ -370,6 +376,7 @@ def _counter_evidence(conflicts: list[dict[str, Any]], anomaly: dict[str, Any]) 
                     statement=statement,
                     source=f"conflict:{theme or 'unknown'}",
                     weight="moderate",
+                    related_dimensions=[str(d) for d in (conflict.get("related_dimensions") or [])],
                 )
             )
         if len(out) >= 3:

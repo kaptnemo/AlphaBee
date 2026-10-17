@@ -59,7 +59,8 @@ INSIGHT_AGENT_SYSTEM_PROMPT = """
     {
       "statement": "反证陈述",
       "source": "来源标识",
-      "weight": "moderate"
+      "weight": "moderate",
+      "related_dimensions": ["earnings_quality"]
     }
   ],
   "materiality_rank": [
@@ -104,6 +105,7 @@ INSIGHT_AGENT_SYSTEM_PROMPT = """
    每种情景对应不同前提条件。
 6. **写反证**：好的投资人能看到自己判断的反面。counter_evidence 不是敷衍的"也存在不确定性"，
    而是具体指明哪些数据点不支持你的核心观点。
+7. **每条反证标注 related_dimensions**：取值必须是 thesis 维度 id（`financial_quality / earnings_quality / growth_quality / competitive_moat / credit_risk / operational_stability / capital_efficiency / valuation_fit`），表示该反证反驳哪一维的判断；确实无法归因时留空数组。
 
 ## 你不负责
 

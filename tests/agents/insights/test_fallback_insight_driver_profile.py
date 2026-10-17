@@ -65,3 +65,21 @@ def test_profile_only_context_keeps_minimal_skeleton():
     output = build_fallback_insight({"driver_profile": {"primary_drivers": ["猪价"]}}, "002714.SZ")
     assert output.core_view == ""
     assert output.main_driver == ""
+
+
+def test_tier2_counter_evidence_carries_conflict_related_dimensions():
+    """F2：Tier 2 兜底 counter_evidence 携带 conflict.related_dimensions（透传映射）。"""
+    output = build_fallback_insight(
+        _context(
+            conflicts=[
+                {
+                    "theme": "冲突主题",
+                    "related_dimensions": ["earnings_quality", "credit_risk"],
+                    "hypotheses": [{"status": "verified", "summary": "核验结论：反证。", "explanation": ""}],
+                }
+            ]
+        ),
+        "600519.SH",
+    )
+    assert output.counter_evidence
+    assert output.counter_evidence[0].related_dimensions == ["earnings_quality", "credit_risk"]

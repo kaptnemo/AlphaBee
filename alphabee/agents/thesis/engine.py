@@ -1037,18 +1037,21 @@ class ThesisEngine:
                 if central_tension not in dim.context_notes:
                     dim.context_notes.append(f"洞察-中心矛盾：{central_tension}")
 
-        # ── Inject counter-evidence as counter_evidence on all dimensions ──
-        # These are LLM-identified facts that cut against the core view.
-        # Rather than guessing which dimension each counter-evidence item
-        # belongs to, we attach all of them to every dimension — the report
-        # generator will surface the most relevant ones per dimension.
+        # ── Inject counter-evidence targeted by related_dimensions ──
+        # F2（THESIS_CONTEXT_MISMATCH_FIX_PLAN §3.2）：LLM 标注 related_dimensions 时
+        # 反证只进目标维度（不再全维广播造成反证错位）；旧产物无该字段 / 空数组时保持
+        # 全维广播（行为兼容）。非法维度 id 在此按 ``dimensions`` 键过滤丢弃。
         for item in counter_evidence_items:
             statement = str(item.get("statement", "") or "")
             if not statement:
                 continue
             source = str(item.get("source", "insight") or "insight")
+            related = [
+                dimensions[d] for d in (item.get("related_dimensions") or []) if isinstance(d, str) and d in dimensions
+            ]
+            targets = related or list(dimensions.values())
             text = f"[洞察反证] {statement} (来源: {source})"
-            for dim in dimensions.values():
+            for dim in targets:
                 dim.counter_evidence.append(text)
 
         # ── Deduplicate counter_evidence per dimension ──
