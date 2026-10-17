@@ -20,14 +20,23 @@
 * M3 删掉 reviewer 文案分流 ⇒ 文案断言必红；
 * M4 误改 score 路径（如删罚分）⇒ 本文件 score 断言 + ``test_conflict_direction_r3.py`` 的
   002916 分数逐位断言 + ``test_confidence_penalty.py`` 必红。
+
+P1 追加（§3.4 可观测性）：折减循环内产出确定性日志 ``thesis_confidence_damped``
+（``dim_id`` / ``hits`` / ``damped``），命中数由 ``damp_flags: dict[str, int]`` 计数 ——
+本文件末尾两例用 ``caplog`` 断言字段齐全、按维度计数、零覆盖维度不产出该行。
 """
 
 from __future__ import annotations
 
+import json
+import logging
+from collections.abc import Callable
 from typing import Any
 
 import pytest
+import structlog
 
+from alphabee.agents.thesis import engine as engine_module
 from alphabee.agents.thesis.engine import ThesisEngine
 from alphabee.agents.thesis.models import (
     CompanyContext,
@@ -667,3 +676,118 @@ def test_300760_semi_reconstructed_replay_invariants():
     review = ThesisReviewer().review(thesis, signal_results, use_llm=False)
     insufficient = [v.dimension_id for v in review.dimension_verdicts.values() if v.status == "insufficient"]
     assert len(insufficient) <= 1, insufficient
+
+
+# ── §3.4 可观测性（P1）：thesis_confidence_damped 确定性日志 ────────────────
+
+
+def _capture_damping_events(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    action: Callable[[], None],
+) -> list[dict[str, Any]]:
+    """在「structlog → stdlib + JSON 渲染」下执行 ``action``，用 ``caplog`` 收折减事件。
+
+    两处工程理由（整目录运行时实测踩到，单文件运行不会暴露）：
+
+    * 仓库任一模块调用 ``alphabee.utils.get_logger()`` 会把 structlog 全局接到 stdlib
+      （``wrap_for_formatter`` + ``cache_logger_on_first_use=True``）；而模块级 ``engine.logger``
+      **一旦首次使用就被缓存**，此后 ``structlog.configure()`` 不再影响它。故这里把模块属性换成
+      一个**未绑定的新代理**（同名 logger），让它在本次配置下绑定 —— 被测代码行（折减循环里的
+      ``logger.info``）不变，用完由 ``monkeypatch`` 与保存的全局配置还原。
+    * 收上来的 ``record.msg`` 可能是 dict（包装式）或 JSON 字符串（渲染式），统一归一化后比较。
+    """
+    saved_config = structlog.get_config()
+    saved_logger = engine_module.logger
+    structlog.reset_defaults()
+    structlog.configure(
+        processors=[structlog.stdlib.add_log_level, structlog.processors.JSONRenderer()],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=False,
+    )
+    monkeypatch.setattr(engine_module, "logger", structlog.get_logger("alphabee.agents.thesis.engine"))
+    try:
+        with caplog.at_level(logging.INFO, logger="alphabee.agents.thesis.engine"):
+            action()
+    finally:
+        structlog.configure(**saved_config)
+        engine_module.logger = saved_logger
+
+    events: list[dict[str, Any]] = []
+    for record in caplog.records:
+        if record.name != "alphabee.agents.thesis.engine":
+            continue
+        payload: Any = record.msg
+        if isinstance(payload, str) and payload.lstrip().startswith("{"):
+            payload = json.loads(payload)
+        if isinstance(payload, dict) and payload.get("event") == "thesis_confidence_damped":
+            events.append(payload)
+    return events
+
+
+def test_damping_emits_audit_log_with_hit_count(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch):
+    """§3.4：折减循环后产出 ``thesis_confidence_damped``（dim_id/hits/damped 三字段齐全）。
+
+    一档封顶语义不变：5 条假设命中同一维度 ⇒ ``hits=5`` 但只折减一次（``damped=0.425``）。
+    """
+    dims = {_TARGET_DIM: _dim(_TARGET_DIM, 0.5, score=0.5)}
+    conflicts, hids = _hits(_TARGET_DIM, 5)
+
+    def _action() -> None:
+        _apply_conflict(
+            dimensions=dims,
+            conflicts=conflicts,
+            verification_results=[_verified(hid, "rejected") for hid in hids],
+        )
+
+    events = _capture_damping_events(caplog, monkeypatch, _action)
+
+    assert [event["event"] for event in events] == ["thesis_confidence_damped"]
+    assert events[0]["dim_id"] == _TARGET_DIM
+    assert events[0]["hits"] == 5
+    assert events[0]["damped"] == pytest.approx(0.425)
+    assert events[0]["level"] == "info"  # structlog.stdlib.add_log_level
+    assert dims[_TARGET_DIM].confidence == pytest.approx(0.425)  # 一档封顶语义不变
+
+
+def test_damping_log_counts_per_dim_and_skips_zero_coverage(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """hits 按维度计数（每维度一行）；零覆盖维度不折减 ⇒ 不产出折减日志。"""
+    dims = {
+        "earnings_quality": _dim("earnings_quality", 0.5, score=0.5),
+        "growth_quality": _dim("growth_quality", 0.0, score=0.0),
+    }
+    conflicts = [
+        _conflict(
+            "c1",
+            ["earnings_quality"],
+            hypotheses=[
+                {"id": "h1", "explanation": "确认操纵收入", "status": "pending"},
+                {"id": "h2", "explanation": "确认操纵收入", "status": "pending"},
+            ],
+        ),
+        _conflict(
+            "c2",
+            ["growth_quality"],
+            severity="critical",
+            hypotheses=[{"id": "h3", "explanation": "确认操纵收入", "status": "pending"}],
+        ),
+    ]
+    verifications = [
+        _verified("h1", "rejected"),
+        _verified("h2", "unknown"),
+        _verified("h3", "rejected"),
+    ]
+
+    def _action() -> None:
+        _apply_conflict(dimensions=dims, conflicts=conflicts, verification_results=verifications)
+
+    events = _capture_damping_events(caplog, monkeypatch, _action)
+
+    assert [event["dim_id"] for event in events] == ["earnings_quality"]
+    assert events[0]["hits"] == 2  # rejected + unknown 各一次命中
+    assert events[0]["damped"] == pytest.approx(0.425)  # 一档封顶：两次命中仍只折减一次
+    # 零覆盖维度（覆盖度 0）被命中也不折减、不抬升 ⇒ 不产出折减日志。
+    assert dims["growth_quality"].confidence == 0.0
