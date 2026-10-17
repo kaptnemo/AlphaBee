@@ -12,7 +12,10 @@
 修复（§3.2）：三处减法改为 ``damp_flags`` 登记，循环后对每个被命中维度**最多乘一次**
 ``DAMPING_FACTOR``（0.85，与 ``_apply_insight`` 的降级阻尼同源同值，DEVIATION §7.2「一档封顶」）；
 **score 路径零改动**（罚分 / ``_remove_disputed_contributions`` 精确扣除 / ``counter_evidence`` /
-``missing_evidence`` 全部原样）。reviewer 侧（§3.3）Rule 1 文案分流：证据为空才报「无信号覆盖」。
+``missing_evidence`` 全部原样）。F1（THESIS_CONTEXT_MISMATCH_FIX_PLAN §3.1）后新增独立 score 通道：
+未溯源 rejected 的维度分数 ×0.5 折减并产出 ``thesis_score_damped``（详见 ``test_rejected_score_damp.py``），
+本文件末尾两条日志用例据此在事件列表追加该事件（置信度→分数两条事件序）。
+reviewer 侧（§3.3）Rule 1 文案分流：证据为空才报「无信号覆盖」。
 
 判别力（变异必红，§6.5）：
 * M1 把乘性改回 ``max(0.0, conf - 0.1)`` ⇒ 本文件「乘性 / 不归零」断言必红；
@@ -721,7 +724,10 @@ def _capture_damping_events(
         payload: Any = record.msg
         if isinstance(payload, str) and payload.lstrip().startswith("{"):
             payload = json.loads(payload)
-        if isinstance(payload, dict) and payload.get("event") == "thesis_confidence_damped":
+        if isinstance(payload, dict) and payload.get("event") in (
+            "thesis_confidence_damped",
+            "thesis_score_damped",
+        ):
             events.append(payload)
     return events
 
@@ -730,6 +736,7 @@ def test_damping_emits_audit_log_with_hit_count(caplog: pytest.LogCaptureFixture
     """§3.4：折减循环后产出 ``thesis_confidence_damped``（dim_id/hits/damped 三字段齐全）。
 
     一档封顶语义不变：5 条假设命中同一维度 ⇒ ``hits=5`` 但只折减一次（``damped=0.425``）。
+    F1 后：同一维度因 rejected 未溯源还会产出 ``thesis_score_damped``（置信度→分数两条事件序）。
     """
     dims = {_TARGET_DIM: _dim(_TARGET_DIM, 0.5, score=0.5)}
     conflicts, hids = _hits(_TARGET_DIM, 5)
@@ -743,11 +750,15 @@ def test_damping_emits_audit_log_with_hit_count(caplog: pytest.LogCaptureFixture
 
     events = _capture_damping_events(caplog, monkeypatch, _action)
 
-    assert [event["event"] for event in events] == ["thesis_confidence_damped"]
+    assert [event["event"] for event in events] == ["thesis_confidence_damped", "thesis_score_damped"]
     assert events[0]["dim_id"] == _TARGET_DIM
     assert events[0]["hits"] == 5
     assert events[0]["damped"] == pytest.approx(0.425)
     assert events[0]["level"] == "info"  # structlog.stdlib.add_log_level
+    # F1：未溯源 rejected 的分数折减日志紧随置信度阻尼之后（事件序：置信度→分数）。
+    assert events[1]["dim_id"] == _TARGET_DIM
+    assert events[1]["damped_score"] == pytest.approx(0.25)  # 0.5 × 0.5
+    assert events[1]["level"] == "info"
     assert dims[_TARGET_DIM].confidence == pytest.approx(0.425)  # 一档封顶语义不变
 
 
@@ -786,8 +797,14 @@ def test_damping_log_counts_per_dim_and_skips_zero_coverage(
 
     events = _capture_damping_events(caplog, monkeypatch, _action)
 
-    assert [event["dim_id"] for event in events] == ["earnings_quality"]
+    # 置信度→分数两条事件序（F1：rejected 未溯源 ⇒ 分数折减日志紧随置信度阻尼之后）。
+    assert [event["event"] for event in events] == ["thesis_confidence_damped", "thesis_score_damped"]
+    assert events[0]["dim_id"] == "earnings_quality"
     assert events[0]["hits"] == 2  # rejected + unknown 各一次命中
     assert events[0]["damped"] == pytest.approx(0.425)  # 一档封顶：两次命中仍只折减一次
-    # 零覆盖维度（覆盖度 0）被命中也不折减、不抬升 ⇒ 不产出折减日志。
+    assert events[1]["dim_id"] == "earnings_quality"
+    assert events[1]["damped_score"] == pytest.approx(0.25)  # 0.5 × 0.5
+    # 零覆盖维度（覆盖度 0）被命中也不折减、不抬升 ⇒ 不产出折减日志；
+    # 零分数维度（score 0）同理不产出分数折减日志。
     assert dims["growth_quality"].confidence == 0.0
+    assert dims["growth_quality"].score == 0.0

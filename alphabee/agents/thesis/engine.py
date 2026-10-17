@@ -51,6 +51,11 @@ _CONFLICT_PENALTY: dict[str, float] = {
     "medium": 0.25,
     "low": 0.1,
 }
+# rejected 假设未溯源到具体贡献时的维度分数折减系数（一档封顶、方向不变、score==0 跳过）。
+# 出处：docs/design/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md §3.1——×0.5 保证任何 strong_*
+# （|score|≥0.5）折减后必降一档（-1.0→-0.5 恰落在 negative 边界），与置信度阻尼的
+# 「一档封顶」语义同构，不引入新量纲（§8.2 规则 1：权重值必须显式，不得埋在逻辑里）。
+_REJECTED_SCORE_DAMP = 0.5
 _POSITIVE_ANOMALY_PATTERNS = {"efficiency_gain"}
 # 金融行业组已收敛到行业名规范字典（Phase 2 字段治理，B1）：
 # 见 alphabee/industry/industry_names.yaml groups.financial
@@ -679,6 +684,11 @@ class ThesisEngine:
         # 计数只服务 §3.4 的可观测日志（hits 可审计）。
         damp_flags: dict[str, int] = {}
 
+        # F1：rejected 且精确溯源失败的维度（只登记，循环后统一按 ×0.5 折减分数）。
+        # 集合登记 ⇒ 多假设命中同一维度仍只折减一次（一档封顶）。与 damp_flags（置信度
+        # 通道）并列，二者只动各自通道：damp_flags 动 confidence，本集合动 score。
+        untraced_rejected: set[str] = set()
+
         verify_items = verification_results or conflict_analysis.get("verification_results") or []
         verify_by_hid = {item.get("hypothesis_id", ""): item for item in verify_items if item.get("hypothesis_id")}
 
@@ -731,13 +741,18 @@ class ThesisEngine:
                             continue
                         if message:
                             dim.counter_evidence.append(message)
+                        removed = False
                         if disputed_pattern or disputed_signal:
-                            self._remove_disputed_contributions(
+                            removed = self._remove_disputed_contributions(
                                 dim=dim,
                                 dim_effective=dim_effective,
                                 disputed_pattern=disputed_pattern,
                                 disputed_signal=disputed_signal,
                             )
+                        if not removed:
+                            # 缺陷文档 R2：框架层假设不含 pattern/signal id → 精确扣除必然落空。
+                            # 原实现“分数原地不动”使“证伪成立、负分照旧”（603986 三条 blocking 的根）。
+                            untraced_rejected.add(dim_id)
                         # 无论是否精确命中某条贡献，rejected 都意味着维度判断被“否定式”修订过，
                         # 登记一次置信度阻尼（循环后统一乘 DAMPING_FACTOR，一档封顶）。
                         damp_flags[dim_id] = damp_flags.get(dim_id, 0) + 1
@@ -768,6 +783,23 @@ class ThesisEngine:
             # §3.4 可观测性（P1）：确定性日志，只记维度级信息（本方法不在 run() 作用域内，
             # 无 symbol 可用），不新增 schema / task record 字段。零覆盖维度不折减 ⇒ 不产出本行。
             logger.info("thesis_confidence_damped", dim_id=dim_id, hits=hits, damped=dim.confidence)
+
+        # F1：rejected 假设未精确溯源时，相关维度分数做一次 ×0.5 折减（一档封顶、方向不变）。
+        # 只动 score 通道（置信度阻尼照旧走 damp_flags 循环）；score==0 跳过（中性维度
+        # 折减是无操作，与置信度阻尼“零覆盖不抬升”对称）；多假设命中同一维度只折减一次
+        # （untraced_rejected 为集合登记，天然一档封顶）。按 dimensions 既有顺序迭代，
+        # 保证日志产出顺序确定（engine 确定性纪律）。
+        for dim_id in dimensions:
+            if dim_id not in untraced_rejected:
+                continue
+            dim = dimensions[dim_id]
+            if dim.score == 0:
+                continue
+            dim.score = round(dim.score * _REJECTED_SCORE_DAMP, 3)
+            dim.context_notes.append(
+                f"被证伪假设未溯源到具体贡献，维度分数已按 ×{_REJECTED_SCORE_DAMP:g} 折减（一档封顶）。"
+            )
+            logger.info("thesis_score_damped", dim_id=dim_id, damped_score=dim.score)
 
     def _apply_verified_conflict(
         self,
@@ -878,7 +910,7 @@ class ThesisEngine:
         dim_effective: dict[str, list[tuple[str, str, float]]],
         disputed_pattern: set[str],
         disputed_signal: set[str],
-    ) -> None:
+    ) -> bool:
         """从单个维度里精确扣除被证伪的 signal / anomaly 两条贡献路径并重算分数。
 
         “大存大贷”这类模式会以两条路径各自扣一次 credit_risk（双重计数）：
@@ -886,6 +918,9 @@ class ThesisEngine:
           - 异常直连：source_id=anomaly_pattern:high_cash_high_debt，source_type="anomaly"
         rejected 回写必须同时删掉这两条；其余未被证伪的负面信号保留，
         维度不是整体归零，而是精确扣除被证伪的那一块。
+
+        :returns: ``True`` 表示已精确扣除并重算分数；``False`` 表示未命中任何贡献
+            （调用方据此把该维度登记进 F1 的 ``untraced_rejected``，循环后统一 ×0.5 折减）。
         """
         eff = dim_effective.get(dim.id, [])
         kept = [
@@ -897,8 +932,8 @@ class ThesisEngine:
             )
         ]
         if kept == eff:
-            # 未命中任何贡献 → 保守不扣分，保持原分数不变。
-            return
+            # 未命中任何贡献 → 保持原分数不变，交由调用方按 F1 未溯源折减处理。
+            return False
         dim_effective[dim.id] = kept
         dim.score = sum(v for _, _, v in kept) / len(kept) if kept else 0.0
         dim.evidence = [
@@ -909,6 +944,7 @@ class ThesisEngine:
                 or (e.source_type == "anomaly" and any(e.signal_id == f"anomaly_pattern:{p}" for p in disputed_pattern))
             )
         ]
+        return True
 
     def _apply_company_context(
         self,

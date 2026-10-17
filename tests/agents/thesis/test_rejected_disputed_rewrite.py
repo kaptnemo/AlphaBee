@@ -1,5 +1,7 @@
 """P0-③：rejected 假设回写 dimension 分数（含双重计数修复）。"""
 
+import pytest
+
 from alphabee.agents.thesis.engine import ThesisEngine
 
 
@@ -105,10 +107,17 @@ def test_rejected_hypothesis_falls_back_to_keyword_inference():
     assert dim.score == 0.0
 
 
-def test_rejected_hypothesis_without_match_keeps_score_conservatively():
-    # 解释文字不含任何模式名/信号 id，兜底未命中 → 保守不扣分，保持原判定。
+def test_rejected_hypothesis_without_match_damps_score_and_caps_band():
+    # 解释文字不含任何模式名/信号 id，兜底未命中 → 未溯源折减：score ×0.5（一档封顶、
+    # 方向不变），counter_evidence 照常入账、context_notes 含折减留痕。
+    # 注：本 fixture 的 credit_risk 基线为 -0.725（signal -1.0 + anomaly -0.45 → 均值），
+    # 故折减后为 -0.3625 → -0.362（设计 §5.1 的 -0.5 基于 -1.0 基线，此处按真实基线断言）。
     thesis = _run_thesis(*_high_cash_high_debt_inputs(explanation="公司账务处理符合会计准则。"))
 
     dim = thesis.dimensions["credit_risk"]
-    assert dim.judgment == "strong_negative"
-    assert dim.score < -0.5
+    assert dim.score == pytest.approx(-0.362, abs=1e-3)
+    assert dim.judgment == "negative"
+    # 反证文字照常写入维度（分数被折减，但证伪叙事仍保留供报告端呈现）。
+    assert any("再融资" in item for item in dim.counter_evidence)
+    # context_notes 含折减留痕（×0.5 一档封顶）。
+    assert any("折减" in note for note in dim.context_notes)
