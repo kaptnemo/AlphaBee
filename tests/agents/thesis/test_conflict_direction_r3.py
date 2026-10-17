@@ -251,6 +251,71 @@ def test_engine_002916_five_conflicts_projection():
     assert dim.score == pytest.approx(1.0 - 0.55)
 
 
+def test_engine_002916_five_conflicts_replay_confidence_survives():
+    """§6.2 002916 五冲突 engine 级重放：薄覆盖 + 核验缺口下置信度不归零、分数逐位不变。
+
+    复用 ``_REAL_002916_CONFLICTS`` 的真实五冲突原文，但按真实 002916 record 的量级把
+    ``earnings_quality`` 的覆盖度压薄（1 条贡献 / 22 条信号 = ``1/22``），并给核验结果补上
+    「缺口」（真实 record 的 ``verified_conflict`` issue 均带「缺口: …」段）：
+
+    * 修复前：c5（unknown，−0.1）一次即击穿 ``0.045``；c1–c4（verified 有 gaps，各 −0.05）同样归零；
+    * 修复后：只乘一次 ``0.85`` 且**一档封顶** ⇒ ``round(1/22 × 0.85, 3) = 0.039 > 0``；
+    * 分数侧（仅 c5 的 high 档 −0.55）与 ``test_engine_002916_five_conflicts_projection`` 钉住的
+      修复前数值逐位一致 ⇒ score 路径零改动。
+    """
+    signal_results = {
+        "quality_signal": {
+            "level": "high",
+            "interpretation": "盈利质量信号。",
+            "thesis_impact": {"earnings_quality": "positive"},
+        }
+    }
+    # 21 条计入 ``total_signals`` 但不映射任何维度的信号：把覆盖度压到真实的 1/22 量级。
+    for i in range(21):
+        signal_results[f"filler_{i:02d}"] = {"level": "none", "interpretation": "无风险发现。"}
+
+    conflict_analysis = {
+        "conflicts": [
+            {
+                "id": cid,
+                "theme": f"冲突{cid}",
+                "description": "描述",
+                "related_dimensions": ["earnings_quality"],
+                "severity": severity,
+                "confidence": 0.9,
+                "hypotheses": [{"id": f"h{cid}", "explanation": explanation, "status": "pending"}],
+            }
+            for (cid, severity, explanation, _expected) in _REAL_002916_CONFLICTS
+        ]
+    }
+    verification_results = [
+        {
+            "hypothesis_id": f"h{cid}",
+            "status": "verified",
+            "summary": explanation,
+            "gaps": ["缺口：缺少连续多期序列。"],
+        }
+        for (cid, _severity, explanation, _expected) in _REAL_002916_CONFLICTS
+    ]
+
+    thesis = ThesisEngine().run(
+        symbol="002916.SZ",
+        period="2026Q2",
+        signal_results=signal_results,
+        conflict_analysis=conflict_analysis,
+        verification_results=verification_results,
+    )
+    dim = thesis.dimensions["earnings_quality"]
+
+    # score 路径零改动：与既有投影钉一致的 1.0 − 0.55（仅 c5 的 high 罚分）。
+    assert dim.score == pytest.approx(1.0 - 0.55)
+    # G1：被修订维度置信度 > 0（修复前 5 条假设的绝对减法会把 0.045 打成 0）。
+    assert dim.confidence == pytest.approx(round((1 / 22) * 0.85, 3))
+    assert dim.confidence == pytest.approx(0.039)
+    conflict_evidence = [item for item in dim.evidence if item.source_type == "conflict"]
+    assert [item.signal_id for item in conflict_evidence] == ["conflict:c5"]
+
+
 def test_reviewer_002916_five_conflicts_votes():
     """reviewer 侧口径一致：五冲突中仅 c5（unknown）投负票，票值 = -0.55/0.8。"""
     conflicts = ConflictAnalysisResult(

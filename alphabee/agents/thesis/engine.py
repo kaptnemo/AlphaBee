@@ -653,6 +653,17 @@ class ThesisEngine:
         if not conflict_analysis:
             return
 
+        # 冲突折减的阻尼因子与 insight 降级阻尼**同源同值**（DAMPING_FACTOR=0.85）。
+        # 局部 import：与 `_apply_insight` 同款写法，避免 agents → orchestrator 的模块级依赖。
+        from alphabee.orchestrator.services.degradation import DAMPING_FACTOR
+
+        # 本次冲突结算中被「修订性更新」命中的维度（只登记，不在此处折减）：
+        # 折减语义 = 「该维度经历过一次排除性/待验证的修订」，是**一次乘性阻尼**，
+        # 与命中次数、假设条数、severity 无关（一档封顶）。severity 的差异由 score 侧的
+        # `_CONFLICT_PENALTY` 表达，confidence 侧不再叠加绝对减法（量纲与覆盖度比例不一致，
+        # 会把薄覆盖维度直接击穿到 0 ⇒ 审查端误诊「无信号覆盖」）。
+        damp_flags: set[str] = set()
+
         verify_items = verification_results or conflict_analysis.get("verification_results") or []
         verify_by_hid = {item.get("hypothesis_id", ""): item for item in verify_items if item.get("hypothesis_id")}
 
@@ -688,7 +699,7 @@ class ThesisEngine:
                             if dim is None:
                                 continue
                             dim.missing_evidence.extend(gaps[:3])
-                            dim.confidence = max(0.0, dim.confidence - 0.05)
+                            damp_flags.add(dim_id)
                 elif status == "rejected":
                     message = summary or hypothesis.get("explanation", "")
                     # P0-③：被证伪的假设必须把“它指向的那块负面贡献”从维度分数里精确扣除，
@@ -713,8 +724,8 @@ class ThesisEngine:
                                 disputed_signal=disputed_signal,
                             )
                         # 无论是否精确命中某条贡献，rejected 都意味着维度判断被“否定式”修订过，
-                        # 给一个轻微置信度折减，表达这条维度经历过一次排除性更新。
-                        dim.confidence = max(0.0, dim.confidence - 0.05)
+                        # 登记一次置信度阻尼（循环后统一乘 DAMPING_FACTOR，一档封顶）。
+                        damp_flags.add(dim_id)
                 elif status in ("unknown", "pending"):
                     missing = gaps or ([summary] if summary else [])
                     if not missing:
@@ -724,11 +735,20 @@ class ThesisEngine:
                         if dim is None:
                             continue
                         dim.missing_evidence.extend(missing[:3])
-                        dim.confidence = max(0.0, dim.confidence - 0.1)
+                        damp_flags.add(dim_id)
 
         for dim in dimensions.values():
             dim.counter_evidence = self._dedupe_preserve_order(dim.counter_evidence)
             dim.missing_evidence = self._dedupe_preserve_order(dim.missing_evidence)
+
+        # 循环后统一折减：每个被命中维度**最多乘一次** DAMPING_FACTOR。
+        # 覆盖度=0（无贡献）的维度保持 0——阻尼只作用于「有证据但被修订过」的维度，
+        # 不得把无证据维度抬升（G1 的对称约束）。0.85^k > 0（k 有限）⇒ 有贡献维度恒 > 0。
+        for dim_id in damp_flags:
+            dim = dimensions.get(dim_id)
+            if dim is None or dim.confidence <= 0:
+                continue
+            dim.confidence = round(dim.confidence * DAMPING_FACTOR, 3)
 
     def _apply_verified_conflict(
         self,

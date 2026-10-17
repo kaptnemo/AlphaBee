@@ -134,8 +134,16 @@ class ThesisReviewer:
         suggested_action = "accept"
 
         # ── Rule 1: zero confidence ──
-        if confidence == 0 or (not evidence):
+        # 文案分流（G3）：只有**真的没有证据**才报「无信号覆盖」；证据非空而置信度为 0
+        # 是「冲突折减把置信度打到 0」的旧逻辑残留（修复后新 run 不会再产生该组合），
+        # 保留本分支只为重放旧 artifact 时给出如实诊断。状态判定不变：
+        # 两者都是 insufficient / needs_more_data，保证旧 record 重放行为等价。
+        if not evidence:
             issues.append("该维度无信号覆盖，判断不可靠")
+            status = "insufficient"
+            suggested_action = "needs_more_data"
+        elif confidence == 0:
+            issues.append(f"该维度置信度被冲突折减归零，方向判断不具参考性（证据 {len(evidence)} 条）")
             status = "insufficient"
             suggested_action = "needs_more_data"
 
