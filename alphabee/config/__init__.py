@@ -154,6 +154,22 @@ class DeviationTrackingSettings(BaseModel):
         default=20,
         description="--track-alerts 只读视图每标的显示的最大告警帧数",
     )
+    price_move_mode: str = Field(
+        default="absolute",
+        description=(
+            "行情异动阈值口径（P0 设计 §7.1）：absolute = 现状绝对值阈值；"
+            "limit_relative = 按板块涨跌停幅度归一（|change|/board_limit ≥ price_move_ratio，"
+            "且封板边界 |change| ≥ board_limit − 0.5pp 也触发）。默认 absolute = 现状，"
+            "切换属行为变更（ROADMAP 登记）。"
+        ),
+    )
+    price_move_ratio: float = Field(
+        default=0.5,
+        description=(
+            "limit_relative 触发比例（P0 设计 §7.1）：|change|/board_limit ≥ 该值即触发"
+            "（0.5 ⇒ 主板 5%、双创 10%、北交所 15%，与 DEFAULT_PRICE_MOVE_PCT=5.0 在主板口径一致）。"
+        ),
+    )
 
 
 class DeviationSettings(BaseModel):

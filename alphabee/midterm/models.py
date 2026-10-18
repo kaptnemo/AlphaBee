@@ -499,10 +499,16 @@ class EvidenceEvent(BaseModel):
 
 
 class ExitCondition(BaseModel):
-    """退出条件（thesis / fundamental / expectation / valuation_crowding / opportunity_cost）。"""
+    """退出条件（thesis / fundamental / expectation / valuation_crowding / opportunity_cost）。
+
+    P0 设计 §6.2 新增两个生产点 kind（价格风险止损 / 面值退市观察），由
+    ``alphabee.midterm.exit_conditions.build_exit_conditions`` 产出。
+    """
 
     kind: str  # thesis_broken / fundamental_stop / expectation_stop
     # / valuation_crowding_exit / opportunity_cost
+    # / price_risk_stop（5 日累计跌幅 ≤ −(2×board_limit) 或连续 2 日跌停）
+    # / delist_warning（最新收盘 < 1 元或连续 20 日 < 1 元）
     condition: str  # 触发条件描述
     met: bool = False
 
@@ -704,6 +710,9 @@ class CompanyStateDiff(BaseModel):
     anchor: ArtifactRef | None = None  # 建仓锚点（可选，§44）
     is_first: bool = False
     elapsed_days: int
+    # P0 设计 §6.1（additive）：交易日口径与停牌口径；None = 回落日历日 / 未知。
+    trading_days: int | None = None
+    suspended_days: int | None = None
 
     # 五层变化（首帧时各层按「基线登记」处理）
     factors: list[FactorDelta] = Field(default_factory=list)  # L1

@@ -35,4 +35,20 @@ data:
 | `LANGFUSE_BASE_URL` | Langfuse 服务地址（默认 `http://localhost:3000`） | 可选 |
 | `DATA_ROOT` | 产物根目录（默认 `data/`） | 可选 |
 
+## 偏离控制框架（deviation）
+
+`deviation.tracking` 段承载宏观环跟踪（tracking）的阈值与开关（P0 设计 §7.1）。缺段时全部取内置默认值，旧配置仍可 import：
+
+```yaml
+deviation:
+  tracking:
+    price_move_mode: absolute   # 行情异动阈值口径（absolute | limit_relative）
+    price_move_ratio: 0.5       # limit_relative 触发比例（|change|/board_limit ≥ 0.5）
+```
+
+- `price_move_mode: absolute`（默认）= 现状绝对值口径：`|price_change_pct| > 5.0%` 触发。
+- `price_move_mode: limit_relative` = 按板块涨跌停幅度归一：`|change|/board_limit ≥ price_move_ratio`
+  即触发，且封板边界 `|change| ≥ board_limit − 0.5pp` 也触发（覆盖 ST ≈4.95% 与涨停 9.99% 漏判）。
+  `price_move_ratio: 0.5` ⇒ 主板 5%、双创 10%、北交所 15%，与主板绝对口径 `5.0%` 一致。
+
 `main.py` 会自动加载项目根目录下的 `.env`，配置文件则从 `config.yaml` 读取。

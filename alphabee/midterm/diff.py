@@ -721,6 +721,9 @@ def diff(
     prev: CompanyStateArtifact | None,
     curr: CompanyStateArtifact,
     anchor: CompanyStateArtifact | None = None,
+    *,
+    trading_days: int | None = None,
+    suspended_days: int | None = None,
 ) -> CompanyStateDiff:
     """差分两个 CompanyStateArtifact（纯函数，禁 LLM）。
 
@@ -729,10 +732,15 @@ def diff(
     → 步骤 8 证据差集 → 步骤 9 归因（模板兜底）→ 步骤 10 退出检查 → 步骤 11 边界。
     首帧按基线登记处理（不产归因/退出/证据差集）。
 
+    P0 设计 §6.1：``trading_days`` / ``suspended_days`` 为 additive 口径，
+    ``elapsed_days`` 语义不变（日历日）；``trading_days=None`` ⇒ 与现状逐字节一致。
+
     Args:
         prev: 上一帧（首帧为 ``None``）。
         curr: 当前帧。
         anchor: 建仓锚点帧（可选，§44）。
+        trading_days: 本窗口交易日数（``None`` = 维持现状日历日口径）。
+        suspended_days: 本窗口停牌交易日数（``None`` = 未知）。
 
     Returns:
         :class:`CompanyStateDiff`：五层分层差分。
@@ -771,6 +779,8 @@ def diff(
         anchor=anchor_ref,
         is_first=is_first,
         elapsed_days=_elapsed_days(prev, curr),
+        trading_days=trading_days,
+        suspended_days=suspended_days,
         factors=factors,
         scores=scores,
         state_shift=state_shift,
@@ -814,12 +824,17 @@ def _per_day(numerator: float, elapsed_days: int) -> float | None:
     return numerator / elapsed_days
 
 
+def _rate_denominator(d: CompanyStateDiff) -> int:
+    """速率分母：优先 ``trading_days``（交易日口径），``None`` 回落 ``elapsed_days``（P0 §6.1）。"""
+    return d.trading_days if d.trading_days is not None else d.elapsed_days
+
+
 def diff_series(diffs: list[CompanyStateDiff]) -> list[DiffVelocity]:
     """从 diff 序列派生逐帧速度/加速度（纯规则禁 LLM，design §6）。
 
-    - ``belief_velocity = tv_distance / elapsed_days``（状态无漂移 → 0.0；首帧
-      ``elapsed_days=0`` → ``None``）；
-    - ``evidence_arrival_rate = len(new_evidence) / elapsed_days``；
+    - ``belief_velocity = tv_distance / 分母``（状态无漂移 → 0.0；分母 <= 0 → ``None``）；
+    - ``evidence_arrival_rate = len(new_evidence) / 分母``；
+    - 分母优先 ``trading_days``（P0 §6.1），``None`` 回落 ``elapsed_days``（现状）；
     - ``belief_acceleration = belief_velocity_t − belief_velocity_{t-1}``（首帧或任一
       侧 velocity 为 ``None`` → ``None``）。
 
@@ -833,8 +848,9 @@ def diff_series(diffs: list[CompanyStateDiff]) -> list[DiffVelocity]:
     prev_velocity: float | None = None
     for d in diffs:
         tv = d.state_shift.tv_distance if d.state_shift is not None else 0.0
-        velocity = _per_day(tv, d.elapsed_days)
-        arrival = _per_day(len(d.new_evidence), d.elapsed_days)
+        denominator = _rate_denominator(d)
+        velocity = _per_day(tv, denominator)
+        arrival = _per_day(len(d.new_evidence), denominator)
         acceleration = (velocity - prev_velocity) if (velocity is not None and prev_velocity is not None) else None
         velocities.append(
             DiffVelocity(

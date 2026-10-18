@@ -45,7 +45,15 @@ from pydantic import BaseModel, Field
 # ★ 复用而非重写：midterm 的引擎一律**按模块属性调用**（不是 import 期绑定名）——
 # 这样 midterm 侧被 monkeypatch（哨兵 / 必抛）时本模块行为会随之变化 / 随之失败，
 # 这是"调用真的路由到 midterm"的可证伪判据（import 期绑定会让哨兵失效）。
-from alphabee.midterm import decision_model, diff_consumers, factors, persistence, versions
+from alphabee.midterm import (
+    decision_model,
+    diff_consumers,
+    exit_conditions,
+    factors,
+    persistence,
+    trading_calendar,
+    versions,
+)
 from alphabee.midterm.diff import diff as midterm_diff
 from alphabee.midterm.models import (
     ChangeAttribution,
@@ -55,6 +63,7 @@ from alphabee.midterm.models import (
     FactorSnapshot,
 )
 from alphabee.tracking.ledger import record_tracking_deviations
+from alphabee.tracking.report_calendar import detect_report_calendar_triggers
 from alphabee.tracking.status import research_status
 from alphabee.tracking.triggers import (
     Trigger,
@@ -153,6 +162,10 @@ class TrackingReport(BaseModel):
     # 研究连续体 P3（D1-A2）：本帧写入偏离账本的条数（0 = 无偏离，或写入失败/未持久化）。
     # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
     deviations_recorded: int = 0
+    # P0 设计 §6.1（additive）：交易日口径自证（帧报告自证"按交易日"还是"按日历日"）。
+    # **只 append 字段且带默认值**：历史 JSONL 反序列化不受影响。
+    calendar_source: str = ""  # trading_calendar.calendar_source()：tushare / akshare / fallback
+    trading_days: int | None = None  # 本窗口交易日数；None = 未计算 / 日历日兜底
 
     @property
     def kinds(self) -> list[str]:
@@ -219,6 +232,29 @@ def _default_evidence_provider(symbol: str, *, thesis: str = "", as_of_date: str
     定性通道缺位属具名顺延项，不影响"反证强制入账"的机制（两侧证据只要有就都入账）。
     """
     return decision_model.collect_evidence(symbol, thesis, None, as_of_date=as_of_date)
+
+
+def _latest_report_period(symbol: str) -> tuple[bool, str | None]:
+    """从 ``get_expectation_fact`` 的 forecast/express 记录取 ``end_date`` 最大值（P0 §7.2，fail-open）。
+
+    返回 ``(ok, latest_period)``：``ok=False`` 表示取数失败 / 数据源不可用，调用方应
+    **整体跳过** ``report_calendar``（否则会把「取数失败」误当「该出未出」产生噪声）；
+    ``ok=True`` 且 ``latest_period=None`` 才是真正的「尚无任何预告/快报记录」。
+    """
+    try:
+        from alphabee.agents.facts.tools.expectation_fact import get_expectation_fact
+
+        data = get_expectation_fact(symbol)
+    except Exception:
+        return False, None
+    if data.get("forecast_error") or data.get("express_error"):
+        return False, None
+    periods = []
+    for rec in [*(data.get("forecast") or []), *(data.get("express") or [])]:
+        end = str(rec.get("period") or "").strip()
+        if end:
+            periods.append(end)
+    return True, (max(periods) if periods else None)
 
 
 def _dedupe_triggers(triggers: Iterable[Trigger]) -> list[Trigger]:
@@ -417,19 +453,31 @@ def _reconcile_frame(
         thesis=thesis,
         prev_evidence_log=getattr(prev, "evidence_log", None),
     )
-    # 字段级接线：evaluate 不产这三项，由本层从上一帧继承（§9.2「字段已有、无调度」的补齐）
-    curr.exit_conditions = list(getattr(prev, "exit_conditions", None) or [])
+    # 字段级接线：evaluate 不产这三项，由本层补齐（§9.2 + P0 设计 §6.2 退出条件首个生产点）
+    # P0 §6.2：退出条件 = 新生产点产出 + 继承上一帧列表（继承逻辑已存在）。
+    curr.exit_conditions = [
+        *exit_conditions.build_exit_conditions(str(snapshot.symbol or symbol), snapshot, as_of=as_of),
+        *list(getattr(prev, "exit_conditions", None) or []),
+    ]
     curr.next_evidence_to_watch = list(getattr(prev, "next_evidence_to_watch", None) or [])
     curr.stale_after = _stale_after(
         as_of, prev, degraded=bool(getattr(curr, "degraded", False)), days=limits.stale_after_days
     )
+
+    # P0 设计 §6.1：交易日/停牌口径（prev=None 首帧无窗口 ⇒ 均为 None）
+    trading_days: int | None = None
+    suspended_days: int | None = None
+    if prev is not None:
+        prev_as_of = str(prev.as_of_date)
+        trading_days = trading_calendar.trading_days_between(prev_as_of, as_of)
+        suspended_days = trading_calendar.suspension_days(str(snapshot.symbol or symbol), prev_as_of, as_of)
 
     # 五层差分（prev=None → 首帧基线登记）；diff 要求 curr.date > prev.date，同日重跑不差分
     skipped = ""
     frame_diff: CompanyStateDiff | None = None
     if prev is None or as_of > str(prev.as_of_date):
         try:
-            frame_diff = midterm_diff(prev, curr)
+            frame_diff = midterm_diff(prev, curr, trading_days=trading_days, suspended_days=suspended_days)
         except ValueError as exc:  # 引擎校验不通过（如 symbol/schema 漂移）→ 降级为不差分
             skipped = f"差分被拒绝（{exc}）"
             logger.warning("tracking diff rejected symbol=%s as_of=%s: %s", symbol, as_of, exc)
@@ -678,6 +726,9 @@ def run_once(
     report.degraded_reason = str(getattr(artifact, "degraded_reason", "") or "")
     report.skipped_reason = frame.skipped_reason
     report.persisted = frame.persisted
+    # P0 设计 §6.1：交易日口径自证（帧报告标注 calendar_source；trading_days=None 即「按日历日」）
+    report.calendar_source = trading_calendar.calendar_source()
+    report.trading_days = getattr(frame.frame_diff, "trading_days", None) if frame.frame_diff is not None else None
 
     triggers = detect_triggers(
         symbol,
@@ -693,6 +744,17 @@ def run_once(
             prev_snapshot=getattr(frame.previous, "factor_snapshot", None),
             thresholds=limits,
         )
+    # P0 设计 §7.2：披露日历触发器（第三来源，统一走 _dedupe_triggers；取数失败/日历不可得 ⇒ 跳过/[]）。
+    # 仅默认证据来源（evidence_provider=None）时才接：披露日历的 latest_period 复用
+    # get_expectation_fact（与默认 collect_evidence 同源）；注入证据的调用方（测试/替身）
+    # 无真实预期来源 ⇒ 整体跳过，避免把「无数据」误报为「该出未出」。
+    if evidence_provider is None:
+        try:
+            latest_ok, latest_period = _latest_report_period(symbol)
+            if latest_ok:
+                triggers += detect_report_calendar_triggers(symbol, as_of=frame_as_of, latest_period=latest_period)
+        except Exception:  # noqa: BLE001 - 披露日历来源 fail-open（不打断帧）
+            pass
     if manual:
         triggers.append(manual_trigger(symbol, reason="CLI 显式人工触发（--trigger manual）"))
     report.triggers = _dedupe_triggers(triggers)

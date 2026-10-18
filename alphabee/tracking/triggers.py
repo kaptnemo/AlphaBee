@@ -25,7 +25,7 @@
 * **阈值 fail-open**：:func:`thresholds_from_settings` 读 config 的 `deviation.tracking` 段，
   缺失/异常 → tv 档**不传参**（即用 `monitor_triggers` 自己的默认阈值），**模块级不读配置**。
 
-**六类 kind 与触发条件的映射（v1 口径 + P0 设计 §3.3 授权扩展，逐条可测）**：
+**七类 kind 与触发条件的映射（v1 口径 + P0 设计 §3.3/§7.2 授权扩展，逐条可测）**：
 
 ======================  ==========================================================================
 kind                    触发条件（→ 判定来源）
@@ -33,17 +33,20 @@ kind                    触发条件（→ 判定来源）
 ``FINANCIAL_REPORT``    增量事实侧：财报类 canonical 字段相对上一帧**实质变化**（代理判定）
 ``ANNOUNCEMENT``        增量事实侧：``risk.news_title`` 非空且与上一帧不同（代理判定）
 ``PRICE_MOVE``          ``monitor_triggers`` 的信念位移项（``tv_distance=…``）**或**
-                        行情快照 ``|trend.price_change_pct| > 阈值``
+                        行情快照 ``|trend.price_change_pct| > 阈值``（``absolute``）/
+                        ``|change|/board_limit ≥ limit_ratio`` 或封板（``limit_relative``，P0 §7.1）
 ``STALE_EXPIRED``       ``stale_after`` 已到期（§9.2「数据陈旧后继续持有旧结论」）
 ``MANUAL``              ``check_exit`` 报出退出信号（§9.4 行动类输出只允许 Tier 0/5）**或**
                         ``monitor_triggers`` 的证据到达率项（``evidence_arrival_rate=…``，高信息量
                         → 深度研究/复核）；亦由 CLI ``--trigger manual`` 直接注入
 ``RESTATEMENT``         diff 侧：本帧 ``new_evidence`` 出现 retraction 事件
                         （``supersedes`` 非空且 ``effect_on_thesis == "neutral"``，P0 设计 §3.3）
+``REPORT_CALENDAR``     披露日历侧：``detect_report_calendar_triggers``（P0 设计 §7.2）产出
+                        （report_overdue / forecast_due / report_due，payload.sub_kind 区分）
 ======================  ==========================================================================
 
-**枚举扩展口径（P0 设计 §3.3 / §7.2 授权）**：``RESTATEMENT`` 是「不扩枚举」纪律的
-一次**具名授权扩展**（仅此一项，登记于 ROADMAP 变更登记表）；其余事件通道仍走既有五类。
+**枚举扩展口径（P0 设计 §3.3 / §7.2 授权）**：``RESTATEMENT`` 与 ``REPORT_CALENDAR`` 是
+「不扩枚举」纪律的**两次具名授权扩展**（仅此两项，登记于 ROADMAP 变更登记表）；其余事件通道仍走既有五类。
 
 **如实披露两处 v1 判断**：
 
@@ -64,7 +67,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from alphabee.midterm import diff_consumers
+from alphabee.midterm import board_limits, diff_consumers
 from alphabee.midterm.models import CompanyStateArtifact, CompanyStateDiff, FactorSnapshot, FundamentalFactor
 
 logger = logging.getLogger(__name__)
@@ -91,12 +94,12 @@ DEFAULT_STALE_AFTER_DAYS = 7
 
 
 class TriggerKind(enum.StrEnum):
-    """触发来源（§14.5-A 五种 + P0 设计 §3.3 授权扩展 ``RESTATEMENT``）。
+    """触发来源（§14.5-A 五种 + P0 设计 §3.3/§7.2 授权扩展两项）。
 
-    枚举扩展口径（P0 设计 §7.2 授权，仅此一项；其余事件通道仍走既有五类）：
-    ``RESTATEMENT = "restatement"`` 用于重述/预告修正——观察到 retraction 事件
-    （``supersedes`` 非空且 ``effect_on_thesis == "neutral"``）时产出，reason 含被
-    作废事件 subject。该口径已在 ``docs/roadmap/ROADMAP.md`` 变更登记表登记。
+    枚举扩展口径（P0 设计 §7.2 授权，**仅此两项**；其余事件通道仍走既有五类）：
+    ``RESTATEMENT = "restatement"`` 用于重述/预告修正；``REPORT_CALENDAR = "report_calendar"``
+    用于披露日历触发（该出未出 / 预告强制窗口 / 披露窗口提醒）。均已登记于
+    ``docs/roadmap/ROADMAP.md`` 变更登记表。
     """
 
     FINANCIAL_REPORT = "financial_report"
@@ -105,6 +108,7 @@ class TriggerKind(enum.StrEnum):
     STALE_EXPIRED = "stale_expired"
     MANUAL = "manual"
     RESTATEMENT = "restatement"
+    REPORT_CALENDAR = "report_calendar"
 
 
 @dataclass(frozen=True)
@@ -126,12 +130,18 @@ class TriggerThresholds:
     ``tv_distance`` 缺省为 **``None``** = 调用 ``monitor_triggers`` 时**不传该参数**，
     于是用它自己的默认阈值 —— 本模块因此**没有任何第二份 tv 阈值字面量**，
     也就不可能与 midterm 漂移。
+
+    P0 设计 §7.1：``price_move_mode``（``absolute`` | ``limit_relative``，默认
+    ``absolute`` = 现状）与 ``limit_ratio``（默认 0.5，``limit_relative`` 下
+    |change|/board_limit ≥ ratio 即触发）。
     """
 
     tv_distance: float | None = None
     price_move_pct: float = DEFAULT_PRICE_MOVE_PCT
     stale_grace_days: int = 0  # 到期额外宽限天数（0 = 到期即触发）
     stale_after_days: int = DEFAULT_STALE_AFTER_DAYS  # 新帧写入的保鲜期（§9.2 复用）
+    price_move_mode: str = "absolute"  # absolute | limit_relative（P0 §7.1）
+    limit_ratio: float = 0.5  # |change|/board_limit ≥ ratio 即触发（limit_relative 下）
 
 
 def _config_section() -> Any:
@@ -174,6 +184,12 @@ def thresholds_from_settings() -> TriggerThresholds:
         return TriggerThresholds()
     grace = getattr(section, "stale_grace_days", None)
     fresh = getattr(section, "stale_after_days", None)
+    mode = str(getattr(section, "price_move_mode", None) or "absolute").strip().lower()
+    if mode not in ("absolute", "limit_relative"):
+        mode = "absolute"  # 坏值 → 现状口径（fail-open）
+    ratio = _read_number(section, "price_move_ratio", 0.5)
+    if ratio is None or ratio <= 0:
+        ratio = 0.5
     return TriggerThresholds(
         tv_distance=_read_number(section, "tv_distance", None),
         price_move_pct=_read_number(section, "price_move_pct", DEFAULT_PRICE_MOVE_PCT) or DEFAULT_PRICE_MOVE_PCT,
@@ -181,6 +197,8 @@ def thresholds_from_settings() -> TriggerThresholds:
         stale_after_days=fresh
         if isinstance(fresh, int) and not isinstance(fresh, bool) and fresh > 0
         else DEFAULT_STALE_AFTER_DAYS,
+        price_move_mode=mode,
+        limit_ratio=ratio,
     )
 
 
@@ -207,18 +225,60 @@ def _factor_snapshot(artifact: CompanyStateArtifact | None) -> FactorSnapshot | 
     return snapshot if isinstance(snapshot, FactorSnapshot) else None
 
 
-def _price_move_triggers(symbol: str, change: Any, threshold: float) -> list[Trigger]:
-    """行情异动（读快照字段 + 与阈值比较；midterm 无对应实现，故在本模块判定）。"""
+def _price_move_triggers(
+    symbol: str,
+    change: Any,
+    threshold: float,
+    *,
+    mode: str = "absolute",
+    limit_ratio: float = 0.5,
+) -> list[Trigger]:
+    """行情异动（读快照字段 + 与阈值比较；midterm 无对应实现，故在本模块判定）。
+
+    P0 设计 §7.1：``mode="limit_relative"`` 时按 ``board_limits.board_limit_pct`` 归一
+    （|change|/board_limit ≥ ``limit_ratio`` 即触发），且封板边界（|change| ≥
+    board_limit − 0.5pp）也触发——覆盖 ST ≈4.95% 与涨停 9.99% 的边界漏判；
+    ``mode="absolute"`` 维持现状逐字不变。
+    """
     if isinstance(change, bool) or not isinstance(change, int | float):
         return []
-    if abs(float(change)) <= threshold:
+    value = float(change)
+
+    if mode == "limit_relative":
+        limit = board_limits.board_limit_pct(symbol)
+        edge = limit - 0.5
+        ratio = abs(value) / limit if limit > 0.0 else None
+        hit = (ratio is not None and ratio >= limit_ratio) or abs(value) >= edge
+        if not hit:
+            return []
+        return [
+            Trigger(
+                kind=TriggerKind.PRICE_MOVE,
+                symbol=symbol,
+                reason=(
+                    f"行情异动（limit_relative）：price_change_pct={value:+.2f}% "
+                    f"相对 {limit:g}% 涨跌停归一 |ratio|={ratio:.2f} 触发"
+                ),
+                payload={
+                    "source": "price_snapshot",
+                    "price_change_pct": value,
+                    "threshold": threshold,
+                    "mode": "limit_relative",
+                    "limit_ratio": limit_ratio,
+                    "board_limit": limit,
+                },
+            )
+        ]
+
+    # absolute（现状口径，逐字不变）
+    if abs(value) <= threshold:
         return []
     return [
         Trigger(
             kind=TriggerKind.PRICE_MOVE,
             symbol=symbol,
-            reason=f"行情异动：price_change_pct={float(change):+.2f}% 绝对值超阈值 {threshold:g}%",
-            payload={"source": "price_snapshot", "price_change_pct": float(change), "threshold": threshold},
+            reason=f"行情异动：price_change_pct={value:+.2f}% 绝对值超阈值 {threshold:g}%",
+            payload={"source": "price_snapshot", "price_change_pct": value, "threshold": threshold},
         )
     ]
 
@@ -367,7 +427,11 @@ def detect_triggers(
     # 5) artifact 内最近一帧的行情异动
     snapshot = _factor_snapshot(artifact)
     triggers += _price_move_triggers(
-        symbol, getattr(getattr(snapshot, "trend", None), "price_change_pct", None), limits.price_move_pct
+        symbol,
+        getattr(getattr(snapshot, "trend", None), "price_change_pct", None),
+        limits.price_move_pct,
+        mode=limits.price_move_mode,
+        limit_ratio=limits.limit_ratio,
     )
 
     return triggers
@@ -450,7 +514,11 @@ def detect_fact_triggers(
             )
 
     triggers += _price_move_triggers(
-        symbol, getattr(getattr(snapshot, "trend", None), "price_change_pct", None), limits.price_move_pct
+        symbol,
+        getattr(getattr(snapshot, "trend", None), "price_change_pct", None),
+        limits.price_move_pct,
+        mode=limits.price_move_mode,
+        limit_ratio=limits.limit_ratio,
     )
     return triggers
 

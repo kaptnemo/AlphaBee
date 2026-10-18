@@ -51,10 +51,15 @@ SYMBOL = "600519.SH"
 
 
 def _snapshot(
-    *, as_of: str = "2026-09-18", revenue_yoy: float = 12.0, price_change_pct: float = 1.0, news: str = ""
+    *,
+    as_of: str = "2026-09-18",
+    revenue_yoy: float = 12.0,
+    price_change_pct: float = 1.0,
+    news: str = "",
+    symbol: str = SYMBOL,
 ) -> FactorSnapshot:
     return FactorSnapshot(
-        symbol=SYMBOL,
+        symbol=symbol,
         as_of_date=as_of,
         fundamental=FundamentalFactor(revenue_yoy=revenue_yoy, net_profit_yoy=8.0),
         trend=TrendFactor(price_change_pct=price_change_pct),
@@ -218,8 +223,13 @@ def test_kind_restatement_from_retraction_event():
     assert found[0].payload["superseded_ids"] == ["old-fc"]
 
 
-def test_all_authorized_kinds_are_covered():
-    """六类 kind 全覆盖（防"枚举里有一类永远产不出来"的死枚举；含 P0 授权扩展 RESTATEMENT）。"""
+def test_all_authorized_kinds_are_covered(monkeypatch):
+    """七类 kind 全覆盖（防"枚举里有一类永远产不出来"的死枚举；含 P0 授权扩展两项）。"""
+    from alphabee.midterm import trading_calendar
+    from alphabee.tracking import report_calendar as rc
+
+    monkeypatch.setattr(trading_calendar, "calendar_source", lambda: "tushare")
+    monkeypatch.setattr(trading_calendar, "trading_days_between", lambda start, end: 5)
     produced = {
         *(
             t.kind
@@ -247,12 +257,13 @@ def test_all_authorized_kinds_are_covered():
                 prev_snapshot=_snapshot(revenue_yoy=1.0),
             )
         ),
+        *(t.kind for t in rc.detect_report_calendar_triggers(SYMBOL, as_of="2026-05-06", latest_period="20250930")),
     }
     assert produced == set(TriggerKind)
 
 
 def test_trigger_kind_enum_matches_authorized_set():
-    """`TriggerKind` 恰为 §14.5-A 五种 + P0 设计 §3.3 授权扩展的 ``RESTATEMENT``（共六种）。"""
+    """`TriggerKind` 恰为 §14.5-A 五种 + P0 设计 §3.3/§7.2 授权扩展两项（共七种）。"""
     assert [kind.value for kind in TriggerKind] == [
         "financial_report",
         "announcement",
@@ -260,6 +271,7 @@ def test_trigger_kind_enum_matches_authorized_set():
         "stale_expired",
         "manual",
         "restatement",
+        "report_calendar",
     ]
 
 
@@ -317,6 +329,144 @@ def test_stale_boundary_and_grace_window():
     assert [t.kind for t in detect_triggers(SYMBOL, as_of="2026-09-24", artifact=artifact, thresholds=grace)] == [
         TriggerKind.STALE_EXPIRED
     ]
+
+
+# ── ②b P0 §7.1：limit_relative 制度感知阈值 ─────────────────────────────────
+
+
+def _relative(price_change_pct, symbol):
+    """构造 limit_relative 模式 + 给定涨跌幅的触发列表（detect_fact_triggers 走该路径）。"""
+    limits = TriggerThresholds(price_move_mode="limit_relative", limit_ratio=0.5)
+    return detect_fact_triggers(
+        symbol,
+        snapshot=_snapshot(symbol=symbol, price_change_pct=price_change_pct),
+        prev_snapshot=_snapshot(symbol=symbol),
+        thresholds=limits,
+    )
+
+
+def test_limit_relative_main_board_5pct_triggers():
+    assert [t.kind for t in _relative(5.0, "600519.SH")] == [TriggerKind.PRICE_MOVE]
+
+
+def test_limit_relative_chinext_10pct_triggers():
+    assert [t.kind for t in _relative(10.0, "300750.SZ")] == [TriggerKind.PRICE_MOVE]
+
+
+def test_limit_relative_star_10pct_triggers():
+    assert [t.kind for t in _relative(10.0, "688981.SH")] == [TriggerKind.PRICE_MOVE]
+
+
+def test_limit_relative_bse_15pct_triggers():
+    assert [t.kind for t in _relative(15.0, "830799")] == [TriggerKind.PRICE_MOVE]
+
+
+def test_limit_relative_below_ratio_does_not_trigger():
+    assert _relative(4.9, "600519.SH") == []  # 4.9/10 < 0.5 且 < 封板边界 9.5
+
+
+def test_limit_relative_st_4_95_pct_triggers_on_board_limit(monkeypatch):
+    # ST 涨停 ≈4.95%（恰低于 5% 绝对阈值）：limit_relative 下按 5% 板块归一，|4.95|/5 = 0.99 触发。
+    # v1 的 ST 自动识别顺延（RC-ST-NAME），故此处把 board_limit_pct patch 成 5% 模拟 ST 口径。
+    monkeypatch.setattr(triggers_module.board_limits, "board_limit_pct", lambda symbol, is_st=False: 5.0)
+    limits = TriggerThresholds(price_move_mode="limit_relative", limit_ratio=0.5)
+    found = detect_fact_triggers(
+        "600519.SH",
+        snapshot=_snapshot(symbol="600519.SH", price_change_pct=4.95),
+        prev_snapshot=_snapshot(symbol="600519.SH"),
+        thresholds=limits,
+    )
+    assert [t.kind for t in found] == [TriggerKind.PRICE_MOVE]
+
+
+def test_limit_relative_limit_up_9_99_pct_triggers_on_edge():
+    # 涨停 9.99% 恰低于 10%：封板边界 |9.99| ≥ 10−0.5=9.5 触发
+    assert [t.kind for t in _relative(9.99, "600519.SH")] == [TriggerKind.PRICE_MOVE]
+
+
+def test_limit_relative_edge_boundary_exact_9_5_triggers():
+    assert [t.kind for t in _relative(9.5, "600519.SH")] == [TriggerKind.PRICE_MOVE]
+
+
+def test_limit_relative_uses_ratio_not_absolute_threshold():
+    # 双创 +5%（绝对口径 5.0 会触发；但 limit_relative 下 5/20=0.25 < 0.5 且 <19.5）⇒ 不触发
+    assert _relative(5.0, "300750.SZ") == []
+
+
+def test_absolute_mode_preserves_existing_strict_threshold():
+    limits = TriggerThresholds()  # 默认 absolute
+    found = detect_fact_triggers(
+        "600519.SH",
+        snapshot=_snapshot(symbol="600519.SH", price_change_pct=4.95),
+        prev_snapshot=_snapshot(symbol="600519.SH"),
+        thresholds=limits,
+    )
+    assert found == []  # ST 4.95% 在 absolute 下不触发（现状逐字）
+
+
+def test_absolute_mode_still_triggers_above_5():
+    limits = TriggerThresholds()
+    found = detect_fact_triggers(
+        "600519.SH",
+        snapshot=_snapshot(symbol="600519.SH", price_change_pct=5.01),
+        prev_snapshot=_snapshot(symbol="600519.SH"),
+        thresholds=limits,
+    )
+    assert [t.kind for t in found] == [TriggerKind.PRICE_MOVE]
+
+
+def test_thresholds_default_mode_is_absolute_and_ratio_half():
+    limits = TriggerThresholds()
+    assert limits.price_move_mode == "absolute"
+    assert limits.limit_ratio == 0.5
+
+
+def test_thresholds_from_settings_reads_relative_mode(monkeypatch):
+    class _Tracking:
+        price_move_mode = "limit_relative"
+        price_move_ratio = 0.6
+        stale_grace_days = 0
+        stale_after_days = 7
+
+    class _Deviation:
+        tracking = _Tracking()
+
+    class _Settings:
+        deviation = _Deviation()
+
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: _Settings())
+    limits = thresholds_from_settings()
+    assert limits.price_move_mode == "limit_relative"
+    assert limits.limit_ratio == 0.6
+
+
+def test_thresholds_from_settings_bad_mode_falls_back_absolute(monkeypatch):
+    class _Tracking:
+        price_move_mode = "bogus"
+        price_move_ratio = -1.0
+
+    class _Deviation:
+        tracking = _Tracking()
+
+    class _Settings:
+        deviation = _Deviation()
+
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: _Settings())
+    limits = thresholds_from_settings()
+    assert limits.price_move_mode == "absolute"
+    assert limits.limit_ratio == 0.5
+
+
+def test_kind_report_calendar_from_report_calendar_module(monkeypatch):
+    """REPORT_CALENDAR（P0 §7.2）：由 report_calendar 模块产出，payload.sub_kind 区分。"""
+    from alphabee.midterm import trading_calendar
+    from alphabee.tracking import report_calendar as rc
+
+    monkeypatch.setattr(trading_calendar, "calendar_source", lambda: "tushare")
+    monkeypatch.setattr(trading_calendar, "trading_days_between", lambda start, end: 5)
+    found = rc.detect_report_calendar_triggers(SYMBOL, as_of="2026-05-06", latest_period="20250930")
+    assert found and all(t.kind is TriggerKind.REPORT_CALENDAR for t in found)
+    assert any(t.payload["sub_kind"] == "report_overdue" for t in found)
 
 
 # ── ③ ★ 复用而非重写：哨兵传导 / 必抛传导 / 无第二份实现 ─────────────────────

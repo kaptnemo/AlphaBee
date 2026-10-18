@@ -151,3 +151,9 @@ deviation:
     tv_distance: 0.3         # 信念位移阈值（显式登记既有默认，== _TV_TRIGGER）
     evidence_rate: 0.5       # 证据到达率阈值（显式登记既有默认，== _EVIDENCE_RATE_TRIGGER）
     max_alerts_shown: 20     # --track-alerts 每标的显示的最大告警帧数（只读视图）
+    # P0 设计 §7.1：行情异动阈值口径。absolute = 现状（默认值不变 ⇒ 存量行为零变化）；
+    # limit_relative = 按板块涨跌停归一（|change|/board_limit ≥ price_move_ratio 即触发，
+    # 且封板边界 |change| ≥ board_limit − 0.5pp 也触发，覆盖 ST ≈4.95% 与涨停 9.99% 漏判）。
+    # 切换属行为变更，登记见 docs/roadmap/ROADMAP.md「行为变更登记」PR-B 行。
+    price_move_mode: absolute   # absolute | limit_relative
+    price_move_ratio: 0.5       # limit_relative 触发比例（0.5 ⇒ 主板 5% / 双创 10% / 北交所 15%）

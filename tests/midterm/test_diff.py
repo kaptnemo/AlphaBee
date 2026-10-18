@@ -567,6 +567,38 @@ def test_new_evidence_first_frame_empty():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# P0 设计 §6.1：trading_days / suspended_days（additive 口径）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_trading_days_none_is_backward_compatible_regression():
+    """``trading_days=None`` ⇒ 与现状逐字节一致（字段回落 None，elapsed_days 语义不变）。"""
+    prev = _artifact(as_of_date="2026-01-01")
+    curr = _artifact(as_of_date="2026-01-05")
+    d = diff(prev, curr)
+    assert d.trading_days is None
+    assert d.suspended_days is None
+    assert d.elapsed_days == 4  # 日历日语义不变
+
+
+def test_diff_accepts_trading_days_and_suspended_days():
+    prev = _artifact(as_of_date="2026-01-01")
+    curr = _artifact(as_of_date="2026-01-05")
+    d = diff(prev, curr, trading_days=3, suspended_days=1)
+    assert d.trading_days == 3
+    assert d.suspended_days == 1
+    assert d.elapsed_days == 4  # 日历日字段不变，交易日口径由新字段承载
+
+
+def test_diff_series_prefers_trading_days_denominator():
+    frames = [
+        _diff_frame("2026-01-01", elapsed_days=0),
+        _diff_frame("2026-01-05", elapsed_days=10, trading_days=2, tv_distance=0.4, new_evidence_count=2),
+    ]
+    series = diff_series(frames)
+    assert series[1].belief_velocity == pytest.approx(0.2)  # 0.4/2（trading_days）
+    assert series[1].evidence_arrival_rate == pytest.approx(1.0)  # 2/2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 归因（步骤 9，模板兜底）
 # ─────────────────────────────────────────────────────────────────────────────
 def test_attribution_template_note():
@@ -673,6 +705,7 @@ def _diff_frame(
     elapsed_days: int,
     tv_distance: float | None = None,
     new_evidence_count: int = 0,
+    trading_days: int | None = None,
 ) -> CompanyStateDiff:
     state_shift = None
     if tv_distance is not None:
@@ -688,6 +721,7 @@ def _diff_frame(
         prev=None,
         curr=ArtifactRef(id=f"000977:{date}", date=date),
         elapsed_days=elapsed_days,
+        trading_days=trading_days,
         state_shift=state_shift,
         new_evidence=evidence,
     )

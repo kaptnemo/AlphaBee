@@ -802,6 +802,8 @@ def test_tracking_settings_defaults_are_the_registered_values():
         "tv_distance": 0.3,
         "evidence_rate": 0.5,
         "max_alerts_shown": 20,
+        "price_move_mode": "absolute",
+        "price_move_ratio": 0.5,
     }
 
 

@@ -110,15 +110,18 @@ def monitor_triggers(
 ) -> MonitorTrigger:
     """监控触发器（§36 EVI）：``tv_distance`` / ``evidence_arrival_rate`` 超阈值 → 深度研究。
 
-    ``evidence_arrival_rate`` 由单帧 raw 量派生（``len(new_evidence)/elapsed_days``，
-    与 ``diff_series`` 同口径），不落单帧（避免单帧自指）。
+    ``evidence_arrival_rate`` 由单帧 raw 量派生（``len(new_evidence)/分母``，与
+    ``diff_series`` 同口径），不落单帧（避免单帧自指）。**分母口径（P0 §6.1）**：
+    优先 ``d.trading_days``（交易日），``None`` 回落 ``d.elapsed_days``（日历日）——
+    仅当调用方给 ``diff(...)`` 传入 ``trading_days`` 时该变更才生效，否则与现状逐字一致。
     """
     triggers: list[str] = []
     tv = d.state_shift.tv_distance if d.state_shift is not None else 0.0
     if tv > tv_threshold:
         triggers.append(f"tv_distance={tv:.3f}>{tv_threshold}")
-    if d.elapsed_days > 0:
-        rate = len(d.new_evidence) / d.elapsed_days
+    denominator = d.trading_days if d.trading_days is not None else d.elapsed_days
+    if denominator and denominator > 0:
+        rate = len(d.new_evidence) / denominator
         if rate > evidence_rate_threshold:
             triggers.append(f"evidence_arrival_rate={rate:.3f}>{evidence_rate_threshold}")
     return MonitorTrigger(triggered=bool(triggers), triggers=triggers)
