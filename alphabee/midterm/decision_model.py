@@ -436,6 +436,7 @@ def evaluate(
         as_of_date=snapshot.as_of_date,
         degraded=snapshot.degraded,
         degraded_reason=snapshot.degraded_reason,
+        classifier_order=resolved_order,
     )
 
 

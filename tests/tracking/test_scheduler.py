@@ -500,7 +500,11 @@ def test_trigger_dedupe_keeps_distinct_payloads():
 
 
 def _patch_offline(monkeypatch, *, revenue_yoy: float = 12.0):
-    """把默认 provider 替换为离线桩（CLI 路径不含网络/LLM 依赖）——patch **midterm 侧**。"""
+    """把默认 provider 替换为离线桩（CLI 路径不含网络/LLM 依赖）——patch **midterm 侧**。
+
+    披露日历的 ``_latest_report_period`` 复用 ``get_expectation_fact``（真实 Tushare 取数），
+    离线 CLI 冒烟也必须一并桩掉：否则会打到真实数据源并往 stdout 写错误日志，污染 JSON 输出。
+    """
     from alphabee.midterm import decision_model as md
     from alphabee.midterm import factors
 
@@ -510,6 +514,7 @@ def _patch_offline(monkeypatch, *, revenue_yoy: float = 12.0):
         lambda symbol, include_market=True: _snapshot(D2, revenue_yoy=revenue_yoy),
     )
     monkeypatch.setattr(md, "collect_evidence", lambda *a, **k: _evidence(D2))
+    monkeypatch.setattr(scheduler_module, "_latest_report_period", lambda symbol: (False, None))
 
 
 def test_cli_smoke_json(tmp_path, monkeypatch, capsys):
@@ -884,3 +889,113 @@ def test_f4_does_not_touch_node_contracts():
     assert hashlib.sha256("|".join(expected).encode()).hexdigest()[:16] == "1857784a5cb634e3"
     assert len(DETECTORS) == 7
     assert validate_contracts() == []
+
+
+# ── ⑦ TEF PR-2：分类器顺序透传 + provenance + 跨序标注（§5.2 / §6.1 / §6.2） ──
+
+
+def test_cli_classifier_option_exists_with_etf_tef_choices():
+    parser = scheduler_module._build_parser()
+    assert parser.parse_args(["--classifier", "tef"]).classifier == "tef"
+    assert parser.parse_args(["--classifier", "etf"]).classifier == "etf"
+    assert parser.parse_args([]).classifier is None  # 缺省 None → 读 config
+
+
+def test_cli_classifier_rejects_unknown_value():
+    parser = scheduler_module._build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--classifier", "xxx"])
+
+
+def test_run_once_classifier_tef_persists_tef_frame(tmp_path):
+    """`--classifier tef` 透传 ⇒ evaluate 写入 provenance ⇒ 落盘帧 classifier_order=="tef"。"""
+    state_dir = tmp_path / "state"
+    report = run_once(
+        SYMBOL,
+        as_of=D1,
+        state_dir=state_dir,
+        alert_dir=tmp_path / "alerts",
+        classifier_order="tef",
+        **_providers(D1),
+    )
+    assert report.classifier_order == "tef"
+    assert report.classifier_order_mismatch is False  # 首帧无 prev
+    assert latest_artifact(SYMBOL, state_dir).classifier_order == "tef"
+
+
+def test_run_once_default_classifier_follows_config_etf(tmp_path):
+    """缺省 None → 读 config midterm.classifier_order（默认 etf）⇒ provenance=="etf"。"""
+    report = run_once(
+        SYMBOL,
+        as_of=D1,
+        state_dir=tmp_path / "state",
+        alert_dir=tmp_path / "alerts",
+        **_providers(D1),
+    )
+    assert report.classifier_order == "etf"
+    assert report.classifier_order_mismatch is False
+
+
+def test_cross_order_adjacent_frames_mismatch_true(tmp_path):
+    """跨序相邻帧：prev=etf + curr=tef ⇒ classifier_order_mismatch is True（不阻断、不静默）。"""
+    state_dir = tmp_path / "state"
+    prev = _prev_artifact_with_state("S1", D1)
+    prev.classifier_order = "etf"
+    append_artifact(prev, state_dir)
+
+    report = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        alert_dir=tmp_path / "alerts",
+        classifier_order="tef",
+        **_providers(D2),
+    )
+    assert report.classifier_order == "tef"
+    assert report.classifier_order_mismatch is True
+    assert report.degraded is False  # mismatch 只标注，不阻断帧产出
+    assert latest_artifact(SYMBOL, state_dir).classifier_order == "tef"
+
+
+def test_same_order_adjacent_frames_mismatch_false(tmp_path):
+    """同序相邻帧：prev=etf + curr=etf ⇒ mismatch is False。"""
+    state_dir = tmp_path / "state"
+    prev = _prev_artifact_with_state("S1", D1)
+    prev.classifier_order = "etf"
+    append_artifact(prev, state_dir)
+
+    report = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        alert_dir=tmp_path / "alerts",
+        classifier_order="etf",
+        **_providers(D2),
+    )
+    assert report.classifier_order == "etf"
+    assert report.classifier_order_mismatch is False
+
+
+def test_cli_classifier_tef_reports_provenance(tmp_path, monkeypatch, capsys):
+    """CLI `--classifier tef` 端到端：JSON 报告 classifier_order=="tef"。"""
+    _patch_offline(monkeypatch)
+    code = main(
+        [
+            "--symbol",
+            SYMBOL,
+            "--once",
+            "--as-of",
+            D2,
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--alert-dir",
+            str(tmp_path / "alerts"),
+            "--classifier",
+            "tef",
+            "--json",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["classifier_order"] == "tef"
+    assert payload[0]["classifier_order_mismatch"] is False

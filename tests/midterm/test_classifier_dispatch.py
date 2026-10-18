@@ -1,17 +1,22 @@
-"""classifier_dispatch.py 的调度与接线钉（TEF design §7.3，PR-1 面）。
+"""classifier_dispatch.py 的调度、接线与 provenance 持久化钉（TEF design §7.3）。
 
-PR-1 不含 ``CompanyStateArtifact.classifier_order`` 字段（属 PR-2），故接线断言
-落在「两序同输入输出差异方向符合 §3.2」而非 artifact provenance 字段。
+调度面（§5.1）：fail-open（缺段/坏值/配置异常/坏显式值一律回落 etf）、显式
+``classifier_order`` 优先于配置、``None`` 跟随配置；真路由哨兵与
+``classifier.py`` / ``models.py`` 的 ``ClassifierResult`` re-export 同一对象。
+接线面（§4.5）：``evaluate`` 先 resolve 一次再路由、``get_decision`` 透传。
+provenance 持久化面（§6.1）：钉住 ``CompanyStateArtifact.classifier_order`` 由
+``evaluate`` 写入解析后的确定值，且存量旧帧无该字段 load 时回落 ``"etf"``。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 from alphabee.midterm import classifier as etf
 from alphabee.midterm import classifier_dispatch as dispatch
 from alphabee.midterm import classifier_tef as tef
-from alphabee.midterm.models import VariableScores
+from alphabee.midterm.models import CompanyStateArtifact, VariableScores
 
 
 def _scores(f=None, e=None, t=None, v=None, c=None, r=None) -> VariableScores:
@@ -194,3 +199,52 @@ def test_classifier_result_reexport_identity_and_fields():
     # 字段逐字不变
     for field_name in ("state", "transition", "factor_deltas", "uncertain", "research_tasks", "rationale"):
         assert hasattr(result, field_name)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PR-2：artifact provenance + 持久化兼容（TEF design §6.1 / §7.3 持久化行）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_evaluate_writes_classifier_order_to_artifact(monkeypatch):
+    from alphabee.midterm import decision_model
+    from alphabee.midterm.models import FactorSnapshot
+
+    scores = _scores(f=1.0, e=0.0, t=1.0)
+    monkeypatch.setattr(decision_model, "compress_scores", lambda snapshot: scores)
+
+    tef_artifact = decision_model.evaluate(FactorSnapshot(symbol="600519.SH"), classifier_order="tef")
+    assert tef_artifact.classifier_order == "tef"
+
+    etf_artifact = decision_model.evaluate(FactorSnapshot(symbol="600519.SH"), classifier_order="etf")
+    assert etf_artifact.classifier_order == "etf"
+
+
+def test_old_frame_without_classifier_order_loads_as_etf(tmp_path):
+    """存量 JSONL 无 classifier_order 字段 ⇒ load 回落 "etf"（历史帧确由 ETF 产出）。"""
+    from alphabee.midterm import persistence
+
+    state_dir = tmp_path / "state"
+    path = state_dir / "600519.SH.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old_payload = CompanyStateArtifact(symbol="600519.SH", as_of_date="2026-01-01").model_dump(mode="json")
+    old_payload.pop("classifier_order", None)  # 模拟存量旧帧
+    path.write_text(
+        json.dumps({"id": "600519.SH:2026-01-01", **old_payload}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = persistence.load_artifacts("600519.SH", state_dir)
+    assert len(loaded) == 1
+    assert loaded[0].classifier_order == "etf"
+
+
+def test_new_frame_classifier_order_roundtrip(tmp_path):
+    from alphabee.midterm import persistence
+
+    artifact = CompanyStateArtifact(symbol="600519.SH", as_of_date="2026-01-02", classifier_order="tef")
+    persistence.append_artifact(artifact, tmp_path / "state")
+
+    loaded = persistence.load_artifacts("600519.SH", tmp_path / "state")
+    assert len(loaded) == 1
+    assert loaded[0].classifier_order == "tef"

@@ -166,6 +166,10 @@ class TrackingReport(BaseModel):
     # **只 append 字段且带默认值**：历史 JSONL 反序列化不受影响。
     calendar_source: str = ""  # trading_calendar.calendar_source()：tushare / akshare / fallback
     trading_days: int | None = None  # 本窗口交易日数；None = 未计算 / 日历日兜底
+    # TEF design §6.2（additive，PR-2）：本帧分类器顺序自证 + 跨序相邻帧标注。
+    # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
+    classifier_order: str = ""  # 本帧解析后的顺序（"" = reconcile 失败 / 未计算）
+    classifier_order_mismatch: bool = False  # prev 非空且 prev.classifier_order != curr.classifier_order
 
     @property
     def kinds(self) -> list[str]:
@@ -193,6 +197,8 @@ class _Frame:
     # 研究连续体 P5（W5）：本帧登记后的 thesis 版本号与 reason（0 / "" = 未登记，如 persist=False 或降级）
     thesis_version: int = 0
     thesis_version_reason: str = ""
+    # TEF design §6.2（additive，PR-2）：跨序相邻帧标注（在内核算好，供 run_once 透传到报告）。
+    classifier_order_mismatch: bool = False
 
 
 # ── §9.4 安全红线 ───────────────────────────────────────────────────────────
@@ -432,6 +438,7 @@ def _reconcile_frame(
     state_dir: str | Path | None = None,
     persist: bool = True,
     previous: CompanyStateArtifact | None = None,
+    classifier_order: str | None = None,
 ) -> _Frame:
     """一帧的确定性内核（``reconcile`` 与 ``run_once`` **共用**，防两套链路漂移）。"""
     limits = _resolve_thresholds(thresholds)
@@ -452,6 +459,7 @@ def _reconcile_frame(
         prior_confidence=getattr(prev, "thesis_confidence", None) if prev is not None else None,
         thesis=thesis,
         prev_evidence_log=getattr(prev, "evidence_log", None),
+        classifier_order=classifier_order,
     )
     # 字段级接线：evaluate 不产这三项，由本层补齐（§9.2 + P0 设计 §6.2 退出条件首个生产点）
     # P0 §6.2：退出条件 = 新生产点产出 + 继承上一帧列表（继承逻辑已存在）。
@@ -462,6 +470,14 @@ def _reconcile_frame(
     curr.next_evidence_to_watch = list(getattr(prev, "next_evidence_to_watch", None) or [])
     curr.stale_after = _stale_after(
         as_of, prev, degraded=bool(getattr(curr, "degraded", False)), days=limits.stale_after_days
+    )
+
+    # TEF design §6.2（PR-2）：跨序相邻帧标注。旧帧无 classifier_order 字段 load 后回落 "etf"，
+    # 参与比较；mismatch 只标注不阻断、不静默（报告字段自证，对比期间混帧可事后筛选）。
+    classifier_order_mismatch = bool(
+        prev is not None
+        and str(getattr(prev, "classifier_order", "etf") or "etf")
+        != str(getattr(curr, "classifier_order", "etf") or "etf")
     )
 
     # P0 设计 §6.1：交易日/停牌口径（prev=None 首帧无窗口 ⇒ 均为 None）
@@ -533,6 +549,7 @@ def _reconcile_frame(
         persisted=persisted,
         thesis_version=thesis_version,
         thesis_version_reason=thesis_version_reason,
+        classifier_order_mismatch=classifier_order_mismatch,
     )
 
 
@@ -545,6 +562,7 @@ def reconcile(
     thresholds: TriggerThresholds | None = None,
     state_dir: str | Path | None = None,
     persist: bool = True,
+    classifier_order: str | None = None,
 ) -> CompanyStateArtifact:
     """把标的推进到 ``as_of``：增量事实 → 快照 → 五层差分 + 归因 → 退出检查 → bayes 更新 → 状态检查。
 
@@ -567,6 +585,8 @@ def reconcile(
         state_dir: 帧持久化目录（缺省 ``data/midterm/state``）；thesis 版本目录 = ``<state_dir>/thesis_versions``
             （``state_dir=None`` 时版本回落缺省 ``data/midterm/thesis_versions``，逐字不变；RC-5）。
         persist: 是否落盘（``False`` 用于只读预演/测试）。
+        classifier_order: 分类器顺序变体（TEF design §5.2）：``None`` = 跟随配置；显式 ``"etf"`` / ``"tef"``
+            覆盖配置（同样 fail-open）。
 
     Returns:
         本帧 :class:`CompanyStateArtifact`（已含 ``thesis_confidence`` / ``factor_snapshot`` /
@@ -580,6 +600,7 @@ def reconcile(
         thresholds=thresholds,
         state_dir=state_dir,
         persist=persist,
+        classifier_order=classifier_order,
     ).artifact
 
 
@@ -673,6 +694,7 @@ def run_once(
     persist: bool = True,
     write_alerts: bool = True,
     manual: bool = False,
+    classifier_order: str | None = None,
 ) -> TrackingReport:
     """一次性 reconcile + 触发判定 + 告警落盘（§14.5-A 的 v1 闭环）。
 
@@ -687,6 +709,8 @@ def run_once(
         write_alerts: 是否落盘告警（``False`` = 只读预演；CLI ``--no-persist`` 会关掉它，
             否则"预演"会往**默认告警目录**里偷偷写东西）。
         manual: ``True`` 时额外注入一条 :attr:`TriggerKind.MANUAL`（CLI ``--trigger manual``）。
+        classifier_order: 分类器顺序变体（TEF design §5.2）：``"etf"`` / ``"tef"``；
+            ``None`` = 跟随配置 ``midterm.classifier_order``（fail-open 到 ``etf``）。
 
     Returns:
         :class:`TrackingReport`。
@@ -703,6 +727,7 @@ def run_once(
             thresholds=limits,
             state_dir=state_dir,
             persist=persist,
+            classifier_order=classifier_order,
         )
     except Exception as exc:  # noqa: BLE001 - 跟踪入口必须 fail-open，绝不把异常抛给调度/CLI
         logger.warning("tracking reconcile failed symbol=%s as_of=%s: %s", symbol, frame_as_of, exc)
@@ -729,6 +754,9 @@ def run_once(
     # P0 设计 §6.1：交易日口径自证（帧报告标注 calendar_source；trading_days=None 即「按日历日」）
     report.calendar_source = trading_calendar.calendar_source()
     report.trading_days = getattr(frame.frame_diff, "trading_days", None) if frame.frame_diff is not None else None
+    # TEF design §6.2（PR-2）：本帧分类器顺序自证 + 跨序相邻帧标注（不阻断、不静默）。
+    report.classifier_order = str(getattr(artifact, "classifier_order", "") or "")
+    report.classifier_order_mismatch = bool(frame.classifier_order_mismatch)
 
     triggers = detect_triggers(
         symbol,
@@ -802,12 +830,13 @@ def run_watchlist(
     symbols: Sequence[str],
     *,
     as_of: str | None = None,
+    classifier_order: str | None = None,
     **kwargs: Any,
 ) -> list[TrackingReport]:
     """按序跑一份看板；**单个标的失败不影响其余**（fail-open，逐标的独立报告）。"""
     reports: list[TrackingReport] = []
     for symbol in symbols:
-        reports.append(run_once(symbol, as_of=as_of, **kwargs))
+        reports.append(run_once(symbol, as_of=as_of, classifier_order=classifier_order, **kwargs))
     return reports
 
 
@@ -835,6 +864,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alert-dir", dest="alert_dir", default=None, help="告警落盘目录")
     parser.add_argument("--no-persist", action="store_true", help="只读预演：不落盘帧与告警")
     parser.add_argument("--trigger", choices=["manual"], default=None, help="显式人工触发信号")
+    parser.add_argument(
+        "--classifier",
+        choices=["etf", "tef"],
+        default=None,
+        help="分类器顺序变体（缺省 = 读 config midterm.classifier_order；etf=E→T→F / tef=T→E→F）",
+    )
     parser.add_argument("--json", action="store_true", help="以 JSON 输出报告")
     return parser
 
@@ -908,6 +943,7 @@ def main(argv: list[str] | None = None) -> int:
         persist=not args.no_persist,
         write_alerts=not args.no_persist,  # 只读预演不得写任何东西（含默认告警目录）
         manual=args.trigger == "manual",
+        classifier_order=args.classifier,
     )
     if args.json:
         print(json.dumps([r.model_dump(mode="json") for r in reports], ensure_ascii=False, indent=2))

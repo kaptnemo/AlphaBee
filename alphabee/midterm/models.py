@@ -562,6 +562,9 @@ class CompanyStateArtifact(BaseModel):
     stale_after: str | None = None
     degraded: bool = False  # 上游缺失触发降级（显式 issue）
     degraded_reason: str = ""
+    # TEF design §6.1（additive，PR-2）：本帧由哪套分类器顺序产出（etf=E→T→F / tef=T→E→F）。
+    # 只 append 字段且带默认值：存量 JSONL 无此字段 → load 回落 "etf"（历史帧确由 ETF 产出，语义正确）。
+    classifier_order: str = "etf"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
