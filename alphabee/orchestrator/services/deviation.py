@@ -83,6 +83,8 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "peer_group_benchmarks_missing": DeviationClass.D1_DATA,
     "industry_context_missing": DeviationClass.D1_DATA,
     "industry_benchmarks_missing": DeviationClass.D1_DATA,
+    # P0 设计 §9.3：分析师一致预期覆盖不足（consensus_coverage_low）且无 revision 证据
+    "consensus_missing": DeviationClass.D1_DATA,
     # ── D2 结构偏离（解析/schema/降级/上下文构建）
     "parse_error": DeviationClass.D2_STRUCTURE,
     "schema": DeviationClass.D2_STRUCTURE,
@@ -112,6 +114,8 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "state_drift": DeviationClass.D4_STATE,
     # 现网：市场总分跌破阈值 = 论点所依赖的环境状态发生迁移
     "market_regime": DeviationClass.D4_STATE,
+    # P0 设计 §8.2：政策敏感赛道（policy_shock 原语命中）⇒ 环境状态/政策维度暴露
+    "policy_exposure": DeviationClass.D4_STATE,
     # ── D5 控制偏离（回环打满/预算耗尽/流水线控制层失败）
     "report_rewrite_needed": DeviationClass.D5_CONTROL,
     "budget_exhausted": DeviationClass.D5_CONTROL,

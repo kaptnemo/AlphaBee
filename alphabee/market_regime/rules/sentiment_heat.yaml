@@ -1,0 +1,33 @@
+# 涨停情绪温度计（P0 设计 §8.1，结构照 risk_preference.yaml）
+#
+# 输入：涨停家数（limit_up_count）、跌停家数（limit_down_count）。
+# 输出：sentiment_heat（-3 ~ +3），作为 risk_preference 调整项之一。
+#
+# 业务逻辑：A 股情绪温度计——涨停家数分档给正分（过热），跌停家数占比给负分（冰点）。
+# 只作情绪调整项，不进 regime 主权重（防止短期情绪噪音污染估值/趋势/流动性判断）。
+
+rules:
+  sentiment_heat:
+    weight: 0.20
+    description: 涨停家数分档 + 涨跌停比；过热为正、冰点为负，±3 封顶
+    required_facts: [limit_up_count, limit_down_count]
+    # 设计 §8.1 原文公式用 min/max 封顶；safe-AST 不支持函数调用，故等价展开：
+    #   up 项 = >100 → +3；<20 → −2；20..100 → (count−20)/80×2（0..+2）
+    #   down 项 = −min(down/denom×3, 3)，denom = max(up, 1)
+    formula: >
+      (limit_up_count > 100) * 3 +
+      (limit_up_count < 20) * -2 +
+      (limit_up_count >= 20) * (limit_up_count <= 100) * (limit_up_count - 20) / 80 * 2 -
+      (limit_down_count > 0) * (
+        (limit_down_count * 3 / (limit_up_count + (limit_up_count <= 0)) < 3) *
+        (limit_down_count * 3 / (limit_up_count + (limit_up_count <= 0))) +
+        (limit_down_count * 3 / (limit_up_count + (limit_up_count <= 0)) >= 3) * 3
+      )
+    thresholds:
+      overheated: "value >= 2"
+      neutral: "-2 <= value < 2"
+      frozen: "value < -2"
+    interpretation:
+      overheated: 涨停家数显著放大，情绪过热，追高风险上升
+      neutral: 涨停情绪中性
+      frozen: 涨停稀少且跌停扩散，情绪冰点

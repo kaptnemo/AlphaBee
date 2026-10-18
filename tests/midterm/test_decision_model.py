@@ -51,7 +51,7 @@ def _snapshot(**overrides) -> FactorSnapshot:
     """构建带全量非空值的快照；``overrides`` 里的键为因子名，值为字段 dict。"""
     defaults: dict = {
         "fundamental": FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=20.0, eps_growth_yoy=15.0),
-        "expectation": ExpectationFactor(eps_fy1_revision_1m=3.0, revision_breadth=0.6),
+        "expectation": ExpectationFactor(eps_fy1_revision_1m=3.0, revision_breadth=0.6, coverage_count=3),
         "trend": TrendFactor(rs_stock_market_20d=10.0, rs_stock_market_60d=5.0),
         "valuation": ValuationFactor(pe_ttm_5y_percentile=0.3, pb_5y_percentile=0.4),
         "crowding": CrowdingFactor(holder_count_change=5.0, hot_rank=80, turnover_rate_percentile=0.4),

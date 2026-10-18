@@ -509,3 +509,15 @@ etf_net_inflow:
   required_by: []
   source_mappings: {}
   notes: 当前无稳定免费数据源，见 INDEX.yaml field_gaps。
+
+policy_regime:
+  category: market_regime
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 政策状态定性标签（P0 设计 §8.2；v1 占位，数据源 = 政策事件通道，P1 顺延 RC-POLICY-DATA）
+  aliases:
+    zh: [政策状态, 政策环境]
+    en: [policy regime, policy environment]
+  required_by: []
+  source_mappings: {}

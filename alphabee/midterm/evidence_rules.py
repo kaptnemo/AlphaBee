@@ -54,6 +54,9 @@ _BEAT_MEDIUM_MAX = 15.0  # 5–15% → medium；>15% → strong
 _REVISION_WEAK_MAX = 3.0  # |revision| <3% → weak
 _REVISION_MEDIUM_MAX = 10.0  # 3–10% → medium；>10% → strong
 
+# P0 设计 §9.1：revision 证据的 coverage 护栏（单份研报调价不可信）。
+_MIN_CONSENSUS_COVERAGE = 3
+
 # 数值类证据统一受控 kind（§3：fundamental / expectation / trend / crowding / thesis / price）
 _KIND = "expectation"
 
@@ -92,6 +95,12 @@ def _to_float(value: Any) -> float | None:
         except (TypeError, ValueError):
             return None
     return f if math.isfinite(f) else None
+
+
+def _to_int(value: Any) -> int | None:
+    """同 :func:`_to_float`，但产出 ``int | None``（用于 coverage_count 等计数）。"""
+    v = _to_float(value)
+    return int(v) if v is not None else None
 
 
 def _norm_date(value: Any) -> str:
@@ -451,10 +460,17 @@ def _revision_evidence(
 ) -> list[EvidenceEvent]:
     """分析师盈利预测修正 → 方向证据（方向=符号，幅度离散标定 §6）。
 
+    P0 设计 §9.1：coverage 护栏——``coverage_count`` 缺失或 <
+    :data:`_MIN_CONSENSUS_COVERAGE`（3）⇒ ``[]``（单份研报调价不产 revision 证据）。
+
     A1 相关证据压缩：按预测年度分组，组内只保留 |幅度| 最大的一条
     （最强证据）——1m/3m 窗口重叠，同源修正动量不重复累加 log-odds；
     同组方向冲突时按幅度决定（信息量最大者胜），不按字段数多数表决。
     """
+    coverage = _to_int(values.get("coverage_count"))
+    if coverage is None or coverage < _MIN_CONSENSUS_COVERAGE:
+        return []  # 覆盖不足 ⇒ 不产 revision 证据（防单份研报调价即 strong）
+
     # P0-1：事件 date 用 consensus_as_of_date（跨帧同 id），缺失回落 as_of_date
     # （fail-open 不抛）——同一 revision 数值在跨帧产生同 id，差集不再误报新证据。
     event_date = str(values.get("consensus_as_of_date") or "").strip() or as_of_date

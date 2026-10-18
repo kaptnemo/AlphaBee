@@ -46,6 +46,11 @@ _FUNDAMENTAL_YOY_SCALE = 30.0  # PERCENT 营收/净利/每股 YoY 饱和点（30
 # e_revision 反饱和（log1p 压缩，§12）：不再线性 clip 到 ±1，保留 +45% vs +100% 幅度差异。
 _REVISION_REF = 100.0  # PERCENT 归一化参考点（100% 上修 → ±1；45% → ≈0.83）
 _REVISION_REF_LOG = math.log1p(_REVISION_REF)
+
+# P0 设计 §9.2：E 引擎护栏与锚重调
+_MIN_CONSENSUS_COVERAGE = 3  # 分析师一致预期最小覆盖家数（<3 ⇒ 研报修正不可信）
+_ANCHOR_WEIGHT = 0.6  # 预告锚权重（业绩预告成为 E 主轴）
+_RESEARCH_WEIGHT = 0.4  # 研报修正权重（既有逻辑降权）
 _RS_SCALE = 20.0  # PERCENT 相对强度超额收益饱和点（20% → ±1）
 _HOLDER_CHANGE_SCALE = 20.0  # PERCENT 股东户数增幅饱和点（20% → ±1）
 _PLEDGE_SCALE = 50.0  # PERCENT 质押率饱和点（50% → -1）
@@ -189,13 +194,22 @@ def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | No
     return _saturate(score, 1.0)
 
 
-def _revision(e: ExpectationFactor) -> float | None:
-    """E 方向分（核心因子）：分析师上修 → 正。
+def _forecast_revision_anchor(e: ExpectationFactor) -> float | None:
+    """预告锚（P0-6 重调）：相邻两个报告期预告区间中点差（PERCENT，上修为正）的方向分。
 
-    §3.3 口径 ``eps_fy1_revision_1m/3m + revision_breadth``。revision 字段为 PERCENT
-    （上修为正），用 ``_log1p_saturate`` 反饱和（保留 +45% vs +100% 幅度差异）；
-    ``revision_breadth`` 为上调占比 0-1（0.5 中性 → 映射到 0）。全部缺失 → ``None``。
+    ``ExpectationFactor.forecast_revision_anchor`` 由 ``factors.build_expectation_factor``
+    按修正后末条口径计算（同报告期取 ``ann_date`` 末条、period 降序取前两期）；本函数只做
+    ``_log1p_saturate`` 反饱和（100% → ±1，保留幅度差异）。无相邻期（字段 ``None``）→
+    ``None`` ⇒ ``_revision`` 回落研报单独承载（E **不**因预告水平乐观而无条件为正）。
     """
+    delta = e.forecast_revision_anchor
+    if delta is None:
+        return None
+    return _log1p_saturate(delta, _REVISION_REF_LOG)
+
+
+def _research_revision(e: ExpectationFactor) -> float | None:
+    """研报修正（既有逻辑，P0-6 降权 0.4）：revision 字段 + revision_breadth。"""
     contribs: list[float] = []
     for rev in (e.eps_fy1_revision_1m, e.eps_fy1_revision_3m, e.eps_fy2_revision_1m):
         if rev is not None:
@@ -203,6 +217,28 @@ def _revision(e: ExpectationFactor) -> float | None:
     if e.revision_breadth is not None:
         contribs.append(2.0 * e.revision_breadth - 1.0)  # 0.5 → 0，1 → +1，0 → -1
     return _mean(contribs)
+
+
+def _revision(e: ExpectationFactor) -> float | None:
+    """E 方向分（P0-6 重调）：预告锚 0.6 + 研报修正 0.4；coverage<3 → None（护栏）。
+
+    - coverage 护栏：``coverage_count`` 缺失或 < :data:`_MIN_CONSENSUS_COVERAGE` ⇒
+      ``None``（调用方 :func:`compress_scores` 把 ``consensus_coverage_low`` 登记进
+      ``FactorSnapshot.missing_facts``）；
+    - 合成：两者皆有时 ``0.6×anchor + 0.4×research``（clip [-1,1]）；单侧缺失时另一侧
+      **单独承载**（full，不缩放）；两侧全缺 → ``None``。
+    """
+    if e.coverage_count is None or e.coverage_count < _MIN_CONSENSUS_COVERAGE:
+        return None
+    anchor = _forecast_revision_anchor(e)
+    research = _research_revision(e)
+    if anchor is None and research is None:
+        return None
+    if anchor is None:
+        return research
+    if research is None:
+        return anchor
+    return _saturate(_ANCHOR_WEIGHT * anchor + _RESEARCH_WEIGHT * research, 1.0)
 
 
 def _relative_strength(t: TrendFactor) -> float | None:
@@ -367,7 +403,9 @@ def compress_scores(snapshot: FactorSnapshot | None) -> VariableScores:
     """把七因子快照压缩为七方向分（``FactorSnapshot → VariableScores``）。
 
     七个方向分独立产出、不跨因子求和；任一因子方向分输入缺失时对应字段为 ``None``。
-    只读 ``snapshot``，不修改其原始 canonical 值。
+    只读 ``snapshot`` 的原始 canonical 值，**唯一例外**：P0 设计 §9.2 的 coverage 护栏
+    会把 ``consensus_coverage_low`` 登记进 ``snapshot.missing_facts``（复用 factors 的
+    缺失登记通道），供 ``resolve_midterm_decision`` 产出 ``consensus_missing`` Issue。
 
     Args:
         snapshot: 七因子快照（``alphabee.midterm.factors.get_factor_snapshot`` 产物）。
@@ -380,6 +418,11 @@ def compress_scores(snapshot: FactorSnapshot | None) -> VariableScores:
         return VariableScores()
 
     e_revision = _revision(snapshot.expectation)
+    # P0 §9.2：覆盖不足 → E 研报修正不可靠（_revision 已返回 None），并把护栏触发
+    # 显式登记进 missing_facts（只留痕，不静默）。
+    if snapshot.expectation.coverage_count is None or snapshot.expectation.coverage_count < _MIN_CONSENSUS_COVERAGE:
+        if "consensus_coverage_low" not in snapshot.missing_facts:
+            snapshot.missing_facts.append("consensus_coverage_low")
     segment_divergence = _segment_divergence(snapshot.fundamental)
 
     return VariableScores(

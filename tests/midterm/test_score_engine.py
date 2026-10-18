@@ -18,7 +18,14 @@ from alphabee.midterm.models import (
     TrendFactor,
     ValuationFactor,
 )
-from alphabee.midterm.score_engine import adjust_market_exposure, compress_scores
+from alphabee.midterm.score_engine import (
+    _ANCHOR_WEIGHT,
+    _RESEARCH_WEIGHT,
+    _forecast_revision_anchor,
+    _research_revision,
+    adjust_market_exposure,
+    compress_scores,
+)
 
 
 def _snapshot(**overrides) -> FactorSnapshot:
@@ -37,6 +44,7 @@ def _snapshot(**overrides) -> FactorSnapshot:
             eps_fy1_revision_3m=2.0,
             eps_fy2_revision_1m=1.0,
             revision_breadth=0.6,
+            coverage_count=3,  # P0 §9.2：覆盖达标（≥3）才允许研报修正参与 E 方向分
         ),
         "trend": TrendFactor(
             rs_stock_market_20d=10.0,
@@ -219,19 +227,23 @@ def test_fundamental_segment_divergence_below_threshold_no_bonus():
 
 
 def test_revision_upward_positive():
-    snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=5.0))
+    snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=5.0, coverage_count=3))
     assert compress_scores(snap).e_revision == pytest.approx(0.3882, abs=1e-3)
 
 
 def test_revision_downward_negative():
-    snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=-5.0))
+    snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=-5.0, coverage_count=3))
     assert compress_scores(snap).e_revision == pytest.approx(-0.3882, abs=1e-3)
 
 
 def test_revision_antisaturation_45_vs_100():
     """反饱和：+45% 与 +100% 不再都 clip 到 1.0，保留幅度差异。"""
-    s45 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0))).e_revision
-    s100 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=100.0))).e_revision
+    s45 = compress_scores(
+        _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0, coverage_count=3))
+    ).e_revision
+    s100 = compress_scores(
+        _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=100.0, coverage_count=3))
+    ).e_revision
     assert s45 != s100
     assert s100 > s45
     assert s45 < 1.0  # 45% 不再饱和到 1.0
@@ -240,14 +252,18 @@ def test_revision_antisaturation_45_vs_100():
 
 def test_revision_antisaturation_monotonic():
     """反饱和单调：上修幅度越大方向分越高（5% < 45% < 100%）。"""
-    s5 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=5.0))).e_revision
-    s45 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0))).e_revision
-    s100 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=100.0))).e_revision
+    s5 = compress_scores(_snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=5.0, coverage_count=3))).e_revision
+    s45 = compress_scores(
+        _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0, coverage_count=3))
+    ).e_revision
+    s100 = compress_scores(
+        _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=100.0, coverage_count=3))
+    ).e_revision
     assert 0.0 < s5 < s45 < s100
 
 
 def test_revision_breadth_neutral_zero():
-    snap = _snapshot(expectation=ExpectationFactor(revision_breadth=0.5))
+    snap = _snapshot(expectation=ExpectationFactor(revision_breadth=0.5, coverage_count=3))
     assert compress_scores(snap).e_revision == pytest.approx(0.0)
 
 
@@ -327,7 +343,7 @@ def test_crowding_high_turnover_exempt_with_e_revision():
     base = _snapshot(crowding=CrowdingFactor(turnover_rate_percentile=0.9))
     up = _snapshot(
         crowding=CrowdingFactor(turnover_rate_percentile=0.9),
-        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0, coverage_count=3),  # e_revision ≈ 0.83 > 0.3
     )
     c_base = compress_scores(base).c_crowding
     c_up = compress_scores(up).c_crowding
@@ -356,7 +372,7 @@ def test_crowding_low_turnover_positive_not_attenuated():
     base = _snapshot(crowding=CrowdingFactor(turnover_rate_percentile=0.1))
     up = _snapshot(
         crowding=CrowdingFactor(turnover_rate_percentile=0.1),
-        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0, coverage_count=3),  # e_revision ≈ 0.83 > 0.3
     )
     c_base = compress_scores(base).c_crowding
     c_up = compress_scores(up).c_crowding
@@ -442,7 +458,7 @@ def test_compress_scores_market_summary_regime_lift():
         fundamental=FundamentalFactor(
             revenue_yoy=10.0, net_profit_yoy=10.0, eps_growth_yoy=10.0, segment_fastest_yoy=30.0
         ),
-        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0),  # e_revision ≈ 0.83 > 0.3
+        expectation=ExpectationFactor(eps_fy1_revision_1m=45.0, coverage_count=3),  # e_revision ≈ 0.83 > 0.3
         market=MarketFactor(market_score=40.0, regime="熊市", position_low=0.0, position_high=0.2),
     )
     m = compress_scores(snap).m
@@ -481,3 +497,78 @@ def test_does_not_mutate_snapshot():
     before = snap.model_dump()
     compress_scores(snap)
     assert snap.model_dump() == before
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P0-6 §9.2：coverage 护栏 + E 锚重调
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_revision_coverage_below_threshold_returns_none_and_registers():
+    snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0, coverage_count=2))
+    assert compress_scores(snap).e_revision is None
+    assert "consensus_coverage_low" in snap.missing_facts
+
+
+def test_revision_coverage_missing_returns_none_and_registers():
+    snap = _snapshot(expectation=ExpectationFactor(eps_fy1_revision_1m=45.0))  # coverage None
+    assert compress_scores(snap).e_revision is None
+    assert "consensus_coverage_low" in snap.missing_facts
+
+
+def test_revision_coverage_ok_not_registered():
+    snap = _snapshot()  # coverage_count=3
+    compress_scores(snap)
+    assert "consensus_coverage_low" not in snap.missing_facts
+
+
+def test_revision_anchor_research_blend_0_6_0_4():
+    e = ExpectationFactor(
+        forecast_revision_anchor=20.0,  # 相邻期预告区间中点差 +20% → anchor
+        eps_fy1_revision_1m=10.0,  # research
+        coverage_count=3,
+    )
+    anchor = _forecast_revision_anchor(e)
+    research = _research_revision(e)
+    assert anchor is not None and research is not None
+    expected = _ANCHOR_WEIGHT * anchor + _RESEARCH_WEIGHT * research
+    assert compress_scores(_snapshot(expectation=e)).e_revision == pytest.approx(expected)
+
+
+def test_revision_anchor_only_when_research_missing():
+    e = ExpectationFactor(forecast_revision_anchor=-10.0, coverage_count=3)
+    assert compress_scores(_snapshot(expectation=e)).e_revision == pytest.approx(_forecast_revision_anchor(e))
+
+
+def test_revision_research_only_when_anchor_missing():
+    e = ExpectationFactor(eps_fy1_revision_1m=5.0, coverage_count=3)
+    assert compress_scores(_snapshot(expectation=e)).e_revision == pytest.approx(_research_revision(e))
+
+
+def test_revision_both_missing_returns_none():
+    e = ExpectationFactor(coverage_count=3)
+    assert compress_scores(_snapshot(expectation=e)).e_revision is None
+
+
+def test_revision_forecast_level_without_adjacent_period_does_not_contribute():
+    """无相邻期 ⇒ anchor=None ⇒ research 单独承载；E 不因预告水平乐观而无条件为正。"""
+    e = ExpectationFactor(
+        profit_forecast_min_change=100.0,
+        profit_forecast_max_change=200.0,  # 预告水平乐观，但无 forecast_revision_anchor
+        coverage_count=3,
+    )
+    assert _forecast_revision_anchor(e) is None
+    assert compress_scores(_snapshot(expectation=e)).e_revision is None  # research 也为空
+
+
+def test_revision_anchor_positive_from_adjacent_period_upgrade():
+    """相邻期预告区间中点上修 ⇒ 锚为正 ⇒ 正 E 贡献。"""
+    e = ExpectationFactor(forecast_revision_anchor=20.0, coverage_count=3)
+    assert _forecast_revision_anchor(e) > 0
+    assert compress_scores(_snapshot(expectation=e)).e_revision > 0
+
+
+def test_revision_anchor_negative_from_adjacent_period_downgrade():
+    e = ExpectationFactor(forecast_revision_anchor=-20.0, coverage_count=3)
+    assert _forecast_revision_anchor(e) < 0
+    assert compress_scores(_snapshot(expectation=e)).e_revision < 0

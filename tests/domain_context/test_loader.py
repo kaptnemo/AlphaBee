@@ -11,9 +11,9 @@ from alphabee.domain_context import (
 from alphabee.domain_context.schemas import PlaybookSchema, PrimitiveSchema
 
 
-def test_catalog_loads_6_primitives_3_playbooks():
+def test_catalog_loads_7_primitives_3_playbooks():
     cat = load_catalog()
-    assert len(cat.primitives) == 6
+    assert len(cat.primitives) == 7
     assert len(cat.playbooks) == 3
 
 
@@ -25,6 +25,7 @@ def test_expected_primitive_ids():
         "working_capital_stress",
         "biological_inventory",
         "project_delivery",
+        "policy_shock",
     }
 
 

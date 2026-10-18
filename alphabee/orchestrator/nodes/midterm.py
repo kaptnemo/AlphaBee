@@ -343,6 +343,22 @@ async def resolve_midterm_decision(
                 value=decision.model_dump(mode="json"),
             )
         )
+
+        # P0 设计 §9.3：覆盖不足 + 本 run 无 revision 证据 ⇒ consensus_missing 只留痕
+        # （不阻断、不降级）；「无 revision 证据」用证据 subject 的 ":revision:" 前缀判定。
+        missing_facts = decision.factor_snapshot.missing_facts if decision.factor_snapshot else []
+        has_revision_evidence = any(":revision:" in str(getattr(e, "subject", "") or "") for e in decision.evidence_log)
+        if "consensus_coverage_low" in missing_facts and not has_revision_evidence:
+            new_issues.append(
+                record_deviation(
+                    DeviationClass.D1_DATA,
+                    IssueSeverity.MEDIUM,
+                    "分析师一致预期覆盖不足（<3 家）且本 run 无 revision 证据，consensus 口径不可用。",
+                    detected_at_step=step.id,
+                    category="consensus_missing",
+                    scope=IssueScope.DATA,
+                )
+            )
     except Exception as exc:
         # 降级纪律：LLM/网络失败只记 Issue，报告照常（不产出 MIDTERM_DECISION，
         # 下游 finalize/recorder 需容忍其缺失，详见 Phase 2/3 接线）。

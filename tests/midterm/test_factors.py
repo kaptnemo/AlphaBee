@@ -192,12 +192,26 @@ def test_build_fundamental_factor_segment_collection_uses_latest_period():
 
 def test_build_expectation_factor_forecast_express_and_consensus():
     exp = {
-        "forecast": [{"profit_forecast_min_change": 5.0, "profit_forecast_max_change": 30.0}],
+        "forecast": [
+            {
+                "period": "20241231",
+                "ann_date": "20250130",
+                "profit_forecast_min_change": 5.0,
+                "profit_forecast_max_change": 30.0,
+            },
+            {
+                "period": "20231231",
+                "ann_date": "20240130",
+                "profit_forecast_min_change": 0.0,
+                "profit_forecast_max_change": 20.0,
+            },
+        ],
         "express": [{"express_revenue_yoy": 12.0, "express_net_profit_yoy": 15.0}],
     }
     factor, missing = build_expectation_factor(exp, _consensus())
     assert factor.profit_forecast_min_change == 5.0
     assert factor.profit_forecast_max_change == 30.0
+    assert factor.forecast_revision_anchor == pytest.approx(7.5)  # (17.5 − 10.0)
     assert factor.express_revenue_yoy == 12.0
     assert factor.express_net_profit_yoy == 15.0
     assert factor.eps_fy1 == 3.2
@@ -206,6 +220,52 @@ def test_build_expectation_factor_forecast_express_and_consensus():
     assert factor.rating_upgrade_1m == 3
     assert factor.rating_downgrade_1m == 1
     assert missing == []
+
+
+def test_build_expectation_factor_anchor_none_without_adjacent_period():
+    exp = {
+        "forecast": [
+            {
+                "period": "20241231",
+                "ann_date": "20250130",
+                "profit_forecast_min_change": 5.0,
+                "profit_forecast_max_change": 30.0,
+            }
+        ],
+        "express": [],
+    }
+    factor, _ = build_expectation_factor(exp, _consensus())
+    assert factor.forecast_revision_anchor is None
+
+
+def test_build_expectation_factor_anchor_uses_latest_record_per_period():
+    # 同报告期修正：取 ann_date 末条（修正后区间）参与相邻期中点差
+    exp = {
+        "forecast": [
+            {
+                "period": "20241231",
+                "ann_date": "20250130",
+                "profit_forecast_min_change": 5.0,
+                "profit_forecast_max_change": 30.0,
+            },
+            {
+                "period": "20241231",
+                "ann_date": "20250220",
+                "profit_forecast_min_change": 20.0,
+                "profit_forecast_max_change": 40.0,
+            },
+            {
+                "period": "20231231",
+                "ann_date": "20240130",
+                "profit_forecast_min_change": 0.0,
+                "profit_forecast_max_change": 20.0,
+            },
+        ],
+        "express": [],
+    }
+    factor, _ = build_expectation_factor(exp, _consensus())
+    assert factor.profit_forecast_min_change == 20.0  # 修正后末条
+    assert factor.forecast_revision_anchor == pytest.approx(20.0)  # (30 − 10)
 
 
 def test_build_expectation_factor_consensus_none_registers_missing():

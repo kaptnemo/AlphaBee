@@ -94,6 +94,9 @@ _DEGRADE_CATEGORIES: frozenset[str] = frozenset(
 )
 
 #: 核心输入整体缺失（→ T3 骨架/跳过）的稳定 category。
+#: P0 设计 §9.3 的 ``consensus_missing`` **刻意不登记**进本集合：它只留痕（进报告
+#: "系统问题"段与偏离账本），不阻断、不降级、不触发恢复阶梯（与 company_track_missing
+#: 不同，consensus 覆盖不足仍可由预告锚承载 E 方向分）。
 _SKELETON_CATEGORIES: frozenset[str] = frozenset(
     {
         "industry_context_missing",

@@ -51,7 +51,7 @@ ENGINE_SUB_INDICATORS: dict[str, list[str]] = {
     "liquidity_score": ["rate_cycle_score", "m1_m2_score", "socfin_score"],
 }
 MARKET_COMPONENTS = ["valuation_score", "trend_score", "liquidity_score"]
-RISK_DELTA_RULES = ["turnover_delta", "margin_delta", "etf_delta"]
+RISK_DELTA_RULES = ["turnover_delta", "margin_delta", "etf_delta", "sentiment_heat"]
 
 RuleResult = dict[str, Any]
 RuleResults = dict[str, RuleResult]
@@ -378,7 +378,7 @@ class MarketScoreEngine:
 
     def _risk_delta(self, results: RuleResults) -> float:
         # 风险偏好调整项（-5 ~ +5）：
-        #   成交额 50% + 融资余额 30% + ETF 资金流 20%（见 risk_preference.yaml）。
+        #   成交额 40% + 融资余额 25% + ETF 资金流 15% + 涨停情绪 20%（见 risk_preference.yaml）。
         # 设计意图：情绪/资金因子只作"总分的微调"，不进入结构性主权重，
         # 防止短期情绪噪音污染估值/趋势/流动性的中长期判断。
         # 与引擎分不同，缺失的情绪子项按 0 分累加（缺情绪数据≈中性情绪），

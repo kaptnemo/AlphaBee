@@ -30,7 +30,9 @@ def _s3_snapshot() -> FactorSnapshot:
         symbol="300750.SZ",
         as_of_date="2024-06-30",
         fundamental=FundamentalFactor(revenue_yoy=30.0, net_profit_yoy=40.0, eps_growth_yoy=35.0),
-        expectation=ExpectationFactor(eps_fy1_revision_1m=5.0, eps_fy1_revision_3m=4.0, revision_breadth=0.7),
+        expectation=ExpectationFactor(
+            eps_fy1_revision_1m=5.0, eps_fy1_revision_3m=4.0, revision_breadth=0.7, coverage_count=3
+        ),
         trend=TrendFactor(rs_stock_market_20d=20.0, rs_stock_market_60d=15.0),
         valuation=ValuationFactor(pe_ttm_5y_percentile=0.3, pb_5y_percentile=0.35),
         crowding=CrowdingFactor(holder_count_change=-5.0, hot_rank=90, turnover_rate_percentile=0.3),
@@ -57,6 +59,7 @@ def _langchao_000977_snapshot() -> FactorSnapshot:
             eps_fy1_revision_1m=45.0,
             profit_forecast_min_change=100.0,
             profit_forecast_max_change=200.0,
+            coverage_count=3,
         ),
         trend=TrendFactor(
             rs_stock_market_20d=-25.0,

@@ -161,24 +161,24 @@ def test_forecast_without_express_sign_direction():
 # revision（方向=符号，幅度离散标定）
 # ─────────────────────────────────────────────────────────────────────────────
 def test_revision_weak_medium_strong_and_direction():
-    cons = {"eps_fy1_revision_1m": 2.0}
+    cons = {"eps_fy1_revision_1m": 2.0, "coverage_count": 3}
     e = build_numeric_evidence(None, cons, as_of_date="2024-03-20")[0]
     assert e.effect_on_thesis == "confirming"
     assert e.confidence_delta == 0.1  # |2| < 3 → weak
     assert e.date == "2024-03-20"
 
-    e = build_numeric_evidence(None, {"eps_fy1_revision_1m": -5.0})[0]
+    e = build_numeric_evidence(None, {"eps_fy1_revision_1m": -5.0, "coverage_count": 3})[0]
     assert e.effect_on_thesis == "refuting"  # 方向=符号
     assert e.confidence_delta == 0.3  # 3 ≤ |−5| ≤ 10 → medium
 
-    e = build_numeric_evidence(None, {"eps_fy1_revision_1m": 12.0})[0]
+    e = build_numeric_evidence(None, {"eps_fy1_revision_1m": 12.0, "coverage_count": 3})[0]
     assert e.effect_on_thesis == "confirming"
     assert e.confidence_delta == 0.5  # >10 → strong
 
 
 def test_revision_zero_and_missing_no_event():
-    assert build_numeric_evidence(None, {"eps_fy1_revision_1m": 0.0}) == []
-    assert build_numeric_evidence(None, {"eps_fy1_revision_1m": None}) == []
+    assert build_numeric_evidence(None, {"eps_fy1_revision_1m": 0.0, "coverage_count": 3}) == []
+    assert build_numeric_evidence(None, {"eps_fy1_revision_1m": None, "coverage_count": 3}) == []
     assert build_numeric_evidence(None, {}) == []
 
 
@@ -189,6 +189,7 @@ def test_revision_compressed_to_strongest_per_fiscal_year():
         "eps_fy1_revision_1m": 4.0,
         "eps_fy1_revision_3m": 8.0,
         "eps_fy2_revision_1m": -2.0,
+        "coverage_count": 3,
     }
     events = build_numeric_evidence(None, cons)
     assert len(events) == 2
@@ -204,7 +205,9 @@ def test_revision_compressed_to_strongest_per_fiscal_year():
 
 def test_revision_opposite_signs_keep_strongest():
     # A1：同组方向冲突（1m=+4 / 3m=−9）→ 按 |幅度| 决定（−9 胜出），不按字段数多数表决
-    events = build_numeric_evidence(None, {"eps_fy1_revision_1m": 4.0, "eps_fy1_revision_3m": -9.0})
+    events = build_numeric_evidence(
+        None, {"eps_fy1_revision_1m": 4.0, "eps_fy1_revision_3m": -9.0, "coverage_count": 3}
+    )
     assert len(events) == 1
     assert events[0].effect_on_thesis == "refuting"
     assert events[0].confidence_delta == 0.3  # |−9| → medium
@@ -301,7 +304,7 @@ def test_all_emitted_deltas_are_discrete():
         forecast=[_fc(lo=10.0, hi=15.0), _fc(period="20230930", lo=-5.0, hi=5.0)],
         express=[_ex(np_yoy=35.0), _ex(period="20230930", np_yoy=-20.0)],
     )
-    cons = {"eps_fy1_revision_1m": 4.0, "eps_fy1_revision_3m": -9.0}
+    cons = {"eps_fy1_revision_1m": 4.0, "eps_fy1_revision_3m": -9.0, "coverage_count": 3}
     events = build_numeric_evidence(exp, cons)
     assert events
     for e in events:
@@ -320,7 +323,7 @@ def _cons(values: dict | None = None, as_of_date: str = "2024-03-20") -> dict:
 
 def test_revision_same_value_same_id_across_frames():
     """同一 revision 数值、不同 as_of_date ⇒ 事件 id 逐字相等（P0-1 根因①消除）。"""
-    cons = _cons({"eps_fy1_revision_1m": 4.0}, as_of_date="2024-03-20")
+    cons = _cons({"eps_fy1_revision_1m": 4.0, "coverage_count": 3}, as_of_date="2024-03-20")
     e1 = build_numeric_evidence(None, cons, symbol="600519", as_of_date="2024-03-21")[0]
     e2 = build_numeric_evidence(None, cons, symbol="600519", as_of_date="2024-03-22")[0]
     assert e1.id == e2.id
@@ -329,7 +332,7 @@ def test_revision_same_value_same_id_across_frames():
 
 def test_revision_date_falls_back_to_as_of_date_when_consensus_date_missing():
     """consensus_as_of_date 缺失 ⇒ 回落 as_of_date（fail-open，不抛）。"""
-    cons = {"values": {"eps_fy1_revision_1m": 4.0}}  # 无 as_of_date
+    cons = {"values": {"eps_fy1_revision_1m": 4.0, "coverage_count": 3}}  # 无 as_of_date
     e = build_numeric_evidence(None, cons, symbol="600519", as_of_date="2024-03-22")[0]
     assert e.date == "2024-03-22"
 
@@ -361,7 +364,7 @@ def test_revision_level_replace_net_effect():
 
 def test_revision_same_value_repeat_frame_zero_change():
     """同值重复帧 ⇒ 净变化 0、后验不动（P0-1 主钉）。"""
-    cons = _cons({"eps_fy1_revision_1m": 4.0}, as_of_date="2024-03-20")
+    cons = _cons({"eps_fy1_revision_1m": 4.0, "coverage_count": 3}, as_of_date="2024-03-20")
     events = build_numeric_evidence(None, cons, symbol="600519")
     prev_post = update_confidence(events, prior=0.5)
     post = update_confidence_delta(events, prior=prev_post, prev_events=events)
@@ -426,3 +429,26 @@ def test_no_update_flag_preserves_legacy_single_forecast_event():
     events = build_numeric_evidence(_exp(forecast=[_fc(ann="20240130", lo=10.0, hi=15.0)]), symbol="600519")
     assert [e.effect_on_thesis for e in events] == ["confirming"]
     assert all(not e.supersedes for e in events)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P0-6 §9.1：revision coverage 护栏
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_revision_coverage_below_threshold_returns_empty():
+    cons = _cons({"eps_fy1_revision_1m": 4.0, "coverage_count": 2}, as_of_date="2024-03-20")
+    assert build_numeric_evidence(None, cons, symbol="600519") == []
+
+
+def test_revision_coverage_missing_returns_empty():
+    cons = {"values": {"eps_fy1_revision_1m": 4.0}}  # 无 coverage_count
+    assert build_numeric_evidence(None, cons, symbol="600519") == []
+
+
+def test_revision_coverage_at_threshold_regression():
+    cons = _cons({"eps_fy1_revision_1m": 4.0, "coverage_count": 3}, as_of_date="2024-03-20")
+    events = build_numeric_evidence(None, cons, symbol="600519")
+    assert len(events) == 1
+    assert events[0].effect_on_thesis == "confirming"
+    assert events[0].confidence_delta == 0.3  # |4| ∈ [3,10] → medium

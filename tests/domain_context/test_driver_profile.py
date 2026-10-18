@@ -1,7 +1,8 @@
 """DriverProfile 组装与契约测试（DOMAIN_CONTEXT_ROADMAP P0 第 4 步）。"""
 
-from alphabee.core import ArtifactRoleGroup, ArtifactType
+from alphabee.core import ArtifactRoleGroup, ArtifactType, IssueScope, IssueSeverity
 from alphabee.domain_context import DriverProfile, RouterInput, build_driver_profile
+from alphabee.domain_context.driver_profile import build_policy_exposure_issue
 
 
 def test_muyuan_driver_profile_expands_primitives():
@@ -144,6 +145,25 @@ def test_profile_passes_through_causal_paths_and_when_to_activate():
     for primitive in profile.activated_primitives:
         assert primitive.causal_paths
         assert primitive.when_to_activate
+
+
+# ── P0 设计 §8.2：policy_shock 路由命中 ⇒ policy_exposure Issue ─────────────
+
+
+def test_policy_sensitive_profile_emits_policy_exposure_issue():
+    profile = build_driver_profile("300750.SZ", RouterInput(track_label="动力电池", industry="电力设备"))
+    assert "policy_shock" in {p.id for p in profile.activated_primitives}
+    issue = build_policy_exposure_issue(profile)
+    assert issue is not None
+    assert issue.category == "policy_exposure"
+    assert issue.scope == IssueScope.DATA
+    assert issue.severity == IssueSeverity.MEDIUM
+
+
+def test_non_policy_profile_emits_no_issue():
+    profile = build_driver_profile("600519.SH", RouterInput(track_label="白酒", industry="食品饮料"))
+    assert "policy_shock" not in {p.id for p in profile.activated_primitives}
+    assert build_policy_exposure_issue(profile) is None
 
 
 def test_driver_hypotheses_and_research_agenda_roundtrip():

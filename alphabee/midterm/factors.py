@@ -205,6 +205,58 @@ def _first(records: Any) -> dict[str, Any]:
     return records if isinstance(records, dict) else {}
 
 
+def _ann_key(rec: dict[str, Any]) -> str:
+    """ann_date 归一为可比较的 ``YYYYMMDD``；缺失回落 period。"""
+    ann = str(rec.get("ann_date") or "").strip()
+    digits = "".join(ch for ch in ann if ch.isdigit())
+    if len(digits) >= 8:
+        return digits[:8]
+    return str(rec.get("period") or "").strip()
+
+
+def _latest_forecast_by_period(records: Any) -> dict[str, dict[str, Any]]:
+    """预告记录按 ``period`` 分组，组内按 ``ann_date`` 升序取**末条**（PR-A §3.2 修正后口径）。"""
+    out: dict[str, dict[str, Any]] = {}
+    for rec in records or []:
+        if not isinstance(rec, dict):
+            continue
+        period = str(rec.get("period") or "").strip()
+        if not period:
+            continue
+        cur = out.get(period)
+        if cur is None or _ann_key(rec) >= _ann_key(cur):
+            out[period] = rec
+    return out
+
+
+def _forecast_midpoint(rec: dict[str, Any]) -> float | None:
+    """预告区间中点（单边缺失退化为另一侧）；全缺失 → None。"""
+    lo = _opt(rec.get("profit_forecast_min_change"))
+    hi = _opt(rec.get("profit_forecast_max_change"))
+    if lo is None and hi is None:
+        return None
+    if lo is not None and hi is not None:
+        return (lo + hi) / 2.0
+    return lo if lo is not None else hi
+
+
+def _forecast_revision_anchor(records: Any) -> float | None:
+    """相邻两个报告期（period 降序取前两期）预告区间中点差（PERCENT，上修为正）。
+
+    P0 设计 §9.2：业绩预告成为 E 主轴——预告区间中点上修 ⇒ 正贡献、下修 ⇒ 负贡献。
+    无相邻期（<2 个报告期）或任一期区间缺失 → ``None``（score_engine 回落研报单独承载）。
+    """
+    by_period = _latest_forecast_by_period(records)
+    periods = sorted(by_period, reverse=True)
+    if len(periods) < 2:
+        return None
+    latest_mid = _forecast_midpoint(by_period[periods[0]])
+    prev_mid = _forecast_midpoint(by_period[periods[1]])
+    if latest_mid is None or prev_mid is None:
+        return None
+    return round(latest_mid - prev_mid, 4)
+
+
 def _missing_fields(obj: Any, fields: tuple[str, ...]) -> list[str]:
     """返回 ``obj`` 上值为 ``None`` 的 canonical 字段名列表。"""
     return [name for name in fields if getattr(obj, name, None) is None]
@@ -338,17 +390,24 @@ def build_expectation_factor(
 ) -> tuple[ExpectationFactor, list[str]]:
     """E 因子：公告类预期（``get_expectation_fact``）+ 分析师一致预期（``build_consensus``）。
 
-    - 预告/快报取最新一条 record（``forecast[0]`` / ``express[0]``）。
+    - 预告取**修正后末条口径**（同报告期按 ``ann_date`` 升序取末条，PR-A §3.2）的
+      最新报告期记录；``forecast_revision_anchor`` 由相邻两个报告期（period 降序前两期）
+      预告区间中点差计算（PERCENT，上修为正，P0 §9.2）。
+    - 快报取最新一条 record（``express[0]``）。
     - 一致预期字段来自 ``ConsensusOutput.values``（13 个 canonical 字段）。
     """
     data = exp_data or {}
-    forecast = _first(data.get("forecast"))
+    forecast_records = data.get("forecast") or []
+    by_period = _latest_forecast_by_period(forecast_records)
+    periods = sorted(by_period, reverse=True)
+    forecast = by_period[periods[0]] if periods else {}
     express = _first(data.get("express"))
     cvals = getattr(consensus, "values", None) or {}
 
     factor = ExpectationFactor(
         profit_forecast_min_change=_opt(forecast.get("profit_forecast_min_change")),
         profit_forecast_max_change=_opt(forecast.get("profit_forecast_max_change")),
+        forecast_revision_anchor=_forecast_revision_anchor(forecast_records),
         express_revenue_yoy=_opt(express.get("express_revenue_yoy")),
         express_net_profit_yoy=_opt(express.get("express_net_profit_yoy")),
         eps_fy1=_opt(cvals.get("eps_fy1")),

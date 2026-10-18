@@ -175,6 +175,9 @@ class ExpectationFactor(BaseModel):
     profit_forecast_max_change: float | None = None  # PERCENT 预告净利润同比上限
     express_revenue_yoy: float | None = None  # PERCENT 快报营收同比
     express_net_profit_yoy: float | None = None  # PERCENT 快报净利同比
+    # P0 设计 §9.2（additive）：相邻两个报告期的预告区间中点差（PERCENT，上修为正），
+    # 由 factors.build_expectation_factor 按修正后末条口径计算；None = 无相邻期。
+    forecast_revision_anchor: float | None = None
     # 新增 consensus 域（分析师一致预期，design §3.4）
     eps_fy1: float | None = None  # CNY_PER_SHARE FY1 一致 EPS
     eps_fy2: float | None = None  # CNY_PER_SHARE FY2 一致 EPS

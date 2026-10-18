@@ -11,7 +11,7 @@
 
 rules:
   turnover_delta:
-    weight: 0.50
+    weight: 0.40
     description: 成交额热度调整项：较近20日均值偏离百分比，±10% 封顶
     required_facts: [turnover_vs_20d_avg_pct]
     formula: >
@@ -28,7 +28,7 @@ rules:
       cooling: 成交额萎缩，情绪降温
 
   margin_delta:
-    weight: 0.30
+    weight: 0.25
     description: 融资余额热度调整项：较近20日均值变化百分比，±10% 封顶
     required_facts: [margin_vs_20d_avg_pct]
     formula: >
@@ -45,7 +45,7 @@ rules:
       deleveraging: 融资余额收缩，去杠杆进行中
 
   etf_delta:
-    weight: 0.20
+    weight: 0.15
     description: ETF 资金流调整项：净流入（亿元）强度，每 50 亿 +1，封顶 ±2
     required_facts: [etf_net_inflow]
     formula: >
@@ -63,9 +63,9 @@ rules:
 
   risk_preference_delta:
     weight: 0.0
-    description: 风险偏好调整总分 = 成交额×50% + 融资×30% + ETF×20%，范围 -5 ~ +5
-    required_derived_facts: [turnover_delta, margin_delta, etf_delta]
-    formula: turnover_delta * 0.50 + margin_delta * 0.30 + etf_delta * 0.20
+    description: 风险偏好调整总分 = 成交额×40% + 融资×25% + ETF×15% + 涨停情绪×20%，范围 -5 ~ +5
+    required_derived_facts: [turnover_delta, margin_delta, etf_delta, sentiment_heat]
+    formula: turnover_delta * 0.40 + margin_delta * 0.25 + etf_delta * 0.15 + sentiment_heat * 0.20
     thresholds:
       positive: "value >= 1"
       neutral: "-1 <= value < 1"

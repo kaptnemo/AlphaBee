@@ -33,6 +33,7 @@ from langchain_core.runnables import RunnableConfig
 from alphabee.company_track.contracts import CompanyTrackArtifact, SegmentSnapshot
 from alphabee.core import Artifact, ArtifactType, Issue, IssueSeverity, Step, StepStatus
 from alphabee.domain_context import GENERIC_FALLBACK_ID, DriverProfile, RouterInput, build_driver_profile
+from alphabee.domain_context.driver_profile import build_policy_exposure_issue
 from alphabee.orchestrator.collectors import _finalize_step, _make_id
 from alphabee.orchestrator.contracts import IndustryContextArtifact, find_artifact_model
 from alphabee.orchestrator.state import OrchestratorState
@@ -455,6 +456,11 @@ async def resolve_driver_profile(
                 related_step=step.id,
             )
         )
+
+    # P0 设计 §8.2：政策敏感赛道留痕（选中 policy_shock ⇒ policy_exposure Issue，只进账本不进主权重）
+    policy_issue = build_policy_exposure_issue(profile)
+    if policy_issue is not None:
+        new_issues.append(policy_issue)
 
     # ── 3. Tier B 研究层（flag 门控：默认关 = 严格 no-op）───────────────
     # 业务含义：Tier A 只回答"该用哪套框架"；稀疏区域（无专用框架 / 弱锚 / 多主线 /

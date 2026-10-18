@@ -44,6 +44,8 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "peer_group_benchmarks_missing": DeviationClass.D1_DATA,
     "industry_context_missing": DeviationClass.D1_DATA,
     "industry_benchmarks_missing": DeviationClass.D1_DATA,
+    # P0 设计 §9.3：分析师一致预期覆盖不足（consensus_coverage_low）且无 revision 证据
+    "consensus_missing": DeviationClass.D1_DATA,
     # P1（W3）新增：本地财报原文窗口的两种未达（§15.1-C/E）
     "report_window_unavailable": DeviationClass.D1_DATA,
     "report_window_truncated": DeviationClass.D1_DATA,
@@ -71,6 +73,8 @@ _EXPECTED_CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "context_truncated": DeviationClass.D4_STATE,
     "state_drift": DeviationClass.D4_STATE,
     "market_regime": DeviationClass.D4_STATE,
+    # P0 设计 §8.2：政策敏感赛道（policy_shock 原语命中）
+    "policy_exposure": DeviationClass.D4_STATE,
     # D5
     "report_rewrite_needed": DeviationClass.D5_CONTROL,
     "budget_exhausted": DeviationClass.D5_CONTROL,
