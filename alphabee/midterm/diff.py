@@ -422,6 +422,18 @@ def _new_evidence_ids(prev: CompanyStateArtifact, curr: CompanyStateArtifact) ->
     return [e.id for e in _new_evidence(prev, curr)]
 
 
+def _superseded_evidence(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> list[EvidenceEvent]:
+    """本窗口被作废的旧事件（P0 设计 §1.6，additive 语义）。
+
+    ``prev.evidence_log`` 中 id 命中 ``curr.evidence_log`` 任一事件 ``supersedes`` 者。
+    首帧（``prev=None``）→ ``[]``；不影响 ``new_evidence`` 的 id 差集语义。
+    """
+    if prev is None:
+        return []
+    superseded_ids = {eid for e in curr.evidence_log for eid in (e.supersedes or [])}
+    return [e for e in prev.evidence_log if e.id in superseded_ids]
+
+
 def _confidence_delta(prev: CompanyStateArtifact | None, curr: CompanyStateArtifact) -> ConfidenceDelta:
     """L3' 置信度差：Δ = posterior − prior，log_odds_delta = logit 差。
 
@@ -745,6 +757,7 @@ def diff(
     position = _position_diff(prev, curr, state_shift, confidence, ev)
 
     new_evidence = _new_evidence(prev, curr)
+    superseded_evidence = _superseded_evidence(prev, curr)
     attribution = [] if is_first else _attribution(factors, state_shift, confidence, new_evidence)
     thesis_delta = "；".join(a.note for a in attribution)
     exit_conditions_met = _exit_conditions_met(prev, curr)
@@ -765,6 +778,7 @@ def diff(
         ev=ev,
         position=position,
         new_evidence=new_evidence,
+        superseded_evidence=superseded_evidence,
         attribution=attribution,
         thesis_delta=thesis_delta,
         exit_conditions_met=exit_conditions_met,

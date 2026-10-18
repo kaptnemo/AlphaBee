@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
+from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence_delta
 from alphabee.midterm.classifier import classify_state
 from alphabee.midterm.models import (
     CompanyStateArtifact,
@@ -334,8 +334,16 @@ def evaluate(
     portfolio_adjustment: float = 1.0,
     single_stock_cap: float | None = None,
     insight_materiality: Any = None,
+    prev_evidence_log: list[EvidenceEvent] | None = None,
 ) -> CompanyStateArtifact:
     """串起四引擎，把 FactorSnapshot 决策为 CompanyStateArtifact（§6 三轴 + §9）。
+
+    置信度更新走**增量语义**（P0 设计 §1.5）：``prev_evidence_log`` 非 ``None`` 时
+    调用 ``bayes.update_confidence_delta``（新事件 log-odds − 被作废旧事件 log-odds），
+    ``None`` 时退化为既有全量语义（``update_confidence``）。主链
+    ``alphabee/orchestrator/nodes/midterm.py`` **不传**该参数（``None``）⇒ 一次性 run
+    行为零变化；tracking 逐帧路径由 ``tracking/scheduler.py::_reconcile_frame`` 传入
+    ``prev_evidence_log=getattr(prev, "evidence_log", None)``（ROADMAP 行为变更登记）。
 
     Args:
         snapshot: 七因子快照（``alphabee.midterm.factors.get_factor_snapshot`` 产物）。
@@ -346,6 +354,8 @@ def evaluate(
         single_stock_cap: 单股上限（RATIO），超限置 ``position.restricted``。
         insight_materiality: ``insight.materiality_rank``（``list[{variable, importance,
             reasoning}]``，改造 D）；critical 下行变量会加深 bear 收益。``None`` 无修正。
+        prev_evidence_log: 上一帧证据日志（P0 §1.5）；``None`` = 主链首帧/无上帧日志，
+            退化为全量语义（与改造前逐字节一致）。
 
     Returns:
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
@@ -357,7 +367,7 @@ def evaluate(
     scores = compress_scores(snapshot)
     cls = classify_state(scores)
 
-    confidence = update_confidence(evidence, prior=prior_confidence)
+    confidence = update_confidence_delta(evidence, prior=prior_confidence, prev_events=prev_evidence_log)
 
     # 回写快照：消除顶层 StateBelief（argmax=Sx）与 factor_snapshot.state 残留 S0、
     # confidence 残留默认值的自相矛盾，并把方向分写进各因子子模型（消除
@@ -431,6 +441,7 @@ def get_decision(
     prior_confidence: float | None = None,
     thesis: str = "",
     insight_materiality: Any = None,
+    prev_evidence_log: list[EvidenceEvent] | None = None,
 ) -> CompanyStateArtifact:
     """便捷入口：``get_factor_snapshot(symbol)`` 后再 ``evaluate``。
 
@@ -439,6 +450,7 @@ def get_decision(
         evidence: 证据日志；``None``/空表示无证据。
         include_market: 是否采集 M（market_regime，开销较大）。
         prior_confidence / thesis / insight_materiality: 透传 ``evaluate``。
+        prev_evidence_log: 上一帧证据日志（P0 §1.5，透传 ``evaluate``）。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -452,6 +464,7 @@ def get_decision(
         prior_confidence=prior_confidence,
         thesis=thesis,
         insight_materiality=insight_materiality,
+        prev_evidence_log=prev_evidence_log,
     )
 
 

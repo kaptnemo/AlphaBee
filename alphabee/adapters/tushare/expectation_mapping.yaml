@@ -11,6 +11,7 @@ forecast:
   last_parent_net: last_year_net_profit
   summary:        forecast_summary
   change_reason:  change_reason
+  update_flag:    forecast_update_flag
 
 express:
   end_date:       period

@@ -40,7 +40,7 @@ def get_expectation_fact(symbol: str) -> dict[str, Any]:
                     ts_code=ts_code,
                     start_date=start,
                     fields="ts_code,ann_date,end_date,type,p_change_min,p_change_max,"
-                    "net_profit_min,net_profit_max,last_parent_net,summary,change_reason",
+                    "net_profit_min,net_profit_max,last_parent_net,summary,change_reason,update_flag",
                 ).data
             result["forecast"] = forecast_df.head(8).to_dict(orient="records") if not forecast_df.empty else []
             result["forecast_error"] = None

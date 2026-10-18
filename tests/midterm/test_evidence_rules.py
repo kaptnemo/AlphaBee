@@ -9,11 +9,15 @@
 - 防幻觉：缺失/冲突数值置 None，不产事件、不静默回退（§5）。
 """
 
+import pytest
+
+from alphabee.midterm.bayes import update_confidence, update_confidence_delta
 from alphabee.midterm.evidence_rules import (
     _calibrate_beat,
     _calibrate_revision,
     _dedup,
     _event_id,
+    _midpoint,
     _norm_date,
     _to_float,
     build_numeric_evidence,
@@ -206,20 +210,20 @@ def test_revision_opposite_signs_keep_strongest():
     assert events[0].confidence_delta == 0.3  # |−9| → medium
 
 
-def test_duplicate_express_same_period_single_event():
-    # A1：同一报告期多条快报记录 → 取首条，只产一条证据（不重复累加 log-odds）
+def test_duplicate_express_same_period_uses_latest_ann_date():
+    # P0 §3.2：同一报告期多条快报记录 → 按 ann_date 升序取末条（修复取首条拿旧口径）
     events = build_numeric_evidence(_exp(express=[_ex(np_yoy=18.0), _ex(ann="20240401", np_yoy=25.0)]))
     assert len(events) == 1
-    assert events[0].date == "2024-03-20"  # 首条记录（_norm_date → ISO）
-    assert events[0].confidence_delta == 0.5  # |18| > 15 → strong
+    assert events[0].date == "2024-04-01"  # 末条记录（_norm_date → ISO）
+    assert events[0].confidence_delta == 0.5  # |25| > 15 → strong
 
 
-def test_duplicate_forecast_same_period_single_event():
-    # A1：同一报告期多条预告记录 → 取首条，只产一条证据
+def test_duplicate_forecast_same_period_uses_latest_ann_date():
+    # P0 §3.2：同一报告期多条预告记录 → 按 ann_date 升序取末条
     events = build_numeric_evidence(_exp(forecast=[_fc(), _fc(ann="20240401", lo=20.0, hi=25.0)]))
     assert len(events) == 1
-    assert events[0].date == "2024-01-30"  # 首条记录（_norm_date → ISO）
-    assert events[0].confidence_delta == 0.3  # 首条 midpoint 12.5 → medium
+    assert events[0].date == "2024-04-01"  # 末条记录（_norm_date → ISO）
+    assert events[0].confidence_delta == 0.5  # 末条 midpoint 22.5 → strong
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -303,3 +307,122 @@ def test_all_emitted_deltas_are_discrete():
     for e in events:
         assert e.effect_on_thesis in ("confirming", "refuting")  # neutral 不产事件
         assert e.confidence_delta in DISCRETE_DELTAS
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P0-1：revision 跨帧幂等（§2.3 四条）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _cons(values: dict | None = None, as_of_date: str = "2024-03-20") -> dict:
+    return {"as_of_date": as_of_date, "values": dict(values or {})}
+
+
+def test_revision_same_value_same_id_across_frames():
+    """同一 revision 数值、不同 as_of_date ⇒ 事件 id 逐字相等（P0-1 根因①消除）。"""
+    cons = _cons({"eps_fy1_revision_1m": 4.0}, as_of_date="2024-03-20")
+    e1 = build_numeric_evidence(None, cons, symbol="600519", as_of_date="2024-03-21")[0]
+    e2 = build_numeric_evidence(None, cons, symbol="600519", as_of_date="2024-03-22")[0]
+    assert e1.id == e2.id
+    assert e1.date == "2024-03-20"  # 用 consensus_as_of_date，非帧日期
+
+
+def test_revision_date_falls_back_to_as_of_date_when_consensus_date_missing():
+    """consensus_as_of_date 缺失 ⇒ 回落 as_of_date（fail-open，不抛）。"""
+    cons = {"values": {"eps_fy1_revision_1m": 4.0}}  # 无 as_of_date
+    e = build_numeric_evidence(None, cons, symbol="600519", as_of_date="2024-03-22")[0]
+    assert e.date == "2024-03-22"
+
+
+def test_revision_level_replace_net_effect():
+    """同 subject 新值 ⇒ 净 log-odds = logodds(新) − logodds(旧)（§2.3 主钉）。"""
+    old = EvidenceEvent(
+        id="rev-old",
+        date="2024-03-20",
+        kind="expectation",
+        subject="600519:revision:eps_fy1_revision_1m",
+        description="",
+        effect_on_thesis="confirming",
+        confidence_delta=0.1,
+    )
+    new = EvidenceEvent(
+        id="rev-new",
+        date="2024-03-20",
+        kind="expectation",
+        subject="600519:revision:eps_fy1_revision_1m",
+        description="",
+        effect_on_thesis="confirming",
+        confidence_delta=0.5,
+    )
+    prev_post = update_confidence([old], prior=0.5)
+    post = update_confidence_delta([new], prior=prev_post, prev_events=[old])
+    assert post == pytest.approx(update_confidence([new], prior=0.5))
+
+
+def test_revision_same_value_repeat_frame_zero_change():
+    """同值重复帧 ⇒ 净变化 0、后验不动（P0-1 主钉）。"""
+    cons = _cons({"eps_fy1_revision_1m": 4.0}, as_of_date="2024-03-20")
+    events = build_numeric_evidence(None, cons, symbol="600519")
+    prev_post = update_confidence(events, prior=0.5)
+    post = update_confidence_delta(events, prior=prev_post, prev_events=events)
+    assert post == pytest.approx(prev_post)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P0-2：update_flag 作废 / 末条口径 / 回归（§3.5）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _fc_update(period="20231231", ann="20240220", lo=20.0, hi=30.0, flag="1"):
+    return {
+        "period": period,
+        "ann_date": ann,
+        "profit_forecast_min_change": lo,
+        "profit_forecast_max_change": hi,
+        "forecast_update_flag": flag,
+    }
+
+
+def _forecast_event_id(record: dict, symbol: str) -> str:
+    period = record["period"]
+    lo = _to_float(record.get("profit_forecast_min_change"))
+    hi = _to_float(record.get("profit_forecast_max_change"))
+    date = _norm_date(record.get("ann_date")) or _norm_date(record.get("period"))
+    return _event_id(date, "expectation", f"{symbol}:forecast:{period}", _midpoint(lo, hi))
+
+
+def test_update_flag_produces_retraction_superseding_old_forecast():
+    """update_flag 末条预告 ⇒ retraction（neutral/Δ=0/supersedes=旧预告 id）+ 新 flow 事件。"""
+    old = _fc(ann="20240130", lo=10.0, hi=15.0)  # 旧预告（无 update_flag）
+    corrected = _fc_update(ann="20240220", lo=20.0, hi=30.0)  # 修正版
+    events = build_numeric_evidence(_exp(forecast=[old, corrected]), symbol="600519")
+
+    retractions = [e for e in events if e.effect_on_thesis == "neutral" and e.supersedes]
+    assert len(retractions) == 1
+    ret = retractions[0]
+    assert ret.supersedes == [_forecast_event_id(old, "600519")]
+    assert ret.confidence_delta == 0.0  # retraction 不带方向贡献
+    assert "预告修正" in ret.description
+
+    # 修正后区间重新生成 beat/miss/预告方向事件（flow，新 id，非 retraction）
+    flows = [e for e in events if e.effect_on_thesis in ("confirming", "refuting")]
+    assert flows and all(e.id != _forecast_event_id(old, "600519") for e in flows)
+    assert {e.confidence_delta for e in events if e.effect_on_thesis != "neutral"} <= DISCRETE_DELTAS
+
+
+def test_same_period_forecast_picks_latest_ann_date_regardless_of_order():
+    """末条口径钉：记录乱序（先修正版后旧版）仍按 ann_date 升序取末条。"""
+    corrected = _fc_update(ann="20240220", lo=20.0, hi=30.0)
+    old = _fc(ann="20240130", lo=10.0, hi=15.0)
+    events = build_numeric_evidence(_exp(forecast=[corrected, old]), symbol="600519")
+    flows = [e for e in events if e.effect_on_thesis in ("confirming", "refuting")]
+    assert len(flows) == 1
+    assert flows[0].date == "2024-02-20"
+    assert "[+20.00%, +30.00%]" in flows[0].description
+
+
+def test_no_update_flag_preserves_legacy_single_forecast_event():
+    """无 update_flag 回归钉：存量数据路径行为不变（只有 flow，无 retraction）。"""
+    events = build_numeric_evidence(_exp(forecast=[_fc(ann="20240130", lo=10.0, hi=15.0)]), symbol="600519")
+    assert [e.effect_on_thesis for e in events] == ["confirming"]
+    assert all(not e.supersedes for e in events)

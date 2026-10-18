@@ -19,9 +19,16 @@
 - 数值必须来自结构化字段（canonical），缺失/冲突置 ``None``，绝不静默回退为 0 或编造；
 - ``confidence_delta`` 只允许 weak=0.1 / medium=0.3 / strong=0.5 三个离散值（上限 0.7）；
 - 事件签名去重 ``id=hash(date+kind+主体+数值)``（§7），多来源合并 source_refs、同主题只算一次。
-- **相关证据压缩（A1）**：同一报告期（period）至多一条数值证据（express 覆盖 forecast、
-  各自期内取首条）；revision 的 1m/3m 窗口高度重叠（同一批分析师修正动量），
+- **相关证据压缩（A1）**：同一报告期（period）至多一条数值证据（express 覆盖 forecast）；
+  express 与 forecast 同口径按 ``ann_date`` 升序**取末条**（P0 设计 §3.2，修复取首条
+  拿到被更正前旧预告的问题）；revision 的 1m/3m 窗口高度重叠（同一批分析师修正动量），
   同一预测年度只保留 |幅度| 最大的一条——避免同源相关证据重复累加 log-odds 虚增置信度。
+- **预告修正 retraction（P0 设计 §3.2）**：同一报告期出现 ``forecast_update_flag`` 标记的
+  末条预告时，生成 ``effect=neutral`` / ``confidence_delta=0`` / ``supersedes=[旧预告事件 id]``
+  的 retraction 事件作废旧预告，修正后区间再由 beat/miss / 预告方向事件（flow，新 id）承接。
+- **revision 日期口径（P0-1）**：revision 事件 date 用 ``consensus_as_of_date``
+  （``ConsensusOutput.as_of_date``），缺失回落 ``as_of_date``（fail-open），使同一
+  revision 数值跨帧产生同 id。
 """
 
 from __future__ import annotations
@@ -101,6 +108,18 @@ def _norm_date(value: Any) -> str:
     return s
 
 
+def _is_update_flag(value: Any) -> bool:
+    """预告修正标志判定（P0 设计 §3.2）：``update_flag`` 非空且非 0/false → True。
+
+    tushare ``update_flag`` 为字符串标记（如 "1" = 修正）；缺失 / "0" / "None" /
+    "nan" / "false" / "no" 一律视为「无修正」（fail-open：无修正不产 retraction）。
+    """
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text not in ("", "0", "none", "null", "nan", "false", "no", "-")
+
+
 def _effect_from_sign(value: float) -> EffectOnThesis:
     """数值符号 → 方向（§8 thesis 为空时的退化）：>0 confirming / <0 refuting / ==0 neutral。"""
     if value > 0.0:
@@ -170,6 +189,7 @@ def _make_event(
         id=_event_id(date, _KIND, subject, value),
         date=date,
         kind=_KIND,
+        subject=subject,
         description=description,
         effect_on_thesis=effect,
         confidence_delta=_strength_to_delta(strength),
@@ -201,11 +221,24 @@ def _classify_beat(
 
 
 def _index_by_period(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """按 ``period`` 建索引（取首条，避免同报告期重复）。"""
+    """按 ``period`` 建索引，**按 ``ann_date`` 升序取末条**（P0 设计 §3.2）。
+
+    修复既有"取首条可能拿到被更正前的旧预告"问题：express 与 forecast 同口径，
+    同报告期多条记录时以公告日最晚的一条为准（末条 = 修正后口径）。
+    ``ann_date`` 缺失时回落 ``period`` 参与比较（同值下后出现的记录胜出）。
+    """
     out: dict[str, dict[str, Any]] = {}
     for rec in records or []:
         p = str(rec.get("period") or "").strip()
-        if p and p not in out:
+        if not p:
+            continue
+        current = out.get(p)
+        if current is None:
+            out[p] = rec
+            continue
+        cur_key = _norm_date(current.get("ann_date")) or _norm_date(current.get("period"))
+        new_key = _norm_date(rec.get("ann_date")) or _norm_date(rec.get("period"))
+        if new_key >= cur_key:
             out[p] = rec
     return out
 
@@ -269,7 +302,7 @@ def _express_evidence(
     events: list[EvidenceEvent] = []
     covered: set[str] = set()
 
-    # A1 相关证据压缩：同一报告期多条快报记录 → 取首条（与 forecast 侧
+    # A1 相关证据压缩：同一报告期多条快报记录 → 按 ann_date 升序取末条（与 forecast 侧
     # ``_index_by_period`` 同口径），保证每个 period 至多一条 beat/miss 证据。
     for rec in _index_by_period(express_records).values():
         period = str(rec.get("period") or "").strip()
@@ -328,7 +361,7 @@ def _forecast_evidence(
 ) -> list[EvidenceEvent]:
     """业绩预告（无对应快报）→ 预告方向证据（符号定方向，幅度用预告同比）。"""
     events: list[EvidenceEvent] = []
-    # A1 相关证据压缩：同一报告期多条预告记录 → 取首条，保证每个 period
+    # A1 相关证据压缩：同一报告期多条预告记录 → 按 ann_date 升序取末条，保证每个 period
     # 至多一条预告证据（重复快照不重复累加 log-odds）。
     for rec in _index_by_period(forecast_records).values():
         period = str(rec.get("period") or "").strip()
@@ -357,6 +390,60 @@ def _forecast_evidence(
     return events
 
 
+def _forecast_retraction_evidence(
+    forecast_records: list[dict[str, Any]],
+    symbol: str,
+) -> list[EvidenceEvent]:
+    """预告修正 → retraction 事件（P0 设计 §3.2，作废旧预告、不携带方向贡献）。
+
+    同一报告期出现 ``forecast_update_flag`` 标记的**末条**预告（按 ``ann_date`` 升序）
+    时：以末条前一条预告（被修正前的版本）重构旧预告事件 id，生成 ``effect=neutral``、
+    ``confidence_delta=0``、``supersedes=[旧预告事件 id]`` 的 retraction 事件。
+    修正后区间本身由 ``_express_evidence`` / ``_forecast_evidence`` 走既有 beat/miss /
+    预告方向事件（flow，新 id）——此处只作废，不重复计方向贡献。
+    """
+    by_period: dict[str, list[dict[str, Any]]] = {}
+    for rec in forecast_records or []:
+        period = str(rec.get("period") or "").strip()
+        if period:
+            by_period.setdefault(period, []).append(rec)
+
+    events: list[EvidenceEvent] = []
+    for period, records in by_period.items():
+        if len(records) < 2:
+            continue
+        ordered = sorted(
+            records,
+            key=lambda r: _norm_date(r.get("ann_date")) or _norm_date(r.get("period")),
+        )
+        last = ordered[-1]
+        if not _is_update_flag(last.get("forecast_update_flag")):
+            continue
+        previous = ordered[-2]
+        old_lo = _to_float(previous.get("profit_forecast_min_change"))
+        old_hi = _to_float(previous.get("profit_forecast_max_change"))
+        old_midpoint = _midpoint(old_lo, old_hi)
+        if old_midpoint is None:
+            continue
+        old_date = _norm_date(previous.get("ann_date")) or _norm_date(previous.get("period"))
+        old_id = _event_id(old_date, _KIND, f"{symbol}:forecast:{period}", old_midpoint)
+        retract_date = _norm_date(last.get("ann_date")) or _norm_date(last.get("period"))
+        events.append(
+            EvidenceEvent(
+                id=_event_id(retract_date, _KIND, f"{symbol}:retraction:{period}", None),
+                date=retract_date,
+                kind=_KIND,
+                subject=f"{symbol}:retraction:{period}",
+                description=f"预告修正：{period} 业绩预告作废（旧预告 {_forecast_description(old_lo, old_hi)}）",
+                effect_on_thesis=EffectOnThesis.NEUTRAL,
+                confidence_delta=0.0,
+                source_refs=[_forecast_source(symbol)],
+                supersedes=[old_id],
+            )
+        )
+    return events
+
+
 def _revision_evidence(
     values: dict[str, Any],
     symbol: str,
@@ -368,6 +455,10 @@ def _revision_evidence(
     （最强证据）——1m/3m 窗口重叠，同源修正动量不重复累加 log-odds；
     同组方向冲突时按幅度决定（信息量最大者胜），不按字段数多数表决。
     """
+    # P0-1：事件 date 用 consensus_as_of_date（跨帧同 id），缺失回落 as_of_date
+    # （fail-open 不抛）——同一 revision 数值在跨帧产生同 id，差集不再误报新证据。
+    event_date = str(values.get("consensus_as_of_date") or "").strip() or as_of_date
+
     events: list[EvidenceEvent] = []
     for fields in _REVISION_GROUPS:
         best_field: str | None = None
@@ -385,7 +476,7 @@ def _revision_evidence(
             continue
         events.append(
             _make_event(
-                date=as_of_date,
+                date=event_date,
                 subject=f"{symbol}:revision:{best_field}",
                 value=best_value,
                 description=_revision_description(best_field, best_value),
@@ -402,15 +493,25 @@ def _consensus_values(consensus: Any) -> dict[str, Any]:
 
     注意：必须优先判 ``dict``——dict 自带 ``.values`` 方法，若先判 ``hasattr(values)``
     会把 bound method 误当数据。
+
+    P0 设计 §2.1：返回 dict 追加 ``consensus_as_of_date``（源自 ``ConsensusOutput.as_of_date``，
+    ``collectors/consensus/engine.py`` 已有）；``coverage_count`` 随 ``values`` 透传
+    （``ConsensusOutput.values`` 已含该 canonical 字段）。
     """
     if consensus is None:
         return {}
     if isinstance(consensus, dict):
         inner = consensus.get("values")
-        return inner if isinstance(inner, dict) else consensus
-    if hasattr(consensus, "values"):
-        return consensus.values or {}
-    return {}
+        base = inner if isinstance(inner, dict) else consensus
+    elif hasattr(consensus, "values"):
+        base = consensus.values or {}
+    else:
+        base = {}
+    out = dict(base)
+    as_of = _consensus_date(consensus)
+    if as_of:
+        out["consensus_as_of_date"] = as_of
+    return out
 
 
 def _consensus_date(consensus: Any) -> str:
@@ -456,10 +557,13 @@ def build_numeric_evidence(
     # 1. 快报实际值 → beat/miss（有预告）或符号定方向（无预告）
     express_events, covered = _express_evidence(express_records, forecast_records, symbol)
 
-    # 2. 无对应快报的预告 → 预告方向证据
+    # 2. 无对应快报的预告 → 预告方向证据（同报告期取 ann_date 末条，P0 §3.2）
     forecast_events = _forecast_evidence(forecast_records, covered, symbol)
 
-    # 3. 分析师盈利预测修正（revision）
+    # 3. 预告修正 → retraction 事件（作废旧预告，P0 §3.2；neutral，不携带方向贡献）
+    retraction_events = _forecast_retraction_evidence(forecast_records, symbol)
+
+    # 4. 分析师盈利预测修正（revision；事件 date 用 consensus_as_of_date，P0-1）
     revision_events = _revision_evidence(_consensus_values(consensus), symbol, as_of_date or _consensus_date(consensus))
 
-    return _dedup([*express_events, *forecast_events, *revision_events])
+    return _dedup([*express_events, *forecast_events, *retraction_events, *revision_events])

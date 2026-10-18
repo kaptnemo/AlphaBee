@@ -21,6 +21,7 @@ from alphabee.midterm.models import (
     ArtifactRef,
     CompanyStateArtifact,
     CompanyStateDiff,
+    EvidenceEvent,
     ExitCondition,
     FactorSnapshot,
     FundamentalFactor,
@@ -87,6 +88,39 @@ def _frame_diff(*, tv: float = 0.0, downgrade: bool = False, divergence: bool = 
         state_shift=shift,
         position=PositionDiff(band_weight_divergence=divergence) if divergence else None,
         confidence=None,
+    )
+
+
+def _retraction_frame_diff() -> CompanyStateDiff:
+    """构造含 retraction 事件（neutral + supersedes 非空）的本帧 diff（P0 §3.3 RESTATEMENT）。"""
+    old = EvidenceEvent(
+        id="old-fc",
+        date="2026-09-18",
+        kind="expectation",
+        subject=f"{SYMBOL}:forecast:20231231",
+        description="旧预告",
+        effect_on_thesis="confirming",
+        confidence_delta=0.3,
+    )
+    retraction = EvidenceEvent(
+        id="retract",
+        date="2026-09-20",
+        kind="expectation",
+        subject=f"{SYMBOL}:retraction:20231231",
+        description="预告修正",
+        effect_on_thesis="neutral",
+        confidence_delta=0.0,
+        supersedes=["old-fc"],
+    )
+    shift = StateShift(argmax_from="S2", argmax_to="S2", tv_distance=0.0, kind="same")
+    return CompanyStateDiff(
+        symbol=SYMBOL,
+        prev=None,
+        curr=ArtifactRef(id=f"{SYMBOL}:2026-09-20", date="2026-09-20", symbol=SYMBOL),
+        elapsed_days=100,  # 到达率 1/100 < 0.5 ⇒ 不误触 MANUAL
+        state_shift=shift,
+        new_evidence=[retraction],
+        superseded_evidence=[old],
     )
 
 
@@ -175,8 +209,17 @@ def test_kind_manual_via_explicit_cli_trigger():
     assert trigger.kind is TriggerKind.MANUAL and trigger.payload["source"] == "manual"
 
 
-def test_all_five_kinds_are_covered():
-    """五类 kind 全覆盖（防"枚举里有一类永远产不出来"的死枚举）。"""
+def test_kind_restatement_from_retraction_event():
+    """RESTATEMENT（P0 §3.3）：diff 观察到 retraction 事件 ⇒ 产出触发，reason 含被作废事件 subject。"""
+    found = detect_triggers(SYMBOL, as_of="2026-09-20", artifact=_artifact(), frame_diff=_retraction_frame_diff())
+    assert [t.kind for t in found] == [TriggerKind.RESTATEMENT]
+    assert f"{SYMBOL}:forecast:20231231" in found[0].reason  # reason 含被作废事件 subject
+    assert found[0].payload["source"] == "retraction_event"
+    assert found[0].payload["superseded_ids"] == ["old-fc"]
+
+
+def test_all_authorized_kinds_are_covered():
+    """六类 kind 全覆盖（防"枚举里有一类永远产不出来"的死枚举；含 P0 授权扩展 RESTATEMENT）。"""
     produced = {
         *(
             t.kind
@@ -185,6 +228,15 @@ def test_all_five_kinds_are_covered():
                 as_of="2026-09-20",
                 artifact=_artifact(stale_after="2026-09-01", exit_met=True),
                 frame_diff=_frame_diff(tv=0.9, downgrade=True),
+            )
+        ),
+        *(
+            t.kind
+            for t in detect_triggers(
+                SYMBOL,
+                as_of="2026-09-20",
+                artifact=_artifact(),
+                frame_diff=_retraction_frame_diff(),
             )
         ),
         *(
@@ -199,14 +251,15 @@ def test_all_five_kinds_are_covered():
     assert produced == set(TriggerKind)
 
 
-def test_trigger_kind_enum_is_not_expanded():
-    """`TriggerKind` 恰为 §14.5-A 的五种（**不扩枚举**：扩张属行为变更，须走 ROADMAP）。"""
+def test_trigger_kind_enum_matches_authorized_set():
+    """`TriggerKind` 恰为 §14.5-A 五种 + P0 设计 §3.3 授权扩展的 ``RESTATEMENT``（共六种）。"""
     assert [kind.value for kind in TriggerKind] == [
         "financial_report",
         "announcement",
         "price_move",
         "stale_expired",
         "manual",
+        "restatement",
     ]
 
 

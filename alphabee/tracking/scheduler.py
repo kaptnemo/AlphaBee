@@ -353,9 +353,11 @@ def enforce_attribution_accounting(
             )
         forced.append(side)  # 同侧去重：该侧只要有未引用证据，就登记该侧
 
+    superseded = list(getattr(frame_diff, "superseded_evidence", None) or [])
     note = (
         f"本帧新增证据：支持 {len(sides['supporting'])} / 反对 {len(sides['opposing'])} / "
         f"中性 {len(sides['neutral'])} 条；日志累计：支持 {supporting_in_log} / 反对 {opposing_in_log} 条"
+        f"；作废 {len(superseded)} 条旧证据（P0 §1.6）"
     )
     if forced:
         note += f"；强制补记账侧别：{'、'.join(forced)}"
@@ -413,6 +415,7 @@ def _reconcile_frame(
         evidence,
         prior_confidence=getattr(prev, "thesis_confidence", None) if prev is not None else None,
         thesis=thesis,
+        prev_evidence_log=getattr(prev, "evidence_log", None),
     )
     # 字段级接线：evaluate 不产这三项，由本层从上一帧继承（§9.2「字段已有、无调度」的补齐）
     curr.exit_conditions = list(getattr(prev, "exit_conditions", None) or [])

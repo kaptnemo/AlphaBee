@@ -478,15 +478,24 @@ class EvidenceJudgment(BaseModel):
 
 
 class EvidenceEvent(BaseModel):
-    """一条证据事件，供 ``bayes.py`` 做 log-odds 更新 P(H|Evidence)。"""
+    """一条证据事件，供 ``bayes.py`` 做 log-odds 更新 P(H|Evidence)。
+
+    ``subject``（additive，P0 设计 §2.2）为事件主体（如 ``600519:revision:eps_fy1_revision_1m``），
+    供增量更新按 subject 自动判定 level 取代；``supersedes``（additive，P0 设计 §1.2）
+    为被本事件取代/作废的旧事件 id —— retraction 显式填写、level 取代由
+    ``bayes.update_confidence_delta`` 按 subject 自动判定。旧 JSONL 反序列化时两个
+    additive 字段分别回落 ``""`` / 空列表（不升 ``schema_version``）。
+    """
 
     id: str
     date: str  # YYYY-MM-DD
     kind: str  # fundamental / expectation / trend / crowding / thesis / price
+    subject: str = ""  # 事件主体（additive，P0 §2.2）
     description: str
     effect_on_thesis: str  # confirming / refuting / neutral
     confidence_delta: float  # ΔP(H|E)，供 bayes log-odds 更新
     source_refs: list[str] = Field(default_factory=list)
+    supersedes: list[str] = Field(default_factory=list)  # 被本事件取代/作废的旧事件 id（additive，P0 §1.2）
 
 
 class ExitCondition(BaseModel):
@@ -706,6 +715,7 @@ class CompanyStateDiff(BaseModel):
 
     # 证据与归因
     new_evidence: list[EvidenceEvent] = Field(default_factory=list)
+    superseded_evidence: list[EvidenceEvent] = Field(default_factory=list)  # 本窗口被作废的旧事件（additive，P0 §1.6）
     attribution: list[ChangeAttribution] = Field(default_factory=list)
     thesis_delta: str = ""  # 可读总结（由 attribution 投影 / LLM 润色）
 

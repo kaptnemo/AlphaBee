@@ -102,6 +102,18 @@ change_reason:
   source_mappings:
     tushare: [change_reason]
 
+forecast_update_flag:
+  category: expectation
+  type: str
+  unit: TEXT
+  frequency: [event]
+  description: 预告修正标志（P0 设计 §3.1；非空且非 0 表示该预告为修正版，作废旧预告）
+  aliases:
+    zh: [预告修正标志, 更新标识]
+    en: [forecast update flag, guidance update flag]
+  source_mappings:
+    tushare: [update_flag]
+
 # ─────────────────────────────────────────
 # 业绩快报 (Earnings Express)
 # ─────────────────────────────────────────

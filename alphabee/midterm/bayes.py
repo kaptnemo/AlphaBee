@@ -175,6 +175,74 @@ def update_confidence(
     return _clip_confidence(_sigmoid(lo))
 
 
+# 净 log-odds 变化判定阈值（浮点求和后按 0 判「无净变化」，避免 sigmoid 噪声）
+_LO_DELTA_EPS = 1e-12
+
+
+def update_confidence_delta(
+    events: list[EvidenceEvent] | None,
+    *,
+    prior: float | None = None,
+    prev_events: list[EvidenceEvent] | None = None,
+) -> float | None:
+    """增量更新：后验 = prior ⊕ (新事件 log-odds) ⊖ (被作废旧事件 log-odds)。
+
+    P0 设计 §1.4。与 :func:`update_confidence` 的差异：
+
+    - ``prev_events`` 为 ``None``（主链首帧 / 无上帧日志）→ 退化为全量语义
+      （直接调用 :func:`update_confidence`，一次性 run 行为逐字节不变）；
+    - 新事件 = ``events`` 中 id 不在 ``prev_events`` id 集者（flow 幂等 + level 新值）；
+    - 作废项 = ``prev_events`` 中 id 出现在任一新事件 ``supersedes`` 者（retraction /
+      level 取代显式作废），**并**按 §2.2 通用规则补上「同 ``subject`` 且不同 id」的
+      level 取代（同 subject 的新值自动取代旧值，生成器无需知道 prev 日志）；
+    - 净 log-odds = Σ ``_event_logodds``(新事件) − Σ ``_event_logodds``(作废旧事件)，
+      逐条复用既有 ``_event_logodds``（refuting 1.2× 不对称口径保留）；
+    - 无净变化 → 返回 ``prior``（不重新夹紧，保证「同值重复帧后验不动」）。
+
+    Args:
+        events: 本帧证据日志（含 flow / level / retraction）。
+        prior: 先验 P(H)（0-1）；``None`` 且无净变化时后验为 ``None``。
+        prev_events: 上一帧证据日志（``None`` = 退化全量语义）。
+
+    Returns:
+        后验 P(H|E)（0-1）；无新事件且无先验时为 ``None``。
+    """
+    if not events:
+        return prior
+    if prev_events is None:
+        return update_confidence(events, prior=prior)
+
+    prev_by_id = {e.id: e for e in prev_events}
+    new_events = [e for e in events if e.id not in prev_by_id]
+    if not new_events:
+        return prior  # 同值重复帧：无新事件 → 后验不动（P0-1 主钉）
+
+    superseded_ids: set[str] = set()
+    for event in new_events:
+        superseded_ids.update(event.supersedes or [])
+
+    # §2.2 level 取代通用规则：同 subject 的新事件取代旧事件（旧值换新值），
+    # 无需生成器逐条手工指定 supersedes。
+    new_subjects: dict[str, str] = {}
+    for event in new_events:
+        subj = str(getattr(event, "subject", "") or "")
+        if subj:
+            new_subjects[subj] = event.id
+    for prev_event in prev_events:
+        subj = str(getattr(prev_event, "subject", "") or "")
+        if subj and subj in new_subjects and prev_event.id != new_subjects[subj]:
+            superseded_ids.add(prev_event.id)
+
+    superseded = [prev_by_id[eid] for eid in superseded_ids if eid in prev_by_id]
+
+    net = sum(_event_logodds(e) for e in new_events) - sum(_event_logodds(e) for e in superseded)
+    if abs(net) <= _LO_DELTA_EPS:
+        return prior  # 无净变化 → 返回 prior（不重新夹紧）
+
+    lo = _logit(prior if prior is not None else _NEUTRAL_PRIOR) + net
+    return _clip_confidence(_sigmoid(lo))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ScenarioProbability（§5.2：State × Confidence → P_bull/base/bear）
 # ─────────────────────────────────────────────────────────────────────────────

@@ -25,7 +25,7 @@
 * **阈值 fail-open**：:func:`thresholds_from_settings` 读 config 的 `deviation.tracking` 段，
   缺失/异常 → tv 档**不传参**（即用 `monitor_triggers` 自己的默认阈值），**模块级不读配置**。
 
-**五类 kind 与触发条件的映射（v1 口径，逐条可测）**：
+**六类 kind 与触发条件的映射（v1 口径 + P0 设计 §3.3 授权扩展，逐条可测）**：
 
 ======================  ==========================================================================
 kind                    触发条件（→ 判定来源）
@@ -38,7 +38,12 @@ kind                    触发条件（→ 判定来源）
 ``MANUAL``              ``check_exit`` 报出退出信号（§9.4 行动类输出只允许 Tier 0/5）**或**
                         ``monitor_triggers`` 的证据到达率项（``evidence_arrival_rate=…``，高信息量
                         → 深度研究/复核）；亦由 CLI ``--trigger manual`` 直接注入
+``RESTATEMENT``         diff 侧：本帧 ``new_evidence`` 出现 retraction 事件
+                        （``supersedes`` 非空且 ``effect_on_thesis == "neutral"``，P0 设计 §3.3）
 ======================  ==========================================================================
+
+**枚举扩展口径（P0 设计 §3.3 / §7.2 授权）**：``RESTATEMENT`` 是「不扩枚举」纪律的
+一次**具名授权扩展**（仅此一项，登记于 ROADMAP 变更登记表）；其余事件通道仍走既有五类。
 
 **如实披露两处 v1 判断**：
 
@@ -86,13 +91,20 @@ DEFAULT_STALE_AFTER_DAYS = 7
 
 
 class TriggerKind(enum.StrEnum):
-    """触发来源（§14.5-A 给定的五种，**不扩枚举**）。"""
+    """触发来源（§14.5-A 五种 + P0 设计 §3.3 授权扩展 ``RESTATEMENT``）。
+
+    枚举扩展口径（P0 设计 §7.2 授权，仅此一项；其余事件通道仍走既有五类）：
+    ``RESTATEMENT = "restatement"`` 用于重述/预告修正——观察到 retraction 事件
+    （``supersedes`` 非空且 ``effect_on_thesis == "neutral"``）时产出，reason 含被
+    作废事件 subject。该口径已在 ``docs/roadmap/ROADMAP.md`` 变更登记表登记。
+    """
 
     FINANCIAL_REPORT = "financial_report"
     ANNOUNCEMENT = "announcement"
     PRICE_MOVE = "price_move"
     STALE_EXPIRED = "stale_expired"
     MANUAL = "manual"
+    RESTATEMENT = "restatement"
 
 
 @dataclass(frozen=True)
@@ -233,7 +245,10 @@ def detect_triggers(
     3. **信念位移 / 证据到达率超阈值** → 有 ``frame_diff`` 时委托
        :func:`alphabee.midterm.diff_consumers.monitor_triggers`（``tv_distance=…`` → ``PRICE_MOVE``，
        ``evidence_arrival_rate=…`` → ``MANUAL``）；**无 diff 时不判定**（不自算第二份公式）；
-    4. 附带：artifact 内最近一帧快照的 ``|price_change_pct|`` 超阈值 → ``PRICE_MOVE``。
+    4. **重述/预告修正**（P0 设计 §3.3）→ 有 ``frame_diff`` 时观察 ``new_evidence`` 中的
+       retraction 事件（``supersedes`` 非空且 ``effect_on_thesis == "neutral"``）产出
+       :attr:`TriggerKind.RESTATEMENT`，reason 含被作废事件 subject；
+    5. 附带：artifact 内最近一帧快照的 ``|price_change_pct|`` 超阈值 → ``PRICE_MOVE``。
 
     Args:
         symbol: 标的代码（仅写入 ``Trigger.symbol``，不做格式校验/归一）。
@@ -243,7 +258,7 @@ def detect_triggers(
         thresholds: 阈值覆盖（缺省 :func:`thresholds_from_settings`）。
 
     Returns:
-        触发列表（顺序稳定：stale → exit → monitor → price），同一条件不重复产出。
+        触发列表（顺序稳定：stale → exit → monitor → restatement → price），同一条件不重复产出。
     """
     limits = thresholds or thresholds_from_settings()
     if artifact is None:
@@ -319,7 +334,37 @@ def detect_triggers(
                 )
             )
 
-    # 4) artifact 内最近一帧的行情异动
+    # 4) RESTATEMENT：本帧 diff 的 new_evidence 出现 retraction 事件（P0 设计 §3.3）
+    #    —— supersedes 非空且 effect=neutral；reason 含被作废事件 subject。
+    if frame_diff is not None:
+        superseded_by_id = {e.id: e for e in (getattr(frame_diff, "superseded_evidence", None) or [])}
+        for event in getattr(frame_diff, "new_evidence", None) or []:
+            if not (getattr(event, "supersedes", None) or []):
+                continue
+            if str(getattr(event, "effect_on_thesis", "") or "").strip().lower() != "neutral":
+                continue
+            subjects = [
+                str(getattr(superseded_by_id[eid], "subject", "") or eid)
+                for eid in event.supersedes
+                if eid in superseded_by_id
+            ]
+            if not subjects:
+                subjects = list(event.supersedes)
+            triggers.append(
+                Trigger(
+                    kind=TriggerKind.RESTATEMENT,
+                    symbol=symbol,
+                    reason=(f"重述/预告修正：本帧 retraction 事件（{event.id}）作废旧证据 {'、'.join(subjects)}"),
+                    payload={
+                        "source": "retraction_event",
+                        "retraction_id": event.id,
+                        "superseded_subjects": subjects,
+                        "superseded_ids": list(event.supersedes),
+                    },
+                )
+            )
+
+    # 5) artifact 内最近一帧的行情异动
     snapshot = _factor_snapshot(artifact)
     triggers += _price_move_triggers(
         symbol, getattr(getattr(snapshot, "trend", None), "price_change_pct", None), limits.price_move_pct
