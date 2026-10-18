@@ -107,6 +107,12 @@ domain_context:
     cache_dir: "data/driver_profiles"   # 缓存目录（相对 PROJECT_ROOT；每标的一个 JSON）
     recursion_limit: 40       # LangGraph 递归步数上界（显式设置，勿依赖默认值）
 
+# 中期决策层（docs/midterm/MIDTERM_CLASSIFIER_TEF_DESIGN.md §5.1）
+# 缺段 ⇒ 全默认值（旧 config 行为不变）；classifier_order 默认 etf（E→T→F 基准）。
+# 切换为 tef（T→E→F，A 股价格先行变体）属行为变更，登记见 docs/roadmap/ROADMAP.md 变更登记表 PR-1 行。
+midterm:
+  classifier_order: etf       # etf = E→T→F（基准）；tef = T→E→F（价格先行变体）
+
 deviation:
   detection:                 # §6 即时检测（F1：with_deviation_detection 包装器读这里）
     enabled: true            # 检测器总开关：关闭 ⇒ 整层 no-op（回滚用，不影响业务节点行为）

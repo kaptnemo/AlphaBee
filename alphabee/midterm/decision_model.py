@@ -30,7 +30,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence_delta
-from alphabee.midterm.classifier import classify_state
+from alphabee.midterm.classifier_dispatch import classify_state, resolve_classifier_order
 from alphabee.midterm.models import (
     CompanyStateArtifact,
     EvidenceEvent,
@@ -335,6 +335,7 @@ def evaluate(
     single_stock_cap: float | None = None,
     insight_materiality: Any = None,
     prev_evidence_log: list[EvidenceEvent] | None = None,
+    classifier_order: str | None = None,
 ) -> CompanyStateArtifact:
     """串起四引擎，把 FactorSnapshot 决策为 CompanyStateArtifact（§6 三轴 + §9）。
 
@@ -356,6 +357,9 @@ def evaluate(
             reasoning}]``，改造 D）；critical 下行变量会加深 bear 收益。``None`` 无修正。
         prev_evidence_log: 上一帧证据日志（P0 §1.5）；``None`` = 主链首帧/无上帧日志，
             退化为全量语义（与改造前逐字节一致）。
+        classifier_order: 分类器顺序变体（TEF design §5.1）：``"etf"``=E→T→F（基准）、
+            ``"tef"``=T→E→F（价格先行变体）；``None`` = 跟随配置 ``midterm.classifier_order``
+            （fail-open 到 ``etf``）。
 
     Returns:
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
@@ -365,7 +369,9 @@ def evaluate(
     evidence = _filter_fresh_evidence(evidence, snapshot.as_of_date)
 
     scores = compress_scores(snapshot)
-    cls = classify_state(scores)
+    # TEF design §4.5：先 resolve 一次拿确定值再路由（dispatch 内部对合法值直接放行，无双重分叉）
+    resolved_order = resolve_classifier_order(classifier_order)
+    cls = classify_state(scores, order=resolved_order)
 
     confidence = update_confidence_delta(evidence, prior=prior_confidence, prev_events=prev_evidence_log)
 
@@ -442,6 +448,7 @@ def get_decision(
     thesis: str = "",
     insight_materiality: Any = None,
     prev_evidence_log: list[EvidenceEvent] | None = None,
+    classifier_order: str | None = None,
 ) -> CompanyStateArtifact:
     """便捷入口：``get_factor_snapshot(symbol)`` 后再 ``evaluate``。
 
@@ -451,6 +458,8 @@ def get_decision(
         include_market: 是否采集 M（market_regime，开销较大）。
         prior_confidence / thesis / insight_materiality: 透传 ``evaluate``。
         prev_evidence_log: 上一帧证据日志（P0 §1.5，透传 ``evaluate``）。
+        classifier_order: 分类器顺序变体（TEF design §5.1），透传 ``evaluate``；
+            ``None`` = 跟随配置 ``midterm.classifier_order``（fail-open 到 ``etf``）。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -465,6 +474,7 @@ def get_decision(
         thesis=thesis,
         insight_materiality=insight_materiality,
         prev_evidence_log=prev_evidence_log,
+        classifier_order=classifier_order,
     )
 
 

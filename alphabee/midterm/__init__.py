@@ -13,7 +13,14 @@
 # factors.py 采用函数内惰性导入数据源，四引擎与编排入口均为确定性纯函数，
 # 顶层只依赖 models（Pydantic），因此在此顶层导入不会触发 tushare/akshare 初始化副作用。
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
-from alphabee.midterm.classifier import ClassifierResult, classify_state
+from alphabee.midterm.classifier import classify_state
+from alphabee.midterm.classifier_dispatch import (
+    classify_state as classify_state_dispatch,
+)
+from alphabee.midterm.classifier_dispatch import (
+    resolve_classifier_order,
+)
+from alphabee.midterm.classifier_tef import classify_state as classify_state_tef
 from alphabee.midterm.decision_model import (
     collect_evidence,
     collect_evidence_split,
@@ -61,6 +68,7 @@ from alphabee.midterm.models import (
     ArtifactRef,
     AuditSnapshot,
     ChangeAttribution,
+    ClassifierResult,
     CognitiveState,
     CompanyStateArtifact,
     CompanyStateDiff,
@@ -109,6 +117,7 @@ __all__ = [
     "ArtifactRef",
     "AuditSnapshot",
     "ChangeAttribution",
+    "ClassifierResult",
     "CognitiveState",
     "CompanyStateArtifact",
     "CompanyStateDiff",
@@ -160,16 +169,18 @@ __all__ = [
     "build_valuation_factor",
     "get_factor_snapshot",
     # 四引擎 + 编排入口
-    "ClassifierResult",
     "ScenarioProbability",
     "build_position",
     "classify_state",
+    "classify_state_dispatch",
+    "classify_state_tef",
     "collect_evidence",
     "collect_evidence_split",
     "compress_scores",
     "evaluate",
     "get_decision",
     "get_decision_with_evidence",
+    "resolve_classifier_order",
     "scenario_probability",
     "update_confidence",
     # evidence 抽取（E1/E2/E3）

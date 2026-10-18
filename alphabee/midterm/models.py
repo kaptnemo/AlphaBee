@@ -34,6 +34,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -783,3 +784,20 @@ class DecisionJournalEntry(BaseModel):
     confidence_at_time: float = 0.0
     evidence_refs: list[str] = Field(default_factory=list)
     review_notes: list[str] = Field(default_factory=list)  # 事后复盘
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 分类器结果（TEF design §4.1：从 classifier.py 迁入，字段逐字不变）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ClassifierResult:
+    """classify_state 的结果：软状态 + 迁移 + 因子一致性 + 不确定信号。"""
+
+    state: StateBelief
+    transition: StateTransition | None
+    factor_deltas: list[FactorScoreDelta]
+    uncertain: bool
+    research_tasks: list[ResearchTask] = field(default_factory=list)
+    rationale: list[str] = field(default_factory=list)

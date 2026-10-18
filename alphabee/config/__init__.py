@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from alphabee.config.loader import ConfigLoader
@@ -334,6 +336,17 @@ class DomainContextSettings(BaseModel):
     research: DomainContextResearchSettings = Field(default_factory=DomainContextResearchSettings)
 
 
+class MidtermClassifierSettings(BaseModel):
+    """中期决策层分类器顺序变体（TEF design §5.1）。
+
+    缺段 ⇒ 取默认 ``classifier_order="etf"``（E→T→F 基准），旧 config 行为不变；
+    读取方 ``classifier_dispatch.resolve_classifier_order`` 运行时读取并 fail-open。
+    """
+
+    # 决策层分类器顺序变体：etf=E→T→F（基准，缺省）；tef=T→E→F（A 股价格先行变体）
+    classifier_order: Literal["etf", "tef"] = "etf"
+
+
 class Settings(BaseModel):
     llm: LLMConfig
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
@@ -349,6 +362,8 @@ class Settings(BaseModel):
     company_track: CompanyTrackSettings = Field(default_factory=CompanyTrackSettings)
     # 驱动画像 Tier B 模型研究层（缺段 ⇒ 全默认值：enabled=false，即 D0 行为）
     domain_context: DomainContextSettings = Field(default_factory=DomainContextSettings)
+    # 中期决策层（缺段 ⇒ 全默认值；classifier_order 缺省 etf，旧 config 行为不变）
+    midterm: MidtermClassifierSettings = Field(default_factory=MidtermClassifierSettings)
 
 
 def get_settings() -> Settings:

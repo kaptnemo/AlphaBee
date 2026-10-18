@@ -17,14 +17,17 @@
   S3 Late → S1' 第二曲线标 ``kind="reopen"``。
 
 阈值均为结构性示意（§6.3），集中在模块顶部常量，便于回测调参。
+
+顺序变体（T→E→F）见 :mod:`alphabee.midterm.classifier_tef`；配置/参数切换见
+:mod:`alphabee.midterm.classifier_dispatch`（默认仍走本 ETF 版）。
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
 
 from alphabee.midterm.models import (
+    ClassifierResult,
     Consistency,
     FactorScoreDelta,
     ResearchTask,
@@ -278,18 +281,8 @@ def _research_tasks(
 # 结果载体
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-@dataclass(frozen=True)
-class ClassifierResult:
-    """classify_state 的结果：软状态 + 迁移 + 因子一致性 + 不确定信号。"""
-
-    state: StateBelief
-    transition: StateTransition | None
-    factor_deltas: list[FactorScoreDelta]
-    uncertain: bool
-    research_tasks: list[ResearchTask] = field(default_factory=list)
-    rationale: list[str] = field(default_factory=list)
-
+# ClassifierResult 已迁入 alphabee.midterm.models（TEF design §4.1，字段不变）；
+# 此处 re-export 保留既有 `from alphabee.midterm.classifier import ClassifierResult` 兼容。
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 主入口

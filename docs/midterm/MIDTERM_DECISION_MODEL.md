@@ -229,6 +229,25 @@ classifier 需对每个 `FactorDelta` 标注 `consistency`（resonant / divergen
 - 非法跳级（如 `S1→S3` 直接跳）→ `legal=False`，需人工/证据补齐；
 - `S3 Late → S3 Acceleration → S1'`（第二增长曲线重开预期差，§31–§32）→ `kind="reopen"`。
 
+### 4.6 顺序变体（T→E→F）与切换
+
+`§4.3` 的 `E → T → F` 顺序隐含「存在活跃且及时无偏的一致预期流」（美股式机构信息流）。
+A 股现实更接近 **T → E → F**：研报覆盖稀疏且滞后于行情，题材/政策驱动下**股价先行、预期跟随、
+财报最后确认**是常态，真实信号顺序接近「价格先破位、预期后转平、财报最后证伪」。
+
+为在**同一数据上做 A/B 对比**而非改动既有 ETF 基准，本设计新增**完全独立**的
+`classifier_tef.py`（T→E→F 顺序变体）与 `classifier_dispatch.py`（配置感知调度），
+并通过以下三处切换（全部 fail-open 到 `etf`，绝不抛）：
+
+- 配置：`midterm.classifier_order`（`etf`=E→T→F 基准、`tef`=T→E→F；默认 `etf`，缺段/坏值/异常回落 `etf`）；
+- 参数：`decision_model.evaluate(..., classifier_order=...)` / `get_decision(..., classifier_order=...)`（`None` = 跟随配置）；
+- tracking CLI `--classifier`（A/B 对比入口，见 §5.2）。
+
+顺序差异只落在顺序决定性位置：S2 门控 E→T、S4 门控 E→T、S5 加 T 门控、背离 case ②
+镜像为 `T↑ + E↓`（`E↑ + T↓` 在 TEF 不再具名背离）；S0/S1/S3、中性常量与迁移合法性集合
+两套**逐值相等**（parity 测试钉住）。完整语义、公式对照、取舍披露与测试矩阵见
+`docs/midterm/MIDTERM_CLASSIFIER_TEF_DESIGN.md`。
+
 ---
 
 ## 5. Layer 2b：V/E → ExpectedValue（赔率，§42）
