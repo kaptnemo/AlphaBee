@@ -337,14 +337,21 @@ class DomainContextSettings(BaseModel):
 
 
 class MidtermClassifierSettings(BaseModel):
-    """中期决策层分类器顺序变体（TEF design §5.1）。
+    """中期决策层：分类器顺序变体（TEF design §5.1）+ 一致预期数据源（E 生态设计 §5.3）。
 
-    缺段 ⇒ 取默认 ``classifier_order="etf"``（E→T→F 基准），旧 config 行为不变；
-    读取方 ``classifier_dispatch.resolve_classifier_order`` 运行时读取并 fail-open。
+    缺段 ⇒ 取默认 ``classifier_order="etf"``（E→T→F 基准）与
+    ``consensus_source="report_list"``（东财研报聚合 = 现状），旧 config 行为不变；
+    读取方 ``classifier_dispatch.resolve_classifier_order`` /
+    ``collectors.consensus.eastmoney.resolve_consensus_source`` 运行时读取并 fail-open。
     """
 
     # 决策层分类器顺序变体：etf=E→T→F（基准，缺省）；tef=T→E→F（A 股价格先行变体）
     classifier_order: Literal["etf", "tef"] = "etf"
+    # 一致预期 provider 链（E 生态设计 §5.3），缺省 report_list = 与改造前逐字一致：
+    #   report_list  = 东财研报列表聚合（现状）
+    #   f10_forecast = 东财 F10 盈利预测快照 + 快照序列自算 revision（失败回落 report_list）
+    #   auto         = 优先 f10_forecast，失败回落 report_list
+    consensus_source: Literal["report_list", "f10_forecast", "auto"] = "report_list"
 
 
 class Settings(BaseModel):

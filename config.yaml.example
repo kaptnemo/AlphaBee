@@ -112,6 +112,14 @@ domain_context:
 # 切换为 tef（T→E→F，A 股价格先行变体）属行为变更，登记见 docs/roadmap/ROADMAP.md 变更登记表 PR-1 行。
 midterm:
   classifier_order: etf       # etf = E→T→F（基准）；tef = T→E→F（价格先行变体）
+  # 一致预期 provider 链（docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md §5.3）：
+  #   report_list  = 东财研报列表聚合（默认，行为与改造前逐字一致）
+  #   f10_forecast = 东财 F10 盈利预测（coverage_count 变"机构家数"口径；revision 由
+  #                  data/consensus_snapshots/ 快照序列自算；失败回落 report_list 并留痕）
+  #   auto         = 优先 f10_forecast，失败回落 report_list
+  # 非法值 ⇒ 记 warning 并回落 report_list（绝不抛）。切换为新源属行为变更
+  #（coverage_count 语义由"研报数"变"机构数"），登记见 docs/roadmap/ROADMAP.md 变更登记表。
+  consensus_source: report_list
 
 deviation:
   detection:                 # §6 即时检测（F1：with_deviation_detection 包装器读这里）
