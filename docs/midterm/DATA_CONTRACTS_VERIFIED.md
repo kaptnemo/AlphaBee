@@ -283,7 +283,7 @@ verified_at: 2026-10-19
 | `rating_mean` | `pjtj[]` 有 5 分制均分（`COMPRE_RATING_NUM`，实测 4.75~4.84），与 §1 研报路径 `emRatingValue` 的 **3 分制**（持有1/增持2/买入3）**不可比** | 保持 `None`（不污染与 report_list 帧的可比性） |
 | `rating_upgrade_1m` / `rating_downgrade_1m` / `revision_breadth` | `pjtj`/`ycmx` **无上期评级字段**（`ycmx[].RATING` 只有当前值） | 恒 `None` + `consensus_missing` |
 | EPS 最高/最低 | **接口不提供**；只能从 `ycmx[]` 自算，而明细被截断为最多 30 条（贵州茅台 `EPS_COUNT=44`、明细 30）⇒ 自算必偏窄 | **不落 max/min**（本设计无对应 canonical 字段） |
-| `eps_fy1_revision_3m` 等窗口类 | 接口本身**无历史时序**（只给当前快照），且无 3 个月前值 | 由 `data/consensus_snapshots/<symbol>.jsonl` append-only 快照序列纯规则自算；窗口（30/90 天）未满 ⇒ `None` |
+| `eps_fy1_revision_3m` 等窗口类 | 接口本身**无历史时序**（只给当前快照），且无 3 个月前值 | 由 `data/consensus_snapshots/<纯6位代码>.jsonl` append-only 快照序列纯规则自算；窗口（30/90 天）未满 ⇒ `None` |
 
 ### 空值形态（实测三类 + 一类错误）
 
