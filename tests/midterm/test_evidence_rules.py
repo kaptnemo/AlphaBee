@@ -6,19 +6,25 @@
 - revision 幅度（方向=符号）→ 离散标定（§6）；
 - 符号定方向退化（§8，thesis 为空 / 无预告基线）；
 - 事件签名去重 id=hash(date+kind+主体+数值)，多来源合并 source_refs（§7）；
-- 防幻觉：缺失/冲突数值置 None，不产事件、不静默回退（§5）。
+- 防幻觉：缺失/冲突数值置 None，不产事件、不静默回退（§5）；
+- 预告类型信息量分档与区间保守锚（E 生态设计 §3/§4，PR-A）：类型三档升降、
+  inertia 取消、retraction 不受档位影响、下限/上限保守锚与跨零三档。
 """
 
 import pytest
 
 from alphabee.midterm.bayes import update_confidence, update_confidence_delta
 from alphabee.midterm.evidence_rules import (
+    _DEFAULT_TIER,
+    _FORECAST_TYPE_TIER,
     _calibrate_beat,
     _calibrate_revision,
+    _conservative_direction,
     _dedup,
     _event_id,
-    _midpoint,
+    _forecast_tier,
     _norm_date,
+    _shift_strength,
     _to_float,
     build_numeric_evidence,
 )
@@ -148,13 +154,14 @@ def test_express_without_forecast_sign_direction():
 
 
 def test_forecast_without_express_sign_direction():
-    # 预告 min=20/max=30 → 中点 +25 → confirming，|25|>15 → strong
+    # 预告 min=20/max=30 → 下限保守锚 +20（PR-A §4）→ confirming，|20|>15 → strong
     events = build_numeric_evidence(_exp(forecast=[_fc(lo=20.0, hi=30.0)]))
     assert len(events) == 1
     e = events[0]
     assert e.effect_on_thesis == "confirming"
     assert e.confidence_delta == 0.5
     assert "[+20.00%, +30.00%]" in e.description
+    assert "下限保守锚" in e.description
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,7 +233,7 @@ def test_duplicate_forecast_same_period_uses_latest_ann_date():
     events = build_numeric_evidence(_exp(forecast=[_fc(), _fc(ann="20240401", lo=20.0, hi=25.0)]))
     assert len(events) == 1
     assert events[0].date == "2024-04-01"  # 末条记录（_norm_date → ISO）
-    assert events[0].confidence_delta == 0.5  # 末条 midpoint 22.5 → strong
+    assert events[0].confidence_delta == 0.5  # 末条下限保守锚 20 → strong
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -390,8 +397,11 @@ def _forecast_event_id(record: dict, symbol: str) -> str:
     period = record["period"]
     lo = _to_float(record.get("profit_forecast_min_change"))
     hi = _to_float(record.get("profit_forecast_max_change"))
+    net_min = _to_float(record.get("forecast_net_profit_min"))
+    # PR-A §4：预告方向事件的 value 是保守锚（不是区间中点）
+    _, anchor = _conservative_direction(lo, hi, _forecast_tier(record), net_min)
     date = _norm_date(record.get("ann_date")) or _norm_date(record.get("period"))
-    return _event_id(date, "expectation", f"{symbol}:forecast:{period}", _midpoint(lo, hi))
+    return _event_id(date, "expectation", f"{symbol}:forecast:{period}", anchor)
 
 
 def test_update_flag_produces_retraction_superseding_old_forecast():
@@ -452,3 +462,278 @@ def test_revision_coverage_at_threshold_regression():
     assert len(events) == 1
     assert events[0].effect_on_thesis == "confirming"
     assert events[0].confidence_delta == 0.3  # |4| ∈ [3,10] → medium
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E 生态设计 PR-A §3：预告类型信息量分档
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _fc_typed(f_type, period="20231231", ann="20240130", lo=10.0, hi=15.0, **extra):
+    """带 canonical ``forecast_type`` 的预告记录（PR-A §3 档位输入）。"""
+    rec = _fc(period=period, ann=ann, lo=lo, hi=hi)
+    if f_type is not None:
+        rec["forecast_type"] = f_type
+    rec.update(extra)
+    return rec
+
+
+def test_forecast_type_tier_table():
+    """§3.1 三档表逐项钉死（扭亏/首亏 reversal、预增/预减/略增/略减 magnitude、续盈/续亏 inertia）。"""
+    assert _FORECAST_TYPE_TIER == {
+        "扭亏": "reversal",
+        "首亏": "reversal",
+        "预增": "magnitude",
+        "预减": "magnitude",
+        "略增": "magnitude",
+        "略减": "magnitude",
+        "续盈": "inertia",
+        "续亏": "inertia",
+    }
+    assert _DEFAULT_TIER == "unknown"
+
+
+def test_forecast_tier_fail_open():
+    """缺失/空/不确定/未知取值/非 dict → unknown（fail-open，不猜档位、不抛）。"""
+    assert _forecast_tier({"forecast_type": "扭亏"}) == "reversal"
+    assert _forecast_tier({"forecast_type": "首亏"}) == "reversal"
+    assert _forecast_tier({"forecast_type": " 续盈 "}) == "inertia"
+    assert _forecast_tier({"forecast_type": "续亏"}) == "inertia"
+    assert _forecast_tier({"forecast_type": "略增"}) == "magnitude"
+    assert _forecast_tier({}) == "unknown"
+    assert _forecast_tier({"forecast_type": None}) == "unknown"
+    assert _forecast_tier({"forecast_type": ""}) == "unknown"
+    assert _forecast_tier({"forecast_type": "不确定"}) == "unknown"
+    assert _forecast_tier({"forecast_type": "预增（修正）"}) == "unknown"
+    assert _forecast_tier(None) == "unknown"
+
+
+def test_shift_strength_three_value_closure():
+    """升降档只在 weak/medium/strong 三值内：STRONG 封顶、WEAK 兜底（三值纪律结构性保证）。"""
+    for tier in ("reversal", "inertia", "magnitude", "unknown", None):
+        for strength in (Strength.WEAK, Strength.MEDIUM, Strength.STRONG):
+            assert _shift_strength(strength, tier) in (
+                Strength.WEAK,
+                Strength.MEDIUM,
+                Strength.STRONG,
+            )
+    assert _shift_strength(Strength.WEAK, "reversal") is Strength.MEDIUM
+    assert _shift_strength(Strength.MEDIUM, "reversal") is Strength.STRONG
+    assert _shift_strength(Strength.STRONG, "reversal") is Strength.STRONG  # 升档封顶
+    assert _shift_strength(Strength.STRONG, "inertia") is Strength.MEDIUM
+    assert _shift_strength(Strength.MEDIUM, "inertia") is Strength.WEAK
+    assert _shift_strength(Strength.WEAK, "inertia") is Strength.WEAK  # 降档不取消
+    assert _shift_strength(Strength.MEDIUM, "magnitude") is Strength.MEDIUM
+    assert _shift_strength(Strength.MEDIUM, "unknown") is Strength.MEDIUM
+
+
+def test_beat_reversal_upshift_weak_to_medium():
+    """A-升降档：扭亏 beat 偏离 4%（weak）⇒ 升一档 medium；首亏 miss 同档同理。"""
+    beat = build_numeric_evidence(_exp(forecast=[_fc_typed("扭亏")], express=[_ex(np_yoy=15.6)]), symbol="600519")
+    assert len(beat) == 1
+    assert beat[0].effect_on_thesis == "confirming"
+    assert beat[0].confidence_delta == 0.3  # 0.6/15 ≈ 4% → weak → 升档 medium
+
+    miss = build_numeric_evidence(_exp(forecast=[_fc_typed("首亏")], express=[_ex(np_yoy=9.4)]), symbol="600519")
+    assert len(miss) == 1
+    assert miss[0].effect_on_thesis == "refuting"
+    assert miss[0].confidence_delta == 0.3  # 低于下限 4% → weak → 升档 medium
+
+
+def test_beat_reversal_upshift_capped_at_strong():
+    """STRONG 升档封顶：扭亏偏离 20pp（已 strong）⇒ 仍 strong 0.5，不出三值域。"""
+    events = build_numeric_evidence(_exp(forecast=[_fc_typed("扭亏")], express=[_ex(np_yoy=35.0)]), symbol="600519")
+    assert len(events) == 1
+    assert events[0].effect_on_thesis == "confirming"
+    assert events[0].confidence_delta == 0.5
+
+
+def test_beat_inertia_downshift_but_still_emits():
+    """A-升降档：续盈/续亏 beat 降一档；WEAK 降档后仍产事件（不取消）。"""
+    # 偏离 7pp → medium → 降档 weak
+    down = build_numeric_evidence(_exp(forecast=[_fc_typed("续亏")], express=[_ex(np_yoy=22.0)]), symbol="600519")
+    assert len(down) == 1
+    assert down[0].confidence_delta == 0.1
+    # 偏离 4% 已是 weak → 降档兜底 weak，但事件照常产出（不取消）
+    floor = build_numeric_evidence(_exp(forecast=[_fc_typed("续盈")], express=[_ex(np_yoy=15.6)]), symbol="600519")
+    assert len(floor) == 1
+    assert floor[0].confidence_delta == 0.1
+
+
+def test_beat_magnitude_and_unknown_tier_unchanged():
+    """magnitude / unknown 不动档：偏离 4% → weak、7pp → medium（现行 beat 表逐字不变）。"""
+    for f_type in ("预增", "预减", "略增", "略减", None):
+        weak = build_numeric_evidence(_exp(forecast=[_fc_typed(f_type)], express=[_ex(np_yoy=15.6)]), symbol="600519")
+        assert len(weak) == 1 and weak[0].confidence_delta == 0.1
+        medium = build_numeric_evidence(_exp(forecast=[_fc_typed(f_type)], express=[_ex(np_yoy=22.0)]), symbol="600519")
+        assert len(medium) == 1 and medium[0].confidence_delta == 0.3
+
+
+def test_forecast_inertia_cancelled_magnitude_still_emits():
+    """A-inertia 取消：续盈/续亏预告（无快报）⇒ 不产事件；同区间预减（magnitude）⇒ 照常产事件。"""
+    for f_type in ("续盈", "续亏"):
+        assert build_numeric_evidence(_exp(forecast=[_fc_typed(f_type)]), symbol="600519") == []
+    magnitude = build_numeric_evidence(_exp(forecast=[_fc_typed("预减")]), symbol="600519")
+    assert len(magnitude) == 1
+    assert magnitude[0].effect_on_thesis == "confirming"  # 下限 +10 > 0
+    assert magnitude[0].description.count("下限保守锚") == 1
+
+
+def test_retraction_not_affected_by_tier():
+    """A-retraction 不受 tier：续盈类修正预告 ⇒ retraction 照常产（且末条续盈仍不产方向事件）。"""
+    old = _fc_typed("续盈", ann="20240130", lo=10.0, hi=15.0)
+    corrected = _fc_typed("续盈", ann="20240220", lo=20.0, hi=30.0, forecast_update_flag="1")
+    events = build_numeric_evidence(_exp(forecast=[old, corrected]), symbol="600519")
+
+    retractions = [e for e in events if e.supersedes]
+    assert len(retractions) == 1
+    assert retractions[0].effect_on_thesis == "neutral"
+    assert retractions[0].confidence_delta == 0.0
+    assert retractions[0].supersedes == [_forecast_event_id(old, "600519")]
+    # 修正后的末条是续盈（inertia）⇒ 不再产方向事件，只有 retraction 一条
+    assert [e.effect_on_thesis for e in events] == ["neutral"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E 生态设计 PR-A §4：区间保守锚（替代中点口径）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_anchor_lower_bound_confirming():
+    """B-保守锚：lo=+5/hi=+40 ⇒ confirming，value=|lo|=5（非中点 22.5），description 自证口径。"""
+    events = build_numeric_evidence(_exp(forecast=[_fc(lo=5.0, hi=40.0)]), symbol="600519")
+    assert len(events) == 1
+    e = events[0]
+    assert e.effect_on_thesis == "confirming"
+    # 事件 id 携带 value=|lo|=5.0（把中点 22.5 换回来 ⇒ 本断言必红）
+    assert e.id == _event_id("2024-01-30", "expectation", "600519:forecast:20231231", 5.0)
+    assert e.id != _event_id("2024-01-30", "expectation", "600519:forecast:20231231", 22.5)
+    assert e.confidence_delta == 0.3  # |5| ≥ 5 → medium
+    assert "[+5.00%, +40.00%]" in e.description
+    assert "下限保守锚" in e.description and "+5.00" in e.description
+
+
+def test_anchor_upper_bound_refuting():
+    """B-保守锚：lo=−50/hi=−5 ⇒ refuting，value=|hi|=5（非中点 −27.5）。"""
+    events = build_numeric_evidence(_exp(forecast=[_fc(lo=-50.0, hi=-5.0)]), symbol="600519")
+    assert len(events) == 1
+    e = events[0]
+    assert e.effect_on_thesis == "refuting"
+    assert e.id == _event_id("2024-01-30", "expectation", "600519:forecast:20231231", 5.0)
+    assert e.id != _event_id("2024-01-30", "expectation", "600519:forecast:20231231", -27.5)
+    assert e.confidence_delta == 0.3  # |−5| ≥ 5 → medium
+    assert "[-50.00%, -5.00%]" in e.description
+    assert "上限保守锚" in e.description and "-5.00" in e.description
+
+
+def test_anchor_cross_zero_no_event():
+    """B-保守锚：跨零（lo<=0<=hi）方向不确定 ⇒ 不产事件（magnitude/unknown 均不编造方向）。"""
+    assert build_numeric_evidence(_exp(forecast=[_fc(lo=-20.0, hi=30.0)]), symbol="600519") == []
+    assert build_numeric_evidence(_exp(forecast=[_fc_typed("预增", lo=-20.0, hi=30.0)]), symbol="600519") == []
+    # 距零更近的跨零区间同样不产（lo=0 也属跨零，非 lo>0）
+    assert build_numeric_evidence(_exp(forecast=[_fc(lo=0.0, hi=10.0)]), symbol="600519") == []
+    # 反向跨零（hi=0）同理
+    assert build_numeric_evidence(_exp(forecast=[_fc(lo=-10.0, hi=0.0)]), symbol="600519") == []
+
+
+def test_anchor_reversal_cross_zero_profit_floor():
+    """B-保守锚：扭亏跨零 + 净利润下限>0 ⇒ confirming(weak)；无绝对额/非正值 ⇒ 不产事件。"""
+    floor = build_numeric_evidence(
+        _exp(
+            forecast=[
+                _fc_typed("扭亏", lo=-20.0, hi=30.0, forecast_net_profit_min=2e8),
+            ]
+        ),
+        symbol="600519",
+    )
+    assert len(floor) == 1
+    e = floor[0]
+    assert e.effect_on_thesis == "confirming"
+    assert e.confidence_delta == 0.1  # 绝对额只定方向 ⇒ 强制 weak
+    assert e.id == _event_id("2024-01-30", "expectation", "600519:forecast:20231231", 2e8)
+    assert "扭亏跨零" in e.description and "[-20.00%, +30.00%]" in e.description
+
+    # 绝对额缺失 / 为 0 / 为负 ⇒ 兜底不成立，不产事件
+    for net_min in (None, 0.0, -2e8):
+        assert (
+            build_numeric_evidence(
+                _exp(
+                    forecast=[
+                        _fc_typed("扭亏", lo=-20.0, hi=30.0, forecast_net_profit_min=net_min),
+                    ]
+                ),
+                symbol="600519",
+            )
+            == []
+        )
+    # 非 reversal 档即使绝对额为正也不兜底（预增跨零仍不产）
+    assert (
+        build_numeric_evidence(
+            _exp(forecast=[_fc_typed("预增", lo=-20.0, hi=30.0, forecast_net_profit_min=2e8)]),
+            symbol="600519",
+        )
+        == []
+    )
+
+
+def test_anchor_single_side_missing():
+    """单边缺失：符号能定方向（lo>0 / hi<0）⇒ 保守锚照判；符号不能定 ⇒ 不产事件。"""
+    only_lo = build_numeric_evidence(
+        _exp(forecast=[{"period": "20231231", "ann_date": "20240130", "profit_forecast_min_change": 5.0}]),
+        symbol="600519",
+    )
+    assert len(only_lo) == 1 and only_lo[0].effect_on_thesis == "confirming"
+    assert only_lo[0].confidence_delta == 0.3
+
+    only_hi = build_numeric_evidence(
+        _exp(forecast=[{"period": "20231231", "ann_date": "20240130", "profit_forecast_max_change": -5.0}]),
+        symbol="600519",
+    )
+    assert len(only_hi) == 1 and only_hi[0].effect_on_thesis == "refuting"
+
+    # 只有负下限（上限未知，可能为正）⇒ 方向不确定，不产事件
+    assert (
+        build_numeric_evidence(
+            _exp(forecast=[{"period": "20231231", "ann_date": "20240130", "profit_forecast_min_change": -5.0}]),
+            symbol="600519",
+        )
+        == []
+    )
+
+
+def test_missing_or_unknown_tier_regression_pin():
+    """未知/缺失 tier 走现行行为（回归钉）：与 magnitude 档完全同档同 id。"""
+    for f_type in (None, "不确定", "预增"):
+        beat = build_numeric_evidence(_exp(forecast=[_fc_typed(f_type)], express=[_ex(np_yoy=15.6)]), symbol="600519")
+        assert len(beat) == 1 and beat[0].confidence_delta == 0.1
+        forecast = build_numeric_evidence(_exp(forecast=[_fc_typed(f_type, lo=20.0, hi=30.0)]), symbol="600519")
+        assert len(forecast) == 1
+        assert forecast[0].effect_on_thesis == "confirming"
+        assert forecast[0].confidence_delta == 0.5
+        assert forecast[0].id == _event_id("2024-01-30", "expectation", "600519:forecast:20231231", 20.0)
+
+
+def test_confidence_delta_three_value_discipline_under_tier_shift():
+    """三值纪律专测：升降档 + 保守锚 + 绝对额兜底混合后，confidence_delta 恒在 {0.1,0.3,0.5}。"""
+    exp = _exp(
+        forecast=[
+            _fc_typed("扭亏"),  # 20231231 beat 20pp → strong（升档封顶）
+            _fc_typed("扭亏", period="20230930"),  # beat 4% → medium（升档）
+            _fc_typed("续亏", period="20230630"),  # beat 7pp → weak（降档）
+            _fc_typed("首亏", period="20230331", lo=-20.0, hi=30.0, forecast_net_profit_min=1e8),
+            _fc_typed("预增", period="20221231", lo=-50.0, hi=-5.0),  # 上限锚 → medium
+        ],
+        express=[
+            _ex(np_yoy=35.0),
+            _ex(period="20230930", np_yoy=15.6),
+            _ex(period="20230630", np_yoy=22.0),
+        ],
+    )
+    cons = {"eps_fy1_revision_1m": 4.0, "coverage_count": 3}
+    events = build_numeric_evidence(exp, cons, symbol="600519")
+
+    deltas = {e.confidence_delta for e in events}
+    assert deltas == DISCRETE_DELTAS  # 三档都被覆盖到，且无第四值
+    for e in events:
+        assert e.effect_on_thesis in ("confirming", "refuting")
+        assert e.confidence_delta in DISCRETE_DELTAS
