@@ -5,9 +5,23 @@
 
 1. :func:`fetch_profit_forecast` —— 单次快照拉取（fail-open 返回 ``{}``，绝不抛）；
 2. :func:`append_snapshot` / :func:`load_snapshots` —— 快照 append-only 落盘
-   ``<data_root>/consensus_snapshots/<symbol>.jsonl``（损坏行跳过、同日幂等）；
+   ``<data_root>/consensus_snapshots/<6位代码>.jsonl``（**文件名单一形态**：``300750.SZ`` /
+   ``300750`` / ``sz300750`` 都落同一个 ``300750.jsonl``；损坏行跳过、同日幂等；
+   写盘/读盘 ``OSError`` 一律 fail-open 不抛）；
 3. :func:`compute_revisions` / :func:`build_f10_consensus` —— 由快照序列**纯规则**自算
    1m/3m revision（复用 :mod:`engine` 既有窗口原语，无 LLM、可离线重放）。
+
+**fail-open 纪律**（本模块对外承诺「绝不抛」，三条硬化点）：
+
+- **区块类型守卫**：``pjtj`` / ``jgyc`` / ``yctj_list`` 任一不是 ``list``（如接口异常时返回
+  ``5`` / ``null``）⇒ 整份响应按不可用处理（``{}`` + 原因），绝不进入迭代抛 ``TypeError``；
+  ``yctj_chart`` / ``ycmx`` 本模块不消费，非 list 只记 warning、不判死（不让旁支区块毁掉可用数据）。
+- **写盘失败 fail-open**：``mkdir`` / ``open`` / ``write`` 的 ``OSError``（只读目录、磁盘满、
+  权限）全部捕掉 → 不抛、不回落；**当次快照（内存值）仍参与当次输出与 revision 计算**，
+  并在 ``ConsensusOutput.warnings`` 留痕「落盘失败」。
+- **revision 与落盘解耦**：revision 序列恒为「磁盘历史 + 当次内存快照」（同 ``as_of_date``
+  以历史行优先，与 ``append_snapshot`` 的同日幂等一致），因此落盘成功/失败算出的 revision
+  逐位相同，当期点不会因未落盘而丢失。
 
 接口冒烟结论（2026-10-19 实测，报告：``docs/implementation/midterm/E_ECOSYSTEM_SMOKE_REPORT.md``）
 ────────────────────────────────────────────────────────────────────────────────
@@ -100,8 +114,10 @@ SNAPSHOT_DIR_NAME = "consensus_snapshots"
 _AGGREGATE_ORG_CODE = "00000000"
 #: 交易所前缀（实测可用判据，冒烟 §2）
 _EXCHANGE_PREFIXES = ("SH", "SZ", "BJ")
-#: 响应必须包含的区块（缺一即视为非法响应/非法代码，不能只看 HTTP 200）
+#: 响应必须包含、且类型必须是 ``list`` 的区块（缺一/类型不符即视为非法响应，不能只看 HTTP 200）
 _REQUIRED_BLOCKS = ("pjtj", "jgyc", "yctj_list")
+#: 本模块不消费的旁支区块：仅做防御性类型检查（非 list 只记 warning，不判死可用数据）
+_UNUSED_BLOCKS = ("yctj_chart", "ycmx")
 #: revision 窗口（源字段, canonical 字段, 天数）——与 engine 的 30/90 天窗口同构
 _REVISION_WINDOWS: tuple[tuple[str, str, int], ...] = (
     ("eps_fy1", "eps_fy1_revision_1m", 30),
@@ -160,6 +176,23 @@ def market_prefixed_code(code: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # 拉取 + 原始响应 → canonical 快照
 # ─────────────────────────────────────────────────────────────────────────────
+def _block_type_error(payload: dict[str, Any]) -> str:
+    """检查 5 个区块的值类型；必需区块非 list → 返回原因（空串 = 通过）。
+
+    ``{"pjtj": [], "jgyc": 5, "yctj_list": 5}`` 这类形态若只判键存在，后续 ``for row in
+    payload["yctj_list"]`` 会抛 ``TypeError``（违背「绝不抛」承诺），故在入口判死。
+    ``yctj_chart`` / ``ycmx`` 本模块不消费：非 list 只记 warning，不判死。
+    """
+    for key in _REQUIRED_BLOCKS:
+        if not isinstance(payload.get(key), list):
+            return f"invalid_block:{key}"
+    for key in _UNUSED_BLOCKS:
+        value = payload.get(key)
+        if value is not None and not isinstance(value, list):
+            logger.warning("f10 profit_forecast 区块 %s 非 list（%r），本模块不消费，忽略", key, type(value).__name__)
+    return ""
+
+
 def _fetch_raw(code: str, *, timeout: int) -> tuple[dict[str, Any], str]:
     """拉原始响应，返回 ``(payload, 不可用原因)``；可用时原因为空串。"""
     secucode = market_prefixed_code(code)
@@ -183,6 +216,10 @@ def _fetch_raw(code: str, *, timeout: int) -> tuple[dict[str, Any], str]:
         return {}, "invalid_code"
     if not all(key in payload for key in _REQUIRED_BLOCKS):
         return {}, "unexpected_payload"
+    block_error = _block_type_error(payload)  # 类型守卫：非 list 区块不得进入迭代
+    if block_error:
+        logger.warning("f10 profit_forecast 区块类型非法（%s）：%s", secucode, block_error)
+        return {}, block_error
     return payload, ""
 
 
@@ -284,24 +321,50 @@ def snapshots_dir(data_dir: str | Path | None = None) -> Path:
     return get_data_root() / SNAPSHOT_DIR_NAME
 
 
-def _snapshot_path(symbol: str, data_dir: str | Path | None = None) -> Path:
+def _snapshot_stem(symbol: str) -> str:
+    """快照文件名单一形态：**纯 6 位代码段**（``300750.SZ`` / ``sz300750`` / ``300750`` → ``300750``）。
+
+    evidence 路径传 ``300750.SZ``、factors 路径传 ``300750``，若按原样命名会落两个文件
+    （revision 序列重复、审计混乱）——故写入与读取都归一到这里。
+    非标准输入（无法提取 6 位代码）→ 退回 ``normalize_symbol`` 的净化形态（防路径穿越）。
+    """
+    text = (symbol or "").strip().upper()
+    body, _sep, _suffix = text.partition(".")
+    if len(body) > 6 and body[:2] in _EXCHANGE_PREFIXES:
+        body = body[2:]
+    if len(body) == 6 and body.isdigit():
+        return body
     from alphabee.utils.storage import normalize_symbol
 
-    return snapshots_dir(data_dir) / f"{normalize_symbol(symbol)}.jsonl"
+    return normalize_symbol(symbol)
+
+
+def _snapshot_path(symbol: str, data_dir: str | Path | None = None) -> Path:
+    return snapshots_dir(data_dir) / f"{_snapshot_stem(symbol)}.jsonl"
+
+
+def _open_append(path: Path) -> Any:
+    """以追加模式打开快照文件（单点可替换：测试注入 ``OSError`` 验证写盘 fail-open）。"""
+    return path.open("a", encoding="utf-8")
 
 
 def load_snapshots(symbol: str, *, data_dir: str | Path | None = None) -> list[dict[str, Any]]:
     """读回某标的快照序列（按 ``as_of_date`` 升序；同日期保留首条；损坏行跳过）。
 
-    文件缺失 → ``[]``。以下行被跳过（不抛）：非 JSON 行、空行、非 dict 行、缺
-    ``as_of_date`` 或日期不可解析的行。
+    文件缺失 / 目录不可读（``OSError``）→ ``[]``（fail-open，不抛）。以下行被跳过（不抛）：
+    非 JSON 行、空行、非 dict 行、缺 ``as_of_date`` 或日期不可解析的行。
     """
-    path = _snapshot_path(symbol, data_dir)
-    if not path.exists():
+    try:
+        path = _snapshot_path(symbol, data_dir)
+        if not path.exists():
+            return []
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:  # 目录不可读/权限/竞态 → 当作无历史，由调用方降级
+        logger.warning("consensus snapshot 读取失败（%s）：%s", symbol, exc)
         return []
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -323,29 +386,53 @@ def load_snapshots(symbol: str, *, data_dir: str | Path | None = None) -> list[d
     return rows
 
 
-def append_snapshot(symbol: str, values: dict[str, Any], *, data_dir: str | Path | None = None) -> str:
-    """把一次快照追加进 ``<data_dir>/<symbol>.jsonl``，返回落盘的 ``as_of_date``。
+def _append_snapshot_row(
+    symbol: str,
+    values: dict[str, Any],
+    *,
+    data_dir: str | Path | None,
+) -> tuple[str, str]:
+    """落盘一行快照，返回 ``(as_of_date, 失败说明)``；成功或同日幂等 → 失败说明为空串。
 
     纪律（设计 §5.2）：
 
     - **append-only**：只追加新行，绝不改写/覆盖历史行；
-    - **同日幂等**：该标的已有同 ``as_of_date`` 行时不再追加（返回该日期）——接口 CDN
-      缓存 120 秒，同日多次抓取只保留第一条，保证 revision 序列一天一个点；
-    - 空 ``values`` / 缺 ``as_of_date`` / ``eps_fy1`` 缺失 → 不落盘并返回 ``""``
-      （无覆盖日的空快照对 revision 无意义，不污染序列）。
+    - **同日幂等**：该标的已有同 ``as_of_date`` 行时不再追加——接口 CDN 缓存 120 秒，
+      同日多次抓取只保留第一条，保证 revision 序列一天一个点；
+    - 空 ``values`` / 缺 ``as_of_date`` / ``eps_fy1`` 缺失 → ``("", "unusable_values")``
+      （无覆盖日的空快照对 revision 无意义，不污染序列）；
+    - **写盘 fail-open**：``mkdir`` / ``open`` / ``write`` 的 ``OSError``（只读目录、磁盘满、
+      权限）全部捕掉不抛，折算为 ``(as_of, "write_failed: ...")``——调用方（
+      :func:`build_f10_consensus`）仍可用内存快照产出当期结果并留痕。
     """
     as_of = _parse_date((values or {}).get("as_of_date"))
     if as_of is None or _to_float((values or {}).get("eps_fy1")) is None:
-        return ""
+        return "", "unusable_values"
     as_of_text = as_of.isoformat()
-    if any(str(row.get("as_of_date")) == as_of_text for row in load_snapshots(symbol, data_dir=data_dir)):
-        return as_of_text  # 同日幂等
-    path = _snapshot_path(symbol, data_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {"as_of_date": as_of_text, **{k: v for k, v in values.items() if k != "as_of_date"}}
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    return as_of_text
+    path = None
+    try:
+        if any(str(row.get("as_of_date")) == as_of_text for row in load_snapshots(symbol, data_dir=data_dir)):
+            return as_of_text, ""  # 同日幂等
+        path = _snapshot_path(symbol, data_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {"as_of_date": as_of_text, **{k: v for k, v in values.items() if k != "as_of_date"}}
+        with _open_append(path) as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError as exc:  # 只读目录 / 磁盘满 / 权限：绝不穿透 provider 链
+        logger.warning("consensus snapshot 落盘失败（%s）：%s", path or symbol, exc)
+        return as_of_text, f"write_failed: {exc}"
+    return as_of_text, ""
+
+
+def append_snapshot(symbol: str, values: dict[str, Any], *, data_dir: str | Path | None = None) -> str:
+    """把一次快照追加进 ``<data_dir>/<6位代码>.jsonl``，返回落盘的 ``as_of_date``。
+
+    返回 ``""`` 的两种情形：值不可用（空 ``values`` / 缺 ``as_of_date`` / ``eps_fy1`` 缺失），
+    或**写盘失败**（``OSError``，fail-open 不抛，仅 logger 留痕）。同日幂等 → 返回该日期。
+    需要区分「写盘失败」时用 :func:`_append_snapshot_row`（返回失败说明）。
+    """
+    as_of, _error = _append_snapshot_row(symbol, values, data_dir=data_dir)
+    return as_of if _error == "" else ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -364,27 +451,19 @@ def _eps_series(snapshots: list[dict[str, Any]], field: str) -> list[tuple[date,
     return series
 
 
-def compute_revisions(
-    symbol: str,
-    *,
-    data_dir: str | Path | None = None,
-    as_of: str | date | None = None,
+def _revisions_from_rows(
+    snapshots: list[dict[str, Any]], *, as_of: str | date | None = None
 ) -> dict[str, float | None]:
-    """由快照序列自算 revision（PERCENT，正=上修），不足窗口 → ``None``（不编造）。
+    """由快照行序列自算 revision（PERCENT，正=上修），不足窗口 → ``None``（不编造）。
 
     窗口口径与 :mod:`engine` 同构：当期值 = ``as_of`` 当日或之前最近一条快照的
     ``eps_fy1``；基准值 = ``as_of - window_days`` 当日或之前最近一条；变化率 =
     ``(当期 / 基准 - 1) × 100``。``revision_acceleration`` 为 ``revision_1m`` 序列的
     二阶差分（与 engine 同一算法），需 ≥2 个可算点。
 
-    Args:
-        as_of: 计算基准日（缺省 = 今天）；与 ``ConsensusOutput.as_of_date`` 同口径。
-
-    Returns:
-        ``{"eps_fy1_revision_1m", "eps_fy1_revision_3m", "eps_fy2_revision_1m",
-        "revision_acceleration"}`` → ``float`` 或 ``None``。
+    独立于「从磁盘读」的原因：写盘失败时当次快照仍在内存里，必须与磁盘历史合成同一
+    序列后计算（否则当期点丢失，revision 与落盘成功时不一致）。
     """
-    snapshots = load_snapshots(symbol, data_dir=data_dir)
     asof = _parse_date(as_of) or date.today()
     out: dict[str, float | None] = {}
     for source_field, canon, window in _REVISION_WINDOWS:
@@ -398,6 +477,33 @@ def compute_revisions(
     else:
         out["revision_acceleration"] = None
     return out
+
+
+def compute_revisions(
+    symbol: str,
+    *,
+    data_dir: str | Path | None = None,
+    as_of: str | date | None = None,
+) -> dict[str, float | None]:
+    """由**磁盘**快照序列自算 revision（PERCENT，正=上修），不足窗口 → ``None``。
+
+    Args:
+        as_of: 计算基准日（缺省 = 今天）；与 ``ConsensusOutput.as_of_date`` 同口径。
+
+    Returns:
+        ``{"eps_fy1_revision_1m", "eps_fy1_revision_3m", "eps_fy2_revision_1m",
+        "revision_acceleration"}`` → ``float`` 或 ``None``。
+    """
+    return _revisions_from_rows(load_snapshots(symbol, data_dir=data_dir), as_of=as_of)
+
+
+def _merge_with_history(history: list[dict[str, Any]], current: dict[str, Any]) -> list[dict[str, Any]]:
+    """磁盘历史 + 当次内存快照（同 ``as_of_date`` 以历史行优先，与同日幂等一致）。"""
+    as_of = str(current.get("as_of_date") or "")
+    rows = list(history)
+    if as_of and not any(str(row.get("as_of_date")) == as_of for row in rows):
+        rows.append(current)
+    return rows
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,6 +526,10 @@ def build_f10_consensus(
     新源上不可得的字段显式置 ``None`` 并登记 ``consensus_missing``：``target_price``
     （接口无此字段）、``rating_mean`` / ``rating_upgrade_1m`` / ``rating_downgrade_1m`` /
     ``revision_breadth``（量表不可比 / 无上期评级）。
+
+    **写盘 fail-open**：快照落盘失败（只读目录 / 磁盘满 / 权限）不抛、不回落——当次快照
+    仍进入 ``values``，revision 用「磁盘历史 + 当次内存快照」计算（与落盘成功时逐位一致），
+    失败原因写入 ``ConsensusOutput.warnings``。
     """
     snapshot, reason = _collect(code, timeout=timeout)
     if not snapshot:
@@ -427,8 +537,12 @@ def build_f10_consensus(
         return None
 
     asof = _parse_date(as_of_date) or _parse_date(snapshot.get("as_of_date")) or date.today()
-    append_snapshot(code, snapshot, data_dir=data_dir)
-    revisions = compute_revisions(code, data_dir=data_dir, as_of=asof)
+    history = load_snapshots(code, data_dir=data_dir)  # 已 fail-open（读失败 → []）
+    _as_of_text, write_error = _append_snapshot_row(code, snapshot, data_dir=data_dir)
+    warnings: list[str] = []
+    if write_error and write_error != "unusable_values":
+        warnings.append(f"consensus snapshot 落盘失败（{write_error}），本次仍使用内存快照参与 revision 计算")
+    revisions = _revisions_from_rows(_merge_with_history(history, snapshot), as_of=asof)
 
     values: dict[str, float | int | None] = {field: None for field in CONSENSUS_FIELDS}
     values.update(
@@ -444,6 +558,7 @@ def build_f10_consensus(
         values=values,
         source=SOURCE_NAME,
         missing=[f"consensus_missing: {field}" for field in CONSENSUS_FIELDS if values.get(field) is None],
+        warnings=warnings,
         as_of_date=asof.isoformat(),
         # 新源不统计研报条数（恒 0）；覆盖机构数见 coverage_count（口径变更见设计 §5.4）
         report_count=0,

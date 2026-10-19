@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import types
 
 import pytest
@@ -348,7 +349,7 @@ def test_append_snapshot_writes_canonical_row_and_is_idempotent_same_day(tmp_pat
     assert append_snapshot("600519.SH", values, data_dir=tmp_path) == ASOF
     assert append_snapshot("600519.SH", values, data_dir=tmp_path) == ASOF  # 同日幂等
 
-    path = tmp_path / "600519.SH.jsonl"
+    path = tmp_path / "600519.jsonl"
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     row = json.loads(lines[0])
@@ -372,11 +373,11 @@ def test_append_snapshot_skips_unusable_values(tmp_path):
     assert append_snapshot("600519.SH", {}, data_dir=tmp_path) == ""
     assert append_snapshot("600519.SH", {"as_of_date": ASOF, "eps_fy1": None}, data_dir=tmp_path) == ""
     assert append_snapshot("600519.SH", {"eps_fy1": 1.0}, data_dir=tmp_path) == ""
-    assert not (tmp_path / "600519.SH.jsonl").exists()
+    assert not (tmp_path / "600519.jsonl").exists()
 
 
 def test_load_snapshots_skips_corrupt_lines(tmp_path):
-    path = tmp_path / "600519.SH.jsonl"
+    path = tmp_path / "600519.jsonl"
     path.write_text(
         "\n".join(
             [
@@ -539,7 +540,7 @@ def test_f10_forecast_provider_uses_new_source(monkeypatch, http, tmp_path):
     assert out.values["coverage_count"] == 44
     assert out.values["eps_fy1"] == pytest.approx(67.249318181818)
     assert out.warnings == []
-    assert (tmp_path / "600519.SH.jsonl").exists()
+    assert (tmp_path / "600519.jsonl").exists()
 
 
 def test_f10_forecast_failure_falls_back_to_report_list_with_warning(monkeypatch, report_records, http):
@@ -653,3 +654,211 @@ def test_config_files_declare_consensus_source(file_name):
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     assert raw["midterm"]["consensus_source"] == "report_list"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 硬化 1：快照写盘失败 fail-open（t5 审查建议）
+# ─────────────────────────────────────────────────────────────────────────────
+def _block_snapshot_writes(monkeypatch, *, exc: Exception | None = None):
+    """把快照写入单点替换成必失败（模拟只读目录/磁盘满），不改读路径。"""
+    error = exc or PermissionError(13, "Permission denied", "read-only fixture")
+
+    def _boom(path):
+        raise error
+
+    monkeypatch.setattr(emforecast, "_open_append", _boom)
+
+
+def test_append_snapshot_write_failure_is_fail_open(monkeypatch, tmp_path):
+    """写盘 OSError ⇒ append_snapshot 不抛、返回 ""（未落盘）；失败说明含 write_failed。"""
+    _block_snapshot_writes(monkeypatch)
+    values = {"as_of_date": ASOF, "eps_fy1": 10.0, "coverage_count": 7}
+
+    assert append_snapshot("600519.SH", values, data_dir=tmp_path) == ""
+    as_of, error = emforecast._append_snapshot_row("600519.SH", values, data_dir=tmp_path)
+    assert as_of == ASOF
+    assert error.startswith("write_failed")
+    assert not (tmp_path / "600519.jsonl").exists()
+
+
+def test_build_f10_consensus_write_failure_keeps_values_and_warns(monkeypatch, tmp_path, http):
+    """写盘失败：当次快照值仍进 ConsensusOutput，warnings 留痕，绝不回退/抛。"""
+    _block_snapshot_writes(monkeypatch)
+
+    out = build_f10_consensus("600519.SH", data_dir=tmp_path)
+
+    assert out is not None
+    assert out.source == SOURCE_NAME
+    assert out.values["eps_fy1"] == pytest.approx(67.249318181818)
+    assert out.values["eps_fy2"] == pytest.approx(71.125909090909)
+    assert out.values["coverage_count"] == 44
+    assert out.as_of_date == ASOF
+    assert len(out.warnings) == 1
+    assert "落盘失败" in out.warnings[0]
+    assert not (tmp_path / "600519.jsonl").exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root 不受只读目录权限限制")
+def test_build_f10_consensus_readonly_directory_is_fail_open(http, tmp_path):
+    """真实只读目录（chmod 500）：全链路不抛，输出仍可用 + 留痕。"""
+    readonly = tmp_path / "readonly"
+    readonly.mkdir()
+    os.chmod(readonly, 0o500)
+    try:
+        out = build_f10_consensus("600519.SH", data_dir=readonly)
+    finally:
+        os.chmod(readonly, 0o700)
+
+    assert out is not None
+    assert out.values["eps_fy1"] == pytest.approx(67.249318181818)
+    assert any("落盘失败" in w for w in out.warnings)
+
+
+def test_mkdir_failure_is_fail_open(monkeypatch, tmp_path, http):
+    """目录创建失败（父路径是普通文件 ⇒ FileExistsError/OSError）同样 fail-open。"""
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("x", encoding="utf-8")
+    real_snapshot_path = emforecast._snapshot_path
+    monkeypatch.setattr(
+        emforecast,
+        "_snapshot_path",
+        lambda symbol, data_dir=None: blocker / real_snapshot_path(symbol, data_dir=data_dir).name,
+    )
+
+    out = build_f10_consensus("600519.SH", data_dir=tmp_path)
+
+    assert out is not None and out.values["eps_fy1"] == pytest.approx(67.249318181818)
+    assert any("落盘失败" in w for w in out.warnings)
+
+
+def test_load_snapshots_read_error_is_fail_open(tmp_path):
+    """读盘 OSError（同名路径是目录 ⇒ IsADirectoryError）⇒ [] 不抛，历史当空。"""
+    (tmp_path / "600519.jsonl").mkdir()
+
+    assert load_snapshots("600519.SH", data_dir=tmp_path) == []
+    assert compute_revisions("600519.SH", data_dir=tmp_path, as_of=ASOF)["eps_fy1_revision_1m"] is None
+
+
+def test_provider_chain_does_not_fall_back_on_write_failure(monkeypatch, tmp_path, http):
+    """f10/auto 不因写盘失败回落或中断（研报路径一次都不走）；warnings 只留落盘失败。"""
+    _block_snapshot_writes(monkeypatch)
+
+    def _boom(*a, **k):
+        raise AssertionError("写盘失败不得触发 provider 回落")
+
+    monkeypatch.setattr(eastmoney, "fetch_report_records", _boom)
+
+    out_f10 = eastmoney.build_consensus("600519.SH", consensus_source="f10_forecast", snapshot_dir=str(tmp_path))
+    assert out_f10.source == SOURCE_NAME
+    assert out_f10.values["eps_fy1"] == pytest.approx(67.249318181818)
+    assert any("落盘失败" in w for w in out_f10.warnings)
+
+    out_auto = eastmoney.build_consensus("600519.SH", consensus_source="auto", snapshot_dir=str(tmp_path))
+    assert out_auto.source == SOURCE_NAME
+    assert not any("fallback" in w for w in out_auto.warnings)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 硬化 1b：revision 语义与落盘解耦（落盘失败时当期点不丢）
+# ─────────────────────────────────────────────────────────────────────────────
+def test_revision_identical_whether_snapshot_persisted_or_not(monkeypatch, tmp_path, http):
+    """同一快照序列：落盘成功 / 落盘失败算出的 revision 逐位一致（当次内存点参与计算）。"""
+    ok_dir = tmp_path / "ok"
+    fail_dir = tmp_path / "fail"
+
+    # 第一天（09-19, eps=100）两边都落盘成功
+    http.response = _FakeResponse(_f10_payload(publish_date="2026-09-19 00:00:00", eps1=100.0, eps2=200.0))
+    assert build_f10_consensus("600519.SH", data_dir=ok_dir) is not None
+    assert build_f10_consensus("600519.SH", data_dir=fail_dir) is not None
+
+    # 第二天（10-19, eps=110）：ok 目录正常落盘；fail 目录写盘失败（历史仍可读）
+    http.response = _FakeResponse(_f10_payload(publish_date=f"{ASOF} 00:00:00", eps1=110.0, eps2=210.0))
+    baseline = build_f10_consensus("600519.SH", data_dir=ok_dir)
+    _block_snapshot_writes(monkeypatch)
+    degraded = build_f10_consensus("600519.SH", data_dir=fail_dir)
+
+    assert baseline is not None and degraded is not None
+    assert degraded.values["eps_fy1_revision_1m"] == pytest.approx(10.0)
+    assert degraded.values["eps_fy1_revision_1m"] == baseline.values["eps_fy1_revision_1m"]
+    assert degraded.values["eps_fy2_revision_1m"] == baseline.values["eps_fy2_revision_1m"] == pytest.approx(5.0)
+    # 当期值不丢（来自内存快照），且失败帧留痕
+    assert degraded.values["eps_fy1"] == pytest.approx(110.0)
+    assert any("落盘失败" in w for w in degraded.warnings)
+    # fail 目录只留第一天一行（写失败不产生半行/脏行）
+    assert [row["as_of_date"] for row in load_snapshots("600519.SH", data_dir=fail_dir)] == ["2026-09-19"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 硬化 2：区块类型守卫（非 list 不进入迭代，绝不抛 TypeError）
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"pjtj": [], "jgyc": 5, "yctj_list": 5},
+        {"pjtj": None, "jgyc": [], "yctj_list": []},
+        {"pjtj": [], "jgyc": [], "yctj_list": "not-a-list"},
+        {"pjtj": {}, "jgyc": [], "yctj_list": []},
+    ],
+)
+def test_non_list_required_block_is_fail_open(http, payload):
+    """必需区块非 list（含 {"jgyc":5,"yctj_list":5}）⇒ {} + 明确原因，绝不抛 TypeError。"""
+    http.response = _FakeResponse(payload)
+
+    assert fetch_profit_forecast("600519.SH") == {}
+    assert build_f10_consensus("600519.SH") is None
+    _raw, reason = emforecast._fetch_raw("600519.SH", timeout=5)
+    assert reason.startswith("invalid_block:")
+
+
+@pytest.mark.parametrize("payload_patch", [{"ycmx": 5}, {"yctj_chart": "x"}, {"ycmx": None}])
+def test_non_list_unused_block_is_tolerated(http, payload_patch):
+    """本模块不消费的旁支区块非 list ⇒ 只记 warning，不判死可用数据（不因旁支丢主数据）。"""
+    payload = _f10_payload()
+    payload.update(payload_patch)
+    http.response = _FakeResponse(payload)
+
+    snapshot = fetch_profit_forecast("600519.SH")
+
+    assert snapshot["eps_fy1"] == pytest.approx(67.249318181818)
+    assert snapshot["coverage_count"] == 44
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 硬化 3：快照文件名单一形态（纯 6 位代码；evidence 300750.SZ ≡ factors 300750）
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("symbol", "stem"),
+    [
+        ("300750.SZ", "300750"),
+        ("300750", "300750"),
+        ("sz300750", "300750"),
+        ("SZ300750", "300750"),
+        ("600519.SH", "600519"),
+        ("920002.BJ", "920002"),
+    ],
+)
+def test_snapshot_filename_stem_is_pure_code(symbol, stem):
+    assert emforecast._snapshot_path(symbol).name == f"{stem}.jsonl"
+
+
+def test_write_and_read_share_one_file_across_symbol_forms(tmp_path):
+    """``300750.SZ``（evidence 路径）写入，``300750``/``sz300750``（factors 路径）读出同一序列。"""
+    append_snapshot("300750.SZ", {"as_of_date": "2026-09-19", "eps_fy1": 20.0}, data_dir=tmp_path)
+    append_snapshot("300750", {"as_of_date": ASOF, "eps_fy1": 21.0}, data_dir=tmp_path)
+
+    files = sorted(p.name for p in tmp_path.iterdir())
+    assert files == ["300750.jsonl"]
+    for symbol in ("300750.SZ", "300750", "sz300750", "SZ300750"):
+        assert [row["eps_fy1"] for row in load_snapshots(symbol, data_dir=tmp_path)] == [20.0, 21.0]
+
+
+def test_revision_history_shared_across_symbol_forms(tmp_path, http):
+    """跨路径取数复用同一 revision 历史：.SZ 写第一天、纯代码写第二天 ⇒ 1m revision 可算。"""
+    http.response = _FakeResponse(_f10_payload(publish_date="2026-09-19 00:00:00", eps1=100.0))
+    assert build_f10_consensus("300750.SZ", data_dir=tmp_path) is not None
+    http.response = _FakeResponse(_f10_payload(publish_date=f"{ASOF} 00:00:00", eps1=110.0))
+    out = build_f10_consensus("300750", data_dir=tmp_path)
+
+    assert out is not None
+    assert out.values["eps_fy1_revision_1m"] == pytest.approx(10.0)
+    assert [p.name for p in tmp_path.iterdir()] == ["300750.jsonl"]
