@@ -52,7 +52,7 @@ _CONFLICT_PENALTY: dict[str, float] = {
     "low": 0.1,
 }
 # rejected 假设未溯源到具体贡献时的维度分数折减系数（一档封顶、方向不变、score==0 跳过）。
-# 出处：docs/design/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md §3.1——×0.5 保证任何 strong_*
+# 出处：docs/implementation/thesis/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md §3.1——×0.5 保证任何 strong_*
 # （|score|≥0.5）折减后必降一档（-1.0→-0.5 恰落在 negative 边界），与置信度阻尼的
 # 「一档封顶」语义同构，不引入新量纲（§8.2 规则 1：权重值必须显式，不得埋在逻辑里）。
 _REJECTED_SCORE_DAMP = 0.5

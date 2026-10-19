@@ -1,6 +1,6 @@
 """`check_message_limit` 消息阈值的可配置性用例（默认 50，默认行为不变）。
 
-覆盖 docs/design/DRIVER_PROFILE_D0_CODING_DESIGN.md §4.3：
+覆盖 docs/implementation/domain_context/DRIVER_PROFILE_D0_CODING_DESIGN.md §4.3：
 - 默认阈值 50：49 条不触发、50 条触发（与既有权值行为逐字一致）；
 - 注入 ``message_limit``：按注入值生效（9 条不触发、10 条触发）；
 - 缺该配置项 ⇒ 回落 ``DEFAULT_MESSAGE_LIMIT``；

@@ -2,7 +2,7 @@
 
 > **状态：📝 方案待评审（未动代码）**
 > 背景：药明康德（603259.SH）Tier B 真实产物评审暴露的 P1/P2 级缺陷。
-> 本方案与 `docs/design/DRIVER_PROFILE_P0_FIX_PLAN.md` 同源同风格：只改收敛层/契约增量/测试，
+> 本方案与 `docs/implementation/domain_context/DRIVER_PROFILE_P0_FIX_PLAN.md` 同源同风格：只改收敛层/契约增量/测试，
 > 不动研究层 prompt 的主干逻辑（仅 P1-3/P2-6 两处**增量**prompt 条款）。
 >
 > 修复对象（对应评审结论）：

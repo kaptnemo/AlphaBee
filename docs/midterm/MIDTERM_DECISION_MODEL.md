@@ -246,7 +246,7 @@ A 股现实更接近 **T → E → F**：研报覆盖稀疏且滞后于行情，
 顺序差异只落在顺序决定性位置：S2 门控 E→T、S4 门控 E→T、S5 加 T 门控、背离 case ②
 镜像为 `T↑ + E↓`（`E↑ + T↓` 在 TEF 不再具名背离）；S0/S1/S3、中性常量与迁移合法性集合
 两套**逐值相等**（parity 测试钉住）。完整语义、公式对照、取舍披露与测试矩阵见
-`docs/midterm/MIDTERM_CLASSIFIER_TEF_DESIGN.md`。
+`docs/implementation/midterm/MIDTERM_CLASSIFIER_TEF_DESIGN.md`。
 
 ---
 

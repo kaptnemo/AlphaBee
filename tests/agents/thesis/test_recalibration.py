@@ -1,6 +1,6 @@
 """F3：审查层闭环（一致性进 issues + 双条件确定性重校）的回归钉。
 
-设计依据：``docs/design/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.3 / §5.2。
+设计依据：``docs/implementation/thesis/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.3 / §5.2。
 
 行为：
 * ``_merge_llm``：``signals_consistent=false`` 且 status != contested → issues 追加「信号一致性存疑：…」

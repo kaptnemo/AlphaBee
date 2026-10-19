@@ -1,6 +1,6 @@
 """F1：rejected 假设未精确溯源时，维度分数 ×0.5 折减（一档封顶）的回归钉。
 
-设计依据：``docs/design/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.1 / §5.2 / §6.2。
+设计依据：``docs/implementation/thesis/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.1 / §5.2 / §6.2。
 
 F1 只动 **score 通道**：rejected 假设未溯源（无 ``disputed_*`` 且兜底未命中）→ 相关维度
 分数在循环尾部统一 ×``_REJECTED_SCORE_DAMP``（0.5）。语义：一档封顶（集合登记）、

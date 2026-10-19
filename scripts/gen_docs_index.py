@@ -31,7 +31,8 @@ DIR_GROUPS: list[tuple[str, str]] = [
     ("roadmap", "路线图"),
     ("industry", "行业语境设计"),
     ("midterm", "中期项目"),
-    ("design", "专项设计"),
+    ("design", "分析设计"),
+    ("implementation", "实施设计"),
 ]
 DIR_GROUP: dict[str, str] = dict(DIR_GROUPS)
 

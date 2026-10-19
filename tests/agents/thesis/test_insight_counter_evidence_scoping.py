@@ -1,6 +1,6 @@
 """F2：insight 反证按 related_dimensions 定向注入（不再全维广播错位）的回归钉。
 
-设计依据：``docs/design/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.2 / §5.2。
+设计依据：``docs/implementation/thesis/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.2 / §5.2。
 
 行为：``engine._apply_insight`` 对每条 ``counter_evidence`` 读 ``related_dimensions``——
 带合法维度 id 时只注入目标维度；无字段 / 空数组时保持全维广播（旧产物兼容）；非法 id

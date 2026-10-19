@@ -108,7 +108,8 @@ cd web && npm install && npm run dev   # http://localhost:3000
 | [配置说明](docs/guide/CONFIGURATION.md) | `config.yaml` 与全部环境变量 |
 | [开发者环境](docs/guide/DEVELOPMENT.md) | 开发命令、AI skills 约定、目录结构、后续工作 |
 | [概念速查](docs/guide/CONCEPTS.md) | Fact / DerivedFact / Signal / Thesis 等术语 |
-| [路线图与专项设计](docs/README.md) | 路线图、行业语境、中期项目、偏离控制 / 研究连续体等设计文档 |
+| [路线图与分析设计](docs/README.md) | 路线图、行业语境、中期项目、偏离控制 / 研究连续体等整体分析与设计文档 |
+| [实施设计](docs/README.md) | 代码级实施文档（按模块分层：framework / midterm / thesis / company_track / domain_context） |
 
 ## 测试
 

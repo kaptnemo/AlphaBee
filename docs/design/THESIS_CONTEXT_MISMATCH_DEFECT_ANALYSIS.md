@@ -1,7 +1,7 @@
 # Thesis「语境不适配」批量出现缺陷分析
 
 > 关联条目：[`SEMANTIC_JUDGMENT_CONTRACT_DESIGN.md`](SEMANTIC_JUDGMENT_CONTRACT_DESIGN.md)（判定语义契约）、[`THESIS_CONFIDENCE_DAMPING_DESIGN.md`](THESIS_CONFIDENCE_DAMPING_DESIGN.md)（置信度乘性阻尼，已实施）、[`REPORT_QUALITY_FIX_ROADMAP.md`](../roadmap/REPORT_QUALITY_FIX_ROADMAP.md)（"大存大贷" rejected 传导断裂，同源缺陷）、[`RULE_MARKET_ADAPTATION_DESIGN.md`](RULE_MARKET_ADAPTATION_DESIGN.md)（Phase 1 语境注入只加注释不改分数）、[`PEER_GROUP_JUDGMENT_DESIGN.md`](PEER_GROUP_JUDGMENT_DESIGN.md)（同行基准）、[`DEVIATION_CONTROL_FRAMEWORK.md`](DEVIATION_CONTROL_FRAMEWORK.md) §8（加权边审计）。
-> 状态：✅ **已实施（F1–F5）**。修复方案与实施记录见 [`THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`](THESIS_CONTEXT_MISMATCH_FIX_PLAN.md)；变更登记见 [`../roadmap/ROADMAP.md`](../roadmap/ROADMAP.md) 行为变更登记表（2026-10-17）。
+> 状态：✅ **已实施（F1–F5）**。修复方案与实施记录见 [`THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`](../implementation/thesis/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md)；变更登记见 [`../roadmap/ROADMAP.md`](../roadmap/ROADMAP.md) 行为变更登记表（2026-10-17）。
 > 证据：真实 run **603986.SH 兆易创新**，`data/task_records/603986.SH/2026-10-17/task-6e9476f66ac8.json`（2026-10-17，`llm_review=True`）。文中所有"实测"结论均附复现命令（附录 A）。
 
 ---

@@ -1,8 +1,8 @@
 # 中期决策层 T→E→F 分类器变体设计（可切换对比）
 
 > **状态：设计文档（2026-10 完成；前置 P0 已全部落地，TEF 本身尚未实施）**。为响应 `docs/design/A_SHARE_FRAMEWORK_REVIEW.md` §2.1（信息顺序假设倒置）而立项：**保留现有 E→T→F 分类器原样不动**，新增一套**完全独立**的 T→E→F 分类器，两套通过配置/参数切换，用于同一数据上的 A/B 对比。本文档给出可直接开工的代码粒度：文件清单、类/函数签名、接线点（含既有代码锚点）、切换机制、序列化与兼容策略、配置项、测试矩阵、PR 切分与回滚。
-> **对齐状态（2026-10-18 核实）**：本设计的全部前置依赖（`docs/design/P0_A_SHARE_FIX_IMPLEMENTATION_DESIGN.md` 六项 P0）已按 PR-A（`bb7c06b`）/ PR-B（`cae758a`）/ PR-C（`494b084`）落地并完成 ROADMAP 变更登记（登记表第 81–83 行）。本文档已完成对齐更新：§1.1 立项依据按 P0-6 修复后的 E 重述、新增 §1.3 前置落地状态、§3.2 补充 E 构成口径、§4.1/§4.5 锚点行号刷新、§9 对比实验基线重定义。**TEF 实施按 §8.1 的 PR-1/PR-2 不变。**
-> 关联文档：`docs/midterm/MIDTERM_DECISION_MODEL.md`（§4.2 状态映射表、§4.3 E>T>F 顶部顺序、§4.4 共振/背离——本文档的语义基线）、`docs/design/A_SHARE_FRAMEWORK_REVIEW.md`（§2.1 立项依据）、`docs/design/P0_A_SHARE_FIX_IMPLEMENTATION_DESIGN.md`（已实施的前置设计）、`docs/design/RESEARCH_CONTINUUM_DESIGN.md`（§15 代码级设计范式）。
+> **对齐状态（2026-10-18 核实）**：本设计的全部前置依赖（`docs/implementation/framework/P0_A_SHARE_FIX_IMPLEMENTATION_DESIGN.md` 六项 P0）已按 PR-A（`bb7c06b`）/ PR-B（`cae758a`）/ PR-C（`494b084`）落地并完成 ROADMAP 变更登记（登记表第 81–83 行）。本文档已完成对齐更新：§1.1 立项依据按 P0-6 修复后的 E 重述、新增 §1.3 前置落地状态、§3.2 补充 E 构成口径、§4.1/§4.5 锚点行号刷新、§9 对比实验基线重定义。**TEF 实施按 §8.1 的 PR-1/PR-2 不变。**
+> 关联文档：`docs/midterm/MIDTERM_DECISION_MODEL.md`（§4.2 状态映射表、§4.3 E>T>F 顶部顺序、§4.4 共振/背离——本文档的语义基线）、`docs/design/A_SHARE_FRAMEWORK_REVIEW.md`（§2.1 立项依据）、`docs/implementation/framework/P0_A_SHARE_FIX_IMPLEMENTATION_DESIGN.md`（已实施的前置设计）、`docs/design/RESEARCH_CONTINUUM_DESIGN.md`（§15 代码级设计范式）。
 > 实施时契约改动必须走 `alphabee-pipeline-contract-steward` / `alphabee-schema-steward` skill 流程；本设计已按 steward 要求预先完成下游消费面追踪（§4、§6）。
 
 ---

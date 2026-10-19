@@ -1,6 +1,6 @@
 """`web_search_guard` 的 R-1（词边界匹配）与 R-2（驱动变量窄白名单）用例。
 
-覆盖 docs/design/DRIVER_PROFILE_D0_CODING_DESIGN.md §2.3 与 §3.4：
+覆盖 docs/implementation/domain_context/DRIVER_PROFILE_D0_CODING_DESIGN.md §2.3 与 §3.4：
 - R-1：`pe|pb|ps` 词边界化后 `capex` / `pipeline` 不再误拦，中文禁词行为逐字不变；
 - R-2：行业/商品驱动变量的纯定性查询放行，财务禁词查询仍短路；
 - 放行路径上 post-call 免责声明与数值扫描照旧执行。

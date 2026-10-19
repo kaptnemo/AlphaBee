@@ -641,10 +641,10 @@ CLASS_BY_CATEGORY: dict[str, DeviationClass] = {
     "market_regime": D4_STATE,
     "subagent_failure": D5_CONTROL, "midterm_decision_failed": D5_CONTROL,
     "midterm_decision_report_failed": D5_CONTROL, "failure": D5_CONTROL,
-    # ── 收敛层数值可靠性（P0-1A/P0-1B，DRIVER_PROFILE_P0_FIX_PLAN §7）──
+    # ── 收敛层数值可靠性（P0-1A/P0-1B，docs/implementation/domain_context/DRIVER_PROFILE_P0_FIX_PLAN.md §7）──
     "driver_profile_research_internal_inconsistency": D3_ARGUMENT,
     "driver_profile_research_claim_uncovered": D3_ARGUMENT,
-    # ── 收敛层候选闭包与期别口径（P1-3/P2-6，DRIVER_PROFILE_P1_P2_FIX_PLAN §9）──
+    # ── 收敛层候选闭包与期别口径（P1-3/P2-6，docs/implementation/domain_context/DRIVER_PROFILE_P1_P2_FIX_PLAN.md §9）──
     "driver_profile_research_invalid_candidate": D2_STRUCTURE,
     "driver_profile_research_period_mixing": D3_ARGUMENT,
 }

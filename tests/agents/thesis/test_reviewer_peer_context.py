@@ -1,6 +1,6 @@
 """F4：reviewer 同行基准缺口检查（Layer 1 Rule 6）与 peer_context 模板渲染的回归钉。
 
-设计依据：``docs/design/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.4 / §5.2。
+设计依据：``docs/implementation/thesis/THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`` §3.4 / §5.2。
 
 行为：capital_efficiency / valuation_fit 维度在「有证据、非 insufficient、peer_benchmarks 缺失」
 时报「缺少同行业可比基准」并建议 reconsider_with_context；有基准或 peer_context=None 时行为

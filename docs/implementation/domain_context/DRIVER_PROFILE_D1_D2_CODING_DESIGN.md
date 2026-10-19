@@ -1,7 +1,7 @@
 # DRIVER_PROFILE D1（模型研究层）+ D2（下游接线）编码设计（详细实现稿）
 
 > **父设计**：`docs/design/DRIVER_PROFILE_RESEARCH_DESIGN.md`（§7 Tier B / §8 Tier C / §9 下游接线 / §11 分期 / §12 验收 / §14 决议）。
-> **前序**：`docs/design/DRIVER_PROFILE_D0_CODING_DESIGN.md`（R-1/R-2/R-3 + D0，已实现）。
+> **前序**：`docs/implementation/domain_context/DRIVER_PROFILE_D0_CODING_DESIGN.md`（R-1/R-2/R-3 + D0，已实现）。
 > 本稿覆盖 **D1（Tier B 模型研究层）与 D2（下游接线）**；D3（闭环与度量）不在本稿。
 > **状态：编码设计稿（待实现）**。落地时契约传播走 `alphabee-pipeline-contract-steward`。
 
