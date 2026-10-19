@@ -8,6 +8,8 @@
 
 ## 1. 东方财富研报列表接口（consensus 主数据源）
 
+> 该接口是 consensus 的**默认**数据源（`midterm.consensus_source: report_list`）；备选的东财 F10「盈利预测」接口见 §5（`f10_forecast` / `auto`），两者字段口径**不可混比**（§5「与研报列表路径的口径差异」）。
+
 ```text
 provider: eastmoney
 api: GET https://reportapi.eastmoney.com/report/list   （JSONP，回调名为 cb 参数）
@@ -225,3 +227,83 @@ verified_at: 2026-09-06
 - R 因子"违规/处罚"落地优先用 **`fina_audit`（免费、已可用）** 作"审计异常"直接字段；
   "交易所监管提示/异常波动"需 6000 积分（`stk_alert`/`stk_shock`），落地前需确认积分；
   "违规/立案"结构化数据需换源（AkShare/东财公告，或 `anns_d` 公告语料过滤）。
+
+---
+
+## 5. 东方财富 F10「盈利预测」接口（consensus 备选数据源）
+
+> 完整实测报告（含逐区块原始 JSON 摘录、延迟、复现命令）：`docs/implementation/midterm/E_ECOSYSTEM_SMOKE_REPORT.md`；
+> 实现侧登记：`alphabee/collectors/consensus/emforecast.py` 模块 docstring。数据源切换设计：`docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md` §5。
+
+```text
+provider: eastmoney（PC_HSF10 盈利预测页）
+api: GET https://emweb.securities.eastmoney.com/PC_HSF10/ProfitForecast/PageAjax?code=<PREFIX+6位>
+availability: ok（免费，无需 token / UA / Referer / Cookie；CDN 缓存 120 s）
+verified_at: 2026-10-19
+```
+
+### inputs（实测确认）
+
+| 参数 | 格式 | 说明 |
+|------|------|------|
+| `code` | str | **必须「交易所前缀 + 6 位」**：`SH600519` / `SZ000333` / `BJ920002`；前缀大小写不敏感。**无前缀、`.SH` 后缀、前缀与代码段错配、前导空格** 一律返回 `{"status": -1, "message": "股票代码不合法"}`（**HTTP 仍 200**）。北交所仅 `920xxx` 可用，`43xxxx` / `83xxxx` 被拒 ⇒ 实现侧不发请求、直接回落 |
+
+- 唯一业务参数就是 `code`；`pageNum` / `page` / `ps` / `pageSize` / `type` **全部被忽略**（响应字节数与 md5 完全相同）⇒ **本接口无分页**。
+- 请求头：**不校验 UA / Referer / Cookie / Origin**（显式空 UA 仍 200，贵州茅台样本 37,686 B）。
+- 备用域名 `emweb.eastmoney.com` 与主域名**字节级一致**（md5 相同）。
+- **失败判定**：非法代码返回 HTTP 200 + `{"status": -1}`，`raise_for_status()` 不会触发 ⇒ fail-open 必须**解析 JSON 后判键**（缺 `pjtj`/`jgyc`/`yctj_list` 即视为失败），不得只看状态码。
+
+### outputs（顶层，固定 5 个区块，全部为 list，无 `data` 包装）
+
+| 区块 | 含义 | 行数特征 |
+|------|------|----------|
+| `pjtj` | 评级统计 | 固定 5 行（1/2/3/6 月、1 年） |
+| `jgyc` | 机构预测 | `0` 或 `1 + N`（N ≤ 30）；第 0 行为「近六月平均」聚合行（`ORG_CODE=00000000`） |
+| `yctj_chart` | 预测统计（图表版） | 0~4 行（有 `*_RATIO`/`PE`，**无 `*_COUNT`**） |
+| `yctj_list` | 预测统计（表格版） | 0~6 行（3 实际 + 3 预测），**一致预期均值 + 各指标机构数** |
+| `ycmx` | 预测明细 | 0~30 行（**被截断为「近 6 个月、最多 30 条」**，短于 `EPS_COUNT`） |
+
+### 字段映射：东财字段 → 既有 canonical（实测，对照设计 §5.1）
+
+| canonical | 东财字段（实测） | 取数规则 | 备注 |
+|---|---|---|---|
+| `eps_fy1` | `yctj_list[].EPS` | `YEAR_MARK == "E"` 的**第 1 行** | 实测该行为**当前财年**（2026-10-19 时 `YEAR=2026`） |
+| `eps_fy2` | `yctj_list[].EPS` | 同上第 2 行 | 实测 `YEAR=2027` |
+| `eps_fy3` | `yctj_list[].EPS` | 同上第 3 行（可缺） | 实测 `YEAR=2028`，覆盖率略低于 FY1/FY2 |
+| `coverage_count` | `yctj_list[].EPS_COUNT` | 取与 `eps_fy1` **同一行** | **机构家数**（非研报数）；各指标家数互不相等，固定用 `EPS_COUNT` |
+| `as_of_date` | `jgyc[0].PUBLISH_DATE` | 取日期部分（`YYYY-MM-DD`） | 聚合行（`ORG_CODE=00000000`/`ORG_NAME_ABBR=近六月平均`）恒为**数据刷新日**（≠ 研报日）；`jgyc` 为空 ⇒ 回落本地抓取日 |
+| （快照审计用，非 canonical） | `yctj_list[].EPS_LASTMONTHS` / `EPS_LASTMONTHS_COUNT` | 随快照留痕 | 上一期同口径均值与家数（家数会变，实测 46→44）；**当前不参与 revision 计算**（语义待对拍） |
+| （可选，未落 canonical） | `yctj_list[].PARENT_NETPROFIT` / `TOTAL_OPERATE_INCOME` / `ROE` | 与 EPS 同行 | 设计 §5.1 标注可选，实测有值；本设计不消费 |
+
+### 实测**不可得**的字段（不得凭接口名假设）
+
+| canonical | 实测结论 | 实现侧结论 |
+|---|---|---|
+| `target_price` | **接口完全不存在**（25 区块键名全量扫描 + 原文 grep `target`/`目标价` 双证 0 命中；页面仅 4 个 Tab，无目标价 Tab） | 恒 `None` + `consensus_missing`；目标价只来自 §1 研报列表路径 |
+| `rating_mean` | `pjtj[]` 有 5 分制均分（`COMPRE_RATING_NUM`，实测 4.75~4.84），与 §1 研报路径 `emRatingValue` 的 **3 分制**（持有1/增持2/买入3）**不可比** | 保持 `None`（不污染与 report_list 帧的可比性） |
+| `rating_upgrade_1m` / `rating_downgrade_1m` / `revision_breadth` | `pjtj`/`ycmx` **无上期评级字段**（`ycmx[].RATING` 只有当前值） | 恒 `None` + `consensus_missing` |
+| EPS 最高/最低 | **接口不提供**；只能从 `ycmx[]` 自算，而明细被截断为最多 30 条（贵州茅台 `EPS_COUNT=44`、明细 30）⇒ 自算必偏窄 | **不落 max/min**（本设计无对应 canonical 字段） |
+| `eps_fy1_revision_3m` 等窗口类 | 接口本身**无历史时序**（只给当前快照），且无 3 个月前值 | 由 `data/consensus_snapshots/<symbol>.jsonl` append-only 快照序列纯规则自算；窗口（30/90 天）未满 ⇒ `None` |
+
+### 空值形态（实测三类 + 一类错误）
+
+| 形态 | 实测样本 | 判据 |
+|---|---|---|
+| **无机构覆盖** | `SH600112` / `SZ000995` / `SH603207` | `pjtj=[]`、`jgyc=[]`、`ycmx=[]`，且 `yctj_list` **仍返回 3 个实际年度但无 `YEAR_MARK=="E"` 行** |
+| **次新** | `SH603202` | `pjtj` 有评级（仅「1年内」行有值）但 `jgyc=[]`、无 E 行 ⇒ 评级与一致预期是**两个独立区块**，不能由 `pjtj` 有值推断 `eps_fy1` 有值 |
+| **退市/长期停牌类** | `SH600608` / `600145` / `000033` / `600087` | 与「无覆盖」同形（实际年度陈旧） |
+| **非法代码**（唯一返回 `status` 的形态） | 无前缀 / 带后缀 / 前缀错配 / 前导空格 / 未发行代码 | HTTP 200 + `{"status": -1, "message": "股票代码不合法"}` |
+
+- **存在性判据**：`jgyc` 为空 **且** 无 `YEAR_MARK == "E"` 行 ⇒ 无可用快照。**绝不能**用「`yctj_list` 非空」判有覆盖（无覆盖时仍有 3 个实际年度行），也不能只看 `EPS is None`（无覆盖时根本不给预测年度行）。
+- 上述形态在实现侧统一视为「无可用快照」⇒ `fetch_profit_forecast` 返回 `{}`、`build_f10_consensus` 返回 `None`，由 provider 链回落 `report_list` 并在 `ConsensusOutput.warnings` 留痕。
+
+### 与研报列表路径（§1）的口径差异（登记条款）
+
+- `coverage_count`：§1 是**研报数**（`_coverage_count`），§5 是**机构家数**（`EPS_COUNT`）⇒ **两种口径的帧不可直接混比**（对比实验只在新源启用后的帧内进行；P0-6 的 `<3` 护栏判据不变）。
+- `as_of_date`：§1 是**聚合基准日**（`aggregate_consensus` 缺省用今天，可显式传 `as_of_date` 覆盖），§5 取服务端**数据刷新日**（`jgyc` 聚合行 `PUBLISH_DATE`，缺则回落本地抓取日）。
+- `target_price` / `rating_*` / `revision_breadth`：§1 稀疏但有值，§5 **恒 `None`**（见「实测不可得的字段」）。
+
+### schema-steward 条目（备查）
+
+> **本设计无新 canonical 字段**：13 个 consensus 字段（`alphabee/schemas/consensus.yaml`：`eps_fy1`/`eps_fy2`/`eps_fy3`/`target_price`/`rating_mean`/`coverage_count`/`eps_fy1_revision_1m`/`eps_fy1_revision_3m`/`eps_fy2_revision_1m`/`revision_breadth`/`revision_acceleration`/`rating_upgrade_1m`/`rating_downgrade_1m`）全部**复用既有定义**，本接口只做「东财字段 → 既有 canonical」的映射（上表），**不需要注册任何新字段**；`schemas/INDEX.yaml` / `schemas/consensus.yaml` 均未改动。
+> 数据源字段名的消费面被限制在 `alphabee/collectors/consensus/emforecast.py`（source-specific collector，输出一律 canonical），下游按 canonical 名读取，不感知东财键名。

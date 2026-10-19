@@ -1,6 +1,6 @@
 # 长期持续研究框架设计评审（结合 A 股特点）
 
-> **状态：评审文档（2026-10 完成；P0 六项与 TEF 变体已实施，P1/P2 未实施）**。本文档是对「中期决策层（midterm）→ 跨期跟踪（tracking）→ 市场状态与语境（market_regime / domain_context）→ 偏离控制与数据治理（deviation / company_track）」四个集群的**设计级评审**，以代码为准（多份设计文档状态行已滞后于实现，见 §8）。评审结论分 P0/P1/P2 与"建议降级"四档，均附代码锚点。**实施进展（2026-10-18）**：P0 六项已按 PR-A（`bb7c06b`）/ PR-B（`cae758a`）/ PR-C（`494b084`）全部落地（§6 表含实施状态列，ROADMAP 登记表第 81–83 行）；§2.1 的 TEF 顺序变体已按 PR-1（`3e28dcd`）/ PR-2（`9c82acc`）交付（登记表第 84–85 行），A/B 对比实验待执行；P1/P2 与"建议降级"条目未实施。
+> **状态：评审文档（2026-10 完成；P0 六项、TEF 变体、P1-2 已实施，其余 P1/P2 未实施）**。本文档是对「中期决策层（midterm）→ 跨期跟踪（tracking）→ 市场状态与语境（market_regime / domain_context）→ 偏离控制与数据治理（deviation / company_track）」四个集群的**设计级评审**，以代码为准（多份设计文档状态行已滞后于实现，见 §8）。评审结论分 P0/P1/P2 与"建议降级"四档，均附代码锚点。**实施进展（2026-10-18）**：P0 六项已按 PR-A（`bb7c06b`）/ PR-B（`cae758a`）/ PR-C（`494b084`）全部落地（§6 表含实施状态列，ROADMAP 登记表第 81–83 行）；§2.1 的 TEF 顺序变体已按 PR-1（`3e28dcd`）/ PR-2（`9c82acc`）交付（登记表第 84–85 行），A/B 对比实验待执行。**实施进展（2026-10-19）**：**P1-2 已实施**——预告类型信息量分档 + 区间保守锚（`0e8806d`）与东财 F10 盈利预测数据源 + consensus provider 链（`e1f8191`），按 `docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md` §3/§4/§5 落地，详情见 §2.2「残留收口」，ROADMAP 登记表新增两行；其余 P1/P2 与"建议降级"条目未实施。
 > 关联文档：`docs/design/RESEARCH_CONTINUUM_DESIGN.md`、`docs/design/DEVIATION_CONTROL_FRAMEWORK.md`、`docs/midterm/MIDTERM_DECISION_MODEL.md`、`docs/midterm/MIDTERM_INVESTMENT_ROADMAP.md`、`docs/roadmap/COMPANY_TRACK_ROADMAP.md`、`docs/roadmap/MARKET_REGIME_ROADMAP.md`、`docs/roadmap/DOMAIN_CONTEXT_ROADMAP.md`、`docs/design/REVIEW_REGIME_DOMAIN_CONTEXT.md`（评审小组笔记之一，已落盘）。
 > 若据此立项实施，契约改动必须走 `alphabee-pipeline-contract-steward` / `alphabee-schema-steward` skill 流程。
 
@@ -53,6 +53,12 @@
 **修复状态（2026-10-18）**。✅ **P0-6 已实施**（`494b084`）：`evidence_rules._revision_evidence` 与 `score_engine._revision` 双层 coverage<3 护栏（`_MIN_CONSENSUS_COVERAGE=3`，覆盖不足 ⇒ 不产 revision 证据 / `e_revision=None` 并登记 `consensus_coverage_low`）；E 方向分锚重调为 **0.6×预告锚（`_forecast_revision_anchor`，相邻报告期预告区间中点差）+ 0.4×研报修正**——业绩预告成为 E 主轴；`consensus_missing` Issue 留痕（D1_DATA，只留痕不降级）。配套（P0 PR-A，`bb7c06b`）：`forecast_update_flag` canonical 字段 + adapter 映射落地，同报告期按 `ann_date` 升序取末条。
 
 **残留**：① `forecast_type` 加权（扭亏/首亏 > 预增/预减 > 续盈）未做（本评审 P1-2）；② 预告区间中点按符号计证仍是近似口径；③ 数据源未升级到东财盈利预测 datacenter（rating 右偏、target_price 稀疏的根因仍在，护栏只是"不信"，不是"有了更好的数据"）。
+
+**残留收口（2026-10-19，已实施）**。三项残留均按 `docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md` 落地：
+
+1. **`forecast_type` 加权 — 已实施**（该设计 §3，提交 `0e8806d`）：`alphabee/midterm/evidence_rules.py` 新增 `_FORECAST_TYPE_TIER` 三档（`reversal`=扭亏/首亏、`magnitude`=预增/预减/略增/略减、`inertia`=续盈/续亏，缺失/不确定/未知取值 → `unknown` fail-open）。两处生效：`_express_evidence` 的 beat/miss 强度按档升降一档（`reversal` 升、`inertia` 降，STRONG 封顶 / WEAK 降档后仍产事件，`confidence_delta` 恒在三值域）；`_forecast_evidence` 中 `inertia` **取消**事件（"无意外即无证据"，非降权）。`_forecast_retraction_evidence` 不受档位影响。
+2. **区间中点近似口径 — 已实施（中点口径已收口）**（§4，同提交）：符号定方向改用**区间保守锚** `_conservative_direction`（`lo>0` ⇒ confirming 取 `|lo|`；`hi<0` ⇒ refuting 取 `|hi|`；跨零仅 `reversal` 且净利润绝对额下限 `forecast_net_profit_min>0` 时按绝对额兜底 confirming(weak)；其余跨零/缺失 ⇒ 不产事件），原 `_midpoint` 已删除。**残余须并读**：`score_engine._forecast_revision_anchor` 仍比较相邻报告期的**区间中点差**（设计 §10 非目标，两处口径差异在 `evidence_rules` 模块 docstring §4.2 披露）。
+3. **数据源升级 — 已实施（默认不启用）**（§5，提交 `e1f8191`）：新增 `alphabee/collectors/consensus/emforecast.py`（东财 F10「盈利预测」页接口、append-only 快照、纯规则 revision 自算）与 `build_consensus` 的 report_list/f10_forecast/auto provider 链；`midterm.consensus_source` 默认 `report_list` ⇒ **缺省行为逐字不变**（新源启用是显式配置动作）。**口径限定**：走的是 F10「盈利预测」页单入口（设计 §5.1/§10），**不用**东财 datacenter-web 全量报表接口（RESPREDICT 等），故原残留措辞中的"datacenter"按 F10 页收敛。**残余须并读（不是"修好"）**：F10 接口本身**不含目标价**（`target_price` 恒 `None` + `consensus_missing`，目标价仍只来自研报路径）、评级为 **5 分制且无上期评级**（`rating_mean`/`rating_upgrade_1m`/`rating_downgrade_1m`/`revision_breadth` 恒 `None`，与研报 `emRatingValue` 3 分制不可比）、EPS 最高/最低不提供（`ycmx` 截断 30 条）；而 `coverage_count` 语义由「研报数」变「机构家数」（设计 §5.4：两种口径的帧间不可直接混比，对比实验只在新源启用后的帧内进行）。接口契约以冒烟实测为准（`docs/implementation/midterm/E_ECOSYSTEM_SMOKE_REPORT.md` §8/§12）；**本设计无新 canonical 字段**（全部复用既有 13 字段，映射表登记于 `docs/midterm/DATA_CONTRACTS_VERIFIED.md`）。
 
 ### 2.3 交易制度在决策层缺席：仓位带按"可自由交易"假设设计
 
@@ -160,7 +166,7 @@ regime 引擎确定性内核与 YAML 数据驱动是优点；**涨停情绪数�
 ### P1 — 重要增强
 
 1. **仓位可执行性折减**（`midterm/position.py:197`）：涨停/停牌/成交额占比回灌 stock_weight 折减或置 restricted 新 reason，乘法结构不动；一字板时 C 置 neutral。
-2. **预告修正与类型**（`midterm/evidence_rules.py:203-210` + `adapters/tushare/expectation_mapping.yaml`）：映射 update_flag、同报告期取 ann_date 末条；type 加权（扭亏/首亏 > 预增/预减 > 续盈）。
+2. **预告修正与类型**（`midterm/evidence_rules.py:203-210` + `adapters/tushare/expectation_mapping.yaml`）：映射 update_flag、同报告期取 ann_date 末条；type 加权（扭亏/首亏 > 预增/预减 > 续盈）。 **已实施**（`docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md` §3/§4）：`update_flag → forecast_update_flag` 映射与同报告期按 `ann_date` 末条随 P0 PR-A（`bb7c06b`）落地；`type` 加权按三档 `reversal`/`magnitude`/`inertia` 落地（`0e8806d`，含区间保守锚与 `inertia` 取消事件，详见 §2.2「残留收口」第 1/2 条）。
 3. **中间态证据入窗**（`tracking/scheduler.py:215-221` window_texts 硬编码 None）：预告/快报文本进 evidence window 并参与 FINANCIAL_REPORT 判定。
 4. **告警消费闭环 + 公告分级**（`tracking/triggers.py:395`）：ANNOUNCEMENT 由"新闻标题变化"升级为公告类型分级（问询>减持>回购>一般）。
 5. **regime 风格第二轴 + 注入个股流水线**：board_divergence（hs300 vs 创业板/科创50）+ 风格标签；实现 load_market_regime_context 注入节点。
