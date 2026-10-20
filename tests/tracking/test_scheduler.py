@@ -923,8 +923,27 @@ def test_run_once_classifier_tef_persists_tef_frame(tmp_path):
     assert latest_artifact(SYMBOL, state_dir).classifier_order == "tef"
 
 
-def test_run_once_default_classifier_follows_config_etf(tmp_path):
+def _pin_classifier_config(monkeypatch, order: str = "etf") -> None:
+    """密闭性：钉住 ``midterm.classifier_order``（不读本地 config.yaml，本机可能配 tef）。
+
+    ``resolve_classifier_order`` 在调用时 ``from alphabee.config import get_settings``，
+    因此 monkeypatch 模块属性即可隔离本地配置；``triggers._config_section`` 用
+    ``getattr(settings, "deviation", None)`` fail-open，缺段不影响断言。
+    """
+    from types import SimpleNamespace
+
+    import alphabee.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_settings",
+        lambda: SimpleNamespace(midterm=SimpleNamespace(classifier_order=order)),
+    )
+
+
+def test_run_once_default_classifier_follows_config_etf(tmp_path, monkeypatch):
     """缺省 None → 读 config midterm.classifier_order（默认 etf）⇒ provenance=="etf"。"""
+    _pin_classifier_config(monkeypatch, "etf")  # 钉住默认配置，不读本地 config.yaml
     report = run_once(
         SYMBOL,
         as_of=D1,

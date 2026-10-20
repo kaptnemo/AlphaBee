@@ -84,7 +84,8 @@ def test_end_to_end_s3_resonance_full_artifact():
         effect_on_thesis="confirming",
         confidence_delta=0.5,
     )
-    art = evaluate(_s3_snapshot(), [ev], prior_confidence=0.5)
+    # 显式钉住 ETF 流水线（本文件编码的是 ETF 期望，不读本地 config.yaml）
+    art = evaluate(_s3_snapshot(), [ev], prior_confidence=0.5, classifier_order="etf")
     # 软状态
     assert isinstance(art.state, StateBelief)
     assert art.state.argmax_state == "S3"
@@ -103,7 +104,7 @@ def test_end_to_end_s3_resonance_full_artifact():
 
 def test_end_to_end_s3_no_evidence_ev_degraded():
     """S3 三共振 + 零证据 → EV 显式降级、仓位保守（不再激进核心）。"""
-    art = evaluate(_s3_snapshot())
+    art = evaluate(_s3_snapshot(), classifier_order="etf")
     assert art.state.argmax_state == "S3"
     assert art.expected_value.ev is None  # 零证据 → 降级
     assert art.expected_value.probability_source == "state_prior"
@@ -113,7 +114,7 @@ def test_end_to_end_s3_no_evidence_ev_degraded():
 
 def test_langchao_000977_fixes_end_to_end():
     """端到端复验 000977 浪潮信息：6 个修复逐一确认生效。"""
-    art = evaluate(_langchao_000977_snapshot())
+    art = evaluate(_langchao_000977_snapshot(), classifier_order="etf")
 
     # ① factor_snapshot.state 已回写，与顶层 argmax_state 一致（不再残留 S0）
     assert art.factor_snapshot.state == art.state.argmax_state
@@ -176,7 +177,7 @@ def test_end_to_end_get_decision(monkeypatch):
     import alphabee.midterm.factors as factors_mod
 
     monkeypatch.setattr(factors_mod, "get_factor_snapshot", lambda symbol, include_market=True: snap)
-    art = get_decision("300750.SZ")
+    art = get_decision("300750.SZ", classifier_order="etf")
     assert art.symbol == "300750.SZ"
     assert art.state.argmax_state == "S3"
     assert art.position is not None

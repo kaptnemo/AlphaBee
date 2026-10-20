@@ -121,13 +121,15 @@ def test_route_etf_hits_module_attribute(monkeypatch):
 
 
 def test_route_default_is_etf(monkeypatch):
+    _set_config(monkeypatch, classifier_order="etf")  # 钉住默认配置，不读本地 config.yaml
     monkeypatch.setattr(etf, "classify_state", lambda scores, previous=None: "ETF_SENTINEL")
     monkeypatch.setattr(tef, "classify_state", lambda scores, previous=None: "TEF_SENTINEL")
     assert dispatch.classify_state(_scores(), order=None) == "ETF_SENTINEL"
 
 
-def test_dispatch_default_matches_etf_classifier_field_for_field():
+def test_dispatch_default_matches_etf_classifier_field_for_field(monkeypatch):
     # 默认配置（midterm.classifier_order=etf）下，dispatch 输出与 ETF 逐字段相等
+    _set_config(monkeypatch, classifier_order="etf")  # 钉住默认配置，不读本地 config.yaml
     scores = _scores(f=0.8, e=0.8, t=-0.5, v=0.5)
     assert dispatch.classify_state(scores, order=None) == etf.classify_state(scores)
 
