@@ -1,11 +1,15 @@
+import pytest
+
 from alphabee.financial_report.fetch import (
     _extract_report_year,
     _is_message,
     _iter_text_blocks,
     _render_tool_call,
+    build_compact_tree,
     build_fetch_prompt,
     build_file_tree,
 )
+from alphabee.financial_report.report_cache import build_report_index, clear_report_caches
 
 
 class TestExtractReportYear:
@@ -60,6 +64,104 @@ class TestBuildFileTree:
             (tmp_path / f"f{i}.md").write_text("x")
         tree = build_file_tree(tmp_path, max_entries=2)
         assert "已截断" in tree
+
+
+class TestBuildCompactTree:
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        clear_report_caches()
+        yield
+        clear_report_caches()
+
+    def test_small_report_lists_full_relative_paths(self, tmp_path) -> None:
+        (tmp_path / "第一节_公司简介.md").write_text("x")
+        (tmp_path / "第二节_财务数据").mkdir()
+        (tmp_path / "第二节_财务数据" / "(1)_营业收入.md").write_text("x")
+        index = build_report_index(tmp_path)
+
+        compact = build_compact_tree(index)
+
+        assert compact.startswith("<report_paths>")
+        assert compact.rstrip().endswith("</report_paths>")
+        assert "- 第一节_公司简介.md" in compact
+        assert "- 第二节_财务数据/(1)_营业收入.md" in compact
+        assert "<chapter_map>" not in compact
+
+    def test_large_report_uses_stats_and_chapter_map(self, tmp_path) -> None:
+        for i in range(85):
+            (tmp_path / f"f{i:03d}.md").write_text("x")
+        chapter_dir = tmp_path / "第五章_合并财务报表"
+        chapter_dir.mkdir()
+        for i in range(5):
+            (chapter_dir / f"s{i}.md").write_text("x")
+        index = build_report_index(tmp_path)
+        assert index.total_files == 90
+
+        compact = build_compact_tree(index)
+
+        assert "<report_stats>" in compact
+        assert "文件总数: 90" in compact
+        assert "目录数: 1" in compact
+        assert "<chapter_map>" in compact
+        assert "/第五章_合并财务报表 (5 files)" in compact
+        assert "/ (85 files)" in compact
+        assert "<report_paths>" not in compact
+        # 大报告不再依赖 max_entries=500 截断
+        assert "已截断" not in compact
+
+    def test_full_path_limit_override(self, tmp_path) -> None:
+        for i in range(3):
+            (tmp_path / f"f{i}.md").write_text("x")
+        index = build_report_index(tmp_path)
+
+        assert "<report_paths>" in build_compact_tree(index, full_path_limit=3)
+        assert "<chapter_map>" in build_compact_tree(index, full_path_limit=2)
+
+
+class TestBuildFetchPromptWithIndex:
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        clear_report_caches()
+        yield
+        clear_report_caches()
+
+    def test_prompt_renders_index_full_paths(self, tmp_path) -> None:
+        (tmp_path / "第一节_公司简介.md").write_text("x")
+        (tmp_path / "第二节_财务数据").mkdir()
+        (tmp_path / "第二节_财务数据" / "(1)_营业收入.md").write_text("x")
+        index = build_report_index(tmp_path)
+
+        prompt = build_fetch_prompt("某公司_2025_年年度报告", "营业收入是多少", report_dir=tmp_path, index=index)
+
+        assert "营业收入是多少" in prompt
+        assert "2025 年" in prompt
+        assert "<report_paths>" in prompt
+        assert "- 第二节_财务数据/(1)_营业收入.md" in prompt
+        assert "<chapter_map>" not in prompt
+        # 既有约束语义保留
+        assert "不要" in prompt and "目录遍历" in prompt
+        assert "Grep" in prompt and "Read" in prompt and "Glob" in prompt
+
+    def test_prompt_renders_chapter_map_for_large_report(self, tmp_path) -> None:
+        for i in range(85):
+            (tmp_path / f"f{i:03d}.md").write_text("x")
+        index = build_report_index(tmp_path)
+
+        prompt = build_fetch_prompt("某公司_2025_年年度报告", "q", report_dir=tmp_path, index=index)
+
+        assert "<report_stats>" in prompt
+        assert "文件总数: 85" in prompt
+        assert "<chapter_map>" in prompt
+        assert "/ (85 files)" in prompt
+        assert "<report_paths>" not in prompt
+        assert "以 Grep 结果为准" in prompt
+
+    def test_prompt_without_index_keeps_legacy_tree(self, tmp_path) -> None:
+        (tmp_path / "a.md").write_text("x")
+        prompt = build_fetch_prompt("r", "q", report_dir=tmp_path)
+        assert "<file_tree>" in prompt
+        assert "a.md" in prompt
+        assert "<report_stats>" not in prompt
 
 
 class TestMessageFiltering:

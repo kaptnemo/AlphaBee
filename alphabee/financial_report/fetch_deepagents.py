@@ -20,6 +20,7 @@ load_dotenv()
 
 from pathlib import Path  # noqa: E402
 
+import structlog  # noqa: E402
 from deepagents import create_deep_agent  # noqa: E402
 from deepagents.backends import FilesystemBackend  # noqa: E402
 from deepagents.middleware._tool_exclusion import _ToolExclusionMiddleware  # noqa: E402
@@ -28,20 +29,49 @@ from langchain_core.runnables.config import RunnableConfig  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
 
 from alphabee.financial_report.fetch import build_fetch_prompt  # noqa: E402
+from alphabee.financial_report.report_cache import ReportIndex, get_report_index  # noqa: E402
 from alphabee.utils import create_chat_model  # noqa: E402
 
+logger = structlog.get_logger(__name__)
 
-def create_report_fetch_agent(report_dir: str | Path) -> CompiledStateGraph[Any, Any, Any, Any]:
+
+def create_report_fetch_agent(
+    report_dir: str | Path,
+    *,
+    index: ReportIndex | None = None,
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Factory: build a deep agent scoped to a report folder (virtual backend).
 
     The virtual filesystem exposes only the report's markdown tree, so the
     agent cannot read anything outside it.
+
+    Args:
+        report_dir: 报告目录（``report_parser`` 的输出）。
+        index: 目录 index；缺省时内部取 :func:`get_report_index` 的缓存结果，
+            system prompt 因而复用压缩目录树，同 root 连续构建只扫描目录一次。
+            缓存构建异常时按 fail-open 回退到旧行为（现场渲染完整目录树）。
     """
     report_path = Path(report_dir)
     if not report_path.is_dir():
         raise FileNotFoundError(f"Report directory not found: {report_path}")
 
-    system_prompt = build_fetch_prompt(report_path.name, "", report_dir=report_path)
+    if index is None:
+        try:
+            index = get_report_index(report_path)
+        except FileNotFoundError:
+            # 报告目录不存在：保持原有异常语义，不被缓存吞掉。
+            raise
+        except Exception:
+            logger.warning(
+                "report_cache",
+                kind="index",
+                result="fallback",
+                root=str(report_path),
+                exc_info=True,
+            )
+            index = None
+
+    system_prompt = build_fetch_prompt(report_path.name, "", report_dir=report_path, index=index)
     backend = FilesystemBackend(root_dir=str(report_path.resolve()), virtual_mode=True)
     return create_deep_agent(
         model=create_chat_model("financial_report"),

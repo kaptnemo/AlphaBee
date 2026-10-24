@@ -9,6 +9,8 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
+from alphabee.financial_report.report_cache import invalidate_report_caches
+
 
 def _ngram_split(text: str, n: int = 3) -> list[str]:
     length = len(text)
@@ -290,6 +292,8 @@ def write_markdown_report_folder(
 
     Returns:
         报告目录绝对路径（写入完成后 ``query_financial_report`` 即可定位检索）。
+        返回前会失效该目录的目录 index 缓存（``report_cache.invalidate_report_caches``），
+        保证重写后的报告不会命中旧 index；目录结构、manifest 内容与返回值均不变。
     """
     report_name = _sanitize_report_name(report_name)
     company_name = (company_name or "").strip() if company_name else ""
@@ -362,6 +366,8 @@ def write_markdown_report_folder(
         ),
         encoding="utf-8",
     )
+    # manifest 已就位：失效该 root 的目录 index 缓存（旧版本 key 全部清掉）。
+    invalidate_report_caches(target)
     return target
 
 

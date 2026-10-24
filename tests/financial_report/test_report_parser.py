@@ -1,8 +1,13 @@
+import json
+from pathlib import Path
+
+from alphabee.financial_report import report_cache
 from alphabee.financial_report.report_parser import (
     _ngram_split,
     _ngram_split_lines,
     _split_markdown_by_sections,
     parse_markdown_to_cleaned_sections,
+    write_markdown_report_folder,
 )
 
 
@@ -112,3 +117,64 @@ class TestParseMarkdownToCleanedSections:
         assert cleaned[0]["title"] == "江西沃格光电集团股份有限公司"
         assert cleaned[0]["content"] == ["第一页的独立说明文字"]
         assert cleaned[1]["title"] == "第一节 公司简介"
+
+
+class TestWriteMarkdownReportFolder:
+    def test_writes_folder_manifest_and_invalidates_index_cache(self, tmp_path: Path) -> None:
+        report_cache.clear_report_caches()
+        save_dir = tmp_path / "reports"
+        markdown = "# 第一节 公司简介\n公司主营业务。\n# 第二节 财务数据\n营业收入 1 亿元。\n"
+
+        target = write_markdown_report_folder(
+            markdown,
+            "某公司：2025年年度报告",
+            company_name="某公司",
+            company_code="600000",
+            save_dir=save_dir,
+        )
+
+        # 返回类型与目录结构保持原契约
+        assert isinstance(target, Path)
+        assert target.is_dir()
+        assert target == save_dir.resolve() / "某公司(600000)" / "财报" / "2025年年度报告"
+
+        manifest = json.loads((target / ".report_manifest.json").read_text(encoding="utf-8"))
+        assert set(manifest) == {
+            "report_name",
+            "company_name",
+            "company_code",
+            "category",
+            "report_period",
+            "section_count",
+            "file_count",
+            "full_text_path",
+            "page_count",
+            "created_at",
+        }
+        assert manifest["report_name"] == "某公司：2025年年度报告"
+        assert manifest["company_name"] == "某公司"
+        assert manifest["company_code"] == "600000"
+        assert manifest["category"] == "财报"
+        assert manifest["report_period"] == "2025年年度报告"
+        assert manifest["file_count"] == len(list(target.rglob("*.md")))
+
+        # 写入后 index 可正常构建
+        first_index = report_cache.get_report_index(target)
+        assert first_index.total_files == manifest["file_count"]
+        assert report_cache.stats()["entries"] == 1
+
+        # 重写同一份报告：返回前失效该 root 的 index 缓存
+        rewritten = write_markdown_report_folder(
+            markdown + "# 第三节 其他重要事项\n无。\n",
+            "某公司：2025年年度报告",
+            company_name="某公司",
+            company_code="600000",
+            save_dir=save_dir,
+        )
+        assert rewritten == target
+        assert report_cache.stats()["entries"] == 0
+
+        second_index = report_cache.get_report_index(target)
+        assert second_index.total_files == len(list(target.rglob("*.md")))
+        assert second_index.total_files == first_index.total_files + 1
+        report_cache.clear_report_caches()

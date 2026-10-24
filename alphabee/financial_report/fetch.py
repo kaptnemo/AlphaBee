@@ -16,6 +16,9 @@ from typing import TypeGuard
 
 from claude_agent_sdk.types import AssistantMessage, TextBlock, ToolUseBlock, UserMessage
 
+from alphabee.financial_report import report_cache
+from alphabee.financial_report.report_cache import ReportIndex
+
 MessageWithContent = UserMessage | AssistantMessage
 
 
@@ -55,9 +58,81 @@ def build_file_tree(report_dir: Path, max_entries: int = 500) -> str:
     return "\n".join(entries)
 
 
-def build_fetch_prompt(report_name: str, query: str, report_dir: Path | None = None) -> str:
-    """Build the agent prompt for extracting report content."""
-    tree = build_file_tree(report_dir) if report_dir is not None else "(无)"
+def build_compact_tree(index: ReportIndex, *, full_path_limit: int | None = None) -> str:
+    """按设计 §8.1 渲染 index 的压缩目录树，供 system prompt 使用。
+
+    - ``index.total_files <= full_path_limit``（默认取
+      ``REPORT_CACHE_CONFIG.small_report_full_paths``，即 80）：直接给完整相对路径列表
+      （``<report_paths>``），小报告无需 grep；
+    - 大报告：只给 ``<report_stats>``（文件总数/目录数）+ ``<chapter_map>``
+      （每个目录的直接 ``.md`` 数量），不再依赖 ``max_entries=500`` 截断。
+
+    Args:
+        index: :class:`ReportIndex`（由 ``report_cache.get_report_index`` 构建）。
+        full_path_limit: 覆盖默认的小报告阈值，便于测试。
+
+    Returns:
+        带 XML 风格标签的压缩目录树文本。
+    """
+    limit = report_cache.REPORT_CACHE_CONFIG.small_report_full_paths if full_path_limit is None else full_path_limit
+    if index.total_files <= limit:
+        if not index.rel_files:
+            return f"<report_paths>\n（报告中未找到 markdown 文件；共 {index.total_files} 个）\n</report_paths>"
+        paths = "\n".join(f"- {rel_file}" for rel_file in index.rel_files)
+        return (
+            "<report_paths>\n"
+            f"以下为该报告全部 markdown 文件的相对路径（共 {index.total_files} 个），可直接用于 read_file：\n"
+            f"{paths}\n"
+            "</report_paths>"
+        )
+    return (
+        "<report_stats>\n"
+        f"文件总数: {index.total_files}\n"
+        f"目录数: {len(index.rel_dirs)}\n"
+        "</report_stats>\n\n"
+        "<chapter_map>\n"
+        f"{index.tree_compact}\n"
+        "</chapter_map>"
+    )
+
+
+_STEPS_GREP_FIRST = """\
+1. 用 Grep 工具在文件夹内搜索问题关键词，一次定位所有相关文件。
+2. 用 Read 读取命中的文件，精确摘取与问题直接相关的段落和表格数据；
+   只读与问题相关的最小文件集，不要顺带读取无关章节。
+3. 只有 Grep 没有命中、或需要对文件名做模式匹配时，才用 Glob 补查。"""
+
+_STEPS_FULL_PATHS = """\
+1. 上面的 <report_paths> 已给出全部 markdown 文件的完整相对路径，直接挑选相关文件用 Read 读取；
+   需要按正文关键词筛选时，再用 Grep 在文件夹内搜索。
+2. 用 Read 读取命中的文件，精确摘取与问题直接相关的段落和表格数据；
+   只读与问题相关的最小文件集，不要顺带读取无关章节。
+3. 只有 Grep 没有命中、或需要对文件名做模式匹配时，才用 Glob 补查。"""
+
+_STEPS_CHAPTER_MAP = """\
+1. 用 Grep 工具在文件夹内搜索问题关键词，一次定位所有相关文件
+   （压缩目录树只给出章节目录与文件数，完整文件路径以 Grep 结果为准）。
+2. 用 Read 读取命中的文件，精确摘取与问题直接相关的段落和表格数据；
+   只读与问题相关的最小文件集，不要顺带读取无关章节。
+3. 只有 Grep 没有命中、或需要对文件名做模式匹配时，才用 Glob 补查。"""
+
+
+def build_fetch_prompt(
+    report_name: str,
+    query: str,
+    report_dir: Path | None = None,
+    *,
+    index: ReportIndex | None = None,
+) -> str:
+    """Build the agent prompt for extracting report content.
+
+    Args:
+        report_name: 报告目录名（用于识别报告年度）。
+        query: 需要从报告中提取内容的问题。
+        report_dir: 报告目录；``index`` 为 ``None`` 时用它现场渲染完整目录树（旧行为）。
+        index: 目录 index；提供时按 §8.1 渲染压缩目录树（小报告给完整相对路径，
+            大报告给 ``report_stats`` + ``chapter_map``）。
+    """
     report_year = _extract_report_year(report_name)
     year_label = report_year or "本报告年度"
     period_block = (
@@ -66,6 +141,30 @@ def build_fetch_prompt(report_name: str, query: str, report_dir: Path | None = N
         if report_year
         else "（未能从文件夹名识别报告年度，请通过正文内容判断本期与上期。）"
     )
+
+    if index is not None:
+        compact_tree = build_compact_tree(index)
+        full_path_limit = report_cache.REPORT_CACHE_CONFIG.small_report_full_paths
+        if index.total_files <= full_path_limit:
+            tree_intro = (
+                "以下是该报告的**完整文件索引**（全部 markdown 相对路径，均相对报告根目录）。"
+                "**不要**再执行 ls/find/pwd 等目录遍历操作，可直接按下面的路径 read_file。"
+            )
+            steps = _STEPS_FULL_PATHS
+        else:
+            tree_intro = (
+                "以下是该报告的**压缩目录树**（章节按目录聚合，括号内为该目录直接包含的 markdown 文件数）。"
+                "**不要**再执行 ls/find/pwd 等目录遍历操作；完整文件路径请通过 Grep 结果获得。"
+            )
+            steps = _STEPS_CHAPTER_MAP
+        tree_block = f"{tree_intro}\n\n{compact_tree}"
+    else:
+        tree = build_file_tree(report_dir) if report_dir is not None else "(无)"
+        tree_block = (
+            f"以下已给出完整目录结构，**不要**再执行 ls/find/pwd 等目录遍历操作：\n\n<file_tree>\n{tree}\n</file_tree>"
+        )
+        steps = _STEPS_GREP_FIRST
+
     return f"""\
 # 任务：从年度报告文件夹中提取相关内容
 
@@ -84,18 +183,11 @@ markdown 文件（每个文件对应一个小节，部分章节还嵌套了子�
 
 ## 报告目录结构
 
-以下已给出完整目录结构，**不要**再执行 ls/find/pwd 等目录遍历操作：
-
-<file_tree>
-{tree}
-</file_tree>
+{tree_block}
 
 ## 操作步骤（只需 3 步，请一次完成，不要重复遍历或重复读取）
 
-1. 用 Grep 工具在文件夹内搜索问题关键词，一次定位所有相关文件。
-2. 用 Read 读取命中的文件，精确摘取与问题直接相关的段落和表格数据；
-   只读与问题相关的最小文件集，不要顺带读取无关章节。
-3. 只有 Grep 没有命中、或需要对文件名做模式匹配时，才用 Glob 补查。
+{steps}
 
 ## 按期间回答（重要，避免把年度搞错）
 
