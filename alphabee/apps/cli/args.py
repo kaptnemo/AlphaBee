@@ -91,6 +91,19 @@ def parse_args() -> argparse.Namespace:
         help="查看指定 task_id 的完整运行记录",
     )
     parser.add_argument(
+        "--task-report",
+        default=None,
+        help="从 task_records 渲染指定 task_id 的最终报告（markdown）",
+    )
+    parser.add_argument(
+        "--task-report-output",
+        nargs="?",
+        const="auto",
+        default=None,
+        metavar="PATH",
+        help=("最终报告落盘路径（.md）；不带值时自动生成 data/reports/<标的或任务>-<日期>.md；缺省打印到终端"),
+    )
+    parser.add_argument(
         "--deviations",
         nargs="?",
         const="",

@@ -69,6 +69,7 @@ poetry run python main.py --task-stats
 poetry run python main.py --distill            # LLM 规则蒸馏建议
 poetry run python main.py --task-history 600519.SH
 poetry run python main.py --task-record task-a1b2c3d4e5f6
+poetry run python main.py --task-report task-a1b2c3d4e5f6 [--task-report-output xx.md]  # 从记录渲染最终报告
 ```
 
 ### 公司跟踪与只读视图

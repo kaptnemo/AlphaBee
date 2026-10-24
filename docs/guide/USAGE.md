@@ -58,4 +58,10 @@ poetry run python main.py --task-history 600519.SH
 
 # 查看单次运行的完整记录
 poetry run python main.py --task-record task-a1b2c3d4e5f6
+
+# 从记录直接渲染最终报告（markdown，打印到终端）
+poetry run python main.py --task-report task-a1b2c3d4e5f6
+
+# 渲染并落盘到 .md 文件
+poetry run python main.py --task-report task-a1b2c3d4e5f6 --task-report-output reports/600519.md
 ```

@@ -307,7 +307,7 @@ def main() -> None:
         return
 
     # ── Task records CLI ──
-    if args.task_stats or args.distill or args.task_history or args.task_record:
+    if args.task_stats or args.distill or args.task_history or args.task_record or args.task_report:
         handle_task_cli(args)
         return
 

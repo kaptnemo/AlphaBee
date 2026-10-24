@@ -111,5 +111,26 @@ def handle_task_cli(args: argparse.Namespace) -> None:
 
         print(_json.dumps(record.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
+    if args.task_report:
+        from alphabee.apps.cli.task_report import (
+            default_report_output,
+            render_task_record_report,
+        )
+
+        tid = args.task_report.strip()
+        record = store.load(tid)
+        if record is None:
+            print(color(f"  ❌ 未找到记录: {tid}", Color.RED))
+            return
+        output = args.task_report_output
+        if output == "auto":
+            output = str(default_report_output(record))
+        markdown = render_task_record_report(record, output=output)
+        if not output:
+            print()
+            print(markdown, end="")
+        else:
+            print(color(f"  📄 报告已保存: {output}", Color.GREEN))
+
     print()
     print(hr("═", 70, Color.CYAN))
