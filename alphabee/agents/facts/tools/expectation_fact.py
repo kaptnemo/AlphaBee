@@ -152,3 +152,11 @@ def render(data: dict[str, Any]) -> str:
         lines.append("_近两年无业绩快报数据_\n")
 
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    # 测试代码
+    symbol = "002415.SZ"  # 替换为你想查询的股票代码
+    data = get_expectation_fact(symbol)
+    markdown_text = render(data)
+    print(markdown_text)
