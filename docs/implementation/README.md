@@ -15,7 +15,7 @@
 | `company_track/` | `alphabee/company_track/` | `TRACK_LABEL_COARSE_BUCKET_FIX_PLAN.md`（赛道标签粗口径单桶退化修复） | ✅ 已实施 |
 | `domain_context/` | `alphabee/domain_context/`（驱动画像 DRIVER_PROFILE） | `DRIVER_PROFILE_D0_CODING_DESIGN.md` / `DRIVER_PROFILE_D1_D2_CODING_DESIGN.md`（编码设计） | ✅ 已实施 |
 | | | `DRIVER_PROFILE_P0_FIX_PLAN.md` / `DRIVER_PROFILE_P1_P2_FIX_PLAN.md`（修复计划） | ✅ 已实施 |
-| `financial_report/` | `alphabee/financial_report/`（+ `tools/financial_report.py`） | `REPORT_INDEX_AGENT_CACHE_DESIGN.md`（财报检索 index / fetch agent 缓存 + 路径守卫） | ⬜ 未实施 |
+| `financial_report/` | `alphabee/financial_report/`（+ `tools/financial_report.py`） | `REPORT_INDEX_AGENT_CACHE_DESIGN.md`（财报检索 index / fetch agent 缓存 + 路径守卫） | ✅ 已实施（P0/P1/P2），P3 未实施 |
 
 ## 分类规则
 

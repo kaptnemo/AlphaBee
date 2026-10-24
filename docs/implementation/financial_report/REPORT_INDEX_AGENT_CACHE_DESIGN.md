@@ -1,6 +1,6 @@
 # 财报检索 Index / FetchAgent 缓存设计（降低重复探索与 read_file 误读）
 
-> **状态：设计稿（2026-10-24，未实施）**。本文是 `alphabee/financial_report/` 与 `alphabee/tools/financial_report.py` 的代码级实施设计：给出问题复现、缓存分层、数据契约、并发模型、失效策略、接线锚点、测试矩阵、分阶段落地与回滚。
+> **状态：已实施（设计稿 2026-10-24；P0 index 缓存 + 压缩目录树、P1 backend 路径守卫 + 相似路径提示、P2 fetch agent 缓存 + 并发复用均已落地；P3（可选）确定性预选 / evidence 缓存未实施、本期不做）**。本文是 `alphabee/financial_report/` 与 `alphabee/tools/financial_report.py` 的代码级实施设计：给出问题复现、缓存分层、数据契约、并发模型、失效策略、接线锚点、测试矩阵、分阶段落地与回滚。
 >
 > **关联链路**：`query_financial_report` ← `verify_hypotheses` 并行冲突验证 / `resolve_driver_profile` / `report_pipeline`。
 >
