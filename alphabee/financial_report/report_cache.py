@@ -8,6 +8,7 @@
 - §3.4 ``ReportCacheConfig`` 默认值（本期不接 ``config.yaml``，测试可 monkeypatch
   模块级实例 :data:`REPORT_CACHE_CONFIG`）；
 - §6 TTL + LRU + 不缓存负结果；
+- §7.2 ``suggest_paths``：``read_file`` 未命中时基于 index 给出相似真实路径；
 - §8.1 压缩目录树（章节目录 + 每个目录的直接 ``.md`` 数量）。
 
 本模块刻意保持轻量：顶层只依赖标准库与 ``structlog``，**不** import
@@ -18,6 +19,7 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 import posixpath
 import threading
@@ -31,6 +33,9 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 REPORT_MANIFEST_NAME = ".report_manifest.json"
+
+#: ``difflib.get_close_matches`` 的相似度门槛（设计 §7.2 建议约 0.5）。
+SUGGEST_PATH_CUTOFF = 0.5
 
 # index cache key: (root.resolve() 的字符串, version)
 _IndexKey = tuple[str, str]
@@ -308,6 +313,101 @@ def stats() -> dict[str, int]:
     with _lock:
         _purge_expired_locked(time.monotonic())
         return _stats.snapshot(len(_entries))
+
+
+def suggest_paths(index: ReportIndex, requested: str, *, n: int = 5) -> list[str]:
+    """基于 index 给出 ``requested`` 最可能对应的真实文件路径（设计 §7.2）。
+
+    算法顺序：
+
+    1. basename 精确匹配（忽略目录）：模型目录拼错、文件名正确的场景直接命中；
+       再做 basename 包含匹配（按 basename 相似度降序）：处理漏 ``(1)_`` 前缀、
+       多/少 ``-续`` 等规范化差异；
+    2. ``difflib.get_close_matches`` 在完整相对路径上做相似匹配
+       （``cutoff=SUGGEST_PATH_CUTOFF``）：处理拼错字符、整体路径相近；
+    3. 目录前缀过滤：请求本身是目录时先给该目录下的文件，并让同目录候选优先
+       （稳定排序）：目录对、文件名错时先给同目录的真实文件。
+
+    候选全部来自已有的 :class:`ReportIndex`，**不**重新扫描目录。返回路径统一
+    带前导 ``/``（与虚拟文件系统风格一致，可直接交给 ``read_file``），最多 ``n`` 条、
+    去重。
+
+    Args:
+        index: 报告目录索引。
+        requested: 模型请求的路径（容忍反斜杠、前导 ``/``、重复斜杠等写法）。
+        n: 最多返回的候选数量。
+
+    Returns:
+        带前导 ``/`` 的候选相对路径列表；无候选时返回空列表。
+    """
+    if n <= 0 or not index.rel_files:
+        return []
+
+    requested_rel = _normalize_rel_path(requested)
+    requested_dir = posixpath.dirname(requested_rel)
+    requested_base = posixpath.basename(requested_rel)
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add(rel_file: str) -> None:
+        if rel_file and rel_file not in seen:
+            seen.add(rel_file)
+            ordered.append(rel_file)
+
+    if requested_base:
+        # 1a) basename 精确匹配：目录可错，文件名对即可命中
+        for rel_file in index.rel_files:
+            if posixpath.basename(rel_file) == requested_base:
+                add(rel_file)
+
+        # 1b) basename 包含匹配（如漏 (1)_ 前缀），按 basename 相似度降序
+        basename_scored: list[tuple[float, str]] = []
+        for rel_file in index.rel_files:
+            real_base = posixpath.basename(rel_file)
+            if real_base == requested_base:
+                continue
+            if requested_base in real_base or real_base in requested_base:
+                ratio = difflib.SequenceMatcher(None, requested_base, real_base).ratio()
+                basename_scored.append((ratio, rel_file))
+        basename_scored.sort(key=lambda item: item[0], reverse=True)
+        for _, rel_file in basename_scored:
+            add(rel_file)
+
+    # 2) 完整相对路径的相似匹配（拼错字符、漏 (1)_ 等前缀差异）
+    close_matches = difflib.get_close_matches(
+        requested_rel,
+        index.rel_files,
+        n=max(n * 4, n),
+        cutoff=SUGGEST_PATH_CUTOFF,
+    )
+    for rel_file in close_matches:
+        add(rel_file)
+
+    # 3a) 请求本身就是目录（read_file 误传目录）：先给该目录下的文件
+    if requested_rel and requested_rel in index.rel_dirs:
+        prefix = f"{requested_rel}/"
+        for rel_file in index.rel_files:
+            if rel_file.startswith(prefix):
+                add(rel_file)
+
+    # 3b) 同目录候选优先（稳定排序保留上述优先级）
+    ordered.sort(key=lambda rel_file: posixpath.dirname(rel_file) != requested_dir)
+
+    return [f"/{rel_file}" for rel_file in ordered[:n]]
+
+
+def _normalize_rel_path(path: str | Path) -> str:
+    """归一化为 index 的 posix 相对路径形式（无前导 ``/``，无重复斜杠）。"""
+    text = str(path).replace("\\", "/").strip()
+    if text.startswith("/"):
+        text = text.lstrip("/")
+    if not text:
+        return ""
+    normalized = posixpath.normpath(text)
+    if normalized in {"", ".", "/"}:
+        return ""
+    return normalized.lstrip("/")
 
 
 def _purge_expired_locked(now: float) -> None:

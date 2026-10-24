@@ -1,8 +1,13 @@
 import pytest
+from deepagents.backends import FilesystemBackend
 from langchain_core.messages import AIMessage
 
 from alphabee.financial_report import fetch_deepagents, report_cache
-from alphabee.financial_report.fetch_deepagents import _render_tool_call, create_report_fetch_agent
+from alphabee.financial_report.fetch_deepagents import (
+    ReportFilesystemBackend,
+    _render_tool_call,
+    create_report_fetch_agent,
+)
 from alphabee.financial_report.report_cache import ReportIndex, build_report_index, clear_report_caches, stats
 
 
@@ -122,3 +127,59 @@ class TestCreateReportFetchAgentWithIndex:
         assert "<file_tree>" in captured_prompts[0]
         assert "a.md" in captured_prompts[0]
         assert stats()["entries"] == 0
+
+
+class TestBackendPathGuardWiring:
+    """P1：agent 工厂默认挂 ReportFilesystemBackend，未命中时复用 index 给提示。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        clear_report_caches()
+        yield
+        clear_report_caches()
+
+    @pytest.fixture
+    def captured_backends(self, monkeypatch: pytest.MonkeyPatch) -> list[FilesystemBackend]:
+        backends: list[FilesystemBackend] = []
+
+        class _FakeAgent:
+            pass
+
+        def fake_create_deep_agent(**kwargs):
+            backends.append(kwargs["backend"])
+            return _FakeAgent()
+
+        monkeypatch.setattr(fetch_deepagents, "create_deep_agent", fake_create_deep_agent)
+        monkeypatch.setattr(fetch_deepagents, "create_chat_model", lambda component: object())
+        return backends
+
+    def test_uses_report_filesystem_backend_by_default(
+        self, tmp_path, captured_backends: list[FilesystemBackend]
+    ) -> None:
+        (tmp_path / "第一节_公司简介.md").write_text("公司简介\n", encoding="utf-8")
+
+        create_report_fetch_agent(tmp_path)
+
+        [backend] = captured_backends
+        assert isinstance(backend, ReportFilesystemBackend)
+        # backend 与 index 绑定：未命中路径直接拿到真实候选，无需重新扫描目录
+        result = backend.read("/缺章节/第一节_公司简介情况.md")
+        assert result.error is not None
+        assert "可能的真实路径（请直接使用其一）" in result.error
+        assert "- /第一节_公司简介.md" in result.error
+
+    def test_fallback_backend_has_no_path_hints(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, captured_backends: list[FilesystemBackend]
+    ) -> None:
+        (tmp_path / "a.md").write_text("x", encoding="utf-8")
+
+        def boom(root):
+            raise RuntimeError("index build failed")
+
+        monkeypatch.setattr(report_cache, "build_report_index", boom)
+
+        create_report_fetch_agent(tmp_path)
+
+        [backend] = captured_backends
+        assert isinstance(backend, FilesystemBackend)
+        assert not isinstance(backend, ReportFilesystemBackend)

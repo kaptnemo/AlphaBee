@@ -45,6 +45,20 @@ class TestBuildFetchPrompt:
         assert "本报告年度" in prompt
         assert "None" not in prompt
 
+    def test_declares_path_convention(self) -> None:
+        prompt = build_fetch_prompt("某公司_2025_年年度报告", "q")
+        assert "## 路径约定" in prompt
+        assert "只能使用 Grep/Glob 返回的路径" in prompt
+        assert "不要" in prompt and "自行拼接文件名" in prompt
+        assert "可能的真实路径（请直接使用其一）" in prompt
+        assert "必须直接使用其中一条" in prompt
+        assert "禁止继续猜测路径" in prompt
+
+    def test_requires_full_relative_path_citation(self) -> None:
+        prompt = build_fetch_prompt("某公司_2025_年年度报告", "q")
+        assert "使用**完整相对路径**" in prompt
+        assert "不要只写文件名" in prompt
+
 
 class TestBuildFileTree:
     def test_renders_indented_tree(self, tmp_path) -> None:
@@ -141,6 +155,11 @@ class TestBuildFetchPromptWithIndex:
         # 既有约束语义保留
         assert "不要" in prompt and "目录遍历" in prompt
         assert "Grep" in prompt and "Read" in prompt and "Glob" in prompt
+        # §7.3 / §8.3：路径约定与完整相对路径引用
+        assert "## 路径约定" in prompt
+        assert "只能使用 Grep/Glob 返回的路径" in prompt
+        assert "必须直接使用其中一条" in prompt
+        assert "使用**完整相对路径**" in prompt
 
     def test_prompt_renders_chapter_map_for_large_report(self, tmp_path) -> None:
         for i in range(85):
