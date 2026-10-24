@@ -388,13 +388,21 @@ def test_pick_report_links_filters_summary_and_missing_url():
             {"title": "无链接", "download_url": None},
         ],
     }
-    with pytest.raises(ValueError, match="未获取到"):
-        pipeline.pick_report_links(links)
+    assert pipeline.pick_report_links(links) == []
+
+
+def test_pick_report_links_filters_english_version():
+    links = {
+        "reports": [
+            {"title": "2024年年度报告（英文版）", "download_url": "u1"},
+            {"title": "2024年年度报告", "download_url": "u2"},
+        ],
+    }
+    assert [r["title"] for r in pipeline.pick_report_links(links)] == ["2024年年度报告"]
 
 
 def test_pick_report_links_empty():
-    with pytest.raises(ValueError, match="未获取到"):
-        pipeline.pick_report_links({"reports": []})
+    assert pipeline.pick_report_links({"reports": []}) == []
 
 
 async def test_run_report_pipeline_with_link_discovery(tmp_path, monkeypatch):
