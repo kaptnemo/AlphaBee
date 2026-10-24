@@ -34,6 +34,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa
 from langchain_core.runnables.config import RunnableConfig  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
 
+from alphabee.financial_report import report_cache  # noqa: E402
 from alphabee.financial_report.fetch import build_fetch_prompt  # noqa: E402
 from alphabee.financial_report.report_cache import (  # noqa: E402
     ReportIndex,
@@ -132,10 +133,11 @@ def create_report_fetch_agent(
             index = None
 
     system_prompt = build_fetch_prompt(report_path.name, "", report_dir=report_path, index=index)
-    if index is not None:
+    # index 仍用于 prompt；path_guard_enabled=False 时只关掉 backend 的相似路径提示。
+    if index is not None and report_cache.REPORT_CACHE_CONFIG.path_guard_enabled:
         backend: FilesystemBackend = ReportFilesystemBackend(report_path, index)
     else:
-        # fail-open：没有 index 时退回普通虚拟 backend（无路径提示）。
+        # 关闭守卫或 index fail-open：退回普通虚拟 backend（无路径提示）。
         backend = FilesystemBackend(root_dir=str(report_path.resolve()), virtual_mode=True)
     return create_deep_agent(
         model=create_chat_model("financial_report"),

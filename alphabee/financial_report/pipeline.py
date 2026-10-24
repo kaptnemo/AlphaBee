@@ -45,7 +45,7 @@
 - OCR：``outputs/pdf_ocr/tasks/<task_id>/<file>.cleaned.md``（+ manifest）
 - 解析：``reports/<报告名>/``（章节目录树 + `.report_manifest.json`），
   完整全文副本单独写到同构的 ``reports_full/<报告名>/<报告名>.md``
-- 问答：基于报告目录构建受限 deep agent（``create_report_fetch_agent``）检索回答
+- 问答：基于报告目录构建受限 deep agent（``aget_report_agent``，带缓存）检索回答
 """
 
 from __future__ import annotations
@@ -60,11 +60,11 @@ from typing import Any
 import requests
 import typer
 
-from alphabee.financial_report.fetch_deepagents import create_report_fetch_agent
 from alphabee.financial_report.links import (
     get_financial_report_links,
     get_research_report_links,
 )
+from alphabee.financial_report.report_cache import aget_report_agent
 from alphabee.financial_report.report_parser import reports_root, write_markdown_report_folder
 from alphabee.loader.pdf_ocr_loader import DEFAULT_OCR_SERVER_URL
 from alphabee.mcp.pdf_ocr_server import (
@@ -338,7 +338,7 @@ async def answer_report_question(
     if not report_path.is_dir():
         raise FileNotFoundError(f"Report directory not found: {report_path}")
 
-    agent = create_report_fetch_agent(report_path)
+    agent = await aget_report_agent(report_path)
     result = await agent.ainvoke(
         {"messages": [HumanMessage(content=question)]},
         config={"recursion_limit": max_steps},

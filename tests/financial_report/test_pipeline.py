@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from alphabee.financial_report import pipeline
+from alphabee.financial_report import pipeline, report_cache
 from alphabee.financial_report.report_parser import write_markdown_report_folder
 
 SAMPLE_MARKDOWN = """# 示例公司：2026年一季报
@@ -298,8 +298,8 @@ async def test_answer_report_question_extracts_final_text(monkeypatch):
         async def ainvoke(self, payload, config=None):
             return {"messages": self.messages}
 
-    # create_report_fetch_agent 是同步工厂，mock 也必须是同步函数
-    def make_fake_agent(report_dir, **kwargs):
+    # answer_report_question 走异步缓存入口 aget_report_agent，mock 也必须是协程
+    async def make_fake_agent(report_dir, **kwargs):
         return FakeAgent(
             [
                 HumanMessage(content="q"),
@@ -308,7 +308,7 @@ async def test_answer_report_question_extracts_final_text(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr(pipeline, "create_report_fetch_agent", make_fake_agent)
+    monkeypatch.setattr(pipeline, "aget_report_agent", make_fake_agent)
     report_dir = Path(__import__("tempfile").mkdtemp())
     answer = await pipeline.answer_report_question(report_dir, "净利润？")
     assert answer == "最终答案：净利润 200 亿元"
@@ -321,10 +321,10 @@ async def test_answer_report_question_no_answer(monkeypatch, tmp_path):
         async def ainvoke(self, payload, config=None):
             return {"messages": [HumanMessage(content="q"), AIMessage(content="")]}
 
-    def make_fake_agent(report_dir, **kwargs):
+    async def make_fake_agent(report_dir, **kwargs):
         return FakeAgent()
 
-    monkeypatch.setattr(pipeline, "create_report_fetch_agent", make_fake_agent)
+    monkeypatch.setattr(pipeline, "aget_report_agent", make_fake_agent)
     answer = await pipeline.answer_report_question(tmp_path, "问题")
     assert answer.startswith("AGENT_NO_ANSWER")
 
@@ -332,6 +332,11 @@ async def test_answer_report_question_no_answer(monkeypatch, tmp_path):
 async def test_answer_report_question_missing_dir(tmp_path):
     with pytest.raises(FileNotFoundError):
         await pipeline.answer_report_question(tmp_path / "不存在", "问题")
+
+
+def test_answer_report_question_is_wired_to_agent_cache() -> None:
+    """接线守卫：问答入口必须复用 report_cache 的异步缓存入口。"""
+    assert pipeline.aget_report_agent is report_cache.aget_report_agent
 
 
 # ── 获取下载链接（links 流程） ─────────────────────────────────────────────

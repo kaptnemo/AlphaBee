@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import os
 import posixpath
@@ -27,8 +28,12 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:  # pragma: no cover - 仅类型检查，运行时保持模块顶层轻量
+    from langgraph.graph.state import CompiledStateGraph
 
 logger = structlog.get_logger(__name__)
 
@@ -37,8 +42,17 @@ REPORT_MANIFEST_NAME = ".report_manifest.json"
 #: ``difflib.get_close_matches`` 的相似度门槛（设计 §7.2 建议约 0.5）。
 SUGGEST_PATH_CUTOFF = 0.5
 
+#: agent 缓存 key 的 prompt 结构版本：``build_fetch_prompt`` 结构变更时 +1。
+FETCH_PROMPT_VERSION = 1
+
+#: agent 缓存 key 的模型组件名，与 ``create_chat_model("financial_report")`` 对齐。
+AGENT_MODEL_COMPONENT = "financial_report"
+
 # index cache key: (root.resolve() 的字符串, version)
 _IndexKey = tuple[str, str]
+
+# agent cache key: (root.resolve() 的字符串, version, prompt_version, model component)
+_AgentKey = tuple[str, str, int, str]
 
 
 @dataclass(frozen=True)
@@ -66,7 +80,11 @@ class ReportIndex:
 
 @dataclass(frozen=True)
 class ReportCacheConfig:
-    """缓存配置（§3.4）。本期只用 index 相关字段，agent 字段留给 P2。"""
+    """缓存配置（§3.4）。未接 ``config.yaml``，测试可 monkeypatch 模块级实例。
+
+    四个开关互相独立（§5.4）：``enabled`` 是总开关；``index_enabled`` / ``agent_enabled``
+    分别控制两级缓存；``path_guard_enabled`` 控制 backend 是否挂相似路径提示。
+    """
 
     enabled: bool = True
     index_enabled: bool = True
@@ -106,8 +124,18 @@ class _CacheStats:
 _entries: OrderedDict[_IndexKey, tuple[float, ReportIndex]] = OrderedDict()
 #: 同 key single-flight：等待中的线程挂在同一个 threading.Event 上。
 _inflight: dict[_IndexKey, threading.Event] = {}
+#: agent 缓存：key -> (expire_at, compiled graph)；同样用 OrderedDict 维护 LRU。
+_agent_entries: OrderedDict[_AgentKey, tuple[float, Any]] = OrderedDict()
+#: agent 同 key single-flight：等待中的协程共享同一个 ``asyncio.Task``。
+_agent_inflight: dict[_AgentKey, asyncio.Task[Any]] = {}
+#: 单把 threading 锁保护两级缓存的 dict/计数读写：临界区内没有任何 ``await``
+#: （只是一小段内存操作），因此 async 路径持有它不会阻塞事件循环；也规避了
+#: module 级 ``asyncio.Lock`` 跨事件循环复用时绑定旧 loop 的问题。
 _lock = threading.Lock()
 _stats = _CacheStats()
+_agent_stats = _CacheStats()
+#: clear 世代：clear 之后旧 in-flight 构建不再回填缓存（避免跨测试污染）。
+_generation = 0
 
 
 def report_version(root: str | Path) -> str:
@@ -277,12 +305,123 @@ def get_report_index(root: str | Path) -> ReportIndex:
         return built
 
 
+async def aget_report_agent(root: str | Path) -> CompiledStateGraph[Any, Any, Any, Any]:
+    """异步 agent 缓存入口（设计 §3.3 / §3.5 / §4 / §5 / §6）。
+
+    agent key 为
+    ``(str(root.resolve()), version, FETCH_PROMPT_VERSION, "financial_report")``：
+    报告重写 → version 变化 → 新 key；prompt 结构或模型组件变化 → 新 key。
+
+    行为：
+
+    - 命中缓存直接返回同一个 compiled graph；
+    - 未命中时同 key 只有一个协程真正构建（``asyncio.Task`` 单飞），其余等待
+      同一结果；构建在 ``asyncio.to_thread`` 中执行，不在事件循环里跑同步重活；
+    - TTL（``agent_ttl_s``）+ LRU（``max_agent_entries``）与 index 缓存一致；
+    - 失败 fail-open（§4.4）：``FileNotFoundError`` 原样抛出（报告目录不存在）；
+      其他异常记录 warning 并回退同步工厂 ``create_report_fetch_agent(root)``，
+      回退产物不进缓存、不缓存负结果；
+    - ``enabled=False`` 或 ``agent_enabled=False`` 时不读写 agent 缓存，每次新建
+      （此时 index 是否复用由 index 开关决定）。
+
+    Args:
+        root: 报告目录（``report_parser.write_markdown_report_folder`` 的输出）。
+
+    Returns:
+        ``CompiledStateGraph``（可被多个并发 ``ainvoke`` 复用，每次调用使用各自的
+        messages，不共享对话历史）。
+
+    Raises:
+        FileNotFoundError: 报告目录不存在。
+    """
+    root_path = Path(root)
+    if not root_path.is_dir():
+        raise FileNotFoundError(f"Report directory not found: {root_path}")
+
+    config = REPORT_CACHE_CONFIG
+    if not (config.enabled and config.agent_enabled):
+        # 降级开关：不读写 agent 缓存，每次新建（index 仍按自己的开关复用）。
+        return await _build_agent_direct(root_path)
+
+    resolved_root = str(root_path.resolve())
+    version = report_version(root_path)
+    key: _AgentKey = (resolved_root, version, FETCH_PROMPT_VERSION, AGENT_MODEL_COMPONENT)
+    loop = asyncio.get_running_loop()
+
+    hit_agent: CompiledStateGraph[Any, Any, Any, Any] | None = None
+    task: asyncio.Task[CompiledStateGraph[Any, Any, Any, Any]] | None = None
+
+    with _lock:
+        now = time.monotonic()
+        _purge_expired_agent_locked(now)
+        cached = _agent_entries.get(key)
+        owner = False
+        if cached is not None and cached[0] > now:
+            _agent_entries.move_to_end(key)
+            _agent_stats.hits += 1
+            entries = len(_agent_entries)
+            hit_agent = cached[1]
+        else:
+            task = _agent_inflight.get(key)
+            if task is not None and task.get_loop() is not loop:
+                # 不跨事件循环等待（多次 asyncio.run / 每个测试一个 loop）：
+                # 旧 loop 的 in-flight 任务只让它自己清理，不在这里 await。
+                _agent_inflight.pop(key, None)
+                task = None
+            if task is None:
+                task = loop.create_task(_build_agent_for_cache(root_path, key, _generation))
+                _agent_inflight[key] = task
+                task.add_done_callback(_make_agent_inflight_cleanup(key))
+                _agent_stats.misses += 1
+                _agent_stats.builds += 1
+                owner = True
+            entries = len(_agent_entries)
+
+    if hit_agent is not None:
+        _log_agent_event(
+            result="hit",
+            root=resolved_root,
+            version=version,
+            duration_ms=0.0,
+            entries=entries,
+        )
+        return hit_agent
+
+    if owner:
+        _log_agent_event(
+            result="miss",
+            root=resolved_root,
+            version=version,
+            duration_ms=0.0,
+            entries=entries,
+        )
+
+    # 命中分支已 return；走到这里一定是 single-flight 的构建任务（新建或复用）。
+    # 显式断言既表达不变式，也让静态检查把 task 从 Optional 窄化。
+    assert task is not None
+
+    try:
+        return await asyncio.shield(task)
+    except FileNotFoundError:
+        # 报告目录不存在：保持原有异常语义，不吞、不回退。
+        raise
+    except Exception:
+        # 构建体已记录 result="error"（含耗时与栈）；这里只做 fail-open 回退，
+        # 回退产物不进缓存，保证查询仍可用（§4.4）。
+        return await _fallback_agent(root_path, resolved_root, version)
+
+
 def invalidate_report_caches(root: str | Path | None = None) -> None:
-    """失效 index 缓存（本期只清 index；agent 缓存 P2 再扩展）。
+    """失效 index + agent 缓存（§6.1）。
+
+    除了删除已完成的缓存条目，若该 root 存在在途的 agent 构建，这里会递增一轮
+    ``_generation``，使该构建完成后的写回被丢弃（与 :func:`clear_report_caches`
+    一致的不回填语义）；在途构建本身仍会正常返回给调用方，只是不再进缓存。
 
     Args:
         root: 指定报告目录时只清该 root 的全部版本；``None`` 时清空全部。
     """
+    global _generation
     resolved_root = str(Path(root).resolve()) if root is not None else None
     with _lock:
         stale_keys = [key for key in _entries if resolved_root is None or key[0] == resolved_root]
@@ -290,6 +429,20 @@ def invalidate_report_caches(root: str | Path | None = None) -> None:
             _entries.pop(key, None)
         _wake_inflight_locked(resolved_root)
         entries = len(_entries)
+
+        stale_agent_keys = [
+            agent_key for agent_key in _agent_entries if resolved_root is None or agent_key[0] == resolved_root
+        ]
+        for agent_key in stale_agent_keys:
+            _agent_entries.pop(agent_key, None)
+        agent_entries = len(_agent_entries)
+        stale_agent_inflight = [
+            agent_key for agent_key in _agent_inflight if resolved_root is None or agent_key[0] == resolved_root
+        ]
+        if stale_agent_keys or stale_agent_inflight:
+            # 有东西需要失效时才推进世代：避免不相关的在途构建被无谓丢弃。
+            _generation += 1
+
     logger.info(
         "report_cache",
         kind="index",
@@ -297,22 +450,64 @@ def invalidate_report_caches(root: str | Path | None = None) -> None:
         root=resolved_root,
         entries=entries,
     )
+    if stale_agent_keys or stale_agent_inflight:
+        logger.info(
+            "report_cache",
+            kind="agent",
+            result="invalidate",
+            root=resolved_root,
+            entries=agent_entries,
+        )
 
 
 def clear_report_caches() -> None:
-    """清空全部缓存与计数器（测试专用）。"""
-    global _stats
+    """清空 index + agent 缓存与计数器（测试专用）。
+
+    同时递增 ``_generation``：clear 之前启动、clear 之后才完成的 in-flight 构建
+    不会把结果回填进缓存；尚未完成的 agent 任务会被取消，避免跨事件循环残留。
+    """
+    global _generation, _stats, _agent_stats
     with _lock:
         _entries.clear()
         _wake_inflight_locked(None)
+        pending_agent_tasks = [task for task in _agent_inflight.values() if not task.done()]
+        _agent_inflight.clear()
+        _agent_entries.clear()
         _stats = _CacheStats()
+        _agent_stats = _CacheStats()
+        _generation += 1
+    try:
+        current_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    for task in pending_agent_tasks:
+        # 只在本 loop 里直接 cancel；其他 loop 的任务交给它自己的 loop 清理，
+        # 避免在已关闭/未运行 loop 上操作任务。
+        task_loop = task.get_loop()
+        if task_loop is current_loop:
+            task.cancel()
+            continue
+        if task_loop.is_closed():
+            continue
+        try:
+            task_loop.call_soon_threadsafe(task.cancel)
+        except RuntimeError:  # pragma: no cover - loop 在检查后被关闭的竞态
+            continue
 
 
-def stats() -> dict[str, int]:
-    """返回 ``hits/misses/builds/evictions/entries`` 快照（先剔除过期项）。"""
+def stats() -> dict[str, Any]:
+    """返回 index 与 agent 两级缓存的计数器快照（先剔除过期项）。
+
+    顶层键（``hits/misses/builds/evictions/entries``）保持为 index 缓存以兼容既有
+    调用；``index`` / ``agent`` 两个子字典分别给出两级缓存的明细。
+    """
     with _lock:
-        _purge_expired_locked(time.monotonic())
-        return _stats.snapshot(len(_entries))
+        now = time.monotonic()
+        _purge_expired_locked(now)
+        _purge_expired_agent_locked(now)
+        index_snapshot = _stats.snapshot(len(_entries))
+        agent_snapshot = _agent_stats.snapshot(len(_agent_entries))
+    return {**index_snapshot, "index": index_snapshot, "agent": agent_snapshot}
 
 
 def suggest_paths(index: ReportIndex, requested: str, *, n: int = 5) -> list[str]:
@@ -435,6 +630,158 @@ def _wake_inflight_locked(root: str | None) -> None:
         event = _inflight.pop(key, None)
         if event is not None:
             event.set()
+
+
+# ── agent 缓存内部实现 ─────────────────────────────────────────────────────
+
+
+def _purge_expired_agent_locked(now: float) -> None:
+    """剔除过期的 agent 缓存条目（调用方必须已持锁）。"""
+    expired = [key for key, (expire_at, _) in _agent_entries.items() if expire_at <= now]
+    for key in expired:
+        _agent_entries.pop(key, None)
+
+
+def _evict_agent_locked(max_entries: int) -> list[_AgentKey]:
+    """agent 缓存的 LRU 淘汰（调用方必须已持锁）。"""
+    limit = max(1, max_entries)
+    evicted: list[_AgentKey] = []
+    while len(_agent_entries) > limit:
+        key, _ = _agent_entries.popitem(last=False)
+        _agent_stats.evictions += 1
+        evicted.append(key)
+    return evicted
+
+
+def _agent_entries_count() -> int:
+    with _lock:
+        _purge_expired_agent_locked(time.monotonic())
+        return len(_agent_entries)
+
+
+def _make_agent_inflight_cleanup(key: _AgentKey) -> Any:
+    """构造同 key in-flight 任务的完成回调（清理登记、吞掉未取回的异常告警）。"""
+
+    def _cleanup(task: asyncio.Task[Any]) -> None:
+        with _lock:
+            if _agent_inflight.get(key) is task:
+                _agent_inflight.pop(key, None)
+        if not task.cancelled():
+            # 标记异常已取回：clear/取消场景下无人 await 时也不会刷警告。
+            task.exception()
+
+    return _cleanup
+
+
+async def _build_agent_for_cache(
+    root_path: Path, key: _AgentKey, generation: int
+) -> CompiledStateGraph[Any, Any, Any, Any]:
+    """single-flight 的构建体：线程池中建 index + compiled graph，再写回缓存。"""
+    # 延迟 import：report_cache 顶层必须保持轻量（fetch_deepagents 依赖本模块）。
+    from alphabee.financial_report.fetch_deepagents import create_report_fetch_agent
+
+    started = time.perf_counter()
+    try:
+        index = await asyncio.to_thread(get_report_index, root_path)
+        agent = await asyncio.to_thread(create_report_fetch_agent, root_path, index=index)
+    except BaseException:
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        logger.warning(
+            "report_cache",
+            kind="agent",
+            result="error",
+            root=key[0],
+            version=key[1],
+            duration_ms=round(duration_ms, 3),
+            exc_info=True,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    config = REPORT_CACHE_CONFIG
+    with _lock:
+        if generation == _generation:
+            _agent_entries[key] = (time.monotonic() + config.agent_ttl_s, agent)
+            _agent_entries.move_to_end(key)
+            evicted = _evict_agent_locked(config.max_agent_entries)
+        else:
+            # clear_report_caches 已发生：不回填，避免污染新一轮缓存。
+            evicted = []
+        entries = len(_agent_entries)
+
+    _log_agent_event(
+        result="build",
+        root=key[0],
+        version=key[1],
+        duration_ms=duration_ms,
+        entries=entries,
+    )
+    for evicted_root, evicted_version, _, _ in evicted:
+        logger.info(
+            "report_cache",
+            kind="agent",
+            result="evict",
+            root=evicted_root,
+            version=evicted_version,
+            entries=entries,
+        )
+    return agent
+
+
+async def _build_agent_direct(root_path: Path) -> CompiledStateGraph[Any, Any, Any, Any]:
+    """开关关闭时直接构建：不经 agent 缓存（index 是否复用由 index 开关决定）。"""
+    from alphabee.financial_report.fetch_deepagents import create_report_fetch_agent
+
+    started = time.perf_counter()
+    agent = await asyncio.to_thread(create_report_fetch_agent, root_path)
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    _log_agent_event(
+        result="build",
+        root=str(root_path.resolve()),
+        version=report_version(root_path),
+        duration_ms=duration_ms,
+        entries=_agent_entries_count(),
+    )
+    return agent
+
+
+async def _fallback_agent(root_path: Path, resolved_root: str, version: str) -> CompiledStateGraph[Any, Any, Any, Any]:
+    """缓存构建失败时的 fail-open 回退：同步工厂现建（不缓存，§4.4）。"""
+    from alphabee.financial_report.fetch_deepagents import create_report_fetch_agent
+
+    started = time.perf_counter()
+    agent = await asyncio.to_thread(create_report_fetch_agent, root_path)
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    logger.warning(
+        "report_cache",
+        kind="agent",
+        result="fallback",
+        root=resolved_root,
+        version=version,
+        duration_ms=round(duration_ms, 3),
+        entries=_agent_entries_count(),
+    )
+    return agent
+
+
+def _log_agent_event(
+    *,
+    result: str,
+    root: str,
+    version: str,
+    duration_ms: float,
+    entries: int,
+) -> None:
+    """agent 缓存观测字段（§6.4 / §13.3）：不记录报告内容或密钥。"""
+    logger.info(
+        "report_cache",
+        kind="agent",
+        result=result,
+        root=root,
+        version=version,
+        duration_ms=round(duration_ms, 3),
+        entries=entries,
+    )
 
 
 def _render_compact_tree(rel_files: list[str], rel_dirs: list[str]) -> str:

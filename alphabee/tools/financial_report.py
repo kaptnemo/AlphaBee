@@ -46,7 +46,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from alphabee import PROJECT_ROOT
-from alphabee.financial_report.fetch_deepagents import create_report_fetch_agent
+from alphabee.financial_report.report_cache import aget_report_agent
 from alphabee.tools.cache import SyncTTLCache
 
 REPORT_DIR = PROJECT_ROOT / "reports"  # Default directory for financial reports
@@ -499,7 +499,8 @@ async def query_financial_report(request: FinancialReportRequest) -> str:
     )
     if not root_path:
         return build_not_found_reason(request)
-    agent = create_report_fetch_agent(root_path)
+    # agent 走 L2 缓存（同 root/version 只编译一次），不可用时内部 fail-open 回退新建。
+    agent = await aget_report_agent(root_path)
     result = await agent.ainvoke(
         {"messages": [HumanMessage(content=request.query)]},
         config={"recursion_limit": 40},

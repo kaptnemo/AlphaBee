@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from deepagents.backends import FilesystemBackend
 from langchain_core.messages import AIMessage
@@ -183,3 +185,122 @@ class TestBackendPathGuardWiring:
         [backend] = captured_backends
         assert isinstance(backend, FilesystemBackend)
         assert not isinstance(backend, ReportFilesystemBackend)
+
+
+class TestBackendInstanceWiring:
+    """守卫覆盖 subagent 的机制：工厂只建一个 backend 实例并把它交给 create_deep_agent。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        clear_report_caches()
+        yield
+        clear_report_caches()
+
+    def test_single_backend_instance_is_passed_to_create_deep_agent(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        created: list[ReportFilesystemBackend] = []
+
+        class RecordingBackend(ReportFilesystemBackend):
+            def __init__(self, root_dir, index) -> None:
+                super().__init__(root_dir, index)
+                created.append(self)
+
+        passed_backends: list[FilesystemBackend] = []
+
+        class _FakeAgent:
+            pass
+
+        def fake_create_deep_agent(**kwargs):
+            passed_backends.append(kwargs["backend"])
+            return _FakeAgent()
+
+        monkeypatch.setattr(fetch_deepagents, "ReportFilesystemBackend", RecordingBackend)
+        monkeypatch.setattr(fetch_deepagents, "create_deep_agent", fake_create_deep_agent)
+        monkeypatch.setattr(fetch_deepagents, "create_chat_model", lambda component: object())
+        (tmp_path / "第一节_公司简介.md").write_text("公司简介\n", encoding="utf-8")
+
+        create_report_fetch_agent(tmp_path)
+
+        # 只创建一个守卫 backend，并且原样交给 create_deep_agent（GP subagent 与主 agent 共用）
+        assert len(created) == 1
+        assert len(passed_backends) == 1
+        assert passed_backends[0] is created[0]
+
+    def test_passed_backend_guards_async_reads(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """子 agent 的工具走 BackendProtocol.aread（asyncio.to_thread(read)）。"""
+        captured: list[FilesystemBackend] = []
+
+        class _FakeAgent:
+            pass
+
+        def fake_create_deep_agent(**kwargs):
+            captured.append(kwargs["backend"])
+            return _FakeAgent()
+
+        monkeypatch.setattr(fetch_deepagents, "create_deep_agent", fake_create_deep_agent)
+        monkeypatch.setattr(fetch_deepagents, "create_chat_model", lambda component: object())
+        (tmp_path / "第一节_公司简介.md").write_text("公司简介\n", encoding="utf-8")
+        create_report_fetch_agent(tmp_path)
+
+        [backend] = captured
+        assert isinstance(backend, ReportFilesystemBackend)
+        result = asyncio.run(backend.aread("/缺章节/第一节_公司简介情况.md"))
+        assert result.error is not None
+        assert "- /第一节_公司简介.md" in result.error
+
+
+class TestPathGuardSwitch:
+    """§3.4/§5.4：path_guard_enabled 单独控制 backend 守卫，index/prompt 不受影响。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        clear_report_caches()
+        yield
+        clear_report_caches()
+
+    @pytest.fixture
+    def captured(self, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+        calls: list[dict] = []
+
+        class _FakeAgent:
+            pass
+
+        def fake_create_deep_agent(**kwargs):
+            calls.append(kwargs)
+            return _FakeAgent()
+
+        monkeypatch.setattr(fetch_deepagents, "create_deep_agent", fake_create_deep_agent)
+        monkeypatch.setattr(fetch_deepagents, "create_chat_model", lambda component: object())
+        return calls
+
+    def test_guard_enabled_uses_report_backend(self, tmp_path, captured: list[dict]) -> None:
+        (tmp_path / "a.md").write_text("x", encoding="utf-8")
+
+        create_report_fetch_agent(tmp_path)
+
+        [call] = captured
+        assert isinstance(call["backend"], ReportFilesystemBackend)
+        assert "<report_paths>" in call["system_prompt"]  # index 仍用于 prompt
+
+    def test_guard_disabled_falls_back_to_plain_backend(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, captured: list[dict]
+    ) -> None:
+        monkeypatch.setattr(
+            report_cache, "REPORT_CACHE_CONFIG", report_cache.ReportCacheConfig(path_guard_enabled=False)
+        )
+        (tmp_path / "a.md").write_text("x", encoding="utf-8")
+
+        create_report_fetch_agent(tmp_path)
+
+        [call] = captured
+        backend = call["backend"]
+        assert isinstance(backend, FilesystemBackend)
+        assert not isinstance(backend, ReportFilesystemBackend)
+        # 关掉的只是路径提示：index 仍用于压缩目录树 prompt
+        assert "<report_paths>" in call["system_prompt"]
+        assert "- a.md" in call["system_prompt"]
+        # 普通 backend 未命中时不附加候选
+        result = backend.read("/缺章节/完全不存在.md")
+        assert result.error is not None
+        assert "可能的真实路径" not in result.error
