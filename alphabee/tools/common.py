@@ -284,6 +284,23 @@ def extract_symbols_from_query(query: str) -> dict[str, str]:
     return {name: code for name, code in company_map.items() if code in symbols}
 
 
+def symbols_to_names(symbols: list[str]) -> dict[str, str]:
+    """将股票代码列表转换为公司名称映射。"""
+    all_stocks_path = Path(__file__).resolve().parents[1] / "static" / "all_stocks.csv"
+
+    if all_stocks_path.exists():
+        import pandas as pd
+
+        df = pd.read_csv(all_stocks_path)
+        code_to_name = dict(zip(df["stock_code"], df["company_name"]))
+    else:
+        raise FileNotFoundError(
+            f"Stock list not found at {all_stocks_path}. Please run the tushare collector to generate it."
+        )
+
+    return {code: code_to_name.get(code, "Unknown") for code in symbols}
+
+
 if __name__ == "__main__":
     # import asyncio
 

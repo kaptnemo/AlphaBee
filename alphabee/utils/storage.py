@@ -6,6 +6,7 @@ from pathlib import Path
 
 from alphabee import PROJECT_ROOT
 from alphabee.config import settings
+from alphabee.tools.common import symbols_to_names
 
 
 def get_data_root() -> Path:
@@ -20,7 +21,10 @@ def get_data_root() -> Path:
 def normalize_symbol(symbol: str | None) -> str:
     """Normalize a symbol for filesystem use."""
     value = (symbol or "unknown").strip()
-    return value.replace("/", "_").replace("\\", "_") or "unknown"
+    # 通过code 获取标的名称
+    name = symbols_to_names([value]).get(value, value)
+
+    return name.replace("/", "_").replace("\\", "_") or "unknown"
 
 
 def get_symbol_data_dir(*parts: str, symbol: str | None = None) -> Path:
