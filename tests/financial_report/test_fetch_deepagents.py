@@ -167,7 +167,7 @@ class TestBackendPathGuardWiring:
         # backend 与 index 绑定：未命中路径直接拿到真实候选，无需重新扫描目录
         result = backend.read("/缺章节/第一节_公司简介情况.md")
         assert result.error is not None
-        assert "可能的真实路径（请直接使用其一）" in result.error
+        assert "可能的真实路径" in result.error
         assert "- /第一节_公司简介.md" in result.error
 
     def test_fallback_backend_has_no_path_hints(

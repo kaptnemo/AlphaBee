@@ -48,8 +48,8 @@ logger = structlog.get_logger(__name__)
 #: read_file 未命中时最多给出的候选路径数（设计 §7.2）。
 MAX_PATH_HINTS = 5
 
-#: 未命中提示的固定前缀：prompt 中要求模型看到它后直接使用其中一条。
-PATH_HINTS_HEADER = "可能的真实路径（请直接使用其一）："
+#: 未命中提示的固定前缀：prompt 中要求模型优先使用最匹配的一条，不匹配则改 grep。
+PATH_HINTS_HEADER = "可能的真实路径（优先使用最匹配的一条；不匹配请改用 grep）："
 
 
 class ReportFilesystemBackend(FilesystemBackend):

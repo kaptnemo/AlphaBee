@@ -114,6 +114,20 @@ class TestSuggestPaths:
         assert hints
         assert all(hint.startswith("/企业精神/五、_合并财务报表主要项目注释－续/") for hint in hints)
 
+    def test_directory_mistaken_as_markdown_file_lists_inner_files(self, report_index: ReportIndex) -> None:
+        # 用户日志里的真实形态：``39、_长期借款.md`` 实际是目录，内容在 ``（1）_长期借款分类.md``
+        hints = suggest_paths(report_index, "企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本.md")
+        assert hints
+        assert hints[0] == (
+            "/企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本/(1)_营业收入和营业成本情况.md"
+        )
+        assert all(hint.startswith("/企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本/") for hint in hints)
+
+    def test_semantically_unrelated_siblings_are_not_suggested(self, report_index: ReportIndex) -> None:
+        # 目录对但语义完全不同：不能把同目录的邻居当成候选（旧实现会返回一堆无关文件）
+        hints = suggest_paths(report_index, "企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本/长期借款.md")
+        assert hints == []
+
     def test_respects_n_and_dedupes(self, report_index: ReportIndex) -> None:
         hints = suggest_paths(report_index, "折旧方法.md", n=2)
         assert 0 < len(hints) <= 2
@@ -173,6 +187,14 @@ class TestReportFilesystemBackend:
         hints = _hints_from_error(result.error)
         assert hints
         assert any("(1)_营业收入和营业成本情况.md" in hint for hint in hints)
+
+    def test_read_directory_with_md_suffix_gets_inner_file_first(self, backend: ReportFilesystemBackend) -> None:
+        result = backend.read("/企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本.md")
+        assert result.error is not None
+        hints = _hints_from_error(result.error)
+        assert hints[0] == (
+            "/企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本/(1)_营业收入和营业成本情况.md"
+        )
 
     def test_hints_capped_at_five(self, report_root: Path) -> None:
         # 造 8 个高度相似的文件，验证提示条数上限

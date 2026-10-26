@@ -11,6 +11,7 @@ import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langgraph.errors import GraphRecursionError
 
 from alphabee.financial_report import fetch_deepagents, report_cache
 from alphabee.tools import financial_report as fr
@@ -186,3 +187,28 @@ async def test_query_financial_report_no_answer_keeps_reason_code(cached_report_
     )
 
     assert answer.startswith(fr.REASON_AGENT_NO_ANSWER)
+
+
+async def test_query_financial_report_recursion_returns_reason_code(cached_report_root, monkeypatch):
+    """触顶回传 AGENT_NO_ANSWER 文本（不抛异常），避免 ToolRetryMiddleware 重试。"""
+
+    captured: dict[str, object] = {}
+
+    class _RecursiveAgent:
+        async def ainvoke(self, payload, config=None):
+            captured["config"] = config
+            raise GraphRecursionError("Recursion limit reached")
+
+    async def fake_aget_report_agent(root, **kwargs):
+        return _RecursiveAgent()
+
+    monkeypatch.setattr(fr, "aget_report_agent", fake_aget_report_agent)
+
+    answer = await fr.query_financial_report(
+        FinancialReportRequest(company_name="宁德时代", year=2025, report_type="annual", query="q")
+    )
+
+    assert answer.startswith(fr.REASON_AGENT_NO_ANSWER)
+    assert "步上限" in answer
+    assert "不要以相同 query 重试" in answer
+    assert captured["config"] == {"recursion_limit": fr.FINANCIAL_REPORT_RECURSION_LIMIT}

@@ -42,7 +42,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import structlog
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field
 
 from alphabee import PROJECT_ROOT
@@ -72,6 +74,14 @@ REPORT_TYPE_MAPPING = {
 # 「非确定性失败（检索没答出来，可改问题重试）」。
 REASON_REPORT_NOT_FOUND = "REPORT_NOT_FOUND"
 REASON_AGENT_NO_ANSWER = "AGENT_NO_ANSWER"
+
+logger = structlog.get_logger(__name__)
+
+#: 财报检索 agent 的 LangGraph 步数上限。
+#: 40 步对“公司 + 报告期 + 单一指标”足够，但多主题 query 会频繁触顶；
+#: 60 步给复杂但仍可收敛的查询留出余量，触顶时由 query_financial_report 收口成
+#: AGENT_NO_ANSWER 文本，避免 ToolRetryMiddleware 对确定性失败重试 3 次。
+FINANCIAL_REPORT_RECURSION_LIMIT = 60
 
 # 根目录定位结果缓存：同一 (公司, 年份, 报告类型) 的定位结果复用，
 # 未命中的结果也会缓存（负缓存），避免 agent 对不存在的报告反复重试。
@@ -501,16 +511,32 @@ async def query_financial_report(request: FinancialReportRequest) -> str:
         return build_not_found_reason(request)
     # agent 走 L2 缓存（同 root/version 只编译一次），不可用时内部 fail-open 回退新建。
     agent = await aget_report_agent(root_path)
-    result = await agent.ainvoke(
-        {"messages": [HumanMessage(content=request.query)]},
-        config={"recursion_limit": 40},
-    )
+    try:
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content=request.query)]},
+            config={"recursion_limit": FINANCIAL_REPORT_RECURSION_LIMIT},
+        )
+    except GraphRecursionError:
+        # 确定性失败：返回原因码文本而不是抛异常，避免外层 ToolRetryMiddleware
+        # 用同一个宽泛 query 再跑 2 次（每次都会再次耗尽步数）。
+        logger.warning(
+            "financial_report_recursion_limit",
+            root=root_path,
+            limit=FINANCIAL_REPORT_RECURSION_LIMIT,
+            query_length=len(request.query),
+        )
+        return (
+            f"{REASON_AGENT_NO_ANSWER}: 报告检索代理达到 {FINANCIAL_REPORT_RECURSION_LIMIT} 步上限，"
+            "问题过于宽泛或包含多个主题。**不要以相同 query 重试**；"
+            "请拆分为多个单一主题的 query（每次只问一个指标/章节/事件），"
+            "或把问题收窄到「公司 + 报告期 + 具体指标/章节/事件」。"
+        )
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
             return msg.content if isinstance(msg.content, str) else ""
     return (
         f"{REASON_AGENT_NO_ANSWER}: 报告检索代理未产出最终文本答案"
-        "（可能问题过于宽泛、超出 40 步检索上限，或模型未收敛）。"
+        f"（可能问题过于宽泛、达到 {FINANCIAL_REPORT_RECURSION_LIMIT} 步上限，或模型未收敛）。"
         "建议将问题收窄到「公司 + 报告期 + 具体指标/章节/事件」，"
         "或将多个不相关问题拆分为多次调用后重试。"
     )

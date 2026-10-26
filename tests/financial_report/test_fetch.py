@@ -50,8 +50,8 @@ class TestBuildFetchPrompt:
         assert "## 路径约定" in prompt
         assert "只能使用 Grep/Glob 返回的路径" in prompt
         assert "不要" in prompt and "自行拼接文件名" in prompt
-        assert "可能的真实路径（请直接使用其一）" in prompt
-        assert "必须直接使用其中一条" in prompt
+        assert "可能的真实路径" in prompt
+        assert "优先使用与问题最匹配的一条" in prompt
         assert "禁止继续猜测路径" in prompt
 
     def test_requires_full_relative_path_citation(self) -> None:
@@ -158,7 +158,7 @@ class TestBuildFetchPromptWithIndex:
         # §7.3 / §8.3：路径约定与完整相对路径引用
         assert "## 路径约定" in prompt
         assert "只能使用 Grep/Glob 返回的路径" in prompt
-        assert "必须直接使用其中一条" in prompt
+        assert "优先使用与问题最匹配的一条" in prompt
         assert "使用**完整相对路径**" in prompt
 
     def test_prompt_renders_chapter_map_for_large_report(self, tmp_path) -> None:

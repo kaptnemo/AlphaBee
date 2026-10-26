@@ -23,6 +23,7 @@ import asyncio
 import difflib
 import os
 import posixpath
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -41,6 +42,20 @@ REPORT_MANIFEST_NAME = ".report_manifest.json"
 
 #: ``difflib.get_close_matches`` 的相似度门槛（设计 §7.2 建议约 0.5）。
 SUGGEST_PATH_CUTOFF = 0.5
+
+#: 文件名里常见的章节编号/前缀，用于“语义主干”比较：
+#: ``39、_长期借款`` / ``（1）_长期借款分类`` / ``第八节_财务报告`` → 去掉编号后再匹配。
+_NUMBER_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"[（(]\s*(?:\d+|[一二三四五六七八九十百]+)\s*[）)]"
+    r"|\d+\s*[、.．]"
+    r"|[一二三四五六七八九十百]+\s*[、.．]"
+    r"|第(?:\d+|[一二三四五六七八九十百]+)[节章]"
+    r")[\s_\-－—、.．]*"
+)
+
+#: 续篇后缀：``-续`` / ``_续`` / ``（续）``。
+_TRAILING_CONTINUATION_RE = re.compile(r"(?:[-_－—]\s*续|（续）|\(续\))$")
 
 #: agent 缓存 key 的 prompt 结构版本：``build_fetch_prompt`` 结构变更时 +1。
 FETCH_PROMPT_VERSION = 1
@@ -510,22 +525,34 @@ def stats() -> dict[str, Any]:
     return {**index_snapshot, "index": index_snapshot, "agent": agent_snapshot}
 
 
+def _semantic_stem(name: str) -> str:
+    """去掉章节编号/前缀/续篇后缀，得到用于匹配的“语义主干”。"""
+    stem = posixpath.splitext(name)[0]
+    stem = _NUMBER_PREFIX_RE.sub("", stem)
+    stem = _TRAILING_CONTINUATION_RE.sub("", stem)
+    return stem.strip(" _-－—、.．")
+
+
+def _files_under(index: ReportIndex, directory: str) -> list[str]:
+    """返回某个目录下的全部 markdown 相对路径（稳定排序由 index 保证）。"""
+    prefix = f"{directory}/"
+    return [rel_file for rel_file in index.rel_files if rel_file.startswith(prefix)]
+
+
 def suggest_paths(index: ReportIndex, requested: str, *, n: int = 5) -> list[str]:
     """基于 index 给出 ``requested`` 最可能对应的真实文件路径（设计 §7.2）。
 
-    算法顺序：
+    匹配顺序（分数从高到低）：
 
-    1. basename 精确匹配（忽略目录）：模型目录拼错、文件名正确的场景直接命中；
-       再做 basename 包含匹配（按 basename 相似度降序）：处理漏 ``(1)_`` 前缀、
-       多/少 ``-续`` 等规范化差异；
-    2. ``difflib.get_close_matches`` 在完整相对路径上做相似匹配
-       （``cutoff=SUGGEST_PATH_CUTOFF``）：处理拼错字符、整体路径相近；
-    3. 目录前缀过滤：请求本身是目录时先给该目录下的文件，并让同目录候选优先
-       （稳定排序）：目录对、文件名错时先给同目录的真实文件。
-
-    候选全部来自已有的 :class:`ReportIndex`，**不**重新扫描目录。返回路径统一
-    带前导 ``/``（与虚拟文件系统风格一致，可直接交给 ``read_file``），最多 ``n`` 条、
-    去重。
+    0. **请求本身是目录**（模型把章节目录误写成 ``xxx.md``）→ 直接列出该目录下
+       的文件。这是最常见的误读：``39、_长期借款.md`` 实际是目录
+       ``39、_长期借款/``，真实内容在 ``（1）_长期借款分类.md``。
+    1. 同名目录别名（父目录写错、章节目录名对）→ 列出该目录下的文件；
+    2. 精确 basename（目录可错、文件名对）；
+    3. 语义主干精确（去掉 ``39、_`` / ``（1）_`` / ``-续`` 后相等）；
+    4. 语义主干包含（如 ``长期借款`` → ``长期借款分类``）；
+    5. 原始 basename 包含（兜底）。
+    同目录候选加固定加成，保证“目录对、文件名错”优先于“文件名对、目录错”。
 
     Args:
         index: 报告目录索引。
@@ -539,57 +566,65 @@ def suggest_paths(index: ReportIndex, requested: str, *, n: int = 5) -> list[str
         return []
 
     requested_rel = _normalize_rel_path(requested)
+    if not requested_rel:
+        return []
+
     requested_dir = posixpath.dirname(requested_rel)
     requested_base = posixpath.basename(requested_rel)
+    requested_no_ext = posixpath.splitext(requested_rel)[0]
+    requested_core = _semantic_stem(requested_base)
 
-    ordered: list[str] = []
-    seen: set[str] = set()
+    # 0) 请求路径本身是目录（允许模型误写成 ``xxx.md``）：目录下的文件才是真候选。
+    exact_dir: str | None = None
+    if requested_rel in index.rel_dirs:
+        exact_dir = requested_rel
+    elif requested_no_ext != requested_rel and requested_no_ext in index.rel_dirs:
+        exact_dir = requested_no_ext
+    if exact_dir is not None:
+        return [f"/{rel_file}" for rel_file in _files_under(index, exact_dir)[:n]]
 
-    def add(rel_file: str) -> None:
-        if rel_file and rel_file not in seen:
-            seen.add(rel_file)
-            ordered.append(rel_file)
+    scores: dict[str, float] = {}
 
-    if requested_base:
-        # 1a) basename 精确匹配：目录可错，文件名对即可命中
-        for rel_file in index.rel_files:
-            if posixpath.basename(rel_file) == requested_base:
-                add(rel_file)
+    def add(rel_file: str, score: float) -> None:
+        if score > scores.get(rel_file, 0.0):
+            scores[rel_file] = score
 
-        # 1b) basename 包含匹配（如漏 (1)_ 前缀），按 basename 相似度降序
-        basename_scored: list[tuple[float, str]] = []
-        for rel_file in index.rel_files:
-            real_base = posixpath.basename(rel_file)
-            if real_base == requested_base:
-                continue
-            if requested_base in real_base or real_base in requested_base:
-                ratio = difflib.SequenceMatcher(None, requested_base, real_base).ratio()
-                basename_scored.append((ratio, rel_file))
-        basename_scored.sort(key=lambda item: item[0], reverse=True)
-        for _, rel_file in basename_scored:
-            add(rel_file)
+    # 1) 同名目录别名：父目录写错、但章节目录名对。
+    requested_dir_name = posixpath.basename(requested_no_ext)
+    for directory in index.rel_dirs:
+        dir_name = posixpath.basename(directory)
+        dir_core = _semantic_stem(dir_name)
+        if dir_name != requested_dir_name and not (requested_core and dir_core == requested_core):
+            continue
+        bonus = 30.0 if posixpath.dirname(directory) == requested_dir else 0.0
+        for rel_file in _files_under(index, directory):
+            add(rel_file, 160.0 + bonus)
 
-    # 2) 完整相对路径的相似匹配（拼错字符、漏 (1)_ 等前缀差异）
-    close_matches = difflib.get_close_matches(
-        requested_rel,
-        index.rel_files,
-        n=max(n * 4, n),
-        cutoff=SUGGEST_PATH_CUTOFF,
-    )
-    for rel_file in close_matches:
-        add(rel_file)
+    # 2) 文件级匹配。
+    for rel_file in index.rel_files:
+        base = posixpath.basename(rel_file)
+        core = _semantic_stem(base)
+        same_dir = posixpath.dirname(rel_file) == requested_dir
 
-    # 3a) 请求本身就是目录（read_file 误传目录）：先给该目录下的文件
-    if requested_rel and requested_rel in index.rel_dirs:
-        prefix = f"{requested_rel}/"
-        for rel_file in index.rel_files:
-            if rel_file.startswith(prefix):
-                add(rel_file)
+        if rel_file == requested_rel:
+            score = 200.0
+        elif base == requested_base:
+            score = 150.0
+        elif requested_core and core == requested_core:
+            score = 140.0
+        elif requested_core and core and (requested_core in core or core in requested_core):
+            ratio = difflib.SequenceMatcher(None, requested_core, core).ratio()
+            score = 110.0 + 30.0 * ratio
+        elif requested_base and (requested_base in base or base in requested_base):
+            score = 90.0
+        else:
+            continue
+        if same_dir:
+            score += 30.0
+        add(rel_file, score)
 
-    # 3b) 同目录候选优先（稳定排序保留上述优先级）
-    ordered.sort(key=lambda rel_file: posixpath.dirname(rel_file) != requested_dir)
-
-    return [f"/{rel_file}" for rel_file in ordered[:n]]
+    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    return [f"/{rel_file}" for rel_file, _ in ordered[:n]]
 
 
 def _normalize_rel_path(path: str | Path) -> str:
