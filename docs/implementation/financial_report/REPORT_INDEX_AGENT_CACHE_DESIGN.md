@@ -1,6 +1,6 @@
 # 财报检索 Index / FetchAgent 缓存设计（降低重复探索与 read_file 误读）
 
-> **状态：已实施（设计稿 2026-10-24；P0 index 缓存 + 压缩目录树、P1 backend 路径守卫 + 相似路径提示、P2 fetch agent 缓存 + 并发复用均已落地；P3（可选）确定性预选 / evidence 缓存未实施、本期不做）**。本文是 `alphabee/financial_report/` 与 `alphabee/tools/financial_report.py` 的代码级实施设计：给出问题复现、缓存分层、数据契约、并发模型、失效策略、接线锚点、测试矩阵、分阶段落地与回滚。
+> **状态：已实施（设计稿 2026-10-24；P0 index 缓存 + 压缩目录树、P1 backend 路径守卫 + 相似路径提示、P2 fetch agent 缓存 + 并发复用均已落地；2026-10-25 修订：目录误写成 `.md` 的候选修复、无关同目录候选抑制、递归上限收口；P3（可选）确定性预选 / evidence 缓存未实施、本期不做）**。本文是 `alphabee/financial_report/` 与 `alphabee/tools/financial_report.py` 的代码级实施设计：给出问题复现、缓存分层、数据契约、并发模型、失效策略、接线锚点、测试矩阵、分阶段落地与回滚。
 >
 > **关联链路**：`query_financial_report` ← `verify_hypotheses` 并行冲突验证 / `resolve_driver_profile` / `report_pipeline`。
 >
@@ -504,7 +504,8 @@ class ReportFilesystemBackend(FilesystemBackend):
             hints = suggest_paths(self._index, file_path, n=5)
             if hints:
                 result = ReadResult(
-                    error=result.error + "\n\n可能的真实路径（请直接使用其一）：\n"
+                    error=result.error
+                    + "\n\n可能的真实路径（优先使用最匹配的一条；不匹配请改用 grep）：\n"
                     + "\n".join(f"- /{p}" for p in hints)
                 )
         return result
@@ -516,16 +517,28 @@ class ReportFilesystemBackend(FilesystemBackend):
 - **仅提示、不强制拦截**：目录可能新增文件而 index 尚未刷新，严格 allowlist 会误伤；先做“不存在 → 提示”，风险最低；
 - **严格模式可选**：若希望彻底禁止拼路径，可对 `read` 增加 `if rel not in _rel_set: return error+hints`；需要接受“index 未包含新文件”的短暂不可读；
 - **路径归一化**：比较前统一 `posixpath.normpath`，并去掉前导 `/`；同时兼容 Windows 分隔符；
-- **建议算法**：
-  1. 先按 basename 精确匹配（忽略目录，处理“目录对、文件名错”）；
-  2. 再 `difflib.get_close_matches(requested_rel, index.rel_files, n=5, cutoff=0.5)`；
-  3. 最后按目录前缀过滤，优先同目录候选；
-  4. 返回路径统一带前导 `/`，与虚拟文件系统风格一致。
+- **候选算法（2026-10-25 修订）**：
+  1. **请求本身是目录**：若 `requested`（或去掉 `.md` 后缀后）命中 `rel_dirs`，直接列出该目录下的文件。
+     这是最常见的真实误读——`39、_长期借款.md` 实际是目录，内容在
+     `39、_长期借款/（1）_长期借款分类.md`；
+  2. **同名目录别名**：父目录写错但章节目录名对时，列出该目录下的文件；
+  3. **精确 basename**（忽略目录）：处理“目录错、文件名对”；
+  4. **语义主干精确/包含**：去掉 `39、_` / `（1）_` / `第X节` / `-续` 等编号与后缀后比较，
+     如 `长期借款` 可命中 `（1）_长期借款分类`；
+  5. **原始 basename 包含**：兜底；
+  6. 同目录候选加固定加成，保证“目录对、文件名错”优先于“文件名对、目录错”；
+  7. 返回路径统一带前导 `/`，与虚拟文件系统风格一致。
+
+  **不再使用完整路径的 `difflib` 兜底**：长公共目录前缀会让同目录的无关文件
+  （如 `长期应付款`、`存货`）获得高相似度，反而制造误导。无法语义匹配时宁可返回空，
+  让模型改用 grep。
 
 ### 7.3 对模型的提示词配合
 
 - system prompt 明确：`read_file` 只允许使用 `grep/glob` 返回值或 prompt 中 `<candidate_files>` 给出的路径；
-- 若 `read_file` 返回“可能的真实路径”，下一次必须直接使用其中一条，禁止继续猜；
+- 若 `read_file` 返回“可能的真实路径”，**优先使用与问题最匹配的一条**；若候选都与问题无关，
+  改用 Grep 搜索关键词，禁止继续猜路径（提示语已从“必须直接使用其中一条”改为该口径，
+  避免候选错误时把模型推向错误文件）；
 - 结论引用仍保留“文件名即可”（`fetch.py:119`），但引用格式改为**完整相对路径**，避免上游 agent 拿到半截路径后再次误读。
 
 ### 7.4 可观测性
@@ -533,6 +546,24 @@ class ReportFilesystemBackend(FilesystemBackend):
 - backend 记录 `read_file_miss` 日志：`root/version/requested/hints_count`；
 - 指标目标：`read_file` error rate 从当前 6.8% 降到 <1%；
 - 不改变 `ToolMessage(status="error")` 语义：仍然让模型看到“失败”，只是多给纠正线索。
+
+### 7.5 检索步数上限与确定性失败收口（2026-10-25 修订）
+
+背景：一次多主题 query 让 fetch agent 读了 25 个文件、跑了 23 次 grep + 9 次 glob，
+在 `recursion_limit=40` 处触顶；外层 `ToolRetryMiddleware` 默认对所有异常重试 2 次，
+于是同一个宽泛 query 又被完整重跑两次，日志出现 `failed after 3 attempts`。
+
+落地规则：
+
+1. `query_financial_report` 的 `recursion_limit` 从 40 提升到 **60**（模块常量
+   `FINANCIAL_REPORT_RECURSION_LIMIT`），给复杂但仍可收敛的查询留余量；
+2. 捕获 `GraphRecursionError`，返回 `AGENT_NO_ANSWER` 原因码文本（**不抛异常**）。
+   这样外层 `ToolRetryMiddleware` 不会把确定性失败重试 3 次；
+3. 原因码文本明确写“**不要以相同 query 重试**，请拆分为多个单一主题的 query”；
+4. fetch prompt 增加“检索预算”：单次建议最多读 10 个文件；多子问题时先回答其中
+   最关键的 2–3 个，其余列“未覆盖项”，不要为覆盖所有子问题无限读取；
+5. 日志记录 `financial_report_recursion_limit`（root / limit / query_length），便于观察
+   宽泛 query 的来源。
 
 ---
 
@@ -686,8 +717,11 @@ def build_fetch_prompt(
 | `tests/financial_report/test_report_path_guard.py` | 精确路径 | 存在路径 → 正常读取 |
 | 同上 | 拼错文件名 | 不存在 → error 中包含 top-5 候选，且包含真实文件 |
 | 同上 | 漏 `(1)_` 前缀 | 能用 basename 匹配到 `(1)_...md` |
+| 同上 | 目录误写成 `.md` | `39、_长期借款.md` → 首条候选为 `39、_长期借款/（1）_长期借款分类.md` |
+| 同上 | 无关同目录候选 | 语义不相关的邻居不进入候选（返回空，让模型改用 grep） |
 | 同上 | 目录对、文件名错 | 候选优先同目录 |
 | 同上 | GP subagent 覆盖 | 通过 backend 调用（模拟 subagent）同样返回 hints |
+| `tests/tools/test_financial_report.py` | 递归触顶 | `GraphRecursionError` → 返回 `AGENT_NO_ANSWER` 文本，不抛异常；`recursion_limit=60` |
 | `tests/financial_report/test_fetch_deepagents.py` | 工厂兼容 | `create_report_fetch_agent(dir)` 旧签名仍可用 |
 | 同上 | 缺目录 | 仍然抛 `FileNotFoundError`，不被缓存吞掉 |
 | `tests/tools/test_financial_report.py` | 定位缓存失效 | 新增报告后 `invalidate_report_caches` 生效 |
