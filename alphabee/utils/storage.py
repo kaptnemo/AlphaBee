@@ -21,15 +21,27 @@ def get_data_root() -> Path:
 def normalize_symbol(symbol: str | None) -> str:
     """Normalize a symbol for filesystem use."""
     value = (symbol or "unknown").strip()
-    # 通过code 获取标的名称
-    name = symbols_to_names([value]).get(value, value)
+    return value.replace("/", "_").replace("\\", "_") or "unknown"
 
+
+def _symbol_dir_name(symbol: str | None) -> str:
+    """标的目录名：有效股票代码映射为公司名称，其余保持净化后的原值。"""
+    sanitized = normalize_symbol(symbol)
+    value = (symbol or "").strip()
+    if not value:
+        return sanitized
+    try:
+        name = symbols_to_names([value]).get(value)
+    except FileNotFoundError:
+        return sanitized
+    if not name or name == "Unknown":
+        return sanitized
     return name.replace("/", "_").replace("\\", "_") or "unknown"
 
 
 def get_symbol_data_dir(*parts: str, symbol: str | None = None) -> Path:
     """Return a directory under the configured data root for a symbol."""
-    path = get_data_root() / normalize_symbol(symbol)
+    path = get_data_root() / _symbol_dir_name(symbol)
     for part in parts:
         path /= part
     path.mkdir(parents=True, exist_ok=True)
