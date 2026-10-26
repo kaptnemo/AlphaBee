@@ -514,6 +514,10 @@ class ReportFilesystemBackend(FilesystemBackend):
 
 设计取舍：
 
+- **单文件目录自动读取（2026-10-25 修订）**：若未命中路径（或去掉 `.md` 后）命中 `rel_dirs`，
+  且该目录下只有一个 markdown 文件，则目标无歧义，`read` 直接返回该文件内容并记录
+  `read_file_autocorrect_directory`，省去“报错 → 看候选 → 重读”的一轮往返。
+  目录内含多个文件时仍退回候选提示，由模型自行选择；
 - **仅提示、不强制拦截**：目录可能新增文件而 index 尚未刷新，严格 allowlist 会误伤；先做“不存在 → 提示”，风险最低；
 - **严格模式可选**：若希望彻底禁止拼路径，可对 `read` 增加 `if rel not in _rel_set: return error+hints`；需要接受“index 未包含新文件”的短暂不可读；
 - **路径归一化**：比较前统一 `posixpath.normpath`，并去掉前导 `/`；同时兼容 Windows 分隔符；
@@ -718,6 +722,8 @@ def build_fetch_prompt(
 | 同上 | 拼错文件名 | 不存在 → error 中包含 top-5 候选，且包含真实文件 |
 | 同上 | 漏 `(1)_` 前缀 | 能用 basename 匹配到 `(1)_...md` |
 | 同上 | 目录误写成 `.md` | `39、_长期借款.md` → 首条候选为 `39、_长期借款/（1）_长期借款分类.md` |
+| 同上 | 单文件目录误写成 `.md` | 目录内只有一个 markdown → 直接读取其内容，不返回错误 |
+| 同上 | 多文件目录误写成 `.md` | 目录内多个 markdown → 仍返回候选提示 |
 | 同上 | 无关同目录候选 | 语义不相关的邻居不进入候选（返回空，让模型改用 grep） |
 | 同上 | 目录对、文件名错 | 候选优先同目录 |
 | 同上 | GP subagent 覆盖 | 通过 backend 调用（模拟 subagent）同样返回 hints |
