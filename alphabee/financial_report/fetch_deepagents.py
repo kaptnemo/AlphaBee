@@ -39,6 +39,7 @@ from alphabee.financial_report.fetch import build_fetch_prompt  # noqa: E402
 from alphabee.financial_report.report_cache import (  # noqa: E402
     ReportIndex,
     get_report_index,
+    resolve_single_file_dir,
     suggest_paths,
 )
 from alphabee.utils import create_chat_model  # noqa: E402
@@ -80,6 +81,20 @@ class ReportFilesystemBackend(FilesystemBackend):
         error = result.error
         if not error or "not found" not in error:
             return result
+
+        # 目录被误当文件读取、且目录内只有一个 markdown 时，目标无歧义，直接读取。
+        resolved = resolve_single_file_dir(self._index, file_path)
+        if resolved is not None:
+            resolved_result = super().read(f"/{resolved}", offset=offset, limit=limit)
+            if resolved_result.error is None:
+                logger.info(
+                    "read_file_autocorrect_directory",
+                    root=str(self._index.root),
+                    version=self._index.version,
+                    requested=file_path,
+                    resolved=resolved,
+                )
+                return resolved_result
 
         hints = suggest_paths(self._index, file_path, n=MAX_PATH_HINTS)
         logger.info(

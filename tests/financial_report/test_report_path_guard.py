@@ -196,6 +196,25 @@ class TestReportFilesystemBackend:
             "/企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本/(1)_营业收入和营业成本情况.md"
         )
 
+    def test_single_file_directory_with_md_suffix_reads_directly(self, tmp_path: Path) -> None:
+        clear_report_caches()
+        rel_file = "第八节_财务报告/42、_营业收入和营业成本/(1)_._营业收入和营业成本情况.md"
+        index = _make_report(tmp_path, [rel_file])
+        backend = ReportFilesystemBackend(tmp_path, index)
+
+        # 目录被误写成 .md：目录内只有一个文件，直接返回内容而不是报错
+        result = backend.read("/第八节_财务报告/42、_营业收入和营业成本.md")
+
+        assert result.error is None
+        assert result.file_data is not None
+        assert "正文内容" in result.file_data["content"]
+
+    def test_multi_file_directory_still_hints(self, backend: ReportFilesystemBackend) -> None:
+        # 目录内有多个文件时目标不唯一，仍以候选提示让模型选择
+        result = backend.read("/企业精神/五、_合并财务报表主要项目注释－续/营业收入和营业成本.md")
+        assert result.error is not None
+        assert len(_hints_from_error(result.error)) >= 2
+
     def test_hints_capped_at_five(self, report_root: Path) -> None:
         # 造 8 个高度相似的文件，验证提示条数上限
         for i in range(8):

@@ -539,6 +539,27 @@ def _files_under(index: ReportIndex, directory: str) -> list[str]:
     return [rel_file for rel_file in index.rel_files if rel_file.startswith(prefix)]
 
 
+def resolve_single_file_dir(index: ReportIndex, requested: str) -> str | None:
+    """若 ``requested`` 指向只含一个 markdown 文件的目录，返回该文件相对路径。
+
+    模型常把章节**目录**误写成 ``42、_营业收入和营业成本.md``。当目录内只有一个
+    文件时，目标无歧义，可直接读取，省去“报错 → 看候选 → 重读”的一轮往返；
+    目录内含多个文件时返回 ``None``，继续走相似路径提示让模型自行选择。
+    """
+    rel = _normalize_rel_path(requested)
+    if not rel:
+        return None
+    no_ext = posixpath.splitext(rel)[0]
+    if rel in index.rel_dirs:
+        directory = rel
+    elif no_ext != rel and no_ext in index.rel_dirs:
+        directory = no_ext
+    else:
+        return None
+    files = _files_under(index, directory)
+    return files[0] if len(files) == 1 else None
+
+
 def suggest_paths(index: ReportIndex, requested: str, *, n: int = 5) -> list[str]:
     """基于 index 给出 ``requested`` 最可能对应的真实文件路径（设计 §7.2）。
 
