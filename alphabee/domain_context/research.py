@@ -93,6 +93,11 @@ _KEY_FACT_FIELDS = (
     "revenue_yoy",
     "net_profit_yoy",
     "inventory_yoy",
+    # 转固周期与核心盈利口径：此前这三项只存在于半年报文本/画像缓存里，
+    # 会随画像一起过期；接入 canonical 事实后随最新报告期自动刷新。
+    "construction_in_progress",
+    "fixed_assets",
+    "net_profit_dedt",
 )
 #: 行业/对标基准的键前缀（peer_* / industry_*），原样带进输入包供交叉校验。
 _BENCHMARK_PREFIXES = ("peer_", "industry_")
@@ -509,8 +514,16 @@ def load_cached_research(
     *,
     cache_key: str,
     ttl_days: int | None = None,
+    latest_fact_period: str = "",
 ) -> DriverResearchResult | None:
-    """读缓存（key 不符 / 过期 / 结构损坏 ⇒ ``None`` = 未命中，绝不抛穿）。"""
+    """读缓存（key 不符 / 过期 / **期别过期** / 结构损坏 ⇒ ``None`` = 未命中，绝不抛穿）。
+
+    ``latest_fact_period`` 是本次 run 的**最新财务事实期**（如 ``20260930``）：若它晚于
+    缓存里记录的 ``fact_period``（该画像当初锚定的财务事实期；旧缓存无此字段时回退
+    ``report_period``），说明缓存是在更早的报表上生成的——即使 key 因 track 未漂移而
+    相同，也必须失效重跑。否则三季报入库后，画像仍会复用半年报的驱动假设
+    （典型症状：指标卡还在引用「在建工程 82.47 亿（2026-06-30）」）。
+    """
     path = _cache_file(cache_dir, symbol)
     if not path.exists():
         return None
@@ -519,6 +532,9 @@ def load_cached_research(
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(raw, dict) or raw.get("cache_key") != cache_key:
+        return None
+    cached_fact_period = str(raw.get("fact_period") or raw.get("report_period") or "")
+    if _cache_period_is_stale(cached_fact_period, latest_fact_period):
         return None
     ttl = research_settings().cache_ttl_days if ttl_days is None else ttl_days
     if _is_expired(str(raw.get("created_at") or ""), ttl):
@@ -543,6 +559,21 @@ def load_cached_research(
     )
 
 
+def _cache_period_is_stale(cached_period: str, latest_fact_period: str) -> bool:
+    """缓存锚定的报告期是否早于最新财务事实期。
+
+    两者都是 ``YYYYMMDD``（8 位）时直接按字符串比较；任一侧格式不符（空值 / 非数字）
+    则**不判定过期**——宁可多花一次 LLM，也不要因为解析失败把缓存永久打穿。
+    """
+    cached = (cached_period or "").strip()
+    latest = (latest_fact_period or "").strip()
+    if len(cached) != 8 or len(latest) != 8:
+        return False
+    if not (cached.isdigit() and latest.isdigit()):
+        return False
+    return latest > cached
+
+
 def save_cached_research(
     cache_dir: str | Path | None,
     symbol: str,
@@ -551,9 +582,15 @@ def save_cached_research(
     output: DriverResearchOutput,
     track_label: str = "",
     report_period: str = "",
+    fact_period: str = "",
     playbook_version: int = 1,
 ) -> Path | None:
-    """原子写缓存（fail-open：写失败只 warning，绝不打断 run）。"""
+    """原子写缓存（fail-open：写失败只 warning，绝不打断 run）。
+
+    ``fact_period`` 记录这次研究锚定的**最新财务事实期**：下次 run 若拿到更晚的事实期，
+    缓存即失效（见 :func:`load_cached_research`）。缺省时回退 ``report_period``，
+    兼容旧缓存格式。
+    """
     path = _cache_file(cache_dir, symbol)
     payload = {
         "cache_key": cache_key,
@@ -561,6 +598,7 @@ def save_cached_research(
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "track_label": track_label,
         "report_period": report_period,
+        "fact_period": (fact_period or report_period),
         "playbook_version": int(playbook_version),
         "output": output.model_dump(mode="json"),
     }
@@ -675,6 +713,7 @@ async def run_driver_research(
     cache_dir: str | Path | None = None,
     track_label: str = "",
     report_period: str = "",
+    latest_fact_period: str = "",
     playbook_version: int = 1,
     trigger: str = "",
     use_cache: bool = True,
@@ -685,7 +724,10 @@ async def run_driver_research(
     流程与硬约束（§7.6/§7.7）：
 
     1. **缓存**：key = ``symbol + 最新报告期 + track_label + playbook_version``；
-       命中直接返回（``research_meta["cached"]=True``），**不构造 agent、不调 LLM**；
+       命中直接返回（``research_meta["cached"]=True``），**不构造 agent、不调 LLM**。
+       命中后还要过一道期别闸门：``latest_fact_period`` 晚于缓存所锚定的财务事实期
+       （``fact_period``，旧缓存回退 ``report_period``）⇒ 视为未命中
+       （三季报入库后，半年报锚定的画像不得继续复用）；
     2. **超时（覆盖重试全程）**：循环前算**一次** ``deadline = time.monotonic() + wall_timeout_s``，
        每个 attempt 只把**剩余时间**交给 :func:`_invoke_agent`；剩余 ≤ 0 时不再 re-ask，
        直接抛 :class:`DriverResearchError`（``tier=2``，``truncated=True``）走降级链
@@ -706,7 +748,13 @@ async def run_driver_research(
     cfg = settings or research_settings()
     key = research_cache_key(symbol, report_period, track_label, playbook_version)
     if use_cache:
-        cached = load_cached_research(cache_dir, symbol, cache_key=key, ttl_days=cfg.cache_ttl_days)
+        cached = load_cached_research(
+            cache_dir,
+            symbol,
+            cache_key=key,
+            ttl_days=cfg.cache_ttl_days,
+            latest_fact_period=latest_fact_period,
+        )
         if cached is not None:
             return cached
 
@@ -775,6 +823,7 @@ async def run_driver_research(
                     output=output,
                     track_label=track_label,
                     report_period=report_period,
+                    fact_period=latest_fact_period,
                     playbook_version=playbook_version,
                 )
             return result

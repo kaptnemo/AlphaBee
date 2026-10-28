@@ -210,11 +210,26 @@ def _track_drift_detected(track: CompanyTrackArtifact | None) -> bool:
     return bool(detect_track_drift(track.segments))
 
 
-def _research_report_period(track: CompanyTrackArtifact | None, rows: list[SegmentSnapshot]) -> str:
-    """研究缓存 key 用的"最新报告期"：优先 ``COMPANY_TRACK.as_of_date``，退回最新分部期。"""
-    if track is not None and track.as_of_date:
-        return track.as_of_date
-    return max((seg.report_date for seg in rows), default="")
+def _research_report_period(
+    track: CompanyTrackArtifact | None,
+    rows: list[SegmentSnapshot],
+    fact_period: str = "",
+) -> str:
+    """研究缓存 key 用的"最新报告期"：**按发布时序**取全候选中的最晚一期。
+
+    候选依次是：最新财务事实期（tushare 快照，三季报入库后即 ``20260930``）/
+    ``COMPANY_TRACK.as_of_date``（分部数据口径，通常停在中报）/ 最新分部期。
+
+    为什么不是"track 优先"：分部数据只在中报、年报披露，track 永远慢一个季度；
+    若缓存 key 跟着 track 走，三季报发布后 key 不变 ⇒ 研究层复用半年报锚定的画像，
+    指标卡就会继续引用「在建工程 82.47 亿（2026-06-30）」这类旧数字。
+    """
+    candidates = [
+        (fact_period or "").strip(),
+        ((track.as_of_date if track is not None else "") or "").strip(),
+        max((seg.report_date for seg in rows), default=""),
+    ]
+    return max((period for period in candidates if period), default="")
 
 
 def _research_issues(payload: Mapping[str, Any], step_id: str) -> list[Issue]:
@@ -275,6 +290,7 @@ async def _run_research_layer(
     fact_values: Mapping[str, float],
     rows: list[SegmentSnapshot],
     step_id: str,
+    fact_period: str = "",
 ) -> tuple[DriverProfile, dict[str, Any] | None, list[Issue]]:
     """执行 Tier B + Tier C（仅在 flag 开时调用；**整段共用一个防护**，绝不抛穿）。
 
@@ -334,7 +350,8 @@ async def _run_research_layer(
             symbol,
             research_input,
             track_label=router_input.track_label,
-            report_period=_research_report_period(track, rows),
+            report_period=_research_report_period(track, rows, fact_period),
+            latest_fact_period=fact_period,
             playbook_version=profile.playbook_version,
             trigger=trigger,
         )
@@ -469,6 +486,10 @@ async def resolve_driver_profile(
     # flag 开但未触发（强锚 + 单一主线 + 无漂移）同样零 LLM 成本，不把"开着开关"当"必须调用"。
     research_payload: dict[str, Any] | None = None
     research_issues: list[Issue] = []
+    # 最新财务事实期（tushare 快照首期，如 20260930）：研究缓存 key 与期别闸门都按它锚定，
+    # 避免三季报入库后仍复用半年报锚定的画像（分部数据只在中报/年报披露，track 会慢一季度）。
+    financial_facts = state.get("financial_facts")
+    fact_period = financial_facts.snapshots[0].period if financial_facts and financial_facts.snapshots else ""
     if _research_switches(state)["enabled"]:
         profile, research_payload, research_issues = await _run_research_layer(
             symbol=symbol,
@@ -478,6 +499,7 @@ async def resolve_driver_profile(
             fact_values=fact_values,
             rows=rows,
             step_id=step.id,
+            fact_period=fact_period,
         )
 
     # ── 4. 落 artifact（研究层跑了就用其载荷：含降级元数据与 research_meta）──

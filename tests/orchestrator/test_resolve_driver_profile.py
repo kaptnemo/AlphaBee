@@ -814,3 +814,15 @@ def test_research_tier1_salvage_carries_readable_reason(monkeypatch, tmp_path):
     assert issues[0].severity == IssueSeverity.MEDIUM
     assert "unknown" not in issues[0].message
     assert payload["research_meta"]["issues"][0]["message"].endswith("research_schema_salvaged")
+
+
+def test_research_report_period_takes_latest_fact_period() -> None:
+    """研究缓存 key 的报告期按发布时序取最晚：三季报事实期压过分部口径的 as_of_date。"""
+    track = CompanyTrackArtifact(symbol="603259.SH", as_of_date="20260630")
+    rows = [SegmentSnapshot(report_date="20260630", segment_name="化学业务")]
+
+    assert node._research_report_period(track, rows, "20260930") == "20260930"
+    # 没有财务事实期 ⇒ 退回 COMPANY_TRACK.as_of_date
+    assert node._research_report_period(track, rows, "") == "20260630"
+    # 没有 track ⇒ 退回最新分部期
+    assert node._research_report_period(None, rows, "") == "20260630"

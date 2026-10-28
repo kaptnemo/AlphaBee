@@ -1165,3 +1165,87 @@ def test_count_tool_calls_counts_tool_messages() -> None:
     }
     assert research.count_tool_calls(result) == 2
     assert research.count_tool_calls({}) == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 缓存期别闸门：最新财务事实期晚于缓存 report_period ⇒ 失效
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_load_cached_research_rejects_when_fact_period_advances(tmp_path: Path) -> None:
+    """key 未变（track 未漂移）但三季报已入库时，半年报锚定的缓存必须失效。"""
+    cfg = _settings(tmp_path)
+    key = research.research_cache_key("002916.SZ", "20260630", "覆铜板", 1)
+    assert research.save_cached_research(
+        cfg.cache_dir,
+        "002916.SZ",
+        cache_key=key,
+        output=_output(),
+        track_label="覆铜板",
+        report_period="20260630",
+        playbook_version=1,
+    )
+
+    hit = research.load_cached_research(
+        cfg.cache_dir, "002916.SZ", cache_key=key, ttl_days=90, latest_fact_period="20260630"
+    )
+    assert hit is not None
+    assert hit.meta["cached"] is True
+
+    stale = research.load_cached_research(
+        cfg.cache_dir, "002916.SZ", cache_key=key, ttl_days=90, latest_fact_period="20260930"
+    )
+    assert stale is None
+
+    # 期别缺失/格式不符时不做判定：宁可多跑一次 LLM，也不能让解析失败永久击穿缓存
+    assert research.load_cached_research(cfg.cache_dir, "002916.SZ", cache_key=key, ttl_days=90) is not None
+    assert research._cache_period_is_stale("20260630", "") is False
+    assert research._cache_period_is_stale("", "20260930") is False
+    assert research._cache_period_is_stale("2026年半年度报告", "20260930") is False
+
+
+async def test_run_driver_research_reruns_when_fact_period_advances(tmp_path: Path) -> None:
+    """三季报入库后必须重跑研究层，而不是复用半年报锚定的画像。"""
+    cfg = _settings(tmp_path)
+    agent = FakeAgent(
+        [
+            _output_json(hypotheses=[_hypothesis("产能利用率").model_dump(mode="json")]),
+            _output_json(hypotheses=[_hypothesis("转固节奏").model_dump(mode="json")]),
+        ]
+    )
+    first = await research.run_driver_research(
+        "002916.SZ",
+        {"symbol": "002916.SZ"},
+        settings=cfg,
+        cache_dir=cfg.cache_dir,
+        track_label="覆铜板",
+        report_period="20260630",
+        latest_fact_period="20260630",
+        agent_factory=lambda: agent,
+    )
+    assert first.meta["cached"] is False
+
+    second = await research.run_driver_research(
+        "002916.SZ",
+        {"symbol": "002916.SZ"},
+        settings=cfg,
+        cache_dir=cfg.cache_dir,
+        track_label="覆铜板",
+        report_period="20260630",
+        latest_fact_period="20260930",
+        agent_factory=lambda: agent,
+    )
+    assert second.meta["cached"] is False
+    assert len(agent.calls) == 2
+
+    third = await research.run_driver_research(
+        "002916.SZ",
+        {"symbol": "002916.SZ"},
+        settings=cfg,
+        cache_dir=cfg.cache_dir,
+        track_label="覆铜板",
+        report_period="20260630",
+        latest_fact_period="20260930",
+        agent_factory=lambda: agent,
+    )
+    assert third.meta["cached"] is True
