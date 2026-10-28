@@ -139,12 +139,28 @@ def test_real_sample_601138_selects_newest_report_period_not_newest_created_at()
 
 @pytest.mark.skipif(not (REPO_ROOT / "reports").is_dir(), reason="仓库本地报告目录不存在（数据未随仓库分发）")
 def test_real_sample_002130_consistency_control_both_orders_agree():
-    """一致性对照：``reports/沃尔核材(002130)`` 两序一致（该家报告期最新 = ``created_at`` 最新）。"""
+    """一致性对照：``reports/沃尔核材(002130)`` 两序一致（该家报告期最新 = ``created_at`` 最新）。
+
+    本地数据会随时间新增报告期（半年报之后又入库三季报），因此**不硬编码**具体期次，
+    只钉本用例的对照性质「两序一致」；季报没有「管理层讨论与分析」章节，此时窗口
+    ``reason`` 必为 ``no_matching_section``，年报/半年报则必须取到叙事章节。
+    """
     window = select_report_window("002130", as_of="2026-12-31")
 
-    assert window.reason == ""
-    assert "2026年半年度报告" in window.report_period
-    assert _newest_by_created_at("002130") == window.report_period
+    newest_by_created_at = _newest_by_created_at("002130")
+    assert newest_by_created_at is not None
+    # 对照性质：报告期序与入库序在本标的应一致（这正是本用例与 601138 的区别）。
+    assert window.report_period == newest_by_created_at, (
+        f"两序应一致，实际选中 {window.report_period} / 入库最新 {newest_by_created_at}"
+    )
+
+    if "季度" in newest_by_created_at:
+        # 季报无「第三节 管理层讨论与分析 → 主要业务」章节（数据漂移后新增报告期即走此分支）。
+        assert window.reason == "no_matching_section"
+        assert window.sections == []
+    else:
+        assert window.reason == ""
+        assert window.sections, "年报/半年报必须能取到叙事章节"
 
 
 @pytest.mark.skipif(not (REPO_ROOT / "reports").is_dir(), reason="仓库本地报告目录不存在（数据未随仓库分发）")
