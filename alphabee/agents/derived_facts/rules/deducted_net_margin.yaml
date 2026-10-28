@@ -1,0 +1,16 @@
+name: deducted_net_margin
+description: 扣非归母净利润 / 营业收入（%），剔除一次性损益后的核心净利率；与净利率的差额即非经常性损益的贡献
+required_facts:
+  - net_profit_dedt
+  - revenue
+formula: net_profit_dedt / revenue * 100
+not_applicable_if:
+  - "revenue <= 0"
+thresholds:
+  strong: "value >= 15"
+  adequate: "5 <= value < 15"
+  weak: "value < 5"
+interpretation:
+  strong: 核心净利率高，盈利主要来自经常性经营，对一次性收益依赖低
+  adequate: 核心净利率中等，需结合毛利率与费用率判断盈利弹性的来源
+  weak: 核心净利率偏薄，若净利率显著更高，说明利润高度依赖非经常性损益

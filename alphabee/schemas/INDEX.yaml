@@ -9,7 +9,7 @@ domains:
   financial:
     file: schemas/financial.yaml
     description: 财务报表域（利润表、资产负债表、现金流量表、财务比率、成长性）
-    field_count: 39
+    field_count: 42
     primary_source: tushare
     apis: [income, balancesheet, cashflow, fina_indicator]
 

@@ -31,6 +31,8 @@ balancesheet:
   accounts_receiv:                accounts_receivable
   inventories:                    inventory
   goodwill:                       goodwill
+  cip:                            construction_in_progress
+  fix_assets:                     fixed_assets
 
 # ─────────────────────────────────────────
 # 现金流量表 cashflow()
@@ -60,6 +62,7 @@ fina_indicator:
   netprofit_yoy:          net_profit_yoy
   basic_eps_yoy:          eps_growth_yoy
   interestdebt:           interest_bearing_debt
+  profit_dedt:            net_profit_dedt
   daa:                    depreciation_amortization
   fixed_assets:           fixed_assets_total
   saleexp_to_gr:          sales_expense_ratio

@@ -1,0 +1,16 @@
+name: construction_in_progress_ratio
+description: 在建工程 / 营业收入（%），衡量产能建设的相对强度；该比率越高，未来转固带来的折旧压力越大
+required_facts:
+  - construction_in_progress
+  - revenue
+formula: construction_in_progress / revenue * 100
+not_applicable_if:
+  - "revenue <= 0"
+thresholds:
+  light: "value < 10"
+  moderate: "10 <= value <= 30"
+  heavy: "value > 30"
+interpretation:
+  light: 在建工程相对收入占比低，产能扩张对后续折旧的影响有限
+  moderate: 产能建设强度中等，需结合 capex 指引与工程进度判断转固时点
+  heavy: 在建工程高企，转固后折旧将显著抬升，是毛利率可持续性的核心裁判变量

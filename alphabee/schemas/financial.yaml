@@ -66,6 +66,23 @@ net_profit_attr_p:
     tushare: [n_income_attr_p]
   notes: Tushare income 为报告期累计值（三季报 = 前三季度累计）；TTM 还原与同比见 net_profit_ttm_yoy。
 
+net_profit_dedt:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 扣除非经常性损益后的归母净利润（报告期累计值）
+  aliases:
+    zh: [扣非归母净利润, 扣非净利润, 扣除非经常性损益的净利润]
+    en: [net profit excluding non-recurring items]
+  required_by:
+    derived_facts: [deducted_net_margin]
+  source_mappings:
+    tushare: [profit_dedt]
+  notes: >-
+    Tushare fina_indicator 字段 profit_dedt，报告期累计值（三季报 = 前三季度累计）；
+    与 net_profit_attr_p 的差额近似为非经常性损益的税后贡献，是剔除一次性收益后的核心盈利口径。
+
 ebitda:
   category: financial
   type: float
@@ -269,6 +286,40 @@ goodwill:
     derived_facts: [goodwill_risk]
   source_mappings:
     tushare: [goodwill]
+
+construction_in_progress:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 在建工程（资产负债表口径）
+  aliases:
+    zh: [在建工程, 工程物资与在建工程]
+    en: [construction in progress]
+  required_by:
+    derived_facts: [construction_in_progress_ratio]
+  source_mappings:
+    tushare: [cip]
+  notes: >-
+    来自资产负债表 cip 科目；与 capex、固定资产、折旧摊销配合判断产能建设与转固节奏。
+    转固时点不在资产负债表内披露（中报/年报附注才有明细），该字段只回答"在建规模有多大"。
+
+fixed_assets:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 固定资产（资产负债表口径）
+  aliases:
+    zh: [固定资产]
+    en: [fixed assets]
+  required_by:
+    derived_facts: []
+  source_mappings:
+    tushare: [fix_assets]
+  notes: >-
+    资产负债表 fix_assets；与 fina_indicator 的 fixed_assets_total（fixed_assets）口径不同，
+    后者是财务指标表的汇总值，本字段用于资产负债表结构分析。
 
 # ─────────────────────────────────────────
 # 现金流量表 (Cash Flow Statement)

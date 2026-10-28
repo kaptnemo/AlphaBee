@@ -73,7 +73,7 @@ New-Item -ItemType SymbolicLink -Path .opencode\skills -Target ..\.ai\skills
 alphabee/
   agents/
     facts/              FactCollectorAgent — 8 工具 + Pydantic 数据模型
-    derived_facts/      DerivedFacts — 21 条 YAML + 拓扑排序引擎
+    derived_facts/      DerivedFacts — 24 条 YAML + 拓扑排序引擎
     signal/             SignalEngine — 20 条 YAML（基础风险 + 异常模式）
     anomaly/            AnomalyEngine — 10 条勾稽关系 + z-score
     explore_conflicts/  冲突探索 Agent — 5 大矛盾模式 + 候选假设

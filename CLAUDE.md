@@ -61,7 +61,7 @@ The old DeepAgents-based legacy pipeline (`alphabee/agents_legacy/`，root agent
 Under active development, replacing the legacy subagents:
 
 1. **FactCollectorAgent** (`agents/facts/`) — 8 domain-specific tools (company_profile, financial_fact, market_fact, operation_fact, industry_fact, competition_fact, expectation_fact, risk_fact) + web_search. Returns AlphaBee canonical field names via the adapter layer. Built with `deepagents.create_deep_agent`.
-2. **DerivedFactAgent** (`agents/derived_facts/`) — 21 YAML-defined rules across 7 dimensions (profitability, growth, solvency, efficiency, valuation, cashflow, risk). Rules declare `required_facts` (canonical fields) and/or `required_derived_facts` (upstream rules), forming a DAG resolved via **topological sort**. Formulas use a safe AST evaluator — only arithmetic and comparison operators are whitelisted.
+2. **DerivedFactAgent** (`agents/derived_facts/`) — 24 YAML-defined rules across 7 dimensions (profitability, growth, solvency, efficiency, valuation, cashflow, risk). Rules declare `required_facts` (canonical fields) and/or `required_derived_facts` (upstream rules), forming a DAG resolved via **topological sort**. Formulas use a safe AST evaluator — only arithmetic and comparison operators are whitelisted.
 3. **SignalAgent** (`agents/signal/`) — Takes derived facts and generates structured signals with risk levels (prototype, 3 rules).
 4. **FactAnalysisAgent** (`agents/fact_analysis/`) — Placeholder.
 

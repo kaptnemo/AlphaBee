@@ -1,0 +1,14 @@
+name: depreciation_to_revenue
+description: 折旧与摊销 / 营业收入（%），衡量折旧对收入的侵蚀强度；在建工程转固后该比率抬升，是毛利率见顶的先行信号
+required_facts:
+  - depreciation_amortization
+  - revenue
+formula: depreciation_amortization / revenue * 100
+thresholds:
+  light: "value < 5"
+  moderate: "5 <= value <= 9"
+  heavy: "value > 9"
+interpretation:
+  light: 折旧负担轻，产能仍处爬坡或资产较轻阶段，转固压力尚未体现到成本端
+  moderate: 折旧强度中等，需结合在建工程与资本开支节奏判断后续抬升幅度
+  heavy: 折旧侵蚀显著，重资产属性强；若在建工程仍处高位，未来毛利率将持续承压

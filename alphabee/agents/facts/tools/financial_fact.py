@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -56,7 +57,7 @@ def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
                 fields="ts_code,end_date,total_assets,total_liab,"
                 "total_hldr_eqy_exc_min_int,money_cap,"
                 "total_cur_assets,total_cur_liab,accounts_receiv,"
-                "inventories,goodwill",
+                "inventories,goodwill,cip,fix_assets",
             ).data
             cashflow_df = helper.cashflow(
                 ts_code=ts_code,
@@ -71,7 +72,7 @@ def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
                 fields="ts_code,end_date,roe,roa,grossprofit_margin,netprofit_margin,"
                 "current_ratio,quick_ratio,debt_to_assets,"
                 "or_yoy,netprofit_yoy,basic_eps_yoy,"
-                "interestdebt,daa,fixed_assets,"
+                "interestdebt,profit_dedt,daa,fixed_assets,"
                 "saleexp_to_gr,adminexp_of_gr,finaexp_of_gr,rd_exp",
             ).data
 
@@ -107,6 +108,7 @@ _FIELD_EXTRACTORS: dict[str, tuple[str, str, int]] = {
     "revenue": ("income", "revenue", 0),
     "net_profit": ("income", "net_profit", 0),
     "net_profit_attr_p": ("income", "net_profit_attr_p", 0),
+    "net_profit_dedt": ("fina", "net_profit_dedt", 0),
     "operating_profit": ("income", "operating_profit", 0),
     "ebitda": ("income", "ebitda", 0),
     "interest_expense": ("income", "interest_expense", 0),
@@ -123,6 +125,8 @@ _FIELD_EXTRACTORS: dict[str, tuple[str, str, int]] = {
     "goodwill": ("balance", "goodwill", 0),
     "inventory": ("balance", "inventory", 0),
     "inventory_prev": ("balance", "inventory", 1),
+    "construction_in_progress": ("balance", "construction_in_progress", 0),
+    "fixed_assets": ("balance", "fixed_assets", 0),
     # ── 现金流量表（cashflow）────────────────────────────────
     "operating_cashflow": ("cashflow", "operating_cashflow", 0),
     "capex": ("cashflow", "capex", 0),
@@ -155,6 +159,24 @@ def _extract_from_table(
     if len(records) <= offset:
         return None
     return safe_float(records[offset].get(field))
+
+
+#: 金额/存量字段：缺失必须"显式缺席"，不能沿用 ``safe_float`` 的 0.0 默认值。
+#: 否则规则会把"没披露"算成 0（例如在建工程 0 ⇒ 占比 0% ⇒ 误判为最轻档）。
+_STRICT_ABSENCE_FIELDS = frozenset({"construction_in_progress", "fixed_assets", "net_profit_dedt"})
+
+
+def _extract_from_table_strict(
+    data: dict[str, Any],
+    table: str,
+    field: str,
+    offset: int = 0,
+) -> float | None:
+    """严格提取：原始值缺失/非数值/NaN ⇒ ``None``（而不是 0.0）。"""
+    records = data.get(table, [])
+    if len(records) <= offset:
+        return None
+    return _optional_float(records[offset].get(field))
 
 
 def extract_financial_facts(
@@ -200,7 +222,8 @@ def extract_financial_facts(
         if spec is None:
             continue
         table, col, offset = spec
-        val = _extract_from_table(data, table, col, offset)
+        extractor = _extract_from_table_strict if field in _STRICT_ABSENCE_FIELDS else _extract_from_table
+        val = extractor(data, table, col, offset)
         if val is not None:
             result[field] = val
 
@@ -248,6 +271,24 @@ def _extract_inventory_yoy(data: dict[str, Any]) -> float | None:
     return None
 
 
+def _optional_float(value: Any) -> float | None:
+    """``None``/NaN/非数值 ⇒ ``None``。
+
+    与 :func:`safe_float` 的 ``0.0`` 默认值区分开：金额类渲染必须能表达
+    "未披露"，而不是把缺失印成 0.00。
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(number) else number
+
+
+def _fmt_amount(value: float | None, scale: float = 1e8) -> str:
+    """金额渲染（默认亿元）：缺失显示 ``—``。"""
+    return "—" if value is None else f"{value / scale:.2f}"
+
+
 def get_financial_facts_model(symbol: str, periods: int = 24) -> FinancialFacts:
     """获取 A 股多期财务数据并返回 FinancialFacts Pydantic 模型。
 
@@ -288,6 +329,7 @@ def get_financial_facts_model(symbol: str, periods: int = 24) -> FinancialFacts:
                 operating_profit=safe_float(inc.get("operating_profit")),
                 net_profit=safe_float(inc.get("net_profit")),
                 net_profit_attr_p=safe_float(inc.get("net_profit_attr_p")),
+                net_profit_dedt=_optional_float(fi.get("net_profit_dedt")),
                 ebitda=safe_float(inc.get("ebitda")),
                 interest_expense=safe_float(inc.get("interest_expense")),
                 basic_eps=safe_float(inc.get("basic_eps")),
@@ -303,6 +345,8 @@ def get_financial_facts_model(symbol: str, periods: int = 24) -> FinancialFacts:
                 accounts_receivable=safe_float(bal.get("accounts_receivable")),
                 inventory=safe_float(bal.get("inventory")),
                 goodwill=safe_float(bal.get("goodwill")),
+                construction_in_progress=_optional_float(bal.get("construction_in_progress")),
+                fixed_assets=_optional_float(bal.get("fixed_assets")),
                 # 现金流量表
                 operating_cashflow=op_cf,
                 investing_cashflow=safe_float(cf.get("investing_cashflow")),
@@ -440,6 +484,36 @@ def render(data: dict[str, Any]) -> str:
                 f"| {safe_float(r['quick_ratio']):.2f} "
                 f"| {safe_float(r['debt_to_assets']):.2f} |"
             )
+    lines.append("")
+
+    # ── 产能与扣非 ─────────────────────────────────────────────────────
+    # 转固周期与核心盈利口径：在建工程/固定资产/折旧只在中报、年报附注里展开，
+    # 这里按“最新可得报告期”逐期列出，避免下游回退到过期文本里的旧数字。
+    lines += [
+        "### 产能与扣非（金额单位：亿元，比率为 %）",
+        "| 报告期 | 在建工程 | 固定资产 | 折旧摊销 | 扣非归母净利润 | 扣非净利率(%) |",
+        "|--------|---------|---------|---------|--------------|-------------|",
+    ]
+    for d in ref_dates:
+        bal = balance_map.get(d) or {}
+        fi = fina_map.get(d) or {}
+        inc = income_map.get(d) or {}
+        cip = _optional_float(bal.get("construction_in_progress"))
+        fixed_assets = _optional_float(bal.get("fixed_assets"))
+        depreciation = _optional_float(fi.get("depreciation_amortization"))
+        net_dedt = _optional_float(fi.get("net_profit_dedt"))
+        revenue = _optional_float(inc.get("revenue"))
+        margin = net_dedt / revenue * 100.0 if net_dedt is not None and revenue else None
+        if all(value is None for value in (cip, fixed_assets, depreciation, net_dedt)):
+            continue
+        lines.append(
+            f"| {d} "
+            f"| {_fmt_amount(cip)} "
+            f"| {_fmt_amount(fixed_assets)} "
+            f"| {_fmt_amount(depreciation)} "
+            f"| {_fmt_amount(net_dedt)} "
+            f"| {'—' if margin is None else f'{margin:.2f}'} |"
+        )
     lines.append("")
 
     # ── 成长指标 ───────────────────────────────────────────────────────

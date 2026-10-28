@@ -37,6 +37,7 @@ class FinancialSnapshot(BaseModel):
     operating_profit: float | None = None  # 营业利润
     net_profit: float | None = None  # 净利润（含少数股东损益，tushare n_income）
     net_profit_attr_p: float | None = None  # 归母净利润（tushare n_income_attr_p）
+    net_profit_dedt: float | None = None  # 扣非归母净利润（tushare profit_dedt，报告期累计）
     ebitda: float | None = None
     interest_expense: float | None = None
     basic_eps: float | None = None  # 基本每股收益
@@ -53,6 +54,8 @@ class FinancialSnapshot(BaseModel):
     accounts_receivable: float | None = None
     inventory: float | None = None
     goodwill: float | None = None
+    construction_in_progress: float | None = None  # 在建工程（产能建设/未来转固压力的前置指标）
+    fixed_assets: float | None = None  # 固定资产（资产负债表口径；区别于 fina 的 fixed_assets_total）
 
     # ── 现金流量表 ─────────────────────────────────────────────────────────
     operating_cashflow: float | None = None

@@ -55,13 +55,14 @@ main.py (CLI)
 
 ## 2. 衍生指标 (DerivedFacts)
 
-21 条 YAML 规则，按利润表→资产负债表→现金流量表的依赖关系做拓扑排序：
+24 条 YAML 规则，按利润表→资产负债表→现金流量表的依赖关系做拓扑排序：
 
 ```
-盈利能力：  roe_level, gross_margin_trend
+盈利能力：  roe_level, gross_margin_trend, deducted_net_margin
 成长质量：  revenue_growth, profit_leverage, market_share_change
 偿债能力：  debt_ratio, interest_coverage, current_ratio
-运营效率：  inventory_pressure, asset_turnover, capex_intensity
+运营效率：  inventory_pressure, asset_turnover, capex_intensity,
+            depreciation_to_revenue, construction_in_progress_ratio
 估值匹配：  peg_ratio, pb_roe_match, valuation_compression
 现金流：    cashflow_quality, receivable_pressure, receivable_growth_gap,
             accounts_receivable_growth, accounts_receivable_yoy, dividend_coverage
