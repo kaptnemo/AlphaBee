@@ -138,11 +138,17 @@ rating_downgrade_1m:   { category: consensus, type: int, unit: COUNT, frequency:
 
 **聚合规则**（`alphabee/collectors/consensus/`）：
 1. 拉个股近 N 个月全量研报列表（翻页）；
-2. 按报告期聚合同日 `eps_fy1` 中位数 = 一致预期 EPS；
-3. `eps_fy1_revision_1m = (今日一致EPS / 30日前一致EPS - 1)`，`3m` 同理；
-4. `revision_acceleration = revision_1m_t - revision_1m_{t-1}`；
-5. `rating_mean` = 评级编码均值；`revision_breadth` = 按 `(机构,股票)` 分组对相邻两篇研报评级做差分（不能读 `ratingChange`）；
-6. `target_price` = 有值子集中位数；覆盖率 < 某阈值时显式 `consensus_missing: target_price`。
+2. **财年对齐**：东财 `predictThisYearEps/NextYearEps/NextTwoYearEps` 是「相对发布年」的，
+   一律按 `slot = 目标财年 - publishDate.year` 解析；锚定财年 `FY = as_of 所在自然年`，
+   `eps_fy1/fy2/fy3` 分别指 `FY/FY+1/FY+2`（避免跨年把两个财年混进同一中位数）；
+3. 每家机构取能覆盖该财年的最新一篇 → **跨机构中位数**；快照机构数 < 3 时置 null 并登记
+   `consensus_missing`（宁缺勿错，样本量见 `ConsensusOutput.eps_basis`）；
+4. `eps_fy1_revision_1m = (eps(t) / eps(t-30d) - 1)`，`3m` 同理；分子分母用**同一锚定财年**
+   的 as-of 快照回放（否则跨年时退化成 FY2/FY1 增长率）；亏损基数（≤0）视为不可算；
+5. `revision_acceleration = revision_1m(t) - revision_1m(t-30d)`：固定 30 天网格上的二阶差分
+   （不能用「最后两个有研报的发布日」）；
+6. `rating_mean` = 评级编码均值；`revision_breadth` = 按 `(机构,股票)` 分组对相邻两篇研报评级做差分（不能读 `ratingChange`）；
+7. `target_price` = 有值子集中位数；覆盖率 < 某阈值时显式 `consensus_missing: target_price`。
 
 ### 3.5 缺口
 - 目标价覆盖率低（~38%），需降级；

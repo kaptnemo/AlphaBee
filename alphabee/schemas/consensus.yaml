@@ -13,7 +13,7 @@ eps_fy1:
   type: float
   unit: CNY_PER_SHARE
   frequency: [weekly]
-  description: 分析师一致预期的下一财年（FY1）每股收益（元/股），按报告期聚合同日预测中位数
+  description: 锚定财年（= as_of 所在自然年，见 ConsensusOutput.fy_anchor）的一致预期 EPS（元/股）；每家机构取能覆盖该财年的最新一篇、跨机构取中位数，样本机构数 < 3 时置 null
   aliases:
     zh: [一致预期EPS, FY1每股收益预测, 预测当年EPS]
     en: [consensus FY1 EPS, predicted this year EPS]
@@ -25,7 +25,7 @@ eps_fy2:
   type: float
   unit: CNY_PER_SHARE
   frequency: [weekly]
-  description: 分析师一致预期的下下财年（FY2）每股收益（元/股），按报告期聚合同日预测中位数
+  description: 锚定财年 +1 的一致预期 EPS（元/股）；口径同 eps_fy1（per-org 最新观点 → 横截面中位数，样本 < 3 置 null）
   aliases:
     zh: [FY2每股收益预测, 预测明年EPS]
     en: [consensus FY2 EPS, predicted next year EPS]
@@ -37,7 +37,7 @@ eps_fy3:
   type: float
   unit: CNY_PER_SHARE
   frequency: [weekly]
-  description: 分析师一致预期的第三财年（FY3）每股收益（元/股），覆盖率较低，缺失时显式置 null
+  description: 锚定财年 +2 的一致预期 EPS（元/股），覆盖率较低；口径同 eps_fy1，缺失或样本 < 3 时显式置 null
   aliases:
     zh: [FY3每股收益预测, 预测后年EPS]
     en: [consensus FY3 EPS, predicted next two year EPS]
@@ -74,13 +74,13 @@ coverage_count:
   type: int
   unit: COUNT
   frequency: [weekly]
-  description: 参与一致预期聚合的研报（或机构）数量；用于中小盘/冷门股覆盖不足的阈值判断
+  description: 覆盖机构数（优先 orgCode，回退 orgSName/orgName）；用于中小盘/冷门股覆盖不足的阈值判断
   aliases:
     zh: [覆盖机构数, 分析师覆盖数, 研报覆盖数]
     en: [coverage count, analyst coverage]
   source_mappings:
     eastmoney: [derived_from_report_count]
-  notes: 由聚合引擎按 (股票, 报告期) 统计有效研报数，非东财单一字段。
+  notes: 由聚合引擎去重机构得到，非东财单一字段；与其他字段的快照样本量不同源，快照级样本量见 ConsensusOutput.eps_basis。
 
 # ─────────────────────────────────────────
 # EPS Revision（盈利预测修正）
@@ -140,7 +140,7 @@ revision_acceleration:
   type: float
   unit: PERCENT
   frequency: [weekly]
-  description: EPS 修正加速度（%）= revision_1m_t - revision_1m_{t-1}（revision 的二阶差分）
+  description: EPS 修正加速度（pp / 30 天）= revision_1m_t - revision_1m_{t-30}；在固定 30 天网格（t / t-30 / t-60 三个 as-of 快照）上取二阶差分，任一快照样本 < 3 或非正值（亏损基数）时置 null
   aliases:
     zh: [修正加速度, EPS修正二阶差分]
     en: [revision acceleration, revision second difference]

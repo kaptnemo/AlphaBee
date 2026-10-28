@@ -223,3 +223,40 @@ def build_consensus(
     if source_warning:
         out.warnings.append(source_warning)
     return out
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("code", help="股票代码（600519.SH / sz300750 / 600519）")
+    parser.add_argument("--months", type=int, default=12, help="拉取研报的月份跨度")
+    parser.add_argument("--page-size", type=int, default=100, help="研报列表每页条数")
+    parser.add_argument("--max-pages", type=int, default=20, help="研报列表最大翻页数")
+    parser.add_argument("--timeout", type=int, default=20, help="网络请求超时秒数")
+    parser.add_argument("--as-of-date", type=str, default=None, help="聚合基准日（YYYY-MM-DD）")
+    parser.add_argument(
+        "--target-price-coverage-threshold",
+        type=float,
+        default=0.3,
+        help="目标价覆盖率阈值（report_list 路径）",
+    )
+    parser.add_argument(
+        "--consensus-source",
+        type=str,
+        default=None,
+        help="provider 显式指定（report_list / f10_forecast / auto），None 读配置",
+    )
+    args = parser.parse_args()
+
+    consensus = build_consensus(
+        args.code,
+        months=args.months,
+        page_size=args.page_size,
+        max_pages=args.max_pages,
+        timeout=args.timeout,
+        as_of_date=args.as_of_date,
+        target_price_coverage_threshold=args.target_price_coverage_threshold,
+        consensus_source=args.consensus_source,
+    )
+    print(consensus)
