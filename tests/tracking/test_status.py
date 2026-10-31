@@ -404,7 +404,11 @@ def test_module_introduces_no_new_numeric_threshold():
 
 def test_tracking_report_field_defaults_to_empty():
     """追加字段带默认值：未计算 = ``""``（不是猜测值）。"""
-    assert TrackingReport(symbol=SYMBOL, as_of=D2).research_status == ""
+    report = TrackingReport(symbol=SYMBOL, as_of=D2)
+    assert report.research_status == ""
+    # 状态证据 V2 design §6.8：公式自证与跨公式标注同样带默认值（旧帧/未计算不猜）。
+    assert report.classifier_formula == ""
+    assert report.classifier_formula_mismatch is False
 
 
 def test_run_once_writes_a_status_consistent_with_its_own_fields(tmp_path):

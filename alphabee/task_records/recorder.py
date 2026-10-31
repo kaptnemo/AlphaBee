@@ -99,6 +99,11 @@ class TaskRecorder:
             midterm_state=midterm_val.state.argmax_state if midterm_val and midterm_val.state else "",
             midterm_confidence=midterm_val.thesis_confidence if midterm_val else 0.0,
             midterm_evidence_count=len(midterm_val.evidence_log) if midterm_val else 0,
+            # 状态证据 V2 design §6.9（additive）：从 artifact 取值；旧 artifact 缺字段/无顶背离
+            # ⇒ 默认值（"" / False / 0.0），绝不抛。
+            midterm_formula=str(getattr(midterm_val, "classifier_formula", "") or "") if midterm_val else "",
+            midterm_uncertain=bool(getattr(midterm_val, "uncertain", False)) if midterm_val else False,
+            midterm_adverse_severity=self._adverse_severity(midterm_val),
             # ── 标的上下文 ──
             company_industry=industry_ctx.industry if industry_ctx else "",
             company_lifecycle=industry_ctx.lifecycle_stage if industry_ctx else "",
@@ -112,6 +117,14 @@ class TaskRecorder:
     # ═══════════════════════════════════════════════════════════════
     # 提取器
     # ═══════════════════════════════════════════════════════════════
+
+    def _adverse_severity(self, midterm_val: CompanyStateArtifact | None) -> float:
+        """顶背离严重度（V2 design §6.9）：无 artifact / 无 adverse / 旧 artifact 缺字段 ⇒ 0.0。"""
+        if midterm_val is None:
+            return 0.0
+        adverse = getattr(midterm_val, "adverse_divergence", None)
+        severity = getattr(adverse, "severity", None) if adverse is not None else None
+        return float(severity) if isinstance(severity, (int, float)) else 0.0
 
     def _find_artifact(self, artifacts: list[dict[str, Any]], atype: str) -> dict[str, Any] | None:
         for a in reversed(artifacts):

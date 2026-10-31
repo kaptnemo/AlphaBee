@@ -24,6 +24,11 @@
 
 降级纪律：缺少 ``MIDTERM_DECISION``（上游决策节点失败）时 SKIPPED，不报 issue；
 渲染异常时记 Issue 但不中断主链（报告照常）。
+
+状态证据 V2（design MIDTERM_STATE_EVIDENCE_V2_DESIGN §6.6）：v2 帧（``state_evidence`` 非空且
+``classifier_formula != "v1"``）额外呈现归一化熵 / 归一化证据 / 口径（formula+order）/ 一致性 /
+不确定与顶背离节；v1 帧（含旧帧回落 ``"v1"``）渲染**保持改造前逐字不变**（golden 钉），
+v2 专属字段对 v1 仍可通过 artifact / JSON 观测。
 """
 
 from __future__ import annotations
@@ -218,22 +223,79 @@ def _state_confidence_phrase(decision: CompanyStateArtifact) -> str:
     return f"{state.argmax_state or '—'} 概率质量 {_fmt(mass)}"
 
 
+def _is_v2_frame(decision: CompanyStateArtifact) -> bool:
+    """状态证据 V2 帧判定（V2 design §6.6 第 5 条）：``state_evidence`` 非空且公式非 ``"v1"``。
+
+    v1 帧（含旧帧回落 ``"v1"``）的渲染**保持改造前逐字不变**——不输出任何 v2 专属行；
+    v2 专属字段对 v1 仍可通过 artifact / JSON 观测（本节点只改渲染面，不改数值）。
+    """
+    return bool(decision.state_evidence) and str(decision.classifier_formula or "") != "v1"
+
+
 def _render_state(lines: list[str], decision: CompanyStateArtifact) -> None:
+    """认知状态节：v1 帧保持原文案；v2 帧补归一化熵/证据、口径、一致性与不确定行（§6.6）。
+
+    “不确定”阈值不硬编码：从 ``classifier_v2.UNCERTAIN_P_TOP`` 取（仅 v2 帧走到该分支），
+    延迟 import 以免 v1-only 路径拉起 v2 模块。
+    """
     _section(lines, "认知状态（软状态分布）")
     state = decision.state
     if state is None:
         lines.append("  （缺失：state=None）")
         return
-    lines.append(f"  argmax: {state.argmax_state or '—'}    熵: {_fmt(state.entropy)}")
+    v2_frame = _is_v2_frame(decision)
+    entropy_line = f"  argmax: {state.argmax_state or '—'}    熵: {_fmt(state.entropy)}"
+    if v2_frame and decision.entropy_normalized is not None:
+        entropy_line += f"（归一化 {_fmt(decision.entropy_normalized)}）"
+    lines.append(entropy_line)
     distribution = "  ".join(f"{k}={_fmt(v)}" for k, v in sorted(state.distribution.items()))
     lines.append(f"  分布: {distribution or '—'}")
     # P2-6：状态确信度 = argmax 状态的概率质量，与假设 H 的后验是两回事，必须独立成行，
     # 否则读者会把 thesis_confidence（如 0.95）当成「状态 S4 的确信度」。
     mass = state.distribution.get(state.argmax_state) if state.argmax_state else None
     lines.append(f"  状态确信度: {state.argmax_state or '—'}={_fmt(mass)}（argmax 状态的概率质量，不是假设 H 的后验）")
+    if v2_frame:
+        # 阈值从 v2 模块取（不硬编码）；延迟 import 以免 v1-only 路径拉起 v2 模块。
+        from alphabee.midterm.classifier_v2 import UNCERTAIN_P_TOP
+
+        normalized = "  ".join(f"{key}={_fmt(value)}" for key, value in sorted(decision.state_evidence.items()))
+        lines.append(f"  归一化证据: {normalized or '—'}")
+        lines.append(
+            f"  口径: formula={decision.classifier_formula or '—'} / order={decision.classifier_order or '—'}；"
+            "P 为归一化证据的 softmax 权重，非频率概率"
+        )
+        if decision.factor_consistency:
+            reason = f"（{decision.divergence_reason}）" if decision.divergence_reason else ""
+            lines.append(f"  一致性: {decision.factor_consistency}{reason}")
+        if mass is None:
+            lines.append(f"  不确定: {decision.uncertain}（P_top 缺失，阈值 {_fmt(UNCERTAIN_P_TOP)}）")
+        else:
+            relation = "≥" if float(mass) >= UNCERTAIN_P_TOP else "<"
+            lines.append(f"  不确定: {decision.uncertain}（P_top={_fmt(mass)} {relation} {_fmt(UNCERTAIN_P_TOP)}）")
     if state.drift:
         drift = "  ".join(f"{k}={_fmt(v)}" for k, v in state.drift.items())
         lines.append(f"  漂移: {drift}")
+
+
+def _render_adverse_divergence(lines: list[str], decision: CompanyStateArtifact) -> None:
+    """顶背离节（V2 design §6.6 第 2 条）：仅当 ``adverse_divergence`` 非空时输出。
+
+    与 ``_render_state`` 的「一致性」行互补：一致性只说明「不同向」，本节给出可排序的严重度
+    与三分解，并显式提示「不作为加仓证据」（这是 D4 「内部有信号、外部看不见」的修复点）。
+    """
+    adverse = decision.adverse_divergence
+    if adverse is None:
+        return
+    _section(lines, "顶背离（结构性反证）")
+    lines.append(f"  kind: {adverse.kind or '—'}    severity: {_fmt(adverse.severity)}")
+    lines.append(
+        f"  分解: fundamental_severity={_fmt(adverse.fundamental_severity)}"
+        f" × expectation_severity={_fmt(adverse.expectation_severity)}"
+        f" × price_strength={_fmt(adverse.price_strength)}"
+    )
+    if adverse.description:
+        lines.append(f"  文案: {adverse.description}")
+    lines.append("  提示: 顶背离不作为加仓证据（价格仍强而基本面与一致预期同时实质恶化）。")
 
 
 def _render_hypothesis(lines: list[str], decision: CompanyStateArtifact) -> None:
@@ -269,6 +331,12 @@ def _render_variable_scores(lines: list[str], decision: CompanyStateArtifact) ->
         lines.append(f"  {label}: {_fmt(getattr(scores, attr))}")
     if scores.m:
         lines.append(f"  M(regime 摘要): {_fmt(scores.m)}")
+    if _is_v2_frame(decision):
+        # §6.6 第 3 条：情景方向分（scenario_probability 的驱动方向）独立成行，并写明 v2/v1 口径。
+        direction = _fmt(decision.factor_direction) if decision.factor_direction is not None else "—（缺失）"
+        lines.append(
+            f"  情景方向 factor_direction: {direction}（v2 = 0.7×mean(F,E) + 0.3×mean(F,E,T)；v1 为六因子均值）"
+        )
 
 
 def _render_factor_snapshot(lines: list[str], decision: CompanyStateArtifact) -> None:
@@ -401,6 +469,9 @@ def _render_meta(lines: list[str], decision: CompanyStateArtifact) -> None:
         f"    as_of={decision.as_of_date or '—'}    stale_after={decision.stale_after or '—'}"
     )
     lines.append(f"  degraded={_fmt(decision.degraded)}    reason={decision.degraded_reason or '—'}")
+    if _is_v2_frame(decision):
+        # §6.6 第 4 条：公式版本 provenance（v1 帧不输出，保持改造前渲染逐字不变）。
+        lines.append(f"  formula={decision.classifier_formula or '—'}")
 
 
 def render_midterm_decision_summary(
@@ -418,6 +489,7 @@ def render_midterm_decision_summary(
     # 头部（P2-6）：财报口径 vs 估值/行情口径，两个时点分行标注。
     _render_header(lines, decision, tp)
     _render_state(lines, decision)
+    _render_adverse_divergence(lines, decision)
     _render_hypothesis(lines, decision)
     _render_expectation_gap(lines, decision)
     _render_variable_scores(lines, decision)

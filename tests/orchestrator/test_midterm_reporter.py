@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 from alphabee.agents.facts.models import (
     FinancialFacts,
@@ -21,6 +22,7 @@ from alphabee.agents.facts.models import (
 )
 from alphabee.core import Artifact, ArtifactRoleGroup, ArtifactType
 from alphabee.midterm.models import (
+    AdverseDivergence,
     CognitiveState,
     CompanyStateArtifact,
     EvidenceEvent,
@@ -330,3 +332,108 @@ def test_report_prompt_requires_two_time_point_disclosure():
     assert "估值/行情口径" in REPORT_GENERATOR_PROMPT
     assert "禁止把 PE_TTM / PB / 收盘价表述为" in REPORT_GENERATOR_PROMPT
     assert "估值/行情时点未在输入中提供" in REPORT_GENERATOR_PROMPT
+
+
+# ── 状态证据 V2（design §6.6）：v2 专属行 / v1 帧渲染零变化 / 顶背离节 ──────────
+
+_V2_DISTRIBUTION = {"S0": 0.097, "S1": 0.025, "S2": 0.034, "S3": 0.025, "S4": 0.025, "S5": 0.795}
+_V2_STATE_EVIDENCE = {"S0": 0.3, "S1": 0.0, "S2": 0.0692, "S3": 0.0, "S4": 0.0, "S5": 0.7626}
+# 改造前（v2 接线前）本文件 _company_state() 的渲染全文 sha256：v1 帧必须逐字不变。
+_V1_REPORT_SHA256 = "61092601239ade2192e8a795d64f811ffb45eac234a4b22247fa141bd2ad4cbb"
+
+
+def _v2_decision(**overrides):
+    """v2 帧：600760 实帧口径（S5 / P_top 0.795 / H_norm 0.447 / 顶背离 severity 0.76）。"""
+    updates = {
+        "classifier_formula": "v2",
+        "classifier_order": "tef",
+        "entropy_normalized": 0.447,
+        "state": StateBelief(distribution=dict(_V2_DISTRIBUTION), argmax_state="S5", entropy=0.7993),
+        "uncertain": False,
+        "factor_consistency": "divergent",
+        "divergence_reason": "基本面与预期同时实质恶化而价格仍强（顶背离）",
+        "adverse_divergence": AdverseDivergence(
+            severity=0.7626,
+            fundamental_severity=1.0,
+            expectation_severity=0.7626,
+            price_strength=1.0,
+            description="基本面与预期同时实质恶化而价格仍强（顶背离）",
+        ),
+        "state_evidence": dict(_V2_STATE_EVIDENCE),
+        "factor_direction": -0.5826,
+    }
+    updates.update(overrides)
+    return _company_state().model_copy(update=updates)
+
+
+def test_v1_frame_render_is_byte_identical_to_pre_change():
+    """§6.6 第 5 条：v1 帧（formula 缺省 "v1" 且 state_evidence 为空）渲染保持改造前逐字不变。"""
+    text = node.render_midterm_decision_summary(_company_state())
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == _V1_REPORT_SHA256
+    for marker in ("归一化证据", "口径: formula=", "不确定:", "factor_direction", "formula=", "顶背离"):
+        assert marker not in text
+
+
+def test_v2_frame_renders_normalized_entropy_evidence_and_caliber():
+    text = node.render_midterm_decision_summary(_v2_decision())
+    assert "熵: 0.7993（归一化 0.447）" in text
+    assert "归一化证据: S0=0.3  S1=0  S2=0.0692  S3=0  S4=0  S5=0.7626" in text
+    assert "口径: formula=v2 / order=tef；P 为归一化证据的 softmax 权重，非频率概率" in text
+    assert "一致性: divergent（基本面与预期同时实质恶化而价格仍强（顶背离））" in text
+    assert "不确定: False（P_top=0.795 ≥ 0.55）" in text
+    assert "状态确信度: S5=0.795" in text
+
+
+def test_v2_frame_without_state_evidence_falls_back_to_v1_rendering():
+    """「state_evidence 为空」同样按 v1 渲染（§6.6 第 5 条的或条件），不输出 v2 专属行。"""
+    text = node.render_midterm_decision_summary(_v2_decision(state_evidence={}))
+    for marker in ("归一化证据", "口径: formula=", "不确定:", "factor_direction", "formula="):
+        assert marker not in text
+
+
+def test_v1_formula_with_stray_evidence_still_renders_as_v1():
+    """§6.6 的「或」条件另一分支：formula=="v1" 时即使 state_evidence 非空也按 v1 渲染。"""
+    text = node.render_midterm_decision_summary(_v2_decision(classifier_formula="v1", adverse_divergence=None))
+    for marker in ("归一化证据", "口径: formula=", "不确定:", "factor_direction", "formula=", "顶背离"):
+        assert marker not in text
+
+
+def test_v2_frame_without_normalized_entropy_keeps_plain_entropy_line():
+    text = node.render_midterm_decision_summary(_v2_decision(entropy_normalized=None))
+    entropy_line = next(line for line in text.splitlines() if "argmax: S5" in line)
+    assert "归一化" not in entropy_line
+
+
+def test_adverse_divergence_section_renders_severity_and_three_components():
+    text = node.render_midterm_decision_summary(_v2_decision())
+    assert "顶背离（结构性反证）" in text
+    assert "kind: fundamental_adverse_vs_price_strength    severity: 0.7626" in text
+    assert "分解: fundamental_severity=1 × expectation_severity=0.7626 × price_strength=1" in text
+    assert "文案: 基本面与预期同时实质恶化而价格仍强（顶背离）" in text
+    assert "不作为加仓证据" in text
+
+
+def test_adverse_divergence_section_absent_when_none():
+    text = node.render_midterm_decision_summary(
+        _v2_decision(adverse_divergence=None, factor_consistency="independent", divergence_reason="")
+    )
+    assert "顶背离（结构性反证）" not in text
+    assert "不作为加仓证据" not in text
+    assert "一致性: independent" in text
+
+
+def test_variable_scores_factor_direction_line_and_meta_formula():
+    text = node.render_midterm_decision_summary(_v2_decision())
+    assert "情景方向 factor_direction: -0.5826（v2 = 0.7×mean(F,E) + 0.3×mean(F,E,T)；v1 为六因子均值）" in text
+    assert "formula=v2" in text.split("── 元信息")[1]
+
+
+def test_factor_direction_missing_is_explicit():
+    text = node.render_midterm_decision_summary(_v2_decision(factor_direction=None))
+    assert "情景方向 factor_direction: —（缺失）" in text
+
+
+def test_v2_frame_survives_node_payload_roundtrip():
+    """接线路径（payload → 节点 → summary artifact）同样带 v2 行。"""
+    text = _rendered_text(_v2_decision(), _state)
+    assert "归一化证据" in text and "formula=v2" in text

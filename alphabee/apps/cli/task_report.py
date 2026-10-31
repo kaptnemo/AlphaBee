@@ -83,11 +83,19 @@ def _meta_lines(record: TaskRecord, raw: dict[str, Any]) -> list[str]:
     lines.append(f"**时间**: {record.timestamp}")
 
     if record.midterm_state or record.midterm_confidence or record.midterm_evidence_count:
-        lines.append(
+        line = (
             f"**中期决策**: 状态 {record.midterm_state or '—'} "
             f"置信度 {record.midterm_confidence:.2f} "
             f"证据 {record.midterm_evidence_count} 条"
         )
+        # 状态证据 V2 design §6.9：新记录才追加 formula / 不确定 / 顶背离（旧记录保持原行，
+        # 不出现空标签）。顶背离仅在 severity > 0 时展示——0.0 表示「无顶背离」，不打印噪声值。
+        if record.midterm_formula:
+            line += f" · formula {record.midterm_formula}"
+            line += f" · 不确定 {'是' if record.midterm_uncertain else '否'}"
+            if record.midterm_adverse_severity > 0.0:
+                line += f" · 顶背离 {record.midterm_adverse_severity:.2f}"
+        lines.append(line)
     return lines
 
 

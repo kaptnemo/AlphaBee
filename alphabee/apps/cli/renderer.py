@@ -585,6 +585,22 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
         else:
             band = getattr(position, "position_band", "") if position is not None else ""
         degraded = bool(md.get("degraded", False)) if isinstance(md, dict) else getattr(md, "degraded", False)
+        # 状态证据 V2（design §6.7）：只读渲染 formula / 不确定 / 顶背离标签；
+        # 旧 artifact 缺字段时一律不输出标签（按现状渲染，不新增计算）。
+        formula = md.get("classifier_formula", "") if isinstance(md, dict) else getattr(md, "classifier_formula", "")
+        uncertain = bool(md.get("uncertain", False)) if isinstance(md, dict) else bool(getattr(md, "uncertain", False))
+        adverse = md.get("adverse_divergence") if isinstance(md, dict) else getattr(md, "adverse_divergence", None)
+        if isinstance(adverse, dict):
+            adverse_severity = adverse.get("severity")
+        else:
+            adverse_severity = getattr(adverse, "severity", None) if adverse is not None else None
+        formula_tag = f"  │ 公式 {color(str(formula), Color.CYAN)}" if formula else ""
+        uncertain_tag = color("  │ ⚠ 不确定", Color.YELLOW) if uncertain else ""
+        adverse_tag = (
+            color(f"  │ ⚠ 顶背离 {adverse_severity:.2f}", Color.RED)
+            if isinstance(adverse_severity, (int, float))
+            else ""
+        )
         cc = Color.GREEN if conf >= 0.6 else Color.YELLOW if conf >= 0.4 else Color.RED
         ent_str = f"{entropy:.2f}" if isinstance(entropy, (int, float)) else "—"
         deg_tag = color("  ⚠ 降级", Color.YELLOW) if degraded else ""
@@ -594,6 +610,7 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
             f"  │ 熵 {ent_str}"
             f"  │ 仓位 {color(band or '—', Color.CYAN)}"
             f"  │ 证据 {len(evidence)} 条"
+            f"{formula_tag}{uncertain_tag}{adverse_tag}"
             f"{deg_tag}{issue_tag}"
         )
         print()

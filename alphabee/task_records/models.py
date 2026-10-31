@@ -106,6 +106,10 @@ class TaskRecord(BaseModel):
     midterm_state: str = ""  # S0–S5 认知状态 argmax（StateBelief.argmax_state）
     midterm_confidence: float = 0.0  # P(H|Evidence) 后验
     midterm_evidence_count: int = 0  # evidence_log 长度
+    # 状态证据 V2 design §6.9（additive，全部带默认值）：旧记录反序列化不受影响。
+    midterm_formula: str = ""  # 本帧公式版本 "v1"/"v2"（"" = 旧记录 / 未产出决策）
+    midterm_uncertain: bool = False  # 语义不确定（v1：熵高或背离；v2：P_top 低或非顶背离的背离）
+    midterm_adverse_severity: float = 0.0  # 顶背离严重度 ∈[0,1]（0.0 = 无顶背离 / 旧记录）
 
     # ── 标的上下文 ──
     company_industry: str = ""
@@ -134,6 +138,9 @@ class TaskRecord(BaseModel):
             "midterm_state": self.midterm_state,
             "midterm_confidence": self.midterm_confidence,
             "midterm_evidence_count": self.midterm_evidence_count,
+            "midterm_formula": self.midterm_formula,
+            "midterm_uncertain": self.midterm_uncertain,
+            "midterm_adverse_severity": self.midterm_adverse_severity,
             "signal_levels": signal_levels,
             "anomaly_triggered": self.anomaly_triggered_count,
             "anomaly_patterns": self.anomaly_pattern_count,

@@ -191,3 +191,81 @@ def test_cli_task_report_wiring(tmp_path, capsys, monkeypatch) -> None:
     captured = capsys.readouterr().out
     assert "# 贵州茅台投资分析报告" in captured
     assert "## 核心观点摘要" in captured
+
+
+# ── 状态证据 V2（design §6.9）：formula / 不确定 / 顶背离 渲染 ─────────────────
+
+
+def test_meta_line_renders_formula_uncertain_and_adverse() -> None:
+    md = build_report_markdown(_record(midterm_formula="v2", midterm_uncertain=False, midterm_adverse_severity=0.76))
+    assert "**中期决策**: 状态 S3 置信度 0.85 证据 12 条 · formula v2 · 不确定 否 · 顶背离 0.76" in md
+
+
+def test_meta_line_renders_uncertain_yes() -> None:
+    md = build_report_markdown(_record(midterm_formula="v1", midterm_uncertain=True))
+    assert "· formula v1 · 不确定 是" in md
+    assert "顶背离" not in md  # severity 0.0 = 无顶背离，不打印噪声值
+
+
+def test_meta_line_old_record_keeps_current_rendering() -> None:
+    """旧记录（无 formula 字段）保持现状：不出现空标签。"""
+    md = build_report_markdown(_record())  # _record 未设 formula / uncertain / severity
+    assert "**中期决策**: 状态 S3 置信度 0.85 证据 12 条" in md
+    assert "formula" not in md
+    assert "不确定" not in md
+    assert "顶背离" not in md
+
+
+# ── CLI 渲染面（renderer 的 resolve_midterm_decision 分支，design §6.7）────────
+# 仓库此前没有 renderer 专属测试文件（§8.4「若有」）；本文件已属 apps 渲染面，
+# 故把该分支的只读标签断言放在这里（不新增测试文件）。
+
+
+def _midterm_payload(**overrides) -> dict:
+    payload = {
+        "state": {"argmax_state": "S5", "entropy": 0.7993},
+        "thesis_confidence": 0.6,
+        "evidence_log": [{"id": "e1"}, {"id": "e2"}],
+        "position": {"position_band": "减仓"},
+        "degraded": False,
+        "classifier_formula": "v2",
+        "uncertain": True,
+        "adverse_divergence": {"severity": 0.7626},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _render_midterm_cli_branch(capsys, md_value: dict) -> str:
+    from alphabee.apps.cli import renderer
+    from alphabee.apps.cli.colors import set_color_enabled
+
+    set_color_enabled(False)  # 关闭 ANSI，断言纯文本
+    try:
+        renderer.print_node_update_summary(
+            "resolve_midterm_decision",
+            {"artifacts": [{"type": "midterm_decision", "value": md_value}]},
+            0.1,
+        )
+    finally:
+        set_color_enabled(True)
+    return capsys.readouterr().out
+
+
+def test_cli_midterm_branch_renders_formula_uncertain_and_adverse(capsys) -> None:
+    out = _render_midterm_cli_branch(capsys, _midterm_payload())
+    assert "认知状态: S5" in out
+    assert "公式 v2" in out
+    assert "不确定" in out
+    assert "顶背离 0.76" in out
+
+
+def test_cli_midterm_branch_old_payload_keeps_current_rendering(capsys) -> None:
+    payload = _midterm_payload()
+    for key in ("classifier_formula", "uncertain", "adverse_divergence"):
+        payload.pop(key)
+    out = _render_midterm_cli_branch(capsys, payload)
+    assert "认知状态: S5" in out
+    assert "公式" not in out
+    assert "不确定" not in out
+    assert "顶背离" not in out

@@ -170,6 +170,10 @@ class TrackingReport(BaseModel):
     # **只 append 字段且带默认值**：历史 JSONL（`data/tracking/alerts/*.jsonl`）反序列化不受影响。
     classifier_order: str = ""  # 本帧解析后的顺序（"" = reconcile 失败 / 未计算）
     classifier_order_mismatch: bool = False  # prev 非空且 prev.classifier_order != curr.classifier_order
+    # 状态证据 V2 design §6.8（additive）：本帧公式版本自证 + 跨公式相邻帧标注。
+    # **只 append 字段且带默认值**：历史 JSONL 反序列化不受影响；旧帧无该字段 ⇒ 回落 "v1"。
+    classifier_formula: str = ""  # "v1" / "v2"（"" = reconcile 失败 / 未计算）
+    classifier_formula_mismatch: bool = False  # prev 非空且 prev.classifier_formula != curr.classifier_formula
 
     @property
     def kinds(self) -> list[str]:
@@ -199,6 +203,8 @@ class _Frame:
     thesis_version_reason: str = ""
     # TEF design §6.2（additive，PR-2）：跨序相邻帧标注（在内核算好，供 run_once 透传到报告）。
     classifier_order_mismatch: bool = False
+    # 状态证据 V2 design §6.8（additive）：跨公式相邻帧标注（同序同构，只标注不阻断）。
+    classifier_formula_mismatch: bool = False
 
 
 # ── §9.4 安全红线 ───────────────────────────────────────────────────────────
@@ -439,6 +445,7 @@ def _reconcile_frame(
     persist: bool = True,
     previous: CompanyStateArtifact | None = None,
     classifier_order: str | None = None,
+    classifier_formula: str | None = None,
 ) -> _Frame:
     """一帧的确定性内核（``reconcile`` 与 ``run_once`` **共用**，防两套链路漂移）。"""
     limits = _resolve_thresholds(thresholds)
@@ -460,6 +467,7 @@ def _reconcile_frame(
         thesis=thesis,
         prev_evidence_log=getattr(prev, "evidence_log", None),
         classifier_order=classifier_order,
+        classifier_formula=classifier_formula,
     )
     # 字段级接线：evaluate 不产这三项，由本层补齐（§9.2 + P0 设计 §6.2 退出条件首个生产点）
     # P0 §6.2：退出条件 = 新生产点产出 + 继承上一帧列表（继承逻辑已存在）。
@@ -478,6 +486,13 @@ def _reconcile_frame(
         prev is not None
         and str(getattr(prev, "classifier_order", "etf") or "etf")
         != str(getattr(curr, "classifier_order", "etf") or "etf")
+    )
+    # 状态证据 V2 design §6.8：跨公式相邻帧标注（与 order 同构）。旧帧无 classifier_formula
+    # 字段 load 后回落 "v1"（历史帧确由 v1 产出），参与比较；同样只标注不阻断、不静默。
+    classifier_formula_mismatch = bool(
+        prev is not None
+        and str(getattr(prev, "classifier_formula", "v1") or "v1")
+        != str(getattr(curr, "classifier_formula", "v1") or "v1")
     )
 
     # P0 设计 §6.1：交易日/停牌口径（prev=None 首帧无窗口 ⇒ 均为 None）
@@ -550,6 +565,7 @@ def _reconcile_frame(
         thesis_version=thesis_version,
         thesis_version_reason=thesis_version_reason,
         classifier_order_mismatch=classifier_order_mismatch,
+        classifier_formula_mismatch=classifier_formula_mismatch,
     )
 
 
@@ -563,6 +579,7 @@ def reconcile(
     state_dir: str | Path | None = None,
     persist: bool = True,
     classifier_order: str | None = None,
+    classifier_formula: str | None = None,
 ) -> CompanyStateArtifact:
     """把标的推进到 ``as_of``：增量事实 → 快照 → 五层差分 + 归因 → 退出检查 → bayes 更新 → 状态检查。
 
@@ -587,6 +604,8 @@ def reconcile(
         persist: 是否落盘（``False`` 用于只读预演/测试）。
         classifier_order: 分类器顺序变体（TEF design §5.2）：``None`` = 跟随配置；显式 ``"etf"`` / ``"tef"``
             覆盖配置（同样 fail-open）。
+        classifier_formula: 状态证据公式版本（V2 design §6.8）：``"v1"`` / ``"v2"``；``None`` = 跟随
+            配置 ``midterm.formula_revision``（缺省 ``"v1"``，fail-open 到 ``"v1"``）。
 
     Returns:
         本帧 :class:`CompanyStateArtifact`（已含 ``thesis_confidence`` / ``factor_snapshot`` /
@@ -601,6 +620,7 @@ def reconcile(
         state_dir=state_dir,
         persist=persist,
         classifier_order=classifier_order,
+        classifier_formula=classifier_formula,
     ).artifact
 
 
@@ -695,6 +715,7 @@ def run_once(
     write_alerts: bool = True,
     manual: bool = False,
     classifier_order: str | None = None,
+    classifier_formula: str | None = None,
 ) -> TrackingReport:
     """一次性 reconcile + 触发判定 + 告警落盘（§14.5-A 的 v1 闭环）。
 
@@ -711,6 +732,8 @@ def run_once(
         manual: ``True`` 时额外注入一条 :attr:`TriggerKind.MANUAL`（CLI ``--trigger manual``）。
         classifier_order: 分类器顺序变体（TEF design §5.2）：``"etf"`` / ``"tef"``；
             ``None`` = 跟随配置 ``midterm.classifier_order``（fail-open 到 ``etf``）。
+        classifier_formula: 状态证据公式版本（V2 design §6.8）：``"v1"`` / ``"v2"``；
+            ``None`` = 跟随配置 ``midterm.formula_revision``（缺省 ``"v1"``，fail-open 到 ``"v1"``）。
 
     Returns:
         :class:`TrackingReport`。
@@ -728,6 +751,7 @@ def run_once(
             state_dir=state_dir,
             persist=persist,
             classifier_order=classifier_order,
+            classifier_formula=classifier_formula,
         )
     except Exception as exc:  # noqa: BLE001 - 跟踪入口必须 fail-open，绝不把异常抛给调度/CLI
         logger.warning("tracking reconcile failed symbol=%s as_of=%s: %s", symbol, frame_as_of, exc)
@@ -757,6 +781,9 @@ def run_once(
     # TEF design §6.2（PR-2）：本帧分类器顺序自证 + 跨序相邻帧标注（不阻断、不静默）。
     report.classifier_order = str(getattr(artifact, "classifier_order", "") or "")
     report.classifier_order_mismatch = bool(frame.classifier_order_mismatch)
+    # 状态证据 V2 design §6.8：本帧公式版本自证 + 跨公式相邻帧标注（只标注、不阻断）。
+    report.classifier_formula = str(getattr(artifact, "classifier_formula", "") or "")
+    report.classifier_formula_mismatch = bool(frame.classifier_formula_mismatch)
 
     triggers = detect_triggers(
         symbol,
@@ -831,12 +858,21 @@ def run_watchlist(
     *,
     as_of: str | None = None,
     classifier_order: str | None = None,
+    classifier_formula: str | None = None,
     **kwargs: Any,
 ) -> list[TrackingReport]:
     """按序跑一份看板；**单个标的失败不影响其余**（fail-open，逐标的独立报告）。"""
     reports: list[TrackingReport] = []
     for symbol in symbols:
-        reports.append(run_once(symbol, as_of=as_of, classifier_order=classifier_order, **kwargs))
+        reports.append(
+            run_once(
+                symbol,
+                as_of=as_of,
+                classifier_order=classifier_order,
+                classifier_formula=classifier_formula,
+                **kwargs,
+            )
+        )
     return reports
 
 
@@ -869,6 +905,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["etf", "tef"],
         default=None,
         help="分类器顺序变体（缺省 = 读 config midterm.classifier_order；etf=E→T→F / tef=T→E→F）",
+    )
+    parser.add_argument(
+        "--formula",
+        choices=["v1", "v2"],
+        default=None,
+        help="状态证据公式版本（缺省 = 读 config midterm.formula_revision；v1=现状 / v2=显式 opt-in）",
     )
     parser.add_argument("--json", action="store_true", help="以 JSON 输出报告")
     return parser
@@ -944,6 +986,7 @@ def main(argv: list[str] | None = None) -> int:
         write_alerts=not args.no_persist,  # 只读预演不得写任何东西（含默认告警目录）
         manual=args.trigger == "manual",
         classifier_order=args.classifier,
+        classifier_formula=args.formula,
     )
     if args.json:
         print(json.dumps([r.model_dump(mode="json") for r in reports], ensure_ascii=False, indent=2))

@@ -1018,3 +1018,136 @@ def test_cli_classifier_tef_reports_provenance(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["classifier_order"] == "tef"
     assert payload[0]["classifier_order_mismatch"] is False
+
+
+# ── ⑧ 状态证据 V2：公式版本透传 + provenance + 跨公式标注（V2 design §6.8） ──
+
+
+def test_cli_formula_option_exists_with_v1_v2_choices():
+    parser = scheduler_module._build_parser()
+    assert parser.parse_args(["--formula", "v2"]).formula == "v2"
+    assert parser.parse_args(["--formula", "v1"]).formula == "v1"
+    assert parser.parse_args([]).formula is None  # 缺省 None → 读 config midterm.formula_revision
+
+
+def test_cli_formula_rejects_unknown_value():
+    parser = scheduler_module._build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--formula", "v3"])
+
+
+def test_tracking_report_formula_fields_default_to_empty():
+    report = scheduler_module.TrackingReport(symbol=SYMBOL, as_of=D1)
+    assert report.classifier_formula == ""
+    assert report.classifier_formula_mismatch is False
+
+
+def test_run_once_formula_v2_persists_v2_frame(tmp_path):
+    """`--formula v2` 透传 ⇒ evaluate 写入 formula provenance ⇒ 落盘帧 classifier_formula=="v2"。"""
+    state_dir = tmp_path / "state"
+    report = run_once(
+        SYMBOL,
+        as_of=D1,
+        state_dir=state_dir,
+        alert_dir=tmp_path / "alerts",
+        classifier_order="etf",
+        classifier_formula="v2",
+        **_providers(D1),
+    )
+    assert report.classifier_formula == "v2"
+    assert report.classifier_formula_mismatch is False  # 首帧无 prev
+    assert latest_artifact(SYMBOL, state_dir).classifier_formula == "v2"
+
+
+def test_cross_formula_adjacent_frames_mismatch_true(tmp_path):
+    """跨公式相邻帧：prev=v1 + curr=v2 ⇒ classifier_formula_mismatch is True（只标注、不阻断）。"""
+    state_dir = tmp_path / "state"
+    prev = _prev_artifact_with_state("S1", D1)
+    prev.classifier_formula = "v1"
+    append_artifact(prev, state_dir)
+
+    report = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        alert_dir=tmp_path / "alerts",
+        classifier_order="etf",
+        classifier_formula="v2",
+        **_providers(D2),
+    )
+    assert report.classifier_formula == "v2"
+    assert report.classifier_formula_mismatch is True
+    assert report.degraded is False  # mismatch 只标注，不阻断帧产出
+    assert latest_artifact(SYMBOL, state_dir).classifier_formula == "v2"
+
+
+def test_same_formula_adjacent_frames_mismatch_false(tmp_path):
+    state_dir = tmp_path / "state"
+    prev = _prev_artifact_with_state("S1", D1)
+    prev.classifier_formula = "v1"
+    append_artifact(prev, state_dir)
+
+    report = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        alert_dir=tmp_path / "alerts",
+        classifier_order="etf",
+        classifier_formula="v1",
+        **_providers(D2),
+    )
+    assert report.classifier_formula == "v1"
+    assert report.classifier_formula_mismatch is False
+
+
+def test_old_frame_without_formula_loads_as_v1(tmp_path):
+    """旧 JSONL 无 classifier_formula 字段 ⇒ load 回落 "v1"（历史帧确由 v1 产出）。"""
+    state_dir = tmp_path / "state"
+    path = state_dir / f"{SYMBOL}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old_payload = CompanyStateArtifact(symbol=SYMBOL, as_of_date=D1).model_dump(mode="json")
+    old_payload.pop("classifier_formula", None)  # 模拟存量旧帧
+    path.write_text(
+        json.dumps({"id": f"{SYMBOL}:{D1}", **old_payload}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    loaded = midterm_persistence.load_artifacts(SYMBOL, state_dir)
+    assert len(loaded) == 1 and loaded[0].classifier_formula == "v1"
+
+    # 旧帧（回落 v1）对 curr v1 ⇒ 不误报 mismatch
+    report = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        alert_dir=tmp_path / "alerts",
+        classifier_order="etf",
+        classifier_formula="v1",
+        **_providers(D2),
+    )
+    assert report.classifier_formula == "v1"
+    assert report.classifier_formula_mismatch is False
+
+
+def test_cli_formula_v2_reports_provenance(tmp_path, monkeypatch, capsys):
+    """CLI `--formula v2` 端到端：JSON 报告 classifier_formula=="v2"（缺省 None 跟随配置）。"""
+    _patch_offline(monkeypatch)
+    code = main(
+        [
+            "--symbol",
+            SYMBOL,
+            "--once",
+            "--as-of",
+            D2,
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--alert-dir",
+            str(tmp_path / "alerts"),
+            "--formula",
+            "v2",
+            "--json",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["classifier_formula"] == "v2"
+    assert payload[0]["classifier_formula_mismatch"] is False
