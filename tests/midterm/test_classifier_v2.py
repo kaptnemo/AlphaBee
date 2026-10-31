@@ -358,6 +358,11 @@ def test_i4_evidence_never_exceeds_caps_on_grid():
 # I5 校准聚合（§7.3 的聚合门；容差按 §8.1 的 ≤0.10 / ≥0.85）
 # ─────────────────────────────────────────────────────────────────────────────
 
+# §7.3 步骤 5：校准时聚合约束以 ±0.05 容差复核（设计门本身仍是 0.10 / 0.85；容差不放宽门，
+# 只吸收再校准时的测量抖动）。语料校准证据在 classifier_v2.py 常量区注释里——**测试不读
+# data/**（该目录被 gitignore，CI 不可用），只用固定帧与形状约束。
+_GATE_TOL = 0.05
+
 
 def test_i5_calibration_aggregates():
     bull = _result(1.0, 1.0, 1.0, -1.0, 1.0)
@@ -372,6 +377,38 @@ def test_i5_calibration_aggregates():
         entropy = v2.entropy_nats(distribution_map)
         assert 0.0 <= entropy / math.log(len(_STATES)) <= 1.0
         assert sum(distribution_map.values()) == pytest.approx(1.0)
+
+
+def test_i5_calibration_gates_with_tolerance():
+    """§8.1 I5 + §7.3 步骤 5：四个聚合门以 ±0.05 容差复核（参数再校准时用）。
+
+    - 对称性：完美多空 ``P_top`` 差 ≤ 0.10；
+    - 判别性：无信号帧 ``P(S0)`` ≥ 0.85；
+    - 归一化熵 ``H_norm`` ∈ [0, 1]；
+    - 结构一致性：``EVIDENCE_CAPS["S5"] == max(1.5, BREAK_LAMBDA)``（无容差）。
+    另钉三个冻结参数的取值（语料校准结论见 ``classifier_v2.py`` 常量区注释；再校准须同步改此钉）。
+    """
+    bull = _result(1.0, 1.0, 1.0, -1.0, 1.0)
+    bear = _result(-1.0, -1.0, -1.0, -1.0, 1.0)
+    assert abs(_p_top(bull) - _p_top(bear)) <= 0.10 + _GATE_TOL
+
+    no_signal = _result(0.05, -0.05, 0.1, 0.0, 0.0)
+    assert no_signal.state.distribution["S0"] >= 0.85 - _GATE_TOL
+
+    for frame in (
+        (1.0, 1.0, 1.0, -1.0, 1.0),
+        (-1.0, -1.0, -1.0, -1.0, 1.0),
+        (-1.0, -0.5169, 1.0, 0.6015, -0.1902),  # 600760 实帧
+        (-1.0, -0.2, 1.0, 0.3, 0.0),  # 困境反转候选
+    ):
+        result = _result(*frame)
+        assert 0.0 <= result.entropy_normalized <= 1.0
+
+    assert v2.EVIDENCE_CAPS["S5"] == max(1.5, v2.BREAK_LAMBDA)
+    # 冻结参数（§7.3 校准冻结；2026-10-31 复核：默认值经语料校准确认/待校准口径见常量区注释）
+    assert v2.TEMPERATURE == pytest.approx(0.22)
+    assert v2.UNCERTAIN_P_TOP == pytest.approx(0.55)
+    assert v2.BREAK_LAMBDA == pytest.approx(2.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
