@@ -4,6 +4,7 @@
 > **对齐状态（2026-10-18 核实）**：本设计的全部前置依赖（`docs/implementation/framework/P0_A_SHARE_FIX_IMPLEMENTATION_DESIGN.md` 六项 P0）已按 PR-A（`bb7c06b`）/ PR-B（`cae758a`）/ PR-C（`494b084`）落地并完成 ROADMAP 变更登记（登记表第 81–83 行）。本文档已完成对齐更新：§1.1 立项依据按 P0-6 修复后的 E 重述、新增 §1.3 前置落地状态、§3.2 补充 E 构成口径、§4.1/§4.5 锚点行号刷新、§9 对比实验基线重定义。**TEF 实施按 §8.1 的 PR-1/PR-2 不变。**
 > 关联文档：`docs/midterm/MIDTERM_DECISION_MODEL.md`（§4.2 状态映射表、§4.3 E>T>F 顶部顺序、§4.4 共振/背离——本文档的语义基线）、`docs/design/A_SHARE_FRAMEWORK_REVIEW.md`（§2.1 立项依据）、`docs/implementation/framework/P0_A_SHARE_FIX_IMPLEMENTATION_DESIGN.md`（已实施的前置设计）、`docs/design/RESEARCH_CONTINUUM_DESIGN.md`（§15 代码级设计范式）。
 > 实施时契约改动必须走 `alphabee-pipeline-contract-steward` / `alphabee-schema-steward` skill 流程；本设计已按 steward 要求预先完成下游消费面追踪（§4、§6）。
+> **修订指针（2026-10-31）**：本文档 §3.2 的逐状态状态证据公式是 **TEF 历史设计（`formula=v1`，已冻结）**。该公式的形式缺陷已由「状态证据公式 V2」修订，实现见 `alphabee/midterm/classifier_v2.py`（`v2` 为显式 opt-in，缺省仍为 `v1`；顺序哲学与本文档 §3.1 一致，只改「证据 → 归一化 → softmax」的形式：双侧中性带 / 双击证伪通路 / 上限归一化 + 温度 / 有向不确定 + 结构化背离）。设计见 `docs/implementation/midterm/MIDTERM_STATE_EVIDENCE_V2_DESIGN.md`（§4/§5），本文档**保留原文不改**（历史设计）。
 
 ---
 

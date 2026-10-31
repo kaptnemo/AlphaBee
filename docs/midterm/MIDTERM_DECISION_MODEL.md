@@ -202,6 +202,28 @@ S0 研究候选 → S1 预期差(试探) → S2 证据确认(加仓) → S3 共�
 | **S4** | E 停上修/转负 + T 弱 + V 扩张 + C↑ | 好消息 Price In，边际买家不足 |
 | **S5** | Thesis 证伪 / E 持续下修 | 退出（thesis_broken / alpha_exhausted） |
 
+> **V2 交叉引用（`formula=v2`，显式 opt-in；2026-10-31 落地）**：上表是 `formula=v1`（现状、缺省）的语义基线。V2 期在同一套「因子模式 → 状态」映射上新增了第二套**证据公式**（`alphabee/midterm/classifier_v2.py`），由配置 `midterm.formula_revision`（缺省 `v1`）或显式参数 `classifier_formula` 选择（tracking CLI 另有 `--formula {v1,v2}`，缺省跟随配置）；`v1` 模块**冻结**、数值逐值不变。V2 不改顺序哲学，只改「证据 → 归一化 → softmax」的形式，四个机制：
+>
+> | 机制 | 修复的形式缺陷 | 落点 |
+> |---|---|---|
+> | **M1 双侧中性带** `neutral_band(x,w)` | 单边「尚未上修」把「预期越负」当「越确认」，证据随预期恶化而**上升** | S1 的 E 项、S2 的 E 项（`tef`）/ T 项（`etf`） |
+> | **M2 双击证伪通路** | 退出证据被价格门控独占 ⇒ 价格不破位时退出**不可达** | `S5 = max(价格破位路径, BREAK_LAMBDA × severe(F) × severe(E))` |
+> | **M3 上限归一化 + 温度重标定** | 各状态证据上限不齐（S3 可达 3.0、S5 最多 1.5、S0 为 0.30）⇒ softmax 内建状态先验、熵不可跨状态比较 | `norm[s] = clip01(evidence[s] / EVIDENCE_CAPS[s])`，再 `softmax(norm / TEMPERATURE)` |
+> | **M4 有向不确定 + 结构化背离** | 「不确定」与「背离」只存在于分类器内部、不进 artifact | `uncertain` 改由 `P_top` 判定；新增 `AdverseDivergence`（顶背离，见 §4.4） |
+>
+> **证据上限（结构性常量，不参与调参）**：`S0=0.30`、`S1=2.0`、`S2=2.0`、`S3=3.0`、`S4=3.0`、`S5=2.0`；其中 `S5` 上限 = `max(1.5, BREAK_LAMBDA)`（导入期断言相等，防参数改动后 cap 漂移）。上限 = 该状态公式在 `[−1,1]^6` 上的**可达最大值**，归一化后每个状态都可取到 `1.0`、状态间可比。
+>
+> **口径（写入 artifact 与报告文案）**：`P` 是**归一化模式证据的 softmax 权重**（温度 `TEMPERATURE=0.22`；均匀先验等价于在 logits 上加常数，故省略），**不是频率概率**、也**不是**假设 `H` 的后验 `P(H|E)`；`P_top = max(P)` 叫「状态确信度」只是沿用 v1 命名，不可当置信区间。`H_norm = H_nats / ln(6) ∈ [0,1]` 只是分布离散度。
+>
+> **情景方向 `factor_direction` 的两套口径**（`scenario_probability` 的驱动方向，写入 `CompanyStateArtifact.factor_direction`）：
+>
+> | 公式 | 口径 | 缺失处理 |
+> |---|---|---|
+> | `v1`（现状） | 六因子**等权均值** `mean(F,E,T,V,C,R)`（逐字保留改造前口径） | 缺失因子剔除后对可用子集求均值；全缺 ⇒ `None` |
+> | `v2` | `0.7 × mean(F,E) + 0.3 × mean(F,E,T)` | 逐组对可用子集求均值；某组全缺 ⇒ 跳过该组并按剩余组**权重重归一化**（例：F/E 全缺、仅 T 可用 ⇒ 返回 T；F/E/T 全缺 ⇒ `None`）；`V/C/R` 不参与 |
+>
+> v2 口径的理由：情景概率算的是 **thesis 的情景概率**，驱动变量是 F/E；T 是时序修正；V/C/R 是赔率/拥挤/风险，不是 thesis 驱动。v1 的等权均值会让 `T=+1` 与 `V=+0.60` 把 `F=−1`、`E=−0.52` 抵消成 ≈`−0.03`（类别错误）。公式全文、参数表、校准与测试矩阵见 `docs/implementation/midterm/MIDTERM_STATE_EVIDENCE_V2_DESIGN.md`（§4/§5/§6.3）。
+
 ### 4.3 关键：顶部判定的顺序是 E → T → F（§20）
 
 顶部顺序是 `E → T → F`：**盈利预测先停止上修（E 转平），再股价 RS 下降（T 弱），最后财报才真正变坏（F 坏）**。
@@ -220,6 +242,22 @@ S0 研究候选 → S1 预期差(试探) → S2 证据确认(加仓) → S3 共�
 
 classifier 需对每个 `FactorDelta` 标注 `consistency`（resonant / divergent / independent），
 背离是 S3→S4 与 `EmergencyRiskStop` 的前置信号。
+
+> **V2 追加：`adverse`（顶背离）格**（仅 `formula=v2` 产出；`v1` 的 `adverse_divergence` 恒为 `None`）。
+>
+> 判据（V2 背离分类学**优先级最高**，命中即返回）：`sf > 0 ∧ se > 0 ∧ t_up > 0`，其中 `sf = severe(F)`、`se = severe(E)` 是**负侧严重度**（`|x| ≤ SEVERE_LO=0.25` 的死区内为 0、`|x| ≥ SEVERE_HI=0.60` 饱和为 1），`t_up = up(T)`。语义 = **价格仍强，而基本面与一致预期同时实质恶化**。
+>
+> ```text
+> Consistency        = divergent
+> divergence_reason  = "基本面与预期同时实质恶化而价格仍强（顶背离）"
+> AdverseDivergence  = kind="fundamental_adverse_vs_price_strength"
+>                      severity = sf × se × t_up
+>                      fundamental_severity=sf / expectation_severity=se / price_strength=t_up
+> ```
+>
+> **顶背离不算 `uncertain`**：V2 的判据是 `uncertain = (P_top < UNCERTAIN_P_TOP) 或 (有背离但不是顶背离)`。顶背离是「**确定的坏消息**」而不是「不知道」，故 `uncertain=False` —— 这样它不会被「不确定 ⇒ 不能清仓」的既有跨层耦合压成观望。其处置是：产出**高优先级**研究任务 `research-adverse`（`importance="high"`、`decides=["thesis_state"]`），并在报告、tracking CLI 与任务记录中显式标注「**不作为加仓证据**」；严重度 `severity` 落 `adverse_divergence`（artifact）与 `midterm_adverse_severity`（任务记录）。按 v1 同口径，任何 `divergent` 帧仍同时产出 `research-divergent`。
+>
+> 用严重度而非符号判定的原因：不把「单季轻微负增长」判成顶背离；任一 `F/E/T` 缺失 ⇒ `independent`、不产出顶背离（不制造背离）。仓位层不新增顶背离专用规则（`position.py` 不改）：顶背离的影响经由既有三轴（状态分布 / 熵 / 赔率门槛）传导，而不是新增专用分支。
 
 ### 4.5 状态迁移的合法性（§41）
 

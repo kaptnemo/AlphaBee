@@ -107,11 +107,19 @@ domain_context:
     cache_dir: "data/driver_profiles"   # 缓存目录（相对 PROJECT_ROOT；每标的一个 JSON）
     recursion_limit: 40       # LangGraph 递归步数上界（显式设置，勿依赖默认值）
 
-# 中期决策层（docs/implementation/midterm/MIDTERM_CLASSIFIER_TEF_DESIGN.md §5.1）
-# 缺段 ⇒ 全默认值（旧 config 行为不变）；classifier_order 默认 etf（E→T→F 基准）。
+# 中期决策层（docs/implementation/midterm/MIDTERM_CLASSIFIER_TEF_DESIGN.md §5.1；
+# 状态证据公式 V2 见 docs/implementation/midterm/MIDTERM_STATE_EVIDENCE_V2_DESIGN.md §7.1）
+# 缺段 ⇒ 全默认值（旧 config 行为不变）；classifier_order 默认 etf（E→T→F 基准）、
+# formula_revision 默认 v1（现状证据公式）。
 # 切换为 tef（T→E→F，A 股价格先行变体）属行为变更，登记见 docs/roadmap/ROADMAP.md 变更登记表 PR-1 行。
 midterm:
   classifier_order: etf       # etf = E→T→F（基准）；tef = T→E→F（价格先行变体）
+  formula_revision: v1        # 状态证据公式版本：v1 = 现状（缺省，行为零变化；v1 模块已冻结）；
+                              # v2 = 新证据公式（双侧中性带 / 双击证伪 / 上限归一化+温度 /
+                              # 有向不确定+顶背离），**显式 opt-in**：仅本行置 v2 才生效。
+                              # 缺段 / 非法值 / 读配置异常 ⇒ warning 并回落 v1（绝不抛）。
+                              # 回滚 = 本行改回 v1（一行配置，artifact 只多默认值字段）。
+                              # 行为变更登记见 docs/roadmap/ROADMAP.md「行为变更登记」。
   # 一致预期 provider 链（docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md §5.3）：
   #   report_list  = 东财研报列表聚合（默认，行为与改造前逐字一致）
   #   f10_forecast = 东财 F10 盈利预测（coverage_count 变"机构家数"口径；revision 由
