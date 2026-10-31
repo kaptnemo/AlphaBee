@@ -15,10 +15,13 @@
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence
 from alphabee.midterm.classifier import classify_state
 from alphabee.midterm.classifier_dispatch import (
-    classify_state as classify_state_dispatch,
+    FORMULA_V1,
+    FORMULA_V2,
+    resolve_classifier_order,
+    resolve_formula_revision,
 )
 from alphabee.midterm.classifier_dispatch import (
-    resolve_classifier_order,
+    classify_state as classify_state_dispatch,
 )
 from alphabee.midterm.classifier_tef import classify_state as classify_state_tef
 from alphabee.midterm.decision_model import (
@@ -169,6 +172,8 @@ __all__ = [
     "build_valuation_factor",
     "get_factor_snapshot",
     # 四引擎 + 编排入口
+    "FORMULA_V1",
+    "FORMULA_V2",
     "ScenarioProbability",
     "build_position",
     "classify_state",
@@ -181,6 +186,7 @@ __all__ = [
     "get_decision",
     "get_decision_with_evidence",
     "resolve_classifier_order",
+    "resolve_formula_revision",
     "scenario_probability",
     "update_confidence",
     # evidence 抽取（E1/E2/E3）

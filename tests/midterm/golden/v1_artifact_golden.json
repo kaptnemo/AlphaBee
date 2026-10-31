@@ -1,0 +1,254 @@
+{
+  "as_of_date": "2026-10-30",
+  "classifier_order": "etf",
+  "degraded": false,
+  "degraded_reason": "",
+  "evidence_log": [
+    {
+      "confidence_delta": 0.3,
+      "date": "2026-09-30",
+      "description": "一致预期上修",
+      "effect_on_thesis": "confirming",
+      "id": "golden-e1",
+      "kind": "expectation",
+      "source_refs": [],
+      "subject": "600519:revision:eps_fy1_revision_1m",
+      "supersedes": []
+    },
+    {
+      "confidence_delta": 0.1,
+      "date": "2026-10-15",
+      "description": "毛利率小幅下滑",
+      "effect_on_thesis": "refuting",
+      "id": "golden-e2",
+      "kind": "fundamental",
+      "source_refs": [],
+      "subject": "",
+      "supersedes": []
+    }
+  ],
+  "exit_conditions": [],
+  "expectation_gap": {
+    "as_of_date": "",
+    "evidence": [],
+    "gap": null,
+    "gap_direction": "neutral",
+    "implied_expectation": {},
+    "our_forecast": {},
+    "stale_after": null,
+    "symbol": ""
+  },
+  "expected_value": {
+    "as_of_date": "2026-10-30",
+    "ev": 15.082389217368853,
+    "note": "结构性示意：EV=ΣP·R，R 由估值分位 + EPS 修订估计",
+    "probability_source": "bayes_posterior",
+    "risk": 19.285480181928417,
+    "risk_adjusted_ev": 0.782059304465849,
+    "scenarios": [
+      {
+        "earnings_contribution": 2.4290396361431634,
+        "expected_return": 28.429039636143163,
+        "max_drawdown": null,
+        "probability": 0.5913895708662236,
+        "scenario": "bull",
+        "valuation_contribution": 26.0
+      },
+      {
+        "earnings_contribution": 1.2145198180715817,
+        "expected_return": 1.2145198180715817,
+        "max_drawdown": null,
+        "probability": 0.30000000000000004,
+        "scenario": "base",
+        "valuation_contribution": 0.0
+      },
+      {
+        "earnings_contribution": 1.2145198180715817,
+        "expected_return": -19.285480181928417,
+        "max_drawdown": null,
+        "probability": 0.10861042913377641,
+        "scenario": "bear",
+        "valuation_contribution": -20.5
+      }
+    ]
+  },
+  "factor_snapshot": {
+    "as_of_date": "2026-10-30",
+    "confidence": 0.5934471848931545,
+    "crowding": {
+      "amount_pct_of_market": 1.5,
+      "analyst_coverage_rank": null,
+      "direction": "normal",
+      "holder_count_change": 5.0,
+      "hot_rank": 80,
+      "institutional_holding_ratio": null,
+      "leader_concentration": null,
+      "margin_balance_yoy": null,
+      "news_heat": null,
+      "per_capita_holding_change": null,
+      "score": 54.166666666666664,
+      "turnover_rate": null,
+      "turnover_rate_percentile": 0.4
+    },
+    "degraded": false,
+    "degraded_reason": "",
+    "expectation": {
+      "coverage_count": 5,
+      "direction": "neutral",
+      "eps_fy1": null,
+      "eps_fy1_revision_1m": 3.0,
+      "eps_fy1_revision_3m": null,
+      "eps_fy2": null,
+      "eps_fy2_revision_1m": null,
+      "eps_fy3": null,
+      "express_net_profit_yoy": null,
+      "express_revenue_yoy": null,
+      "forecast_revision_anchor": 2.0,
+      "profit_forecast_max_change": null,
+      "profit_forecast_min_change": null,
+      "rating_downgrade_1m": null,
+      "rating_mean": 2.4,
+      "rating_upgrade_1m": null,
+      "revision_acceleration": null,
+      "revision_breadth": 0.6,
+      "score": 62.145198180715816,
+      "target_price": null
+    },
+    "fundamental": {
+      "current_ratio": null,
+      "debt_to_assets": null,
+      "direction": "improving",
+      "eps_growth_yoy": 15.0,
+      "free_cashflow": null,
+      "goodwill": null,
+      "gross_margin": null,
+      "net_margin": null,
+      "net_profit_yoy": 18.0,
+      "operating_cashflow": null,
+      "revenue_yoy": 12.0,
+      "roe": 18.5,
+      "score": 85.0,
+      "segment_fastest_yoy": 30.0,
+      "segment_slowest_yoy": 4.0
+    },
+    "market": {
+      "breadth_above_ma60_pct": null,
+      "hs300_close": null,
+      "hs300_pb": null,
+      "hs300_pe_ttm": null,
+      "margin_balance": null,
+      "market_score": 60.0,
+      "market_turnover": null,
+      "position_high": 0.8,
+      "position_low": 0.5,
+      "regime": "震荡"
+    },
+    "missing_facts": [],
+    "risk": {
+      "audit": {
+        "audit_agency": "某会计师事务所",
+        "audit_fees": null,
+        "audit_opinion": "标准无保留意见",
+        "audit_sign": null
+      },
+      "debt_to_assets": 40.0,
+      "direction": "neutral",
+      "goodwill": null,
+      "industry_risk": null,
+      "news_title": "",
+      "pledge_ratio": 10.0,
+      "repurchase_progress": "",
+      "score": 50.0
+    },
+    "schema_version": "1",
+    "state": "S3",
+    "symbol": "600519.SH",
+    "trend": {
+      "direction": "improving",
+      "industry_breadth_20": 60.0,
+      "industry_breadth_60": null,
+      "ma120": null,
+      "ma20": null,
+      "ma60": null,
+      "price_change_pct": 1.2,
+      "rs_industry_market_20d": null,
+      "rs_industry_market_60d": null,
+      "rs_stock_industry_20d": 5.0,
+      "rs_stock_industry_60d": null,
+      "rs_stock_market_20d": 8.0,
+      "rs_stock_market_60d": 6.0,
+      "score": 65.83333333333333
+    },
+    "valuation": {
+      "direction": "fair",
+      "industry_pb": null,
+      "industry_pe_ttm": null,
+      "pb_5y_percentile": 0.4,
+      "pb_ratio": null,
+      "pe_ttm": 22.0,
+      "pe_ttm_5y_avg": null,
+      "pe_ttm_5y_percentile": 0.35,
+      "peer_median_pb": null,
+      "peer_median_pe_ttm": null,
+      "percentile": 0.35,
+      "score": 62.5
+    }
+  },
+  "next_evidence_to_watch": [
+    "因子模式不标准、状态无法唯一归类（熵高），需补充证据后再定动作"
+  ],
+  "position": {
+    "actual_weight": 0.012630629111324412,
+    "portfolio_exposure": 0.75,
+    "position_band": "观察",
+    "rationale": [
+      "动作类型=核心（argmax_state=S3，粗粒度意图锚点）",
+      "期望仓位带=ΣP·weight_band=0.0946（entropy=1.647）",
+      "风险调整乘数=1.000（r_risk=0.0）",
+      "RiskAdjustedEV=0.782059304465849 < 1.0 → 赔率不足，减仓 ×0.3（高熵/不确定不清仓）",
+      "position_band=观察（按 actual_weight=0.0126 映射）",
+      "市场暴露：PositionAdvice=[0.5, 0.8] → regime 软约束后 [0.6, 0.9] → 取中值 0.75"
+    ],
+    "restricted": false,
+    "stock_weight": 0.016840838815099218
+  },
+  "prior_confidence": 0.5,
+  "schema_version": "1",
+  "stale_after": null,
+  "state": {
+    "argmax_state": "S3",
+    "distribution": {
+      "S0": 0.13434682446414498,
+      "S1": 0.2571432078081443,
+      "S2": 0.1443814849720928,
+      "S3": 0.3166662816792092,
+      "S4": 0.07373110053820439,
+      "S5": 0.07373110053820439
+    },
+    "drift": null,
+    "entropy": 1.646950735311655
+  },
+  "symbol": "600519.SH",
+  "thesis": "核心假设：份额提升与盈利改善",
+  "thesis_confidence": 0.5934471848931545,
+  "variable_scores": {
+    "c_crowding": 0.08333333333333331,
+    "e_revision": 0.24290396361431635,
+    "f_fundamental_trend": 0.7,
+    "m": {
+      "breadth_above_ma60_pct": null,
+      "hs300_close": null,
+      "hs300_pb": null,
+      "hs300_pe_ttm": null,
+      "margin_balance": null,
+      "market_score": 60.0,
+      "market_turnover": null,
+      "position_high": 0.9,
+      "position_low": 0.6,
+      "regime": "震荡"
+    },
+    "r_risk": 0.0,
+    "t_relative_strength": 0.31666666666666665,
+    "v_valuation_percentile": 0.25
+  }
+}

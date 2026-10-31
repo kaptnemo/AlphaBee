@@ -31,24 +31,44 @@ def _scores(f=None, e=None, t=None, v=None, c=None, r=None) -> VariableScores:
 
 
 class _ConfigStub:
-    def __init__(self, *, has_midterm: bool = True, classifier_order: str | None = None, raise_exc: bool = False):
+    def __init__(
+        self,
+        *,
+        has_midterm: bool = True,
+        classifier_order: str | None = None,
+        formula_revision: str | None = None,
+        raise_exc: bool = False,
+    ):
         self._has_midterm = has_midterm
         self._classifier_order = classifier_order
+        self._formula_revision = formula_revision
         self._raise_exc = raise_exc
         if has_midterm:
-            self.midterm = _MidtermStub(classifier_order)
+            self.midterm = _MidtermStub(classifier_order, formula_revision)
 
 
 class _MidtermStub:
-    def __init__(self, classifier_order: str | None):
+    def __init__(self, classifier_order: str | None, formula_revision: str | None = None):
         self.classifier_order = classifier_order
+        self.formula_revision = formula_revision
 
 
-def _set_config(monkeypatch, *, has_midterm=True, classifier_order=None, raise_exc=False):
+def _set_config(
+    monkeypatch,
+    *,
+    has_midterm=True,
+    classifier_order=None,
+    formula_revision=None,
+    raise_exc=False,
+):
     def _get_settings():
         if raise_exc:
             raise RuntimeError("config boom")
-        return _ConfigStub(has_midterm=has_midterm, classifier_order=classifier_order)
+        return _ConfigStub(
+            has_midterm=has_midterm,
+            classifier_order=classifier_order,
+            formula_revision=formula_revision,
+        )
 
     monkeypatch.setattr("alphabee.config.get_settings", _get_settings)
 
@@ -83,6 +103,56 @@ def test_fail_open_bad_explicit_value(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="alphabee.midterm.classifier_dispatch"):
         assert dispatch.resolve_classifier_order("yyy") == "etf"
     assert any("非法值" in r.message for r in caplog.records)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 公式版本 resolve（V2 design §6.4：与 order 完全同构的 fail-open + 显式优先）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_formula_fail_open_missing_midterm_section(monkeypatch, caplog):
+    _set_config(monkeypatch, has_midterm=False)
+    with caplog.at_level(logging.WARNING, logger="alphabee.midterm.classifier_dispatch"):
+        assert dispatch.resolve_formula_revision(None) == "v1"
+    assert any("回落 v1" in r.message for r in caplog.records)
+
+
+def test_formula_fail_open_bad_config_value(monkeypatch, caplog):
+    _set_config(monkeypatch, formula_revision="v9")
+    with caplog.at_level(logging.WARNING, logger="alphabee.midterm.classifier_dispatch"):
+        assert dispatch.resolve_formula_revision(None) == "v1"
+    assert any("非法" in r.message and "v1" in r.message for r in caplog.records)
+
+
+def test_formula_fail_open_config_exception(monkeypatch, caplog):
+    _set_config(monkeypatch, raise_exc=True)
+    with caplog.at_level(logging.WARNING, logger="alphabee.midterm.classifier_dispatch"):
+        assert dispatch.resolve_formula_revision(None) == "v1"
+    assert any("不可用" in r.message for r in caplog.records)
+
+
+def test_formula_fail_open_bad_explicit_value(caplog):
+    with caplog.at_level(logging.WARNING, logger="alphabee.midterm.classifier_dispatch"):
+        assert dispatch.resolve_formula_revision("v3") == "v1"
+    assert any("非法值" in r.message for r in caplog.records)
+
+
+def test_formula_explicit_legal_value_wins_over_config(monkeypatch):
+    _set_config(monkeypatch, formula_revision="v1")
+    assert dispatch.resolve_formula_revision("v2") == "v2"
+    _set_config(monkeypatch, formula_revision="v2")
+    assert dispatch.resolve_formula_revision("v1") == "v1"
+
+
+def test_formula_none_reads_config(monkeypatch):
+    _set_config(monkeypatch, formula_revision="v2")
+    assert dispatch.resolve_formula_revision(None) == "v2"
+
+
+def test_known_formulas_are_exactly_v1_v2():
+    assert dispatch.KNOWN_FORMULAS == ("v1", "v2")
+    assert dispatch.FORMULA_V1 == "v1"
+    assert dispatch.FORMULA_V2 == "v2"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +195,82 @@ def test_route_default_is_etf(monkeypatch):
     monkeypatch.setattr(etf, "classify_state", lambda scores, previous=None: "ETF_SENTINEL")
     monkeypatch.setattr(tef, "classify_state", lambda scores, previous=None: "TEF_SENTINEL")
     assert dispatch.classify_state(_scores(), order=None) == "ETF_SENTINEL"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 公式路由（§6.4）：v1 走两条 legacy 模块属性；v2 走 classifier_v2（均 monkeypatch 可证伪）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _boom(*args, **kwargs):
+    raise AssertionError("本用例不应走到该分类器实现")
+
+
+def test_v1_routes_to_legacy_modules_not_v2(monkeypatch):
+    calls: list[str] = []
+
+    def _etf_sentinel(scores, previous=None):
+        calls.append("etf")
+        return "ETF_SENTINEL"
+
+    def _tef_sentinel(scores, previous=None):
+        calls.append("tef")
+        return "TEF_SENTINEL"
+
+    from alphabee.midterm import classifier_v2
+
+    monkeypatch.setattr(etf, "classify_state", _etf_sentinel)
+    monkeypatch.setattr(tef, "classify_state", _tef_sentinel)
+    monkeypatch.setattr(classifier_v2, "classify_state", _boom)
+    _set_config(monkeypatch, classifier_order="etf", formula_revision="v1")
+
+    assert dispatch.classify_state(_scores(), formula="v1", order="etf") == "ETF_SENTINEL"
+    assert dispatch.classify_state(_scores(), formula="v1", order="tef") == "TEF_SENTINEL"
+    assert calls == ["etf", "tef"]  # 两次都真的命中 legacy 模块（证伪「偷偷走 v2」）
+
+
+def test_default_formula_none_uses_v1_legacy_path(monkeypatch):
+    from alphabee.midterm import classifier_v2
+
+    _set_config(monkeypatch, classifier_order="etf", formula_revision="v1")
+    monkeypatch.setattr(etf, "classify_state", lambda scores, previous=None: "ETF_SENTINEL")
+    monkeypatch.setattr(classifier_v2, "classify_state", _boom)
+    assert dispatch.classify_state(_scores(), order=None) == "ETF_SENTINEL"
+
+
+def test_v2_routes_to_classifier_v2_with_resolved_order(monkeypatch):
+    from alphabee.midterm import classifier_v2
+
+    captured: dict = {}
+
+    def _v2_sentinel(scores, *, order, previous=None):
+        captured.update(order=order, previous=previous)
+        return "V2_SENTINEL"
+
+    monkeypatch.setattr(etf, "classify_state", _boom)
+    monkeypatch.setattr(tef, "classify_state", _boom)
+    monkeypatch.setattr(classifier_v2, "classify_state", _v2_sentinel)
+    _set_config(monkeypatch, classifier_order="etf", formula_revision="v1")
+
+    previous = None
+    assert dispatch.classify_state(_scores(), formula="v2", order="tef", previous=previous) == "V2_SENTINEL"
+    assert captured == {"order": "tef", "previous": None}
+    # 显式 v2 覆盖配置 v1；order 显式 tef 覆盖配置 etf
+    assert dispatch.resolve_formula_revision(None) == "v1"  # 配置本身仍是 v1（未被显式值污染）
+
+
+def test_v2_order_falls_back_to_etf_when_illegal(monkeypatch):
+    from alphabee.midterm import classifier_v2
+
+    captured: dict = {}
+
+    def _v2_sentinel(scores, *, order, previous=None):
+        captured.update(order=order)
+        return "V2_SENTINEL"
+
+    monkeypatch.setattr(classifier_v2, "classify_state", _v2_sentinel)
+    assert dispatch.classify_state(_scores(), formula="v2", order="bogus") == "V2_SENTINEL"
+    assert captured["order"] == "etf"  # v2 内部要求合法 order，非法值由 dispatch fail-open
 
 
 def test_dispatch_default_matches_etf_classifier_field_for_field(monkeypatch):
@@ -173,6 +319,28 @@ def test_get_decision_passes_classifier_order_through(monkeypatch):
     assert captured.get("classifier_order") == "tef"
 
 
+def test_get_decision_passes_classifier_formula_through(monkeypatch):
+    from alphabee.midterm import decision_model, factors
+    from alphabee.midterm.models import FactorSnapshot
+
+    captured = {}
+
+    def _fake_evaluate(snapshot, evidence=None, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        factors, "get_factor_snapshot", lambda symbol, include_market=True: FactorSnapshot(symbol=symbol)
+    )
+    monkeypatch.setattr(decision_model, "evaluate", _fake_evaluate)
+
+    decision_model.get_decision("600519.SH", classifier_formula="v2")
+    assert captured.get("classifier_formula") == "v2"
+    # 缺省 None 仍透传（由 evaluate 内部跟随配置，不在 get_decision 里提前解析）
+    decision_model.get_decision("600519.SH")
+    assert captured.get("classifier_formula") is None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ClassifierResult 迁移 re-export 兼容（§4.1）
 # ─────────────────────────────────────────────────────────────────────────────
@@ -187,6 +355,10 @@ def test_midterm_init_export_surface():
     assert midterm.classify_state_tef is tef.classify_state
     assert midterm.classify_state_dispatch is dispatch.classify_state
     assert midterm.resolve_classifier_order is dispatch.resolve_classifier_order
+    # 公式版本导出（V2 design §6.4 导出面）
+    assert midterm.resolve_formula_revision is dispatch.resolve_formula_revision
+    assert midterm.FORMULA_V1 == "v1"
+    assert midterm.FORMULA_V2 == "v2"
 
 
 def test_classifier_result_reexport_identity_and_fields():

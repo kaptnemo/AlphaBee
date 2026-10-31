@@ -337,16 +337,21 @@ class DomainContextSettings(BaseModel):
 
 
 class MidtermClassifierSettings(BaseModel):
-    """中期决策层：分类器顺序变体（TEF design §5.1）+ 一致预期数据源（E 生态设计 §5.3）。
+    """中期决策层：分类器顺序变体（TEF design §5.1）+ 状态证据公式版本（V2 design §7.1）
+    + 一致预期数据源（E 生态设计 §5.3）。
 
-    缺段 ⇒ 取默认 ``classifier_order="etf"``（E→T→F 基准）与
-    ``consensus_source="report_list"``（东财研报聚合 = 现状），旧 config 行为不变；
-    读取方 ``classifier_dispatch.resolve_classifier_order`` /
+    缺段 ⇒ 取默认 ``classifier_order="etf"``（E→T→F 基准）、``formula_revision="v1"``
+    （现有状态证据公式，数值行为与改造前逐值一致）与 ``consensus_source="report_list"``
+    （东财研报聚合 = 现状），旧 config 行为不变；读取方
+    ``classifier_dispatch.resolve_classifier_order`` / ``resolve_formula_revision`` /
     ``collectors.consensus.eastmoney.resolve_consensus_source`` 运行时读取并 fail-open。
     """
 
     # 决策层分类器顺序变体：etf=E→T→F（基准，缺省）；tef=T→E→F（A 股价格先行变体）
     classifier_order: Literal["etf", "tef"] = "etf"
+    # 状态证据公式版本：v1 = 现状（缺省，行为零变化）；v2 = 显式 opt-in 的新公式（设计 §7.1）。
+    # 缺省 v1 ⇒ 旧 config 与历史帧全部走原实现；非法/缺失由 resolve_formula_revision fail-open 回 v1。
+    formula_revision: Literal["v1", "v2"] = "v1"
     # 一致预期 provider 链（E 生态设计 §5.3），缺省 report_list = 与改造前逐字一致：
     #   report_list  = 东财研报列表聚合（现状）
     #   f10_forecast = 东财 F10 盈利预测快照 + 快照序列自算 revision（失败回落 report_list）

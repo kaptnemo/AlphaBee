@@ -5,13 +5,18 @@
 ```text
 FactorSnapshot
   → score_engine.compress_scores  → VariableScores
-  → classifier.classify_state     → StateBelief + StateTransition + 一致性
+  → classifier_dispatch.classify_state (formula v1 / v2) → StateBelief + StateTransition + 一致性
   → bayes.update_confidence       → Confidence（P(H|E)）
   → bayes.scenario_probability    → ScenarioProbability（P_bull/base/bear）
   → 情景估值 / EV                  → ExpectedValue（EV = Σ P·R）
   → position.build_position       → PositionDecision（三轴 × M × 组合）
   → 组装 CompanyStateArtifact
 ```
+
+公式版本（V2 design §6.1/§6.3/§6.4）：``classifier_formula=None``（默认）由
+``midterm.formula_revision``（缺省 ``"v1"``）决定；v1 走 ``classifier.py`` /
+``classifier_tef.py`` 且数值逐值不变，``"v2"`` 显式 opt-in 走 ``classifier_v2.py``。
+``ClassifierResult`` 的一致性/背离/归一化证据等字段直接写入 artifact，本模块不重算。
 
 核心纪律：
 
@@ -30,7 +35,13 @@ from datetime import date, timedelta
 from typing import Any
 
 from alphabee.midterm.bayes import ScenarioProbability, scenario_probability, update_confidence_delta
-from alphabee.midterm.classifier_dispatch import classify_state, resolve_classifier_order
+from alphabee.midterm.classifier_dispatch import (
+    FORMULA_V1,
+    FORMULA_V2,
+    classify_state,
+    resolve_classifier_order,
+    resolve_formula_revision,
+)
 from alphabee.midterm.models import (
     CompanyStateArtifact,
     EvidenceEvent,
@@ -144,14 +155,27 @@ def _writeback_directions(snapshot: FactorSnapshot, scores: VariableScores) -> N
     _apply(snapshot.risk, scores.r_risk, "risk_declining", "risk_rising", "neutral")
 
 
-def _factor_direction(scores: VariableScores) -> float | None:
-    """因子方向分均值（正=看多，负=看空），供 ``scenario_probability`` 的情景极化方向。
+def _factor_direction(scores: VariableScores, *, formula: str = FORMULA_V1) -> float | None:
+    """情景方向分（正=看多，负=看空），供 ``scenario_probability`` 的情景极化方向。
 
-    七个因子方向分由 ``score_engine.compress_scores`` 产出，符号已统一（正=对多头有利），
-    因此可直接聚合为「多空倾向」——F 看多（营收/份额/细分）与 C 看空（拥挤）同时存在时，
-    均值自然反映「好公司但贵/拥挤」的混合倾向，而非证据层 ``effect_on_thesis`` 那种
-    相对 H 的确认/反驳（会因 H 偏空而 sign error）。全部缺失 → ``None``。
+    - ``formula="v1"``（缺省）：六因子等权均值（**逐字保留**改造前口径，v1 数值零变化）。
+    - ``formula="v2"``（设计 §6.3）：``0.7×mean(F,E) + 0.3×mean(F,E,T)``；缺失因子按可用
+      子集求均值，某组全缺则跳过该组并归一化权重；F/E/T 全缺 → ``None``。
+
+    v2 口径的理由：``scenario_probability`` 算的是 **thesis 的情景概率**，驱动变量是 F/E；
+    T 是时序修正；V/C/R 是赔率/拥挤/风险，不是 thesis 驱动。v1 的等权均值让 ``T=+1`` 与
+    ``V=+0.60`` 把 ``F=−1``、``E=−0.52`` 抵消成 ≈−0.03（类别错误，设计 §6.3）。
     """
+    if formula == FORMULA_V2:
+        core = [v for v in (scores.f_fundamental_trend, scores.e_revision) if v is not None]
+        trio = [v for v in (scores.f_fundamental_trend, scores.e_revision, scores.t_relative_strength) if v is not None]
+        total = 0.0
+        weight = 0.0
+        for part_weight, part in ((0.7, core), (0.3, trio)):
+            if part:
+                total += part_weight * sum(part) / len(part)
+                weight += part_weight
+        return total / weight if weight > 0.0 else None
     vals = [
         scores.f_fundamental_trend,
         scores.e_revision,
@@ -336,6 +360,7 @@ def evaluate(
     insight_materiality: Any = None,
     prev_evidence_log: list[EvidenceEvent] | None = None,
     classifier_order: str | None = None,
+    classifier_formula: str | None = None,
 ) -> CompanyStateArtifact:
     """串起四引擎，把 FactorSnapshot 决策为 CompanyStateArtifact（§6 三轴 + §9）。
 
@@ -360,18 +385,25 @@ def evaluate(
         classifier_order: 分类器顺序变体（TEF design §5.1）：``"etf"``=E→T→F（基准）、
             ``"tef"``=T→E→F（价格先行变体）；``None`` = 跟随配置 ``midterm.classifier_order``
             （fail-open 到 ``etf``）。
+        classifier_formula: 状态证据公式版本（V2 design §6.3/§6.4）：``"v1"``=现状、
+            ``"v2"``=新公式；``None`` = 跟随配置 ``midterm.formula_revision``（缺省 ``"v1"``，
+            fail-open 到 ``"v1"``）。v2 只在显式 opt-in 时生效，v1 数值行为零变化。
 
     Returns:
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
-        variable_scores、factor_snapshot、expected_value、position 等，无 dead-end。
+        variable_scores、factor_snapshot、expected_value、position 等，无 dead-end；
+        另写入状态证据 V2 的 8 个 additive 字段（公式 provenance、归一化熵、uncertain、
+        一致性/具名背离、顶背离对象、归一化证据、情景方向分）。
     """
     # P2 时效：过滤超过 1 年的旧证据（历史业绩预告已结算，不虚增当期置信度）
     evidence = _filter_fresh_evidence(evidence, snapshot.as_of_date)
 
     scores = compress_scores(snapshot)
-    # TEF design §4.5：先 resolve 一次拿确定值再路由（dispatch 内部对合法值直接放行，无双重分叉）
+    # TEF design §4.5 / V2 design §6.4：先各 resolve 一次拿确定值再路由
+    # （dispatch 内部对合法值直接放行，无双重分叉）。
     resolved_order = resolve_classifier_order(classifier_order)
-    cls = classify_state(scores, order=resolved_order)
+    resolved_formula = resolve_formula_revision(classifier_formula)
+    cls = classify_state(scores, order=resolved_order, formula=resolved_formula)
 
     confidence = update_confidence_delta(evidence, prior=prior_confidence, prev_events=prev_evidence_log)
 
@@ -387,11 +419,13 @@ def evaluate(
     # 情景概率方向用「因子方向分」（score_engine 正确符号化），而非证据层的
     # effect_on_thesis（相对于 H 的确认/反驳，H 偏空时 confirming=看空会 sign error）。
     # 证据继续只通过 update_confidence 影响置信度（后验），不直接充当多空方向。
+    # V2 design §6.3：v1 走六因子均值（逐字不变）；v2 走 0.7×mean(F,E)+0.3×mean(F,E,T)。
+    factor_direction = _factor_direction(scores, formula=resolved_formula)
     scenario_probs = scenario_probability(
         cls.state.argmax_state,
         confidence=confidence,
         has_evidence=has_evidence,
-        factor_direction=_factor_direction(scores),
+        factor_direction=factor_direction,
     )
     ev = _estimate_expected_value(
         snapshot, scenario_probs, scores, has_evidence=has_evidence, insight_materiality=insight_materiality
@@ -437,6 +471,18 @@ def evaluate(
         degraded=snapshot.degraded,
         degraded_reason=snapshot.degraded_reason,
         classifier_order=resolved_order,
+        # ── 状态证据 V2（设计 §6.1/§6.3，additive）──────────────────────────────
+        # 除 classifier_formula / factor_direction 外，其余六项**直接取自 ClassifierResult**：
+        # decision_model 不重算一致性/背离（单一来源，设计 §6.3 第 3 条），v1 由分类器透出的
+        # 值与其内部判决逐值相同（v1 数值行为零变化）。
+        classifier_formula=resolved_formula,
+        entropy_normalized=cls.entropy_normalized,
+        uncertain=cls.uncertain,
+        factor_consistency=cls.factor_consistency,
+        divergence_reason=cls.divergence_reason,
+        adverse_divergence=cls.adverse_divergence,
+        state_evidence=cls.state_evidence,
+        factor_direction=factor_direction,
     )
 
 
@@ -450,6 +496,7 @@ def get_decision(
     insight_materiality: Any = None,
     prev_evidence_log: list[EvidenceEvent] | None = None,
     classifier_order: str | None = None,
+    classifier_formula: str | None = None,
 ) -> CompanyStateArtifact:
     """便捷入口：``get_factor_snapshot(symbol)`` 后再 ``evaluate``。
 
@@ -461,6 +508,8 @@ def get_decision(
         prev_evidence_log: 上一帧证据日志（P0 §1.5，透传 ``evaluate``）。
         classifier_order: 分类器顺序变体（TEF design §5.1），透传 ``evaluate``；
             ``None`` = 跟随配置 ``midterm.classifier_order``（fail-open 到 ``etf``）。
+        classifier_formula: 状态证据公式版本（V2 design §6.4），透传 ``evaluate``；
+            ``None`` = 跟随配置 ``midterm.formula_revision``（缺省 ``"v1"``，fail-open 到 ``"v1"``）。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -476,6 +525,7 @@ def get_decision(
         insight_materiality=insight_materiality,
         prev_evidence_log=prev_evidence_log,
         classifier_order=classifier_order,
+        classifier_formula=classifier_formula,
     )
 
 

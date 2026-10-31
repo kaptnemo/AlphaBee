@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,6 +45,7 @@ from alphabee.midterm.models import (  # noqa: E402
     RiskFactor,
     TrendFactor,
     ValuationFactor,
+    VariableScores,
 )
 
 
@@ -504,3 +506,173 @@ def test_deterministic():
     a = evaluate(snap, [_ev("confirming", 0.2)], prior_confidence=0.5)
     b = evaluate(snap, [_ev("confirming", 0.2)], prior_confidence=0.5)
     assert a.model_dump() == b.model_dump()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 状态证据 V2 接线（设计 §6.1/§6.3/§6.4）：8 个字段写入 + factor_direction 口径
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _pin_midterm_config(monkeypatch, *, classifier_order: str = "etf", formula_revision: str = "v1") -> None:
+    """钉住 midterm 配置缺省（两条 resolve 都在调用时 ``from alphabee.config import get_settings``）。"""
+    stub = SimpleNamespace(
+        midterm=SimpleNamespace(classifier_order=classifier_order, formula_revision=formula_revision)
+    )
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: stub)
+
+
+def _six_factor_mean(scores) -> float:
+    values = [
+        scores.f_fundamental_trend,
+        scores.e_revision,
+        scores.t_relative_strength,
+        scores.v_valuation_percentile,
+        scores.c_crowding,
+        scores.r_risk,
+    ]
+    available = [value for value in values if value is not None]
+    return sum(available) / len(available)
+
+
+def test_evaluate_writes_v1_evidence_fields(monkeypatch):
+    """v1：8 个字段取「无 v2 语义」的确定值，且一致性/背离/uncertain 来自 v1 分类器。"""
+    from alphabee.midterm import classifier as etf_classifier
+
+    _pin_midterm_config(monkeypatch)
+    art = evaluate(_snapshot(), [_ev("confirming", 0.5)], prior_confidence=0.5, classifier_order="etf")
+    internal = etf_classifier.classify_state(art.variable_scores)
+
+    assert art.schema_version == "1"
+    assert art.classifier_formula == "v1"
+    assert art.entropy_normalized is None
+    assert art.adverse_divergence is None
+    assert art.state_evidence == {}
+    assert art.factor_direction == pytest.approx(_six_factor_mean(art.variable_scores))
+    assert art.uncertain is internal.uncertain
+    assert art.factor_consistency == internal.factor_consistency
+    assert art.divergence_reason == internal.divergence_reason
+
+
+def test_evaluate_default_formula_follows_config(monkeypatch):
+    """classifier_formula=None ⇒ 跟随配置：缺省 v1，显式配置 v2 才走 v2（默认行为零变化）。"""
+    _pin_midterm_config(monkeypatch, formula_revision="v1")
+    art_v1 = evaluate(_snapshot(), [], classifier_order="etf")
+    assert art_v1.classifier_formula == "v1"
+
+    _pin_midterm_config(monkeypatch, formula_revision="v2")
+    art_v2 = evaluate(_snapshot(), [], classifier_order="etf")
+    assert art_v2.classifier_formula == "v2"
+
+
+def test_evaluate_writes_v2_fields_from_classifier_result(monkeypatch):
+    """v2：8 个字段与 classifier_v2 的 ClassifierResult 逐值一致 + v2 口径 factor_direction。"""
+    from alphabee.midterm import classifier_v2
+    from alphabee.midterm import decision_model as dm
+
+    scores = VariableScores(
+        f_fundamental_trend=-1.0,
+        e_revision=-0.5169,
+        t_relative_strength=1.0,
+        v_valuation_percentile=0.6015,
+        c_crowding=-0.1902,
+        r_risk=-0.08741,
+    )
+    monkeypatch.setattr(dm, "compress_scores", lambda snapshot: scores)
+    art = dm.evaluate(FactorSnapshot(symbol="600760.SH"), classifier_order="tef", classifier_formula="v2")
+    expected = classifier_v2.classify_state(scores, order="tef")
+
+    assert art.classifier_formula == "v2"
+    assert art.entropy_normalized == pytest.approx(expected.entropy_normalized)
+    assert art.uncertain is expected.uncertain
+    assert art.factor_consistency == expected.factor_consistency
+    assert art.divergence_reason == expected.divergence_reason
+    assert art.adverse_divergence is not None
+    assert art.adverse_divergence.severity == pytest.approx(expected.adverse_divergence.severity)
+    assert art.state_evidence == pytest.approx(expected.state_evidence)
+    # §6.3 v2 口径：0.7×mean(F,E) + 0.3×mean(F,E,T)
+    assert art.factor_direction == pytest.approx(0.7 * (-1.0 + -0.5169) / 2 + 0.3 * (-1.0 + -0.5169 + 1.0) / 3)
+    # 同帧 v1 仍是旧口径（六因子均值）且无 v2 字段
+    monkeypatch.setattr(dm, "compress_scores", lambda snapshot: scores)
+    art_v1 = dm.evaluate(FactorSnapshot(symbol="600760.SH"), classifier_order="tef", classifier_formula="v1")
+    assert art_v1.classifier_formula == "v1"
+    assert art_v1.state_evidence == {}
+    assert art_v1.factor_direction == pytest.approx((-1.0 + -0.5169 + 1.0 + 0.6015 + -0.1902 + -0.08741) / 6)
+    assert art_v1.factor_direction != pytest.approx(art.factor_direction)
+
+
+def test_evaluate_copies_classifier_fields_without_recomputing(monkeypatch):
+    """decision_model 不重算一致性/背离：ClassifierResult 的哨兵值原样进 artifact。"""
+    from alphabee.midterm import decision_model as dm
+    from alphabee.midterm.models import AdverseDivergence, ClassifierResult, StateBelief
+
+    sentinel = ClassifierResult(
+        state=StateBelief(distribution={"S0": 0.4, "S5": 0.6}, argmax_state="S0", entropy=0.673),
+        transition=None,
+        factor_deltas=[],
+        uncertain=True,
+        research_tasks=[],
+        rationale=["sentinel"],
+        factor_consistency="divergent",
+        divergence_reason="SENTINEL 具名背离",
+        entropy_normalized=0.1234,
+        adverse_divergence=AdverseDivergence(severity=0.5, description="SENTINEL 顶背离"),
+        state_evidence={"S0": 0.1, "S1": 0.2, "S2": 0.3, "S3": 0.4, "S4": 0.5, "S5": 0.6},
+    )
+    monkeypatch.setattr(dm, "classify_state", lambda *args, **kwargs: sentinel)
+    art = dm.evaluate(_snapshot(), [], classifier_formula="v2")
+
+    assert art.classifier_formula == "v2"
+    assert art.state is sentinel.state
+    assert art.uncertain is True
+    assert art.factor_consistency == "divergent"
+    assert art.divergence_reason == "SENTINEL 具名背离"
+    assert art.entropy_normalized == pytest.approx(0.1234)
+    assert art.adverse_divergence is not None
+    assert art.adverse_divergence.description == "SENTINEL 顶背离"
+    assert art.state_evidence == sentinel.state_evidence
+    # factor_direction 由 decision_model 按公式版本独立计算（不属于 ClassifierResult）
+    assert art.factor_direction == pytest.approx(_v2_direction(art.variable_scores))
+
+
+def _v2_direction(scores) -> float:
+    core = [v for v in (scores.f_fundamental_trend, scores.e_revision) if v is not None]
+    trio = [v for v in (scores.f_fundamental_trend, scores.e_revision, scores.t_relative_strength) if v is not None]
+    return 0.7 * sum(core) / len(core) + 0.3 * sum(trio) / len(trio)
+
+
+def test_factor_direction_v2_formula_and_missing_subset():
+    from alphabee.midterm import decision_model as dm
+
+    full = VariableScores(
+        f_fundamental_trend=-1.0,
+        e_revision=-0.5169,
+        t_relative_strength=1.0,
+        v_valuation_percentile=0.6015,
+        c_crowding=-0.1902,
+        r_risk=-0.08741,
+    )
+    assert dm._factor_direction(full, formula="v2") == pytest.approx(-0.5826, abs=1e-3)  # noqa: SLF001
+    # 缺失因子按可用子集求均值：F/E 有、T 缺 ⇒ 两组子集都退化为 mean(F,E)
+    assert dm._factor_direction(VariableScores(f_fundamental_trend=0.4, e_revision=0.2), formula="v2") == pytest.approx(
+        0.3
+    )  # noqa: SLF001
+    # 仅 T 可用 ⇒ 只剩 0.3 组，按权重重归一化 → T 本身
+    assert dm._factor_direction(VariableScores(t_relative_strength=0.6), formula="v2") == pytest.approx(0.6)  # noqa: SLF001
+    # F/E/T 全缺 ⇒ None（V/C/R 不参与 v2 口径）
+    assert dm._factor_direction(VariableScores(v_valuation_percentile=0.9), formula="v2") is None  # noqa: SLF001
+
+
+def test_factor_direction_v1_unchanged_six_factor_mean():
+    from alphabee.midterm import decision_model as dm
+
+    scores = VariableScores(
+        f_fundamental_trend=-1.0,
+        e_revision=-0.5169,
+        t_relative_strength=1.0,
+        v_valuation_percentile=0.6015,
+        c_crowding=-0.1902,
+        r_risk=-0.08741,
+    )
+    assert dm._factor_direction(scores) == pytest.approx(_six_factor_mean(scores))  # noqa: SLF001
+    assert dm._factor_direction(scores, formula="v1") == pytest.approx(_six_factor_mean(scores))  # noqa: SLF001
+    assert dm._factor_direction(VariableScores(), formula="v1") is None  # noqa: SLF001
