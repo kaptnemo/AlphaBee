@@ -365,4 +365,8 @@ def classify_state(
         uncertain=uncertain,
         research_tasks=_research_tasks(uncertain, divergent, entropy, divergence_reason),
         rationale=rationale,
+        # 状态证据 V2 design §5.4（additive）：把内部**已经算出**的一致性/具名背离透出到结果载体
+        # （v1 之前丢掉这两个中间结果）。只透出、不参与任何计算 ⇒ v1 公式与数值行为零变化。
+        factor_consistency=consistency.value,
+        divergence_reason=divergence_reason or "",
     )

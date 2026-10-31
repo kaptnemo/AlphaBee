@@ -541,6 +541,25 @@ class PositionDecision(BaseModel):
     restricted: bool = False  # 单股上限/单次调仓限制是否生效
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 顶背离（状态证据 V2 §6.2，additive）
+# ─────────────────────────────────────────────────────────────────────────────
+class AdverseDivergence(BaseModel):
+    """顶背离（结构性反证）：价格仍强，但基本面与一致预期同时实质恶化。
+
+    与 ``Consistency.DIVERGENT`` 互补：后者描述「因子不同向」，本模型描述「不同向的方向
+    是不利的」，并提供可排序的严重度，供报告 / 研究任务 / 记录消费。非顶背离帧为 ``None``
+    （不产出空对象，避免下游把「无背离」误读成「severity=0 的背离」）。
+    """
+
+    kind: str = "fundamental_adverse_vs_price_strength"  # 固定类别名（下游按 kind 分流）
+    severity: float = 0.0  # ∈[0,1] = fundamental_severity × expectation_severity × price_strength
+    fundamental_severity: float = 0.0  # sf = severe(F)：F 的负侧严重度 ∈[0,1]
+    expectation_severity: float = 0.0  # se = severe(E)：E 的负侧严重度 ∈[0,1]
+    price_strength: float = 0.0  # t_up = up(T)：价格强度 ∈[0,1]（T≤0 不构成顶背离）
+    description: str = ""  # 具名文案（与 classifier_v2 的 divergence_reason 同源）
+
+
 class CompanyStateArtifact(BaseModel):
     """S0–S5 认知状态持久化契约（决策层核心 artifact）。"""
 
@@ -565,6 +584,24 @@ class CompanyStateArtifact(BaseModel):
     # TEF design §6.1（additive，PR-2）：本帧由哪套分类器顺序产出（etf=E→T→F / tef=T→E→F）。
     # 只 append 字段且带默认值：存量 JSONL 无此字段 → load 回落 "etf"（历史帧确由 ETF 产出，语义正确）。
     classifier_order: str = "etf"
+    # ── 状态证据 V2（design MIDTERM_STATE_EVIDENCE_V2_DESIGN §6.1，全部 additive + 默认值）──
+    # 本帧所用证据公式：v1 = 现状（缺省）/ v2 = 显式 opt-in；旧帧无此字段 → 回落 "v1"。
+    classifier_formula: str = "v1"
+    # 归一化熵 H/ln6 ∈[0,1]；仅 v2 填，v1 为 None（v1 的 entropy 是未归一化 nats，跨状态不可比）。
+    entropy_normalized: float | None = None
+    # 语义不确定：v2 = P_top 低或「非顶背离的背离」；v1 为其原有判据（熵高或背离），逐值不变。
+    uncertain: bool = False
+    # F/E/T 三因子一致性（resonant / divergent / independent）；v1 也由分类器直接透出。
+    factor_consistency: str = ""
+    # 具名背离文案（无背离 = 空串）；与 factor_consistency 同源，下游不重算（单一来源）。
+    divergence_reason: str = ""
+    # 顶背离结构化载体（价格仍强而 F/E 同时实质恶化）；非顶背离帧为 None。
+    adverse_divergence: AdverseDivergence | None = None
+    # 归一化证据 {S0..S5} → [0,1]（状态间可比）；仅 v2 非空，v1 为空 dict。
+    state_evidence: dict[str, float] = Field(default_factory=dict)
+    # 情景方向分（scenario_probability 的驱动方向）：v2 = 0.7×mean(F,E)+0.3×mean(F,E,T)；
+    # v1 = 六因子等权均值（逐值不变）。
+    factor_direction: float | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -790,7 +827,11 @@ class DecisionJournalEntry(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 分类器结果（TEF design §4.1：从 classifier.py 迁入，字段逐字不变）
+# 分类器结果（TEF design §4.1：从 classifier.py 迁入，原有字段逐字不变）
+#
+# 状态证据 V2 design §5.4 追加五个 additive 字段（全部带默认值）：v1 也填
+# ``factor_consistency`` / ``divergence_reason``（这两个值 v1 内部本来就算出来了、只是丢掉了），
+# ``entropy_normalized`` / ``adverse_divergence`` / ``state_evidence`` 仅 v2 填。
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -804,3 +845,8 @@ class ClassifierResult:
     uncertain: bool
     research_tasks: list[ResearchTask] = field(default_factory=list)
     rationale: list[str] = field(default_factory=list)
+    factor_consistency: str = ""  # Consistency 值（resonant/divergent/independent）；v1 也填
+    divergence_reason: str = ""  # 具名背离文案（无背离 = ""）；v1 也填
+    entropy_normalized: float | None = None  # H/ln6 ∈[0,1]；v1 为 None
+    adverse_divergence: AdverseDivergence | None = None  # 顶背离对象；v1 为 None
+    state_evidence: dict[str, float] = field(default_factory=dict)  # 归一化证据；v1 为空 dict

@@ -316,4 +316,8 @@ def classify_state(
         uncertain=uncertain,
         research_tasks=_research_tasks(uncertain, divergent, entropy, divergence_reason),
         rationale=rationale,
+        # 状态证据 V2 design §5.4（additive）：透出内部已算出的一致性/具名背离（v1 之前丢掉）。
+        # 只透出、不参与任何计算 ⇒ v1 公式与数值行为零变化（parity 由 test_classifier_parity.py 钉）。
+        factor_consistency=consistency.value,
+        divergence_reason=divergence_reason or "",
     )
