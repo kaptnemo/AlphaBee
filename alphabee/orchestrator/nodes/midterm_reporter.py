@@ -111,6 +111,16 @@ class ReportTimePoints:
     valuation_pe_ttm: float | None = None
     valuation_pb: float | None = None
 
+    def as_dict(self) -> dict[str, Any]:
+        """转成 finalize payload / TaskRecord 落库用的扁平 dict（键名即契约）。"""
+        return {
+            "financial_period": self.financial_period,
+            "valuation_as_of": self.valuation_as_of,
+            "valuation_close": self.valuation_close,
+            "valuation_pe_ttm": self.valuation_pe_ttm,
+            "valuation_pb": self.valuation_pb,
+        }
+
 
 def _attr(obj: Any, name: str) -> Any:
     """容忍 pydantic 模型与已 ``model_dump`` 的 dict 两种形态取值（只读）。"""
@@ -121,7 +131,7 @@ def _attr(obj: Any, name: str) -> Any:
     return getattr(obj, name, None)
 
 
-def _extract_time_points(state: Mapping[str, Any]) -> ReportTimePoints:
+def extract_report_time_points(state: Mapping[str, Any]) -> ReportTimePoints:
     """从 ``OrchestratorState`` 提取两个口径的时点（纯读取、无网络、无 LLM、失败即空）。
 
     只读 ``financial_facts`` / ``market_facts`` 两个**已采集**状态字段，不做任何新采集、
@@ -617,7 +627,7 @@ async def report_midterm_decision(
     new_artifacts: list[Artifact] = []
     try:
         # P2-6：头部两个口径的时点从已采集状态字段直读（纯规则、零网络、零 LLM）。
-        time_points = _extract_time_points(state)
+        time_points = extract_report_time_points(state)
         text = render_midterm_decision_summary(decision, time_points=time_points)
         _logger.info(
             "midterm_decision_summary",

@@ -58,7 +58,10 @@ from alphabee.orchestrator.nodes.analyze import run_analysis_engines
 from alphabee.orchestrator.nodes.conflicts import explore_conflicts
 from alphabee.orchestrator.nodes.insights import synthesize_insights
 from alphabee.orchestrator.nodes.midterm import resolve_midterm_decision
-from alphabee.orchestrator.nodes.midterm_reporter import report_midterm_decision
+from alphabee.orchestrator.nodes.midterm_reporter import (
+    extract_report_time_points,
+    report_midterm_decision,
+)
 from alphabee.orchestrator.nodes.prepare_analysis_context import prepare_analysis_context
 from alphabee.orchestrator.nodes.record_deviations import record_deviations
 from alphabee.orchestrator.nodes.resolve_company_track import resolve_company_track
@@ -435,6 +438,9 @@ def finalize_message(state: OrchestratorState) -> OrchestratorState:
         "run": state["run"].model_dump(mode="json") if state.get("run") else None,
         "final_report": (final_artifact.value if final_artifact is not None else None),
         "midterm_decision": _midterm_decision_summary(artifacts),
+        # P2-6：两个口径的时点随载荷下发，供 task_record 落库后 --task-report 复用同一
+        # 渲染口径（否则只能从已采集 state 取，落库后的记录取不到）。纯读取、失败即空。
+        "time_points": extract_report_time_points(state).as_dict(),
         "artifacts": [a.model_dump(mode="json") for a in artifacts],
         "decisions": [d.model_dump(mode="json") for d in state.get("decisions", [])],
         "issues": [i.model_dump(mode="json") for i in state.get("issues", [])],

@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from alphabee.midterm.models import CompanyStateArtifact
+
 
 def _make_id() -> str:
     return f"task-{uuid4().hex[:12]}"
@@ -114,6 +116,18 @@ class TaskRecord(BaseModel):
     midterm_formula_revision: str = ""  # 本帧公式版本（= 配置 midterm.formula_revision）"v1"/"v2"（"" = 同上）
     midterm_uncertain: bool = False  # 语义不确定（v1：熵高或背离；v2：P_top 低或非顶背离的背离）
     midterm_adverse_severity: float = 0.0  # 顶背离严重度 ∈[0,1]（0.0 = 无顶背离 / 旧记录）
+
+    # ── 报告口径时点（P2-6，additive，全部带默认值）：旧记录反序列化不受影响 ──
+    # finalize 时从 state 的 financial_facts / market_facts 取值随载荷下发，记录链路落库，
+    # 供 ``--task-report`` 复用与运行期相同的渲染口径。缺失 ⇒ 空串 / None ⇒ 渲染「（未提供）」；
+    # **绝不用决策日 / 采集日顶替**（那正是 P2-6 要消除的口径混同）。
+    financial_period: str = ""  # 财报口径：最新财务快照 report_period（YYYYMMDD）
+    valuation_as_of: str = ""  # 估值/行情口径：market_facts.trade_date（YYYYMMDD）
+    valuation_close: float | None = None  # 行情截止日收盘价
+    valuation_pe_ttm: float | None = None  # 行情截止日 PE_TTM
+    valuation_pb: float | None = None  # 行情截止日 PB
+
+    midterm: CompanyStateArtifact | None = None  # 中期决策是重要的 artifact，完整落库，反序列化时可选。
 
     # ── 标的上下文 ──
     company_industry: str = ""

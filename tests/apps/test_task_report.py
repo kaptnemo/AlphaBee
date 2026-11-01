@@ -14,6 +14,7 @@ from alphabee.apps.cli.task_report import (
     default_report_output,
     render_task_record_report,
 )
+from alphabee.midterm.models import CompanyStateArtifact, StateBelief
 from alphabee.task_records.models import IssueRecord, TaskRecord
 
 ALL_SECTIONS = {
@@ -231,6 +232,44 @@ def test_meta_line_old_record_keeps_current_rendering() -> None:
     assert "formula" not in md
     assert "不确定" not in md
     assert "顶背离" not in md
+
+
+# ── P2-6 报告口径时点：从落库记录重建决策总结头部 ─────────────────────────────
+
+
+def _midterm_artifact() -> CompanyStateArtifact:
+    return CompanyStateArtifact(
+        symbol="600519.SH",
+        state=StateBelief(distribution={"S3": 0.7}, argmax_state="S3", entropy=0.3),
+        thesis="H",
+        thesis_confidence=0.85,
+        as_of_date="2026-10-30",
+    )
+
+
+def test_midterm_section_renders_persisted_time_points() -> None:
+    md = build_report_markdown(
+        _record(
+            midterm=_midterm_artifact(),
+            financial_period="20260930",
+            valuation_as_of="20261030",
+            valuation_close=1520.0,
+            valuation_pe_ttm=22.5,
+            valuation_pb=8.1,
+        )
+    )
+    assert "财报口径（财务数据报告期）: 20260930" in md
+    assert "估值/行情口径（行情截止日）: 20261030" in md
+    assert "收盘价 1520" in md
+    assert "PE_TTM 22.5" in md
+    assert "PB 8.1" in md
+
+
+def test_midterm_section_old_record_shows_missing_time_points() -> None:
+    """旧记录无时点字段 ⇒ 显式「（未提供）」，不用决策日 / 采集日顶替。"""
+    md = build_report_markdown(_record(midterm=_midterm_artifact()))
+    assert "财报口径（财务数据报告期）: （未提供）" in md
+    assert "估值/行情口径（行情截止日）: （未提供）" in md
 
 
 # ── CLI 渲染面（renderer 的 resolve_midterm_decision 分支，design §6.7）────────

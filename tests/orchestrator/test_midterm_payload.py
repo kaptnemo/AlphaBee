@@ -132,6 +132,46 @@ def test_finalize_payload_without_midterm_artifact_is_null():
     assert payload["midterm_decision"] is None
 
 
+# ── P2-6 报告口径时点：finalize 从已采集 state 取值随载荷下发 ──────────────────
+
+
+def test_finalize_payload_includes_report_time_points():
+    state = {
+        "run": _run(),
+        "artifacts": [_report_artifact()],
+        "decisions": [],
+        "issues": [],
+        "financial_facts": {"snapshots": [{"period": "20260930"}]},
+        "market_facts": {
+            "trade_date": "20261030",
+            "close_price": 1520.0,
+            "pe_ttm": 22.5,
+            "pb_ratio": 8.1,
+        },
+    }
+    payload = json.loads(finalize_message(state)["messages"][0].content)
+    assert payload["time_points"] == {
+        "financial_period": "20260930",
+        "valuation_as_of": "20261030",
+        "valuation_close": 1520.0,
+        "valuation_pe_ttm": 22.5,
+        "valuation_pb": 8.1,
+    }
+
+
+def test_finalize_payload_time_points_empty_without_facts():
+    """state 未采集财务/行情事实 ⇒ 全部为空，绝不拿决策日/采集日兜底。"""
+    state = {"run": _run(), "artifacts": [_report_artifact()], "decisions": [], "issues": []}
+    payload = json.loads(finalize_message(state)["messages"][0].content)
+    assert payload["time_points"] == {
+        "financial_period": "",
+        "valuation_as_of": "",
+        "valuation_close": None,
+        "valuation_pe_ttm": None,
+        "valuation_pb": None,
+    }
+
+
 # ── recorder.capture ────────────────────────────────────────────────────────
 
 

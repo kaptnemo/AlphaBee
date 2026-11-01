@@ -132,3 +132,58 @@ def test_record_migrates_legacy_formula_field():
         {"task_id": "task-both", "query": "q", "midterm_formula": "v1", "midterm_formula_revision": "v2"}
     )
     assert both.midterm_formula_revision == "v2"
+
+
+# ── P2-6 报告口径时点：finalize 下发 → 落库 → --task-report 复用 ──────────────
+
+
+def test_recorder_captures_report_time_points_from_payload():
+    record = TaskRecorder().capture(
+        query="分析 600760",
+        symbol="600760.SH",
+        flags={"enhance": False, "llm_review": False, "midterm": True},
+        payload={
+            "final_report": {"title": "报告"},
+            "issues": [],
+            "time_points": {
+                "financial_period": "20260930",
+                "valuation_as_of": "20261030",
+                "valuation_close": 12.5,
+                "valuation_pe_ttm": 30.1,
+                "valuation_pb": 2.4,
+            },
+        },
+        artifacts=[],
+        start_ts=0.0,
+    )
+    assert record.financial_period == "20260930"
+    assert record.valuation_as_of == "20261030"
+    assert record.valuation_close == pytest.approx(12.5)
+    assert record.valuation_pe_ttm == pytest.approx(30.1)
+    assert record.valuation_pb == pytest.approx(2.4)
+
+
+def test_recorder_time_points_missing_or_invalid_falls_back():
+    """旧 payload 无 time_points / 值不可解析 ⇒ 空串 / None，绝不抛。"""
+    record = TaskRecorder().capture(
+        query="分析 600760",
+        symbol="600760.SH",
+        flags={"enhance": False, "llm_review": False, "midterm": True},
+        payload={
+            "final_report": {"title": "报告"},
+            "issues": [],
+            "time_points": {"valuation_close": "", "valuation_pe_ttm": "n/a"},
+        },
+        artifacts=[],
+        start_ts=0.0,
+    )
+    assert record.financial_period == ""
+    assert record.valuation_as_of == ""
+    assert record.valuation_close is None
+    assert record.valuation_pe_ttm is None
+    assert record.valuation_pb is None
+
+    old = TaskRecord.model_validate({"task_id": "task-old", "query": "q"})
+    assert old.financial_period == ""
+    assert old.valuation_as_of == ""
+    assert old.valuation_close is None

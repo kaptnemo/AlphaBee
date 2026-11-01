@@ -157,6 +157,24 @@ def build_report_markdown(record: TaskRecord) -> str:
         parts.append(f"共 {len(issues)} 个问题")
         parts.append("")
 
+    midterm = record.midterm
+    if midterm:
+        from alphabee.orchestrator.nodes.midterm_reporter import (
+            ReportTimePoints,
+            render_midterm_decision_summary,
+        )
+
+        # P2-6：两个口径的时点随记录落库，这里与运行期渲染复用同一结构；旧记录为空 ⇒
+        # 渲染「（未提供）」，不做决策日 / 采集日兜底。
+        time_points = ReportTimePoints(
+            financial_period=record.financial_period,
+            valuation_as_of=record.valuation_as_of,
+            valuation_close=record.valuation_close,
+            valuation_pe_ttm=record.valuation_pe_ttm,
+            valuation_pb=record.valuation_pb,
+        )
+        parts.append(render_midterm_decision_summary(midterm, time_points=time_points))
+
     return "\n".join(parts).rstrip() + "\n"
 
 

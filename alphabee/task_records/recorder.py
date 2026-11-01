@@ -66,6 +66,8 @@ class TaskRecorder:
         industry_ctx = thesis_val.industry_context if thesis_val else None
         track_val = find_artifact_model(artifacts or [], "company_track", CompanyTrackArtifact)
         midterm_val = find_artifact_model(artifacts or [], "midterm_decision", CompanyStateArtifact)
+        raw_time_points = payload.get("time_points")
+        time_points = raw_time_points if isinstance(raw_time_points, dict) else {}
 
         record = TaskRecord(
             query=query,
@@ -106,6 +108,14 @@ class TaskRecorder:
             midterm_formula_revision=str(getattr(midterm_val, "classifier_formula", "") or "") if midterm_val else "",
             midterm_uncertain=bool(getattr(midterm_val, "uncertain", False)) if midterm_val else False,
             midterm_adverse_severity=self._adverse_severity(midterm_val),
+            # P2-6：两个口径的时点由 finalize 从 state 取值下发；旧 payload 缺失 ⇒ 空/None
+            # （渲染「（未提供）」），绝不用决策日 / 采集日顶替。
+            financial_period=str(time_points.get("financial_period") or ""),
+            valuation_as_of=str(time_points.get("valuation_as_of") or ""),
+            valuation_close=self._opt_float(time_points.get("valuation_close")),
+            valuation_pe_ttm=self._opt_float(time_points.get("valuation_pe_ttm")),
+            valuation_pb=self._opt_float(time_points.get("valuation_pb")),
+            midterm=midterm_val,  # 中期决策是重要的 artifact，完整落库，反序列化时可选。
             # ── 标的上下文 ──
             company_industry=industry_ctx.industry if industry_ctx else "",
             company_lifecycle=industry_ctx.lifecycle_stage if industry_ctx else "",
@@ -127,6 +137,15 @@ class TaskRecorder:
         adverse = getattr(midterm_val, "adverse_divergence", None)
         severity = getattr(adverse, "severity", None) if adverse is not None else None
         return float(severity) if isinstance(severity, (int, float)) else 0.0
+
+    def _opt_float(self, value: Any) -> float | None:
+        """可选数值：缺失 / 空串 / 不可解析 ⇒ ``None``（不抛，交由渲染显示「（未提供）」）。"""
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _find_artifact(self, artifacts: list[dict[str, Any]], atype: str) -> dict[str, Any] | None:
         for a in reversed(artifacts):
