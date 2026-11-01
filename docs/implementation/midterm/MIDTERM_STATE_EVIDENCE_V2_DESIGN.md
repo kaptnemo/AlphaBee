@@ -100,7 +100,7 @@ D1/D2 是**结构性的**：`_not_up` 的单边性与 `t_down` 的乘法零化�
 | 编号 | 非目标 | 理由 |
 |---|---|---|
 | N1 | 不改 T→E→F / E→T→F **顺序哲学**与迁移合法性集合 | 顺序本身有 A 股依据（TEF 设计 §1.1），问题在形式 |
-| N2 | 不改 `score_engine` / `bayes` / `evidence_rules` / `insight_evidence_adapter` | 方向分口径与后验数学不在本次问题域 |
+| N2 | 不改 `score_engine` / `bayes` / `evidence_rules` / `insight_evidence_adapter` （**例外**：2026-11-01 F 方向分 L1——FCF 惩罚移出 F + `score_breakdown` 分解落盘，见 ROADMAP 2026-11-01 行；该变更改 F 的**可审计性**，不属于 V2 公式域） | 方向分口径与后验数学不在本次问题域 |
 | N3 | 不改 `position.py` 公式 | v2 的熵已是可比量，现有阈值经验证可判别（§6.5）；若校准不符再走 §11.2 R3 |
 | N4 | 不做"每标的自动选序" | 沿用 TEF 设计 §1.2 非目标 |
 | N5 | 不改 M 因子 / `market_regime` / 编排图 / `NODE_ORDER` / `ArtifactType` | 与状态证据正交 |
