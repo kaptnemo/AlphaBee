@@ -254,6 +254,17 @@ def _run_node(monkeypatch, codes: list[str], *, min_peers: int | None = None) ->
 
     captured: dict[str, Any] = {}
 
+    # 本用例只钉消费侧 min_peers 闸：空/少量对标组不得触发在线兜底（LLM），
+    # 否则真实 LLM 可能“补出”对标组，导致结果随网络/模型变化而不确定。
+    import alphabee.company_track.peer_report as peer_report_module
+
+    monkeypatch.setattr(peer_report_module, "fetch_local_report_fragments", lambda *a, **k: ([], {}))
+    monkeypatch.setattr(
+        ct_module,
+        "build_peer_group",
+        lambda *a, **k: (PeerGroup(symbol="603986.SH", codes=[]), []),
+    )
+
     monkeypatch.setattr(
         ct_module,
         "build_company_track",
@@ -749,6 +760,17 @@ def _run_node(monkeypatch, codes: list[str], *, min_peers: int | None = None) ->
     from alphabee.company_track.peer_group_store import PeerGroup, PeerGroupStore
 
     captured: dict[str, Any] = {}
+
+    # 本用例只钉消费侧 min_peers 闸：空/少量对标组不得触发在线兜底（LLM），
+    # 否则真实 LLM 可能“补出”对标组，导致结果随网络/模型变化而不确定。
+    import alphabee.company_track.peer_report as peer_report_module
+
+    monkeypatch.setattr(peer_report_module, "fetch_local_report_fragments", lambda *a, **k: ([], {}))
+    monkeypatch.setattr(
+        ct_module,
+        "build_peer_group",
+        lambda *a, **k: (PeerGroup(symbol="603986.SH", codes=[]), []),
+    )
 
     monkeypatch.setattr(
         ct_module,
