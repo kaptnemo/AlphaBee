@@ -28,6 +28,9 @@ from alphabee.orchestrator.services.report_window import (
 
 REPO_ROOT = Path(rw.__file__).resolve().parents[3]
 REAL_SAMPLE_CODE = "601138"  # 工业富联：reports/工业富联(601138)/财报/<12 期报告>/
+# 601138 真实样本的截止日：固定在「2026 半年报已入库、三季报期末之前」，
+# 避免本地 reports/ 新增季报后选中无叙事章节的季报，导致真实样本用例随数据漂移。
+REAL_SAMPLE_AS_OF = "2026-08-31"
 
 
 def _newest_by_created_at(code: str) -> str | None:
@@ -96,7 +99,7 @@ def _write_report(
 
 @pytest.mark.skipif(not (REPO_ROOT / "reports").is_dir(), reason="仓库本地报告目录不存在（数据未随仓库分发）")
 def test_real_sample_yields_sections_without_reason():
-    window = select_report_window(REAL_SAMPLE_CODE, as_of="2026-12-31")
+    window = select_report_window(REAL_SAMPLE_CODE, as_of=REAL_SAMPLE_AS_OF)
 
     assert window.reason == ""
     assert window.sections, "真实样本必须取到章节（否则 §11 验收 3 仍为 ⬜）"
@@ -125,7 +128,7 @@ def test_real_sample_601138_selects_newest_report_period_not_newest_created_at()
     （``2026-08-21T23:55``，恰是 12 份里 ``created_at`` **最旧**的一份）⇒ 本用例同时钉住
     「选中的是报告期最新」与「它与 ``created_at`` 最新**不是**同一份」两件事。
     """
-    window = select_report_window("601138", as_of="2026-12-31")
+    window = select_report_window("601138", as_of=REAL_SAMPLE_AS_OF)
 
     assert window.reason == ""
     assert "2026年半年度报告" in window.report_period, f"实际选中 {window.report_period}"
@@ -172,7 +175,7 @@ def test_real_heading_risk_is_matched_by_substring_rule():
     **规则本身**（标题级子串匹配，F8 明确要求保持不变的语义），并用真实磁盘数据证明
     该标题确实存在于被测报告全文中。
     """
-    window = select_report_window("601138", as_of="2026-12-31")
+    window = select_report_window("601138", as_of=REAL_SAMPLE_AS_OF)
     assert window.reason == ""
 
     risk_title = "十、 重大风险提示"
@@ -188,7 +191,7 @@ def test_real_sample_601138_thickness_regression():
     判别力（自证）：① 把 ``_subtree_span`` 改回叶边界 ⇒ 253 < 3000 且只 1 组 ⇒ **必红**；
     ② 把等额分配改回"先到先得吃满" ⇒ ``risk``/``business`` 被 mda 挤掉 ⇒ **必红**。
     """
-    window = select_report_window("601138", as_of="2026-12-31")
+    window = select_report_window("601138", as_of=REAL_SAMPLE_AS_OF)
 
     assert window.reason == ""
     assert window.chars >= 3000, f"应远厚于旧边界 253 字符，实际 {window.chars}"
@@ -311,7 +314,7 @@ def test_real_sample_risk_group_nonempty_under_equal_split():
     判别力（**实测**）：忠实复现旧"顺序吃满"（`room = max_chars - used`）后 mda 独吞 12000、
     ``risk`` 被挤掉 ⇒ 本用例 **变红**（对照实验输出见交付说明）。
     """
-    window = select_report_window("601138", as_of="2026-12-31")
+    window = select_report_window("601138", as_of=REAL_SAMPLE_AS_OF)
 
     assert window.reason == ""
     risk_chars = sum(section.chars for section in window.sections if section.group == "risk")
@@ -322,8 +325,8 @@ def test_real_sample_risk_group_nonempty_under_equal_split():
 
 def test_real_sample_dot_suffixed_symbol_matches_same_code():
     """``601138.SH`` 与 ``601138`` 命中同一目录（按 6 位代码匹配）。"""
-    with_suffix = select_report_window("601138.SH", as_of="2026-12-31")
-    without = select_report_window("601138", as_of="2026-12-31")
+    with_suffix = select_report_window("601138.SH", as_of=REAL_SAMPLE_AS_OF)
+    without = select_report_window("601138", as_of=REAL_SAMPLE_AS_OF)
 
     assert with_suffix.reason == without.reason == ""
     assert with_suffix.report_name == without.report_name
@@ -380,7 +383,7 @@ def test_midterm_node_window_texts_nonempty_from_real_reports(monkeypatch):
         id="run-p1",
         goal="分析工业富联",
         status=RunStatus.RUNNING,
-        context={"symbol": f"{REAL_SAMPLE_CODE}.SH", "as_of_date": "2026-12-31"},
+        context={"symbol": f"{REAL_SAMPLE_CODE}.SH", "as_of_date": REAL_SAMPLE_AS_OF},
     )
     state = {
         "run": run,
