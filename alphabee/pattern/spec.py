@@ -91,20 +91,23 @@ class Params:
 class TransitionGraph:
     """有向迁移图：``from -> {to -> kind}``。
 
-    - 自环不写入 ``edges``：``legal(a, a) is True``、``kind_of(a, a) == "same"``；
+    - 自环在任何构造路径（直接 ``edges=`` / :meth:`chain` / :meth:`add` /
+      :meth:`with_backward`）都**不写入** ``edges``：``legal(a, a) is True``、
+      ``kind_of(a, a) == "same"``；
     - 未知边：``legal`` 为 ``False``、``kind_of`` 为 ``"illegal"``；
     - :meth:`chain` / :meth:`add` / :meth:`with_backward` 均**返回新图，不修改原图**；
-    - 构造时复制边表，调用方后续修改自己传入的字典不会影响本对象。
+    - 构造时复制并过滤边表，调用方后续修改自己传入的字典不会影响本对象。
     """
 
     edges: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "edges",
-            {from_state: dict(targets) for from_state, targets in self.edges.items()},
-        )
+        filtered: dict[str, dict[str, str]] = {}
+        for from_state, targets in self.edges.items():
+            kept = {to_state: kind for to_state, kind in targets.items() if to_state != from_state}
+            if kept:
+                filtered[from_state] = kept
+        object.__setattr__(self, "edges", filtered)
 
     @classmethod
     def chain(cls, states: Sequence[str], kind: str = "forward") -> TransitionGraph:

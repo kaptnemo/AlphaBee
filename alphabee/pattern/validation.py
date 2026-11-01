@@ -60,6 +60,7 @@ def validate_spec(spec: PatternSpec) -> ValidationReport:
     检查项与 issue code：
 
     - ``states.empty``：状态为空；
+    - ``states.too_few``：状态数 ``< 2``（softmax 需要两两可比的分布）；
     - ``state.duplicate_name``：状态名重复；
     - ``state.cap_not_finite`` / ``state.cap_not_positive``：cap 非有限 / ``<= 0``；
     - ``state.program_not_callable``：证据程序不可调用；
@@ -76,6 +77,13 @@ def validate_spec(spec: PatternSpec) -> ValidationReport:
     state_names = [state.name for state in spec.states]
     if not state_names:
         issues.append(ValidationIssue("states.empty", "states 不能为空"))
+    elif len(state_names) < 2:
+        issues.append(
+            ValidationIssue(
+                "states.too_few",
+                f"状态数必须 >= 2（softmax 需要可比较的分布），实际 {len(state_names)}",
+            )
+        )
 
     seen_states: set[str] = set()
     for name in state_names:

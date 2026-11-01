@@ -155,7 +155,8 @@ def test_engine_rejects_invalid_spec_with_issue_preview() -> None:
 
 def test_engine_rejects_single_state_spec() -> None:
     single = replace(_toy_spec(), states=(_state_a(),), transitions=TransitionGraph())
-    with pytest.raises(ValueError, match="至少 2 个状态"):
+    # 校验层先报 states.too_few；Engine 仍 raise ValueError（行为不变，口径前移）
+    with pytest.raises(ValueError, match="states.too_few"):
         Engine(single)
 
 
@@ -238,6 +239,30 @@ def test_normalize_clips_evidence_above_cap() -> None:
 
     assert result.raw_evidence["C"] == pytest.approx(0.6)
     assert result.normalized_evidence["C"] == 1.0
+
+
+def test_cap_normalization_can_flip_argmax() -> None:
+    """同一帧、同一证据，只有 A 的 cap 不同 → argmax 翻转（cap 是结构上限，不是装饰）。
+
+    判别力自证：若把 ``wide_cap_spec`` 的 A cap 改回 1.0（与 ``base`` 相同），归一化证据回到
+    ``A=0.6 > C=0.4``，下方 ``flipped == "C"`` 会立即失败。``same_cap`` 控制组把这一点显式钉住。
+    """
+    frame: dict[str, float | None] = {"x": 0.6, "y": 0.0}
+    base = Engine(_toy_spec()).classify(frame)
+    assert base.raw_evidence["A"] == pytest.approx(0.6)
+    assert base.raw_evidence["C"] == pytest.approx(0.24)
+    assert base.belief.argmax_state == "A"  # norm: A=0.6, C=0.4
+
+    wide_cap_spec = replace(_toy_spec(), states=(_state_a(cap=2.0), _state_b(), _state_c()))
+    flipped = Engine(wide_cap_spec).classify(frame)
+    assert flipped.raw_evidence == base.raw_evidence  # 原始证据不随 cap 变化
+    assert flipped.normalized_evidence["A"] == pytest.approx(0.3)  # 0.6 / 2.0
+    assert flipped.normalized_evidence["C"] == pytest.approx(0.4)  # 0.24 / 0.6
+    assert flipped.belief.argmax_state == "C"
+
+    # 把 A cap 改回与 base 相同（1.0）后 argmax 回到 A：上方翻转断言对 cap 敏感
+    same_cap = Engine(replace(wide_cap_spec, states=(_state_a(cap=1.0), _state_b(), _state_c())))
+    assert same_cap.classify(frame).belief.argmax_state == "A"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

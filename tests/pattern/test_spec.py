@@ -137,6 +137,25 @@ def test_transition_graph_copies_caller_edges() -> None:
     assert graph.kind_of("A", "B") == "forward"
 
 
+def test_transition_graph_filters_self_loops_on_direct_construction() -> None:
+    edges: dict[str, dict[str, str]] = {
+        "A": {"A": "self", "B": "forward"},
+        "B": {"B": "self"},
+    }
+    graph = TransitionGraph(edges=edges)
+
+    # 直接 edges= 构造与 chain/add/with_backward 口径一致：自环不写入（只有自环的源点也消失）
+    assert graph.edges == {"A": {"B": "forward"}}
+    assert graph.legal("A", "A") is True
+    assert graph.kind_of("A", "A") == "same"
+    assert graph.legal("B", "B") is True
+    assert graph.kind_of("B", "B") == "same"
+    assert graph.kind_of("B", "A") == "illegal"
+    assert graph.states == frozenset({"A", "B"})
+    # 调用方字典不被原地修改
+    assert edges == {"A": {"A": "self", "B": "forward"}, "B": {"B": "self"}}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 模式规格
 # ─────────────────────────────────────────────────────────────────────────────

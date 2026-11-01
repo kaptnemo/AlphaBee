@@ -94,6 +94,14 @@ def test_empty_states_are_reported() -> None:
     assert codes == ["states.empty"]
 
 
+def test_single_state_spec_reports_too_few_states() -> None:
+    spec = replace(_toy_spec(), states=(_state_a(),), transitions=TransitionGraph())
+    report = validate_spec(spec)
+    assert report.ok is False
+    assert [issue.code for issue in report.issues] == ["states.too_few"]
+    assert "2" in report.issues[0].message
+
+
 def test_duplicate_state_names_are_reported_without_raising() -> None:
     spec = replace(
         _toy_spec(),
@@ -118,7 +126,8 @@ def test_duplicate_state_names_are_reported_without_raising() -> None:
 def test_cap_must_be_finite_and_positive(cap: float, expected_code: str) -> None:
     spec = replace(_toy_spec(), states=(_state_a(cap=cap),), transitions=TransitionGraph())
     report = validate_spec(spec)
-    assert [issue.code for issue in report.issues] == [expected_code]
+    # 单状态 spec 会先命中 states.too_few，再命中该状态自身的 cap 问题
+    assert [issue.code for issue in report.issues] == ["states.too_few", expected_code]
 
 
 def test_non_callable_program_is_reported() -> None:
@@ -127,7 +136,10 @@ def test_non_callable_program_is_reported() -> None:
         states=(StateSpec(name="A", cap=1.0, program=42),),  # type: ignore[arg-type]
         transitions=TransitionGraph(),
     )
-    assert [issue.code for issue in validate_spec(spec).issues] == ["state.program_not_callable"]
+    assert [issue.code for issue in validate_spec(spec).issues] == [
+        "states.too_few",
+        "state.program_not_callable",
+    ]
 
 
 def test_empty_or_duplicate_factors_are_reported() -> None:
