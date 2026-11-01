@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+from typing import Any
 
 import pytest
 
@@ -266,7 +267,7 @@ def test_reconcile_writes_thesis_versions_under_state_dir(tmp_path, monkeypatch)
     monkeypatch.setattr(midterm_versions, "DEFAULT_VERSION_DIR", sentinel_default)
     state_dir = tmp_path / "state"
 
-    reconcile(SYMBOL, as_of=D1, state_dir=state_dir, persist=True, **_providers(D1))
+    reconcile(SYMBOL, as_of=D1, state_dir=state_dir, persist=True, thesis="核心假设", **_providers(D1))
 
     version_file = state_dir / "thesis_versions" / f"{SYMBOL}.jsonl"
     assert version_file.exists(), "版本文件应随 state_dir 落位（<state_dir>/thesis_versions/<symbol>.jsonl）"
@@ -285,7 +286,7 @@ def test_state_dir_none_keeps_default_version_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(midterm_persistence, "DEFAULT_DATA_DIR", sentinel_state)
     monkeypatch.setattr(midterm_versions, "DEFAULT_VERSION_DIR", sentinel_versions)
 
-    reconcile(SYMBOL, as_of=D1, persist=True, **_providers(D1))
+    reconcile(SYMBOL, as_of=D1, persist=True, thesis="核心假设", **_providers(D1))
 
     assert (sentinel_state / f"{SYMBOL}.jsonl").exists()  # 帧回落默认 state 目录
     assert (sentinel_versions / f"{SYMBOL}.jsonl").exists()  # 版本回落默认版本目录（data_dir=None 透传）
@@ -1151,3 +1152,219 @@ def test_cli_formula_v2_reports_provenance(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["classifier_formula"] == "v2"
     assert payload[0]["classifier_formula_mismatch"] is False
+
+
+# ── P0/P1/P2：H 来源、原文窗口与冷启动置信度 ───────────────────────────────
+
+
+def test_default_evidence_provider_passes_report_window_texts(monkeypatch):
+    """P1：默认证据来源必须把本地财报原文窗口传给定性通道，并回传取用元信息。"""
+    from alphabee.midterm import decision_model as md
+    from alphabee.orchestrator.services import report_window as rw
+
+    window = rw.ReportWindow(
+        symbol=SYMBOL,
+        report_name="2026年半年度报告",
+        report_period="2026年半年度报告",
+        sections=[
+            rw.WindowSection(title="管理层讨论与分析", text="营收增长 12%", chars=8, group="mda"),
+            rw.WindowSection(title="风险提示", text="原材料涨价", chars=5, group="risk"),
+        ],
+        chars=13,
+        reason="",
+    )
+    monkeypatch.setattr(rw, "report_window_enabled", lambda: True)
+    monkeypatch.setattr(rw, "select_report_window", lambda symbol, *, as_of=None, enabled=True: window)
+
+    captured: dict[str, Any] = {}
+
+    def _fake_collect(symbol, thesis="", window_texts=None, *, model=None, as_of_date=""):
+        captured.update(thesis=thesis, window_texts=window_texts, as_of_date=as_of_date)
+        return []
+
+    monkeypatch.setattr(md, "collect_evidence", _fake_collect)
+
+    bundle = scheduler_module._default_evidence_provider(SYMBOL, thesis="H", as_of_date=D1)
+
+    assert captured["window_texts"] == ["营收增长 12%", "原材料涨价"]
+    assert captured["thesis"] == "H" and captured["as_of_date"] == D1
+    assert bundle.events == []
+    assert (bundle.window_chars, bundle.window_sections, bundle.window_reason) == (13, 2, "")
+
+
+def test_run_once_reports_window_and_thesis_source(tmp_path):
+    """P1/P2：报告显式标注 H 来源与原文窗口；注入证据源时窗口标为未测量。"""
+    report = run_once(
+        SYMBOL,
+        as_of=D1,
+        state_dir=tmp_path / "state",
+        alert_dir=tmp_path / "alerts",
+        persist=False,
+        write_alerts=False,
+        thesis="显式假设",
+        evidence_provider=lambda symbol, **kw: scheduler_module.EvidenceBundle(
+            events=_evidence(D1), window_chars=99, window_sections=3, window_reason=""
+        ),
+        snapshot_provider=_providers(D1)["snapshot_provider"],
+    )
+
+    assert report.thesis == "显式假设" and report.thesis_source == "cli"
+    assert (report.window_texts_chars, report.window_texts_sections, report.window_reason) == (99, 3, "")
+
+    plain = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=tmp_path / "state",
+        alert_dir=tmp_path / "alerts",
+        persist=False,
+        write_alerts=False,
+        **_providers(D2),
+    )
+    assert plain.window_reason == "not_measured"
+
+
+def test_cold_start_zero_confidence_is_not_used_as_prior(tmp_path):
+    """P0：首帧无证据 ⇒ thesis_confidence=0.0 只是哨兵；下一帧不得把它当先验夹死在下限。"""
+    state_dir = tmp_path / "state"
+    first = reconcile(
+        SYMBOL,
+        as_of=D1,
+        state_dir=state_dir,
+        persist=True,
+        snapshot_provider=_providers(D1)["snapshot_provider"],
+        evidence_provider=lambda symbol, **kw: [],
+    )
+    assert first.thesis_confidence == 0.0
+
+    confirming = [
+        EvidenceEvent(
+            id="ev-confirm",
+            date=D2,
+            kind="expectation",
+            description="分析师上修",
+            effect_on_thesis="confirming",
+            confidence_delta=0.3,
+        )
+    ]
+    second = reconcile(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        persist=True,
+        snapshot_provider=_providers(D2)["snapshot_provider"],
+        evidence_provider=lambda symbol, **kw: confirming,
+    )
+    assert second.thesis_confidence > 0.5, "0.0 被误当先验时会夹在 0.05"
+
+
+def test_seed_thesis_only_initializes_first_frame(tmp_path):
+    """P2：种子只在首帧生效；后续帧继承，不被重复种子覆盖。"""
+    state_dir = tmp_path / "state"
+    alert_dir = tmp_path / "alerts"
+    first = run_once(
+        SYMBOL,
+        as_of=D1,
+        state_dir=state_dir,
+        alert_dir=alert_dir,
+        seed_thesis="种子假设",
+        **_providers(D1),
+    )
+    assert first.thesis == "种子假设" and first.thesis_source == "task_record"
+    assert first.thesis_version == 1 and first.thesis_version_reason == "first_registered"
+
+    second = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        alert_dir=alert_dir,
+        seed_thesis="另一个种子",
+        **_providers(D2),
+    )
+    assert second.thesis == "种子假设" and second.thesis_source == "prev"
+    assert second.thesis_version == 0  # 未变 ⇒ 不追加
+
+
+def test_explicit_thesis_override_appends_new_version(tmp_path):
+    """P2：`--thesis` 是显式修订 —— 覆盖继承并追加版本（首版买入理由保持不变）。"""
+    state_dir = tmp_path / "state"
+    alert_dir = tmp_path / "alerts"
+    run_once(SYMBOL, as_of=D1, state_dir=state_dir, alert_dir=alert_dir, thesis="原始假设", **_providers(D1))
+    changed = run_once(
+        SYMBOL,
+        as_of=D2,
+        state_dir=state_dir,
+        alert_dir=alert_dir,
+        thesis="修订假设",
+        **_providers(D2),
+    )
+    assert changed.thesis == "修订假设" and changed.thesis_source == "cli"
+    assert changed.thesis_version == 2 and changed.thesis_version_reason == "changed"
+
+
+def test_seed_thesis_from_task_record_reads_and_validates(tmp_path, monkeypatch):
+    """P2：任务记录种子读取；缺失/未启用/空 H 必须显式报错，不静默种空串。"""
+    from alphabee.midterm.models import CompanyStateArtifact
+    from alphabee.task_records.models import TaskRecord
+    from alphabee.task_records.store import TaskStore
+
+    store = TaskStore(base_dir=tmp_path / "records")
+    store.save(
+        TaskRecord(
+            task_id="task-seed",
+            query="q",
+            midterm=CompanyStateArtifact(symbol=SYMBOL, thesis="记录里的假设", as_of_date=D1),
+        )
+    )
+    store.save(TaskRecord(task_id="task-no-midterm", query="q", midterm=None))
+    store.save(
+        TaskRecord(
+            task_id="task-empty-thesis",
+            query="q",
+            midterm=CompanyStateArtifact(symbol=SYMBOL, thesis="", as_of_date=D1),
+        )
+    )
+    monkeypatch.setattr("alphabee.task_records.store.TaskStore", lambda: store)
+
+    assert scheduler_module._seed_thesis_from_task_record("task-seed") == ("记录里的假设", "")
+    assert scheduler_module._seed_thesis_from_task_record("task-missing")[0] is None
+    assert scheduler_module._seed_thesis_from_task_record("task-no-midterm")[0] is None
+    assert scheduler_module._seed_thesis_from_task_record("task-empty-thesis")[0] is None
+
+
+def test_cli_rejects_thesis_options_for_multiple_symbols():
+    assert main(["--symbol", SYMBOL, "--symbol", "000001.SZ", "--thesis", "H"]) == 2
+
+
+def test_cli_thesis_options_are_mutually_exclusive():
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--symbol", SYMBOL, "--thesis", "H", "--seed-from-task-record", "task-x"])
+    assert excinfo.value.code == 2
+
+
+def test_cli_seed_from_task_record_wires_into_report(tmp_path, monkeypatch, capsys):
+    """P2：CLI 种子接线 —— 报告带种子 H 与 `task_record` 来源，并登记 version 1。"""
+    _patch_offline(monkeypatch)
+    monkeypatch.setattr(scheduler_module, "_seed_thesis_from_task_record", lambda task_id: ("CLI 种子", ""))
+
+    code = main(
+        [
+            "--symbol",
+            SYMBOL,
+            "--once",
+            "--as-of",
+            D2,
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--alert-dir",
+            str(tmp_path / "alerts"),
+            "--seed-from-task-record",
+            "task-x",
+            "--json",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    report = payload[0]
+    assert report["thesis"] == "CLI 种子"
+    assert report["thesis_source"] == "task_record"
+    assert report["thesis_version"] == 1

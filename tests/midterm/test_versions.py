@@ -249,11 +249,13 @@ def test_missing_file_yields_empty_and_latest_none():
     assert latest_version("000001.SZ") is None
 
 
-def test_register_on_empty_thesis_still_registers_first_version():
+def test_register_on_empty_thesis_is_noop():
+    """空 H 不登记版本：冷启动无 H 时不得把空串写成 version 1（否则真实 H 会继承空买入理由）。"""
     version, reason = register_thesis_if_changed(SYMBOL, as_of=D1, thesis="")
 
-    assert reason == APPEND_REASON_FIRST
-    assert version is not None and version.version == 1 and version.buy_rationale == [""]
+    assert version is None and reason == APPEND_REASON_UNCHANGED
+    assert load_versions(SYMBOL) == []
+    assert not _version_file().exists()
 
 
 # ── ④ fail-open ─────────────────────────────────────────────────────────────
@@ -317,12 +319,19 @@ def test_reconcile_frame_registers_version_on_persist(tmp_path):
 
 
 def test_run_once_reports_thesis_version_fields(tmp_path):
-    report = run_once(SYMBOL, as_of=D1, state_dir=tmp_path / "state", alert_dir=tmp_path / "alerts", **_providers(D1))
+    report = run_once(
+        SYMBOL,
+        as_of=D1,
+        state_dir=tmp_path / "state",
+        alert_dir=tmp_path / "alerts",
+        thesis=THESIS,
+        **_providers(D1),
+    )
 
     assert report.thesis_version == 1
     assert report.thesis_version_reason == APPEND_REASON_FIRST
     versions_dir = tmp_path / "state" / "thesis_versions"
-    assert load_versions(SYMBOL, data_dir=versions_dir)[0].thesis == report.thesis
+    assert load_versions(SYMBOL, data_dir=versions_dir)[0].thesis == report.thesis == THESIS
 
 
 def test_persist_false_writes_no_version_file(tmp_path):
@@ -345,7 +354,14 @@ def test_persist_false_writes_no_version_file(tmp_path):
 
 def test_second_frame_with_changed_thesis_registers_version_two(tmp_path):
     """端到端：第二帧 thesis 变了 ⇒ ``thesis_version=2`` 且 reason=changed，首版买入理由不变。"""
-    run_once(SYMBOL, as_of=D1, state_dir=tmp_path / "state", alert_dir=tmp_path / "alerts", **_providers(D1))
+    run_once(
+        SYMBOL,
+        as_of=D1,
+        state_dir=tmp_path / "state",
+        alert_dir=tmp_path / "alerts",
+        thesis=THESIS,
+        **_providers(D1),
+    )
     versions_dir = tmp_path / "state" / "thesis_versions"
     first = load_versions(SYMBOL, data_dir=versions_dir)
     assert first and first[0].version == 1

@@ -163,7 +163,9 @@ def register_thesis_if_changed(
     * **thesis 变了** ⇒ ``version=prev.version+1``、``thesis=新文本``，**``buy_rationale`` /
       ``invalidation`` 继承首版**（`prev.buy_rationale or [prev.thesis]` / `prev.invalidation`），
       reason = :data:`APPEND_REASON_CHANGED`；
-    * **thesis 未变** ⇒ 返回 ``(None, APPEND_REASON_UNCHANGED)``，**不追加**。
+    * **thesis 未变** ⇒ 返回 ``(None, APPEND_REASON_UNCHANGED)``，**不追加**；
+    * **thesis 为空/仅空白** ⇒ 同样返回 ``(None, APPEND_REASON_UNCHANGED)``，**不登记空版本**
+      （冷启动无 H 时不得污染版本历史）。
 
     fail-open：任何异常（读/写/校验）⇒ ``(None, APPEND_REASON_UNCHANGED)`` + warning，绝不抛给调用方
     （跟踪帧的产出优先于版本登记）。
@@ -174,6 +176,10 @@ def register_thesis_if_changed(
     """
     try:
         text = str(thesis or "")
+        if not text.strip():
+            # 空 H 不是有效假设：绝不能登记成 version 1（否则后续真实 H 会变成 version 2
+            # 并继承空买入理由）。跟踪链路未 seed 时常见的冷启动状态 ⇒ 显式 no-op。
+            return None, APPEND_REASON_UNCHANGED
         previous = latest_version(symbol, data_dir=data_dir)
         if previous is not None and str(previous.thesis or "") == text:
             return None, APPEND_REASON_UNCHANGED

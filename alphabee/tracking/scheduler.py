@@ -82,6 +82,7 @@ __all__ = [
     "ACTION_CLASS_GATE_TIERS",
     "DEFAULT_STALE_AFTER_DAYS",
     "ContradictionAccounting",
+    "EvidenceBundle",
     "TrackingReport",
     "default_alert_dir",
     "enforce_attribution_accounting",
@@ -105,7 +106,23 @@ DEFAULT_STATE_DIR = Path("data") / "midterm" / "state"
 DEFAULT_ALERT_DIR = Path("data") / "tracking" / "alerts"
 
 SnapshotProvider = Callable[[str], FactorSnapshot]
-EvidenceProvider = Callable[..., list[EvidenceEvent]]
+
+
+@dataclass(frozen=True)
+class EvidenceBundle:
+    """默认证据来源的返回：证据 + 本帧原文窗口的取用元信息。
+
+    注入的 ``evidence_provider`` 可以直接返回 ``list[EvidenceEvent]``（向后兼容）；
+    只有默认来源会额外携带窗口信息，供 ``TrackingReport`` 显式呈现"本次是否用上了叙事证据"。
+    """
+
+    events: list[EvidenceEvent]
+    window_chars: int = 0
+    window_sections: int = 0
+    window_reason: str = ""
+
+
+EvidenceProvider = Callable[..., "list[EvidenceEvent] | EvidenceBundle"]
 
 
 # ── 报告模型 ────────────────────────────────────────────────────────────────
@@ -136,6 +153,12 @@ class TrackingReport(BaseModel):
     state: str = ""  # 认知状态 argmax（S0–S5）
     thesis: str = ""
     thesis_confidence: float = 0.0
+    # H 的来源自证（additive）：prev（继承上一帧）/ cli（--thesis）/ task_record（首帧种子）/ ""（无 H）。
+    thesis_source: str = ""
+    # P1（additive）：本帧原文窗口的取用元信息（仅默认证据来源测量；注入 provider ⇒ "not_measured"）。
+    window_texts_chars: int = 0
+    window_texts_sections: int = 0
+    window_reason: str = ""
     tv_distance: float = 0.0
 
     state_shift_kind: str = ""  # diff 的 L3 迁移类型：upgrade/downgrade/same/reopen/""
@@ -205,6 +228,11 @@ class _Frame:
     classifier_order_mismatch: bool = False
     # 状态证据 V2 design §6.8（additive）：跨公式相邻帧标注（同序同构，只标注不阻断）。
     classifier_formula_mismatch: bool = False
+    # P1/P2（additive）：H 来源与本帧窗口取用元信息（供 run_once 透传到报告）。
+    thesis_source: str = ""
+    window_chars: int = 0
+    window_sections: int = 0
+    window_reason: str = ""
 
 
 # ── §9.4 安全红线 ───────────────────────────────────────────────────────────
@@ -237,13 +265,27 @@ def _default_snapshot_provider(symbol: str) -> FactorSnapshot:
     return factors.get_factor_snapshot(symbol, include_market=True)
 
 
-def _default_evidence_provider(symbol: str, *, thesis: str = "", as_of_date: str = "") -> list[EvidenceEvent]:
-    """默认证据来源：复用 ``midterm/decision_model.collect_evidence``（数值规则 + 可选 LLM 通道）。
+def _default_evidence_provider(symbol: str, *, thesis: str = "", as_of_date: str = "") -> EvidenceBundle:
+    """默认证据来源：数值规则 + **本地财报原文窗口**驱动的定性通道（Stage A/B）。
 
-    ``window_texts`` 留空（原文管线未接，§9.3 的 W 项），因此 v1 只入账**数值类**证据；
-    定性通道缺位属具名顺延项，不影响"反证强制入账"的机制（两侧证据只要有就都入账）。
+    窗口复用 ``orchestrator.services.report_window.select_report_window``（纯规则、零 LLM、
+    无网络、fail-open），并把取用元信息随证据一起返回，供 ``TrackingReport`` 显式呈现
+    "本次是否用上了叙事证据"（不再静默降级为"只有数值证据"）。
     """
-    return decision_model.collect_evidence(symbol, thesis, None, as_of_date=as_of_date)
+    from alphabee.orchestrator.services.report_window import (
+        report_window_enabled,
+        select_report_window,
+    )
+
+    window = select_report_window(symbol, as_of=as_of_date or None, enabled=report_window_enabled())
+    window_texts = [section.text for section in window.sections if section.text.strip()]
+    events = decision_model.collect_evidence(symbol, thesis, window_texts or None, as_of_date=as_of_date)
+    return EvidenceBundle(
+        events=list(events or []),
+        window_chars=window.chars,
+        window_sections=len(window_texts),
+        window_reason=window.reason,
+    )
 
 
 def _latest_report_period(symbol: str) -> tuple[bool, str | None]:
@@ -446,6 +488,8 @@ def _reconcile_frame(
     previous: CompanyStateArtifact | None = None,
     classifier_order: str | None = None,
     classifier_formula: str | None = None,
+    thesis: str | None = None,
+    seed_thesis: str | None = None,
 ) -> _Frame:
     """一帧的确定性内核（``reconcile`` 与 ``run_once`` **共用**，防两套链路漂移）。"""
     limits = _resolve_thresholds(thresholds)
@@ -456,15 +500,40 @@ def _reconcile_frame(
     snapshot.symbol = snapshot.symbol or symbol
     snapshot.as_of_date = as_of  # 帧日期以判定时点为准（快照来源可能滞后/缺失日期）
 
-    thesis = str(getattr(prev, "thesis", "") or "")
+    # H 的三种来源（P2）：显式覆盖（--thesis）优先；首帧可用种子（task_record）；否则继承上一帧。
+    # 空串一律视作「未提供」——绝不把 H 清空（反漂移：ThesisVersion 不允许行情/叙事静默重写）。
+    override = str(thesis or "").strip()
+    prev_thesis = str(getattr(prev, "thesis", "") or "").strip()
+    if override:
+        resolved_thesis, thesis_source = override, "cli"
+    elif prev is None and str(seed_thesis or "").strip():
+        resolved_thesis, thesis_source = str(seed_thesis).strip(), "task_record"
+    else:
+        resolved_thesis = str(getattr(prev, "thesis", "") or "")
+        thesis_source = "prev" if prev_thesis else ""
+
+    # 冷启动保护（P0）：0.0 是「无证据且无先验」的哨兵，不是有效后验；当先验会把它
+    # 夹死在下限 0.05（_logit(0) ≈ −20.7），后续确认证据几乎拉不回来 ⇒ 显式回落 None。
+    prior_confidence = getattr(prev, "thesis_confidence", None) if prev is not None else None
+    if prior_confidence is not None and float(prior_confidence) <= 0.0:
+        prior_confidence = None
+
     evidence_fn = evidence_provider or _default_evidence_provider
-    evidence = list(evidence_fn(symbol, thesis=thesis, as_of_date=as_of) or [])
+    raw_evidence = evidence_fn(symbol, thesis=resolved_thesis, as_of_date=as_of) or []
+    if isinstance(raw_evidence, EvidenceBundle):
+        evidence = list(raw_evidence.events)
+        window_chars = raw_evidence.window_chars
+        window_sections = raw_evidence.window_sections
+        window_reason = raw_evidence.window_reason
+    else:
+        evidence = list(raw_evidence)
+        window_chars, window_sections, window_reason = 0, 0, "not_measured"
 
     curr = decision_model.evaluate(
         snapshot,
         evidence,
-        prior_confidence=getattr(prev, "thesis_confidence", None) if prev is not None else None,
-        thesis=thesis,
+        prior_confidence=prior_confidence,
+        thesis=resolved_thesis,
         prev_evidence_log=getattr(prev, "evidence_log", None),
         classifier_order=classifier_order,
         classifier_formula=classifier_formula,
@@ -566,6 +635,10 @@ def _reconcile_frame(
         thesis_version_reason=thesis_version_reason,
         classifier_order_mismatch=classifier_order_mismatch,
         classifier_formula_mismatch=classifier_formula_mismatch,
+        thesis_source=thesis_source,
+        window_chars=window_chars,
+        window_sections=window_sections,
+        window_reason=window_reason,
     )
 
 
@@ -580,6 +653,8 @@ def reconcile(
     persist: bool = True,
     classifier_order: str | None = None,
     classifier_formula: str | None = None,
+    thesis: str | None = None,
+    seed_thesis: str | None = None,
 ) -> CompanyStateArtifact:
     """把标的推进到 ``as_of``：增量事实 → 快照 → 五层差分 + 归因 → 退出检查 → bayes 更新 → 状态检查。
 
@@ -606,6 +681,9 @@ def reconcile(
             覆盖配置（同样 fail-open）。
         classifier_formula: 状态证据公式版本（V2 design §6.8）：``"v1"`` / ``"v2"``；``None`` = 跟随
             配置 ``midterm.formula_revision``（缺省 ``"v1"``，fail-open 到 ``"v1"``）。
+        thesis: 显式指定本帧 H（覆盖继承）。仅用于**显式修订**，变化时由
+            ``versions.register_thesis_if_changed`` 追加新版本；空串 = 不覆盖。
+        seed_thesis: 首帧 H 种子（仅在无上一帧时生效）；已有帧时忽略，绝不静默覆盖。
 
     Returns:
         本帧 :class:`CompanyStateArtifact`（已含 ``thesis_confidence`` / ``factor_snapshot`` /
@@ -621,6 +699,8 @@ def reconcile(
         persist=persist,
         classifier_order=classifier_order,
         classifier_formula=classifier_formula,
+        thesis=thesis,
+        seed_thesis=seed_thesis,
     ).artifact
 
 
@@ -716,6 +796,8 @@ def run_once(
     manual: bool = False,
     classifier_order: str | None = None,
     classifier_formula: str | None = None,
+    thesis: str | None = None,
+    seed_thesis: str | None = None,
 ) -> TrackingReport:
     """一次性 reconcile + 触发判定 + 告警落盘（§14.5-A 的 v1 闭环）。
 
@@ -734,6 +816,7 @@ def run_once(
             ``None`` = 跟随配置 ``midterm.classifier_order``（fail-open 到 ``etf``）。
         classifier_formula: 状态证据公式版本（V2 design §6.8）：``"v1"`` / ``"v2"``；
             ``None`` = 跟随配置 ``midterm.formula_revision``（缺省 ``"v1"``，fail-open 到 ``"v1"``）。
+        thesis / seed_thesis: 见 :func:`reconcile`（显式覆盖 / 首帧种子）。
 
     Returns:
         :class:`TrackingReport`。
@@ -752,6 +835,8 @@ def run_once(
             persist=persist,
             classifier_order=classifier_order,
             classifier_formula=classifier_formula,
+            thesis=thesis,
+            seed_thesis=seed_thesis,
         )
     except Exception as exc:  # noqa: BLE001 - 跟踪入口必须 fail-open，绝不把异常抛给调度/CLI
         logger.warning("tracking reconcile failed symbol=%s as_of=%s: %s", symbol, frame_as_of, exc)
@@ -764,6 +849,10 @@ def run_once(
     report.state = str(getattr(getattr(artifact, "state", None), "argmax_state", "") or "")
     report.thesis = str(getattr(artifact, "thesis", "") or "")
     report.thesis_confidence = float(getattr(artifact, "thesis_confidence", 0.0) or 0.0)
+    report.thesis_source = frame.thesis_source
+    report.window_texts_chars = int(frame.window_chars)
+    report.window_texts_sections = int(frame.window_sections)
+    report.window_reason = frame.window_reason
     report.tv_distance = round(
         float(getattr(getattr(frame.frame_diff, "state_shift", None), "tv_distance", 0.0) or 0.0), 6
     )
@@ -912,8 +1001,45 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="状态证据公式版本（缺省 = 读 config midterm.formula_revision；v1=现状 / v2=显式 opt-in）",
     )
+    thesis_group = parser.add_mutually_exclusive_group()
+    thesis_group.add_argument(
+        "--thesis",
+        default=None,
+        metavar="TEXT",
+        help="显式指定本帧核心假设 H（覆盖继承；文本变化时追加 thesis 版本）",
+    )
+    thesis_group.add_argument(
+        "--seed-from-task-record",
+        dest="seed_from_task_record",
+        default=None,
+        metavar="TASK_ID",
+        help="用指定任务记录的中期决策 H 初始化首帧（已有帧时忽略，不覆盖）",
+    )
     parser.add_argument("--json", action="store_true", help="以 JSON 输出报告")
     return parser
+
+
+def _seed_thesis_from_task_record(task_id: str) -> tuple[str | None, str]:
+    """从任务记录读取中期决策 H，作为首帧种子；返回 ``(thesis, error)``。
+
+    只读、显式、fail-open 到调用方（``error`` 非空 ⇒ CLI 以用法错误退出），
+    绝不把空 H 或缺失 artifact 当作"成功种子"。
+    """
+    try:
+        from alphabee.task_records.store import TaskStore
+
+        record = TaskStore().load(task_id)
+    except Exception as exc:  # noqa: BLE001 - 读取失败转成可读错误，由 CLI 决定退出码
+        return None, f"读取任务记录失败: {exc}"
+    if record is None:
+        return None, f"任务记录不存在: {task_id}"
+    midterm = getattr(record, "midterm", None)
+    if midterm is None:
+        return None, f"任务记录没有中期决策 artifact（未启用 midterm？）: {task_id}"
+    text = str(getattr(midterm, "thesis", "") or "").strip()
+    if not text:
+        return None, f"任务记录的中期决策 H 为空（降级产出？）: {task_id}"
+    return text, ""
 
 
 def _symbols(args: argparse.Namespace) -> list[str]:
@@ -931,6 +1057,14 @@ def _render_text(report: TrackingReport) -> str:
         f"[{report.symbol}] as_of={report.as_of} state={report.state or '-'} "
         f"P(H)={report.thesis_confidence:.3f} tv={report.tv_distance:.3f}"
     ]
+    # P1/P2：H 来源与原文窗口取用情况显式可见（避免"只有数值证据"被误读为完整分析）。
+    if report.window_reason == "not_measured":
+        window_desc = "未测量（注入证据源）"
+    else:
+        window_desc = f"{report.window_texts_sections} 段 / {report.window_texts_chars} 字符"
+        if report.window_reason:
+            window_desc += f"（{report.window_reason}）"
+    lines.append(f"  H 来源: {report.thesis_source or '无'}  原文窗口: {window_desc}")
     if report.triggers:
         for trigger in report.triggers:
             lines.append(f"  - [{trigger.kind}] {trigger.reason}")
@@ -977,6 +1111,19 @@ def main(argv: list[str] | None = None) -> int:
         print("error: 至少需要一个 --symbol 或 --watchlist", flush=True)
         return 2
 
+    # H 的显式来源只允许单标的：同一段 H 跨标的复用会制造"看起来有依据"的伪假设。
+    if (args.thesis or args.seed_from_task_record) and len(symbols) != 1:
+        parser.print_usage()
+        print("error: --thesis / --seed-from-task-record 仅支持单个标的", flush=True)
+        return 2
+
+    seed_thesis: str | None = None
+    if args.seed_from_task_record:
+        seed_thesis, seed_error = _seed_thesis_from_task_record(args.seed_from_task_record)
+        if seed_thesis is None:
+            print(f"error: {seed_error}", flush=True)
+            return 2
+
     reports = run_watchlist(
         symbols,
         as_of=args.as_of,
@@ -987,6 +1134,8 @@ def main(argv: list[str] | None = None) -> int:
         manual=args.trigger == "manual",
         classifier_order=args.classifier,
         classifier_formula=args.formula,
+        thesis=args.thesis,
+        seed_thesis=seed_thesis,
     )
     if args.json:
         print(json.dumps([r.model_dump(mode="json") for r in reports], ensure_ascii=False, indent=2))
