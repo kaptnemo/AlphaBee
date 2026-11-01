@@ -71,6 +71,14 @@ _VARIABLE_LABELS: tuple[tuple[str, str], ...] = (
     ("R", "r_risk"),
 )
 
+# F 分解渲染（L1，2026-11-01）：（原始 YoY 键, 饱和项键, 饱和标志键, 展示名）。
+# 只读 `score_engine.fundamental_breakdown` 落盘的键；旧帧无分解 ⇒ 不渲染（保持原行）。
+_F_BREAKDOWN_TERMS: tuple[tuple[str, str, str, str], ...] = (
+    ("revenue_yoy", "revenue_term", "revenue_saturated", "营收"),
+    ("net_profit_yoy", "net_profit_term", "net_profit_saturated", "净利"),
+    ("eps_growth_yoy", "eps_term", "eps_saturated", "EPS"),
+)
+
 # M 因子（market_regime）摘要字段：优先取 factor_snapshot.market，退回 variable_scores.m。
 _MARKET_FIELDS: tuple[str, ...] = (
     "regime",
@@ -339,6 +347,31 @@ def _render_variable_scores(lines: list[str], decision: CompanyStateArtifact) ->
         )
 
 
+def _render_f_breakdown(lines: list[str], breakdown: dict[str, float]) -> None:
+    """F 方向分的可审计分解（L1，2026-11-01）：原始 YoY → 饱和项（标注是否触顶）+ 修正项 + 结论。
+
+    只渲染 ``factor_snapshot.fundamental.score_breakdown`` 已落盘的分解，**不重算公式**
+    （与 ``score_engine.fundamental_breakdown`` 单一来源，避免报告与决策漂移）。
+    """
+    parts: list[str] = []
+    for raw_key, term_key, sat_key, label in _F_BREAKDOWN_TERMS:
+        if raw_key not in breakdown or term_key not in breakdown:
+            continue
+        mark = "（饱和）" if breakdown.get(sat_key, 0.0) else ""
+        parts.append(f"{label} {_fmt(breakdown[raw_key])}→{_fmt(breakdown[term_key])}{mark}")
+    lines.append(f"      F 分解: {'  '.join(parts)}  均值 {_fmt(breakdown.get('growth_mean'))}")
+    fixes = (
+        f"经营现金流 {_fmt(breakdown.get('ocf_penalty'))}",
+        f"beat {_fmt(breakdown.get('beat_bonus'))}",
+        f"miss {_fmt(breakdown.get('miss_penalty'))}",
+        f"细分 {_fmt(breakdown.get('segment_bonus'))}",
+    )
+    flag = "输出饱和" if breakdown.get("output_saturated") else "未饱和"
+    lines.append(
+        f"      F 修正: {'  '.join(fixes)}  ⇒ F={_fmt(breakdown.get('f'))}（{flag}，合计 {_fmt(breakdown.get('raw'))}）"
+    )
+
+
 def _render_factor_snapshot(lines: list[str], decision: CompanyStateArtifact) -> None:
     _section(lines, "七因子快照")
     snapshot = decision.factor_snapshot
@@ -355,9 +388,12 @@ def _render_factor_snapshot(lines: list[str], decision: CompanyStateArtifact) ->
         data = factor.model_dump(exclude_none=True)
         direction = data.pop("direction", "")
         score = data.pop("score", None)
+        breakdown = data.pop("score_breakdown", None)
         lines.append(f"  {label}: direction={direction or '—'}  score={_fmt(score)}")
         if data:
             lines.append(f"      {_fmt(data)}")
+        if breakdown:
+            _render_f_breakdown(lines, breakdown)
     if snapshot.missing_facts:
         lines.append(f"  缺失字段: {', '.join(snapshot.missing_facts)}")
 

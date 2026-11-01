@@ -28,6 +28,7 @@ from alphabee.midterm.models import (
     EvidenceEvent,
     ExpectedValue,
     FactorSnapshot,
+    FundamentalFactor,
     MarketFactor,
     PositionDecision,
     ScenarioOutcome,
@@ -437,3 +438,61 @@ def test_v2_frame_survives_node_payload_roundtrip():
     """接线路径（payload → 节点 → summary artifact）同样带 v2 行。"""
     text = _rendered_text(_v2_decision(), _state)
     assert "归一化证据" in text and "formula=v2" in text
+
+
+# ── L1（2026-11-01）：F 方向分的可审计分解（score_breakdown 渲染）────────────────
+
+
+def _f_breakdown_decision():
+    """带 F 分解的快照帧（600760 口径：只保留 L1 需要的字段，其余为空）。"""
+    snapshot = FactorSnapshot(
+        symbol="600760.SH",
+        as_of_date="2026-11-01",
+        fundamental=FundamentalFactor(
+            revenue_yoy=-34.19,
+            net_profit_yoy=-26.0,
+            eps_growth_yoy=-28.0,
+            direction="deteriorating",
+            score=0.0,
+            score_breakdown={
+                "revenue_yoy": -34.19,
+                "revenue_term": -1.0,
+                "revenue_saturated": 1.0,
+                "net_profit_yoy": -26.0,
+                "net_profit_term": -0.86666,
+                "net_profit_saturated": 0.0,
+                "eps_growth_yoy": -28.0,
+                "eps_term": -0.93333,
+                "eps_saturated": 0.0,
+                "growth_mean": -0.93333,
+                "ocf_penalty": 0.0,
+                "beat_bonus": 0.2,
+                "miss_penalty": 0.0,
+                "segment_bonus": 0.0,
+                "raw": -0.73333,
+                "f": -0.73333,
+                "input_saturated": 1.0,
+                "output_saturated": 0.0,
+            },
+        ),
+    )
+    return _company_state().model_copy(update={"factor_snapshot": snapshot})
+
+
+def test_render_f_breakdown_decomposes_score():
+    text = node.render_midterm_decision_summary(_f_breakdown_decision())
+    assert "F 分解: 营收 -34.19→-1（饱和）  净利 -26→-0.8667  EPS -28→-0.9333  均值 -0.9333" in text
+    assert "F 修正: 经营现金流 0  beat 0.2  miss 0  细分 0  ⇒ F=-0.7333（未饱和，合计 -0.7333）" in text
+
+
+def test_render_without_breakdown_keeps_legacy_lines():
+    """旧帧（无 score_breakdown）不出现 F 分解行 —— 与改造前逐字一致。"""
+    snapshot = FactorSnapshot(
+        symbol="600760.SH",
+        as_of_date="2026-11-01",
+        fundamental=FundamentalFactor(revenue_yoy=-34.19, direction="deteriorating", score=0.0),
+    )
+    text = node.render_midterm_decision_summary(_company_state().model_copy(update={"factor_snapshot": snapshot}))
+    assert "F 基本面: direction=deteriorating  score=0" in text
+    assert "F 分解" not in text
+    assert "F 修正" not in text

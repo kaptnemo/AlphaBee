@@ -25,6 +25,7 @@ from alphabee.midterm.score_engine import (
     _research_revision,
     adjust_market_exposure,
     compress_scores,
+    fundamental_breakdown,
 )
 
 
@@ -114,8 +115,8 @@ def test_fundamental_missing_is_none():
     assert compress_scores(snap).f_fundamental_trend is None
 
 
-def test_fundamental_negative_cashflow_penalized():
-    """profit_without_cash：高增长但经营/自由现金流双负 → F 被显著惩罚。"""
+def test_fundamental_negative_ocf_penalized():
+    """profit_without_cash：经营现金流为负 → F 扣 0.5（与自由现金流无关，L1 后）。"""
     snap = _snapshot(
         fundamental=FundamentalFactor(
             revenue_yoy=30.0,
@@ -125,42 +126,87 @@ def test_fundamental_negative_cashflow_penalized():
             free_cashflow=-8_650_000_000.0,
         )
     )
-    f = compress_scores(snap).f_fundamental_trend
-    assert f < 1.0  # 不再是净利 +269% 拉满的 1.0
-    assert f < 0.5  # 双负现金流 → 显著惩罚
+    # 三因子全部饱和到 +1 ⇒ 均值 1.0；仅经营现金流惩罚 −0.5
+    assert compress_scores(snap).f_fundamental_trend == pytest.approx(0.5)
 
 
-def test_fundamental_single_negative_cashflow_penalized():
-    """单个负现金流（经营或自由）也惩罚，但轻于双负。"""
-    both_neg = _snapshot(
+def test_fundamental_free_cashflow_no_longer_affects_f():
+    """L1（2026-11-01）：**自由现金流移出 F** —— FCF 正/负对 F 零影响（交给 derived facts）。"""
+    common = dict(revenue_yoy=30.0, net_profit_yoy=30.0, eps_growth_yoy=30.0, operating_cashflow=1.0)
+    positive = _snapshot(fundamental=FundamentalFactor(**common, free_cashflow=1.0))
+    negative = _snapshot(fundamental=FundamentalFactor(**common, free_cashflow=-8_650_000_000.0))
+    assert compress_scores(positive).f_fundamental_trend == pytest.approx(1.0)
+    assert compress_scores(negative).f_fundamental_trend == pytest.approx(1.0)
+
+
+def test_fundamental_ocf_penalty_is_single_step():
+    """经营现金流为负只扣一档 −0.5（旧口径双负会扣 −1.0）。"""
+    neg = _snapshot(
         fundamental=FundamentalFactor(
-            revenue_yoy=30.0,
-            net_profit_yoy=30.0,
-            eps_growth_yoy=30.0,
-            operating_cashflow=-1.0,
-            free_cashflow=-1.0,
+            revenue_yoy=30.0, net_profit_yoy=30.0, eps_growth_yoy=30.0, operating_cashflow=-1.0
         )
     )
-    single_neg = _snapshot(
+    clean = _snapshot(
         fundamental=FundamentalFactor(
-            revenue_yoy=30.0,
-            net_profit_yoy=30.0,
-            eps_growth_yoy=30.0,
-            operating_cashflow=-1.0,
-            free_cashflow=1.0,
+            revenue_yoy=30.0, net_profit_yoy=30.0, eps_growth_yoy=30.0, operating_cashflow=1.0
         )
     )
-    clean = _snapshot(fundamental=FundamentalFactor(revenue_yoy=30.0, net_profit_yoy=30.0, eps_growth_yoy=30.0))
-    f_both = compress_scores(both_neg).f_fundamental_trend
-    f_single = compress_scores(single_neg).f_fundamental_trend
-    f_clean = compress_scores(clean).f_fundamental_trend
-    assert f_both < f_single < f_clean
+    delta = compress_scores(clean).f_fundamental_trend - compress_scores(neg).f_fundamental_trend
+    assert delta == pytest.approx(0.5)
 
 
 def test_fundamental_cashflow_missing_no_penalty():
     """现金流缺失 → 不惩罚（不静默假设为负）。"""
     snap = _snapshot(fundamental=FundamentalFactor(revenue_yoy=30.0, net_profit_yoy=30.0, eps_growth_yoy=30.0))
     assert compress_scores(snap).f_fundamental_trend == pytest.approx(1.0)
+
+
+def test_fundamental_breakdown_decomposes_600760_case():
+    """L1：600760 实帧的 F 分解逐项可复核 —— F=−0.733（FCF 已移出、OCF 为正无惩罚）。"""
+    f = FundamentalFactor(
+        revenue_yoy=-34.19,
+        net_profit_yoy=-26.0,
+        eps_growth_yoy=-28.0,
+        operating_cashflow=1.026e09,
+        free_cashflow=-1.671e08,  # 旧口径本会再扣 0.5，现已移出
+    )
+    e = ExpectationFactor(profit_forecast_min_change=-58.23, profit_forecast_max_change=-58.23)
+    bd = fundamental_breakdown(f, e)
+    assert bd is not None
+    assert bd["revenue_term"] == pytest.approx(-1.0)  # −34.19 越过 ±30 饱和点
+    assert bd["revenue_saturated"] == 1.0
+    assert bd["net_profit_term"] == pytest.approx(-26.0 / 30.0)
+    assert bd["eps_term"] == pytest.approx(-28.0 / 30.0)
+    assert bd["growth_mean"] == pytest.approx((-1.0 - 26.0 / 30.0 - 28.0 / 30.0) / 3.0)
+    assert bd["ocf_penalty"] == 0.0  # OCF 为正
+    assert bd["beat_bonus"] == pytest.approx(0.2)  # −26 > 预告上限 −58.23
+    assert bd["miss_penalty"] == 0.0
+    assert bd["segment_bonus"] == 0.0  # −26.33 − (−34.19) = 7.86pp < 15
+    assert bd["raw"] == pytest.approx(-0.933333 + 0.2, abs=1e-4)  # = −0.7333（FCF 已移出）
+    assert bd["f"] == pytest.approx(-0.733333, abs=1e-4)  # 未越过 ±1，不饱和
+    assert bd["input_saturated"] == 1.0  # 至少一项原始 YoY 越过饱和点
+    assert bd["output_saturated"] == 0.0  # 合计未越过 ±1
+    # 单一来源：方向分必须等于分解里的 f
+    snap = _snapshot(fundamental=f, expectation=e)
+    assert compress_scores(snap).f_fundamental_trend == pytest.approx(bd["f"])
+
+
+def test_fundamental_breakdown_output_saturation_flag():
+    """输出饱和标志：合计越过 ±1 时为 1.0（越界部分被 clip 掉）。"""
+    f = FundamentalFactor(revenue_yoy=30.0, net_profit_yoy=200.0, eps_growth_yoy=30.0)
+    e = ExpectationFactor(profit_forecast_min_change=100.0, profit_forecast_max_change=150.0)
+    bd = fundamental_breakdown(f, e)
+    assert bd is not None
+    assert bd["growth_mean"] == pytest.approx(1.0)  # 三项均饱和到 +1
+    assert bd["beat_bonus"] == pytest.approx(0.2)  # 200 > 预告上限 150
+    assert bd["raw"] == pytest.approx(1.2)
+    assert bd["f"] == pytest.approx(1.0)  # clip
+    assert bd["output_saturated"] == 1.0
+    assert bd["ocf_penalty"] == 0.0  # 缺失（None）不惩罚
+
+
+def test_fundamental_breakdown_all_missing_is_none():
+    assert fundamental_breakdown(FundamentalFactor(), ExpectationFactor()) is None
 
 
 def test_fundamental_inline_no_beat():

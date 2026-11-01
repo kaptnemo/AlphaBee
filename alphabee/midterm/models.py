@@ -162,6 +162,10 @@ class FundamentalFactor(BaseModel):
     segment_slowest_yoy: float | None = None  # PERCENT 最慢细分业务同比增速（预留：P2 materiality 拖累项）
     direction: str = "stable"  # improving / stable / deteriorating
     score: float | None = None  # 0-100 方向分（score_engine 输出）
+    # F 方向分的可审计分解（L1，2026-11-01）：`score_engine.fundamental_breakdown` 原样落盘，
+    # 供报告/任务记录复算「F 为什么是这个值」与「是否饱和」；旧帧/无 F → 空 dict。
+    # 键见 `fundamental_breakdown` docstring（原始 YoY / 饱和项 / 修正项 / raw / f / 饱和标志）。
+    score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class ExpectationFactor(BaseModel):

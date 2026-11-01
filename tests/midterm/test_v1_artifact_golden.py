@@ -126,8 +126,23 @@ def _evidence() -> list[EvidenceEvent]:
 
 
 def _canonical(payload: dict) -> str:
-    """剔除 8 个新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。"""
+    """剔除新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。
+
+    剔除两类：① 8 个 artifact 顶层字段（V2 design §6.1）；②
+    ``factor_snapshot.fundamental.score_breakdown``（L1，2026-11-01 的 F 可审计分解）——
+    后者在 golden 冻结时尚不存在，且是**诊断字段**（不参与任何方向分/分布计算），
+    故与顶层字段同口径剔除；它的存在性与确定性由
+    ``test_f_breakdown_written_and_deterministic`` 单独钉住。
+    """
     trimmed = {key: value for key, value in payload.items() if key not in _NEW_FIELDS}
+    factor_snapshot = trimmed.get("factor_snapshot")
+    if isinstance(factor_snapshot, dict):
+        fundamental = factor_snapshot.get("fundamental")
+        if isinstance(fundamental, dict) and "score_breakdown" in fundamental:
+            trimmed["factor_snapshot"] = {
+                **factor_snapshot,
+                "fundamental": {key: value for key, value in fundamental.items() if key != "score_breakdown"},
+            }
     return json.dumps(trimmed, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
@@ -178,6 +193,27 @@ def test_v1_artifact_golden_is_stable_across_runs(monkeypatch):
     first = _canonical(_evaluate_golden_input().model_dump(mode="json"))
     second = _canonical(_evaluate_golden_input().model_dump(mode="json"))
     assert first == second == _golden_text()
+
+
+def test_f_breakdown_written_and_deterministic(monkeypatch):
+    """L1（2026-11-01）：F 可审计分解随帧落盘、两次一致，且不改变方向分本身。
+
+    golden 里不包含 ``score_breakdown``（诊断字段，见 ``_canonical`` 口径）；本用例钉
+    「存在 + 确定性 + 与方向分单一来源 + 旧帧无该字段时回落空 dict」。
+    """
+    _pin_default_midterm_config(monkeypatch)
+    first = _evaluate_golden_input()
+    second = _evaluate_golden_input()
+    breakdown = first.factor_snapshot.fundamental.score_breakdown
+    assert breakdown, "F 分解必须落盘（报告依赖它，不得重算）"
+    assert breakdown == second.factor_snapshot.fundamental.score_breakdown
+    assert breakdown["f"] == pytest.approx(first.variable_scores.f_fundamental_trend)
+    # golden fixture 无现金流 ⇒ 经营现金流惩罚为 0；自由现金流已移出 F（键不存在）
+    assert breakdown["ocf_penalty"] == 0.0
+    assert not any("free_cashflow" in key for key in breakdown)
+    # 旧帧（golden 本身）无该字段 ⇒ 回落空 dict
+    old = CompanyStateArtifact.model_validate(_golden_payload())
+    assert old.factor_snapshot.fundamental.score_breakdown == {}
 
 
 def test_old_frame_without_new_fields_loads_with_defaults():

@@ -131,9 +131,11 @@ def test_langchao_000977_fixes_end_to_end():
     assert art.variable_scores.e_revision is not None
     assert 0.0 < art.variable_scores.e_revision < 1.0
 
-    # ④ F 反映现金质量：净利 +269% 但双负现金流 → F 显著被惩罚（不是 1.0）
-    assert art.variable_scores.f_fundamental_trend is not None
-    assert art.variable_scores.f_fundamental_trend < 0.5
+    # ④ F 反映经营现金流质量：净利 +269% 但经营现金流为负 → 扣 0.5；自由现金流已移出 F（L1）
+    #    mean(saturate(20/30), 1.0, 1.0) = 0.889 → −0.5(OCF) + 0.2(beat, 269 > 预告上限 200) = 0.589
+    f_score = art.variable_scores.f_fundamental_trend
+    assert f_score == pytest.approx(0.589, abs=1e-3)
+    assert f_score < 1.0  # 不再是净利高增就拉满 1.0
 
     # ⑤ 零证据 + 熊市 → EV 显式降级（不再 +20.8% 激进值）
     assert art.expected_value.ev is None

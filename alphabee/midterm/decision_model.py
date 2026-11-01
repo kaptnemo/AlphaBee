@@ -52,7 +52,7 @@ from alphabee.midterm.models import (
     VariableScores,
 )
 from alphabee.midterm.position import build_position
-from alphabee.midterm.score_engine import compress_scores
+from alphabee.midterm.score_engine import compress_scores, fundamental_breakdown
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 情景收益估计参数（结构性示意，§6.3 应回测）
@@ -153,6 +153,20 @@ def _writeback_directions(snapshot: FactorSnapshot, scores: VariableScores) -> N
     _apply(snapshot.valuation, scores.v_valuation_percentile, "cheap", "expensive", "fair")
     _apply(snapshot.crowding, scores.c_crowding, "cold", "overheated", "normal")
     _apply(snapshot.risk, scores.r_risk, "risk_declining", "risk_rising", "neutral")
+
+
+def _writeback_f_breakdown(snapshot: FactorSnapshot) -> None:
+    """把 F 的可审计分解回写进 ``fundamental.score_breakdown``（L1，2026-11-01）。
+
+    与 :func:`_writeback_directions` 同一处回写窗口（``evaluate`` 内），但职责正交：
+    后者写「方向 + 0-100 展示分」，本函数写「为什么是这个分」（原始 YoY / 饱和项 / 修正项 /
+    raw / f / 饱和标志），供报告与任务记录在**不重算公式**的前提下复核 F。
+
+    缺失语义：全部 YoY 缺失 ⇒ F 为 ``None`` ⇒ 保持空 dict（不制造分解）。
+    """
+    breakdown = fundamental_breakdown(snapshot.fundamental, snapshot.expectation)
+    if breakdown is not None:
+        snapshot.fundamental.score_breakdown = breakdown
 
 
 def _factor_direction(scores: VariableScores, *, formula: str = FORMULA_V1) -> float | None:
@@ -414,6 +428,9 @@ def evaluate(
     # confidence 缺失（无证据无先验）时按模型非空字段约定回退 0.0（与 thesis_confidence 同口径）
     snapshot.confidence = confidence if confidence is not None else 0.0
     _writeback_directions(snapshot, scores)
+    # L1（2026-11-01）：F 的可审计分解（原始三项 / 饱和项 / 修正项 / 饱和标志）随帧落盘，
+    # 报告与任务记录只渲染不重算；与方向分同批回写，保证「分」与「为什么」来自同一次计算。
+    _writeback_f_breakdown(snapshot)
 
     has_evidence = bool(evidence)
     # 情景概率方向用「因子方向分」（score_engine 正确符号化），而非证据层的

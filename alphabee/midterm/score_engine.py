@@ -59,7 +59,11 @@ _DEBT_SCALE = 50.0  # PERCENT 资产负债率饱和步长（100% → -1，0% →
 _GOODWILL_SCALE = 1_000_000_000.0  # CNY 商誉饱和点（10 亿 → -1）
 
 # F 现金质量 / 超预期（§11「S2 是 PositiveEvidenceChange 非 Growth」+ profit_without_cash）
-_CASH_NEGATIVE_PENALTY = 0.5  # 单个负现金流（经营或自由）对 F 的惩罚力度
+# 2026-11-01（L1 可审计性修复，ROADMAP 登记）：**自由现金流惩罚移出 F**——FCF 为负在扩产/备货期
+# 是常态（本案 OCF +10.26 亿、FCF −1.67 亿），与「利润无现金支撑」不同义；现金流质量由
+# derived facts 的 cashflow_quality（OCF/净利润）与 capex_intensity 承接，F 不再二次扣分。
+# 保留**经营现金流**惩罚（OCF < 0 = 当期利润没有现金支撑，是 profit_without_cash 的核心形态）。
+_OCF_NEGATIVE_PENALTY = 0.5  # 经营现金流为负对 F 的惩罚力度（自由现金流不再参与）
 _BEAT_BONUS = 0.2  # net_profit_yoy 超预告上限的 beat 加分
 
 # 预期差（P0-2）：预告 miss 惩罚——实际净利增速远低于预告下限 → 显著负向。
@@ -108,17 +112,16 @@ def _mean(values: list[float]) -> float | None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _cash_quality_penalty(f: FundamentalFactor) -> float:
-    """现金质量惩罚（profit_without_cash）：经营/自由现金流为负 → 负向。
+def _operating_cashflow_penalty(f: FundamentalFactor) -> float:
+    """经营现金流惩罚（profit_without_cash）：``OCF < 0`` → ``-_OCF_NEGATIVE_PENALTY``。
 
-    每项为负记 ``-_CASH_NEGATIVE_PENALTY``；现金流缺失（``None``）不惩罚（不静默假设）。
+    **自由现金流不参与 F**（2026-11-01 移出，见常量区说明）：FCF 为负常来自资本开支/备货，
+    与「利润没有现金支撑」不是同一件事，由 derived facts 的 ``capex_intensity`` 承接。
+    缺失（``None``）不惩罚（不静默假设）。
     """
-    penalty = 0.0
     if f.operating_cashflow is not None and f.operating_cashflow < 0.0:
-        penalty += _CASH_NEGATIVE_PENALTY
-    if f.free_cashflow is not None and f.free_cashflow < 0.0:
-        penalty += _CASH_NEGATIVE_PENALTY
-    return -penalty
+        return -_OCF_NEGATIVE_PENALTY
+    return 0.0
 
 
 def _beat_bonus(net_profit_yoy: float | None, max_change: float | None) -> float:
@@ -161,37 +164,90 @@ def _segment_bonus(f: FundamentalFactor) -> float:
     return 0.0
 
 
+def fundamental_breakdown(f: FundamentalFactor, e: ExpectationFactor) -> dict[str, float] | None:
+    """F 方向分的**可审计分解**（L1）：返回逐项与饱和标志；全部 YoY 缺失 → ``None``。
+
+    键（全部 ``float``，缺失项不出现）：
+
+    - ``revenue_yoy`` / ``net_profit_yoy`` / ``eps_growth_yoy``：原始 PERCENT；
+    - ``revenue_term`` / ``net_profit_term`` / ``eps_term``：``_saturate(yoy, _FUNDAMENTAL_YOY_SCALE)`` 后的项；
+    - ``revenue_saturated`` / ...：该项是否越过 ±30 饱和点（1.0/0.0）；
+    - ``growth_mean``：三项均值；``ocf_penalty`` / ``beat_bonus`` / ``miss_penalty`` / ``segment_bonus``：修正项；
+    - ``raw``：修正后合计；``f``：最终方向分（clip 后）；
+    - ``input_saturated``：至少一项 YoY 越过饱和点（原始幅度已丢失）；
+    - ``output_saturated``：合计越过 ±1（越界部分被 clip）。
+
+    本函数是 F 的**唯一计算入口**：:func:`_fundamental_trend` 只取 ``["f"]``，报告/记录消费
+    ``breakdown``——避免"决策算一份、报告再算一份"的漂移（``alphabee-schema-steward`` 单一来源）。
+    """
+    yoys = {
+        "revenue_yoy": f.revenue_yoy,
+        "net_profit_yoy": f.net_profit_yoy,
+        "eps_growth_yoy": f.eps_growth_yoy,
+    }
+    terms = {
+        "revenue_term": f.revenue_yoy,
+        "net_profit_term": f.net_profit_yoy,
+        "eps_term": f.eps_growth_yoy,
+    }
+    present = {key: value for key, value in yoys.items() if value is not None}
+    if not present:
+        return None
+    saturated = {
+        "revenue_saturated": f.revenue_yoy is not None and abs(f.revenue_yoy) > _FUNDAMENTAL_YOY_SCALE,
+        "net_profit_saturated": f.net_profit_yoy is not None and abs(f.net_profit_yoy) > _FUNDAMENTAL_YOY_SCALE,
+        "eps_saturated": f.eps_growth_yoy is not None and abs(f.eps_growth_yoy) > _FUNDAMENTAL_YOY_SCALE,
+    }
+    term_values = {name: _saturate(value, _FUNDAMENTAL_YOY_SCALE) for name, value in terms.items() if value is not None}
+    growth = _mean(list(term_values.values()))
+    if growth is None:  # 理论上不可达（present 非空 ⇒ term_values 非空），防御保留
+        return None
+
+    ocf_penalty = _operating_cashflow_penalty(f)
+    beat_bonus = _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
+    miss_penalty = _miss_penalty(f.net_profit_yoy, e.profit_forecast_min_change)
+    segment_bonus = _segment_bonus(f)
+    raw = growth + ocf_penalty + beat_bonus + miss_penalty + segment_bonus
+    final = _saturate(raw, 1.0)
+
+    breakdown: dict[str, float] = {**present, **term_values}
+    breakdown.update({key: 1.0 if flag else 0.0 for key, flag in saturated.items()})
+    breakdown.update(
+        {
+            "growth_mean": growth,
+            "ocf_penalty": ocf_penalty,
+            "beat_bonus": beat_bonus,
+            "miss_penalty": miss_penalty,
+            "segment_bonus": segment_bonus,
+            "raw": raw,
+            "f": final,
+            "input_saturated": 1.0 if any(saturated.values()) else 0.0,
+            "output_saturated": 1.0 if abs(raw) > 1.0 else 0.0,
+        }
+    )
+    return breakdown
+
+
 def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | None:
-    """F 方向分：边际改善 + 现金质量惩罚 + 超预期 beat + 结构性亮点（改造 E）。
+    """F 方向分：边际改善 + 经营现金流惩罚 + 超预期 beat + 结构性亮点（改造 E）。
 
     §3.3 口径 ``gross_margin_trend + revenue_yoy + net_profit_yoy`` 的边际方向；
     ``FactorSnapshot`` 是单帧、无 ``gross_margin_trend`` 时序，故用营收/净利/EPS
     三组 YoY（本身即边际变化）作为「改善」代理，并叠加：
 
-    - 现金质量（profit_without_cash）：经营/自由现金流为负 → 显著惩罚（避免
-      net_profit_yoy 高增长掩盖现金流失血）；
+    - 经营现金流（profit_without_cash）：**OCF < 0** → 显著惩罚（避免 net_profit_yoy 高增长掩盖
+      利润不兑现）。**自由现金流不再参与**（2026-11-01 移出，见常量区；由 derived facts 承接）；
     - 超预期（beat）：net_profit_yoy 超预告上限才加分，in-line 不加分；
     - 预告 miss（P0-2 预期差）：net_profit_yoy 远低于预告下限 → 显著扣分
       （预告 +30~40% 但实际 +1.54% 的预期差是框架核心信号，不能只奖 beat 不罚 miss）；
     - 结构性亮点（改造 E）：最快细分增速显著跑赢整体（segment divergence > 15pp）
       → 正向修正（整体 +17.94% 但高速通信线 +35.44% 的「结构性突变」）。
 
-    全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。
+    全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。逐项口径见
+    :func:`fundamental_breakdown`（本函数只取其中的 ``f``，单一来源）。
     """
-    yoys = [f.revenue_yoy, f.net_profit_yoy, f.eps_growth_yoy]
-    contribs = [_saturate(v, _FUNDAMENTAL_YOY_SCALE) for v in yoys if v is not None]
-    growth = _mean(contribs)
-    if growth is None:
-        return None
-
-    score = (
-        growth
-        + _cash_quality_penalty(f)
-        + _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
-        + _miss_penalty(f.net_profit_yoy, e.profit_forecast_min_change)
-        + _segment_bonus(f)
-    )
-    return _saturate(score, 1.0)
+    breakdown = fundamental_breakdown(f, e)
+    return breakdown["f"] if breakdown is not None else None
 
 
 def _forecast_revision_anchor(e: ExpectationFactor) -> float | None:
