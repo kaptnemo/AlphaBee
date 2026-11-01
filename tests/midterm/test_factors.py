@@ -22,7 +22,8 @@ from alphabee.midterm import (
     build_valuation_factor,
     get_factor_snapshot,
 )
-from alphabee.midterm.models import FactorSnapshot
+from alphabee.midterm.models import ExpectationFactor, FactorSnapshot, FundamentalFactor
+from alphabee.midterm.score_engine import fundamental_breakdown
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 合成数据
@@ -42,6 +43,46 @@ def _fin() -> dict[str, Any]:
                 "debt_to_assets": 45.0,
                 "current_ratio": 1.8,
             }
+        ],
+        "balance": [{"goodwill": 5e7}],
+        "cashflow": [{"operating_cashflow": 2e8, "capex": 1e8}],
+    }
+
+
+def _fin_marginal() -> dict[str, Any]:
+    """合成多期财务数据（income/fina 同报告期对齐），用于 F 边际派生的透传断言。
+
+    t = 20250930：单季营收 = 600−330 = 270、去年同季 = 450−250 = 200 ⇒ 同比 +35%；
+    单季净利 = 40−20 = 20、去年同季 = 45−30 = 15 ⇒ 同比 +33.3%；
+    单季毛利率 = (600×19% − 330×18%)/270 = 20.222%，去年同季 = (450×22% − 250×20%)/200 = 24.5%。
+    """
+    return {
+        "ref_dates": ["20250930", "20250630", "20250331", "20241231", "20240930", "20240630", "20240331", "20231231"],
+        "income": [
+            {"period": "20250930", "revenue": 600.0, "net_profit_attr_p": 40.0},
+            {"period": "20250630", "revenue": 330.0, "net_profit_attr_p": 20.0},
+            {"period": "20250331", "revenue": 150.0, "net_profit_attr_p": 8.0},
+            {"period": "20241231", "revenue": 700.0, "net_profit_attr_p": 60.0},
+            {"period": "20240930", "revenue": 450.0, "net_profit_attr_p": 45.0},
+            {"period": "20240630", "revenue": 250.0, "net_profit_attr_p": 30.0},
+            {"period": "20240331", "revenue": 100.0, "net_profit_attr_p": 12.0},
+            {"period": "20231231", "revenue": 620.0, "net_profit_attr_p": 55.0},
+        ],
+        "fina": [
+            {  # 最新一期：canonical 单期字段 + 累计毛利率（F 的既有口径）
+                "period": "20250930",
+                "revenue_yoy": -34.19,
+                "net_profit_yoy": -26.0,
+                "eps_growth_yoy": -28.0,
+                "roe": 4.0,
+                "gross_margin": 19.0,
+                "net_margin": 2.0,
+                "debt_to_assets": 45.0,
+                "current_ratio": 1.2,
+            },
+            {"period": "20250630", "gross_margin": 18.0},
+            {"period": "20240930", "gross_margin": 22.0},
+            {"period": "20240630", "gross_margin": 20.0},
         ],
         "balance": [{"goodwill": 5e7}],
         "cashflow": [{"operating_cashflow": 2e8, "capex": 1e8}],
@@ -188,6 +229,61 @@ def test_build_fundamental_factor_segment_collection_uses_latest_period():
     factor, _ = build_fundamental_factor(_fin(), segments=col)
     assert factor.segment_fastest_yoy == 35.44  # 不是旧期的 99.0
     assert factor.segment_slowest_yoy == -2.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F 边际改善数据层（MIDTERM_F_MARGINAL_DESIGN §3.4/§8.3）：4 个 q_* 派生字段透传
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_build_fundamental_factor_passes_through_marginal_fields():
+    """合成多期数据 ⇒ 4 个 q_* 非 None 且逐值符合单季还原恒等式。"""
+    factor, missing = build_fundamental_factor(_fin_marginal())
+
+    assert factor.q_revenue_yoy == pytest.approx(35.0)  # 单季 270 / 去年单季 200 − 1
+    assert factor.q_net_profit_yoy == pytest.approx((20.0 / 15.0 - 1.0) * 100.0)
+    assert factor.q_gross_margin == pytest.approx((600.0 * 0.19 - 330.0 * 0.18) / 270.0 * 100.0)
+    assert factor.q_gross_margin_pp == pytest.approx(
+        (600.0 * 0.19 - 330.0 * 0.18) / 270.0 * 100.0 - (450.0 * 0.22 - 250.0 * 0.20) / 200.0 * 100.0
+    )
+    # 单季口径与累计口径不同（本帧累计营收同比 −34.19%，单季 +35%）
+    assert factor.q_revenue_yoy != factor.revenue_yoy
+    # 派生字段不登记 missing_facts（非 canonical 字段）
+    assert missing == ["segment_fastest_yoy", "segment_slowest_yoy"]
+
+
+def test_build_fundamental_factor_without_multi_period_keeps_f_identical():
+    """无多期数据 ⇒ 4 字段全 None，且 F 方向分与改动前（同一份 canonical 字段）逐值相同。"""
+    factor, missing = build_fundamental_factor(_fin())
+    assert (
+        factor.q_revenue_yoy,
+        factor.q_net_profit_yoy,
+        factor.q_gross_margin,
+        factor.q_gross_margin_pp,
+    ) == (None, None, None, None)
+
+    # 改动前口径：只由 canonical 单期字段构造的 FundamentalFactor（无 q_* 输入）
+    legacy = FundamentalFactor(
+        revenue_yoy=10.5,
+        net_profit_yoy=20.0,
+        eps_growth_yoy=18.0,
+        roe=15.2,
+        gross_margin=40.0,
+        net_margin=12.0,
+        operating_cashflow=2e8,
+        free_cashflow=1e8,
+        debt_to_assets=45.0,
+        current_ratio=1.8,
+        goodwill=5e7,
+    )
+    expectation = ExpectationFactor()
+    assert fundamental_breakdown(factor, expectation) == fundamental_breakdown(legacy, expectation)
+    assert all(not name.startswith("q_") for name in missing)
+
+
+def test_q_marginal_fields_are_not_missing_registry_fields():
+    """q_* 不是 canonical 数据字段 ⇒ 不进缺失登记表（设计 §3.3）。"""
+    assert set(factors_mod._Q_MARGINAL_FIELDS).isdisjoint(factors_mod._FUNDAMENTAL_FIELDS)
 
 
 def test_build_expectation_factor_forecast_express_and_consensus():

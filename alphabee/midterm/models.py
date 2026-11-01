@@ -143,6 +143,12 @@ class FundamentalFactor(BaseModel):
 
     字段名沿用 ``schemas/financial.yaml`` 的 canonical 名，单位与 canonical 一致。
     ``None`` 表示该字段缺失或未采集（不静默回退为 0）。
+
+    ``q_*`` 是 **多期还原派生字段，非 canonical 单期事实**：由
+    ``factors.derive_marginal`` 从同一份多期累计财务数据差分还原（设计
+    ``MIDTERM_F_MARGINAL_DESIGN`` §3.3），因此不进 ``schemas/financial.yaml`` 的
+    canonical 列表，也不登记 ``missing_facts``（缺失语义由 ``score_breakdown`` 的
+    边际键表达，见设计 §4.4）。
     """
 
     revenue_yoy: float | None = None  # PERCENT 营收同比
@@ -166,6 +172,13 @@ class FundamentalFactor(BaseModel):
     # 供报告/任务记录复算「F 为什么是这个值」与「是否饱和」；旧帧/无 F → 空 dict。
     # 键见 `fundamental_breakdown` docstring（原始 YoY / 饱和项 / 修正项 / raw / f / 饱和标志）。
     score_breakdown: dict[str, float] = Field(default_factory=dict)
+    # F 边际改善的单季派生字段（F-Marginal design §3.3，additive）：多期还原派生字段，
+    # 非 canonical 单期事实——不进 schemas/financial.yaml，也不进 missing_facts。
+    # 缺期/数据异常 ⇒ None（不插值、不用 TTM 顶替）；PR-1 不参与 F 方向分计算。
+    q_revenue_yoy: float | None = None  # PERCENT 单季营收同比（多期还原派生）
+    q_net_profit_yoy: float | None = None  # PERCENT 单季归母净利同比（多期还原派生）
+    q_gross_margin: float | None = None  # PERCENT 单季毛利率（累计营收×累计毛利率差分还原）
+    q_gross_margin_pp: float | None = None  # PERCENT 单季毛利率同比变化（pp，带符号）
 
 
 class ExpectationFactor(BaseModel):

@@ -17,7 +17,10 @@
   刻意区别于 fact tools 里 ``safe_float`` 的「无效值兜底 0」语义）。
 - ``direction`` / ``score`` / ``valuation.percentile`` 等由 ``score_engine`` /
   ``classifier`` 输出的字段**不在本模块计算**，保持模型默认值（本模块只做
-  数据映射，不承载业务逻辑）。
+  数据映射，不承载业务逻辑）。唯一例外是 F 的 4 个 ``q_*`` 单季派生字段
+  （``derive_marginal``）：它们是**多期还原计算产物**而非 canonical 事实
+  （设计 ``MIDTERM_F_MARGINAL_DESIGN`` §3.3），故不进 ``schemas/financial.yaml``，
+  也不登记 ``missing_facts``。
 
 管线契约（``alphabee-pipeline-contract-steward``）：
 
@@ -32,6 +35,7 @@ from __future__ import annotations
 
 import datetime
 import math
+from collections.abc import Mapping
 from typing import Any
 
 from alphabee.midterm.models import (
@@ -343,6 +347,246 @@ def _segment_extremes(segments: Any) -> tuple[float | None, float | None]:
     return max(yoys), min(yoys)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# F 因子「边际改善」的数据层：多期累计 → 单季还原（MIDTERM_F_MARGINAL_DESIGN §3）
+#
+# 设计要点（§3.2）：单季 = 累计(t) − 累计(t_prev)，Q1 取累计；上一期 t_prev 必须由
+# **报告期字符串**决定（0630→0331、0930→0630、1231→0930），绝不取数组下标——Tushare
+# 的返回顺序不可依赖。任一必需期缺失 ⇒ 对应字段 None（**不插值、不用 TTM 顶替**）。
+# 全部为纯函数：无 IO、无缓存副作用，同一输入恒等。
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: 同一财年的上一报告期（报告期后缀 → 上一期后缀）；Q1（0331）无同年上一期。
+_Q_PREV: dict[str, str] = {"0630": "0331", "0930": "0630", "1231": "0930"}
+
+#: 单季值(t−4) 的基数不稳门槛：|单季(t−4)| < 1% × 当期累计营收 ⇒ 该腿 None（§3.2）。
+_Q_SMALL_BASE_RATIO = 0.01
+
+#: 单季毛利率合理区间（PERCENT，§3.2 数据异常）；越界显式 None，**不静默夹取**。
+_Q_GROSS_MARGIN_RANGE: tuple[float, float] = (-50.0, 100.0)
+
+#: ``derive_marginal`` 的 4 个产出字段。**不是 canonical 数据字段**，因此不进
+#: ``_FUNDAMENTAL_FIELDS`` 的缺失登记（缺失语义由 ``score_breakdown`` 的
+#: ``f_marginal_source`` 表达，见设计 §3.3 / §4.4）。
+_Q_MARGINAL_FIELDS: tuple[str, ...] = (
+    "q_revenue_yoy",
+    "q_net_profit_yoy",
+    "q_gross_margin",
+    "q_gross_margin_pp",
+)
+
+
+def _normalize_period(value: Any) -> str | None:
+    """报告期归一：``YYYYMMDD``（或 ``YYYY-MM-DD``）→ ``'YYYYMMDD'``；非法 → ``None``。
+
+    报告期字符串是「上一期/去年同期是哪一期」的唯一依据（§3.2 跨年），所以先做严格
+    归一：非 8 位数字（含 ``"2025-9-3"`` / 空串 / ``"nan"`` / 非数值类型）一律 ``None``，
+    由调用方按「缺失」处理，不猜测、不插值。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip().replace("-", "")
+    if len(text) != 8 or not text.isdigit():
+        return None
+    return text
+
+
+def _prev_year(period: str) -> str:
+    """去年同一报告期：``'20260930'`` → ``'20250930'``（入参须为已归一的 8 位报告期）。"""
+    if len(period) != 8 or not period.isdigit():
+        return period
+    return f"{int(period[:4]) - 1:04d}{period[4:]}"
+
+
+def _prev_quarter(period: str) -> str | None:
+    """同一财年的上一报告期；Q1（``0331``）→ ``None``（年份边界，§3.2）。
+
+    ``'20261231'`` → ``'20260930'``：**年报的 t_prev 是同年三季报**，不是「t−1 期」，
+    也不是取数组下一条（§3.2 边界表）。
+    """
+    prev_suffix = _Q_PREV.get(period[4:])
+    if prev_suffix is None:
+        return None
+    return period[:4] + prev_suffix
+
+
+def _series(records: Any, field: str) -> dict[str, float]:
+    """``[{period, field}]`` → ``{period: value}``；按 period **降序**排序后去重（首条生效）。
+
+    Tushare 数组顺序不可依赖（§3.2），故先按报告期降序排序；同报告期的重复记录
+    （重述/修订）保留排序后的首条——稳定排序 ⇒ 原顺序首条，与 ``_dedup`` 的「保首条」
+    口径一致（§4.5 数据重述：以最新 ``ann_date`` 为准，不回溯历史期）。
+
+    非 dict 记录、非法/缺失报告期、非数值字段值（``_opt`` 语义）一律跳过：
+    缺失即缺失，不插值。
+    """
+    if isinstance(records, dict):
+        items: list[Any] = [records]
+    elif isinstance(records, (list, tuple)):
+        items = list(records)
+    else:
+        return {}
+
+    entries: list[tuple[str, float]] = []
+    for record in items:
+        if not isinstance(record, dict):
+            continue
+        period = _normalize_period(record.get("period"))
+        value = _opt(record.get(field))
+        if period is None or value is None:
+            continue
+        entries.append((period, value))
+    entries.sort(key=lambda entry: entry[0], reverse=True)
+
+    series: dict[str, float] = {}
+    for period, value in entries:
+        series.setdefault(period, value)  # 首条生效：同报告期不重复、不覆盖
+    return series
+
+
+def _single_quarter(series: Mapping[str, float], period: str) -> float | None:
+    """单季值：Q1 取累计，其余取 ``累计(t) − 累计(t_prev)``；缺任一 → ``None``。
+
+    ``t_prev`` 由报告期字符串决定（``_prev_quarter``），跨年安全；缺 ``t``、缺
+    ``t_prev`` 均返回 ``None``（§3.2 期数不足：不插值、不用 TTM 顶替）。
+    """
+    current = series.get(period)
+    if current is None:
+        return None
+    prev_period = _prev_quarter(period)
+    if prev_period is None:  # Q1：无同年上一期，累计值即单季值
+        return current
+    previous = series.get(prev_period)
+    if previous is None:
+        return None
+    return current - previous
+
+
+def _quarter_gross_margin(
+    revenue: Mapping[str, float],
+    gross_margin: Mapping[str, float],
+    period: str,
+) -> float | None:
+    """单季毛利率（PERCENT）：``累计营收 × 累计毛利率`` 差分求单季毛利，再除单季营收。
+
+    **口径近似（设计 §3.5，必须披露）**：假定 ``gross_margin`` 与 ``revenue`` 同分母
+    （营业总收入）。两者实际分别为「毛利/营业收入」与「营业总收入」，**对营业外收入
+    占比大的公司有偏差**（主业公司可忽略）。精确解法需补 ``oper_cost`` 改口径
+    （设计 §3.5 P1.5，本轮不做）。
+
+    边界（§3.2）：单季营收缺失/≤ 0 ⇒ ``None``；累计营收或累计毛利率缺任一 ⇒ ``None``；
+    单季毛利率 ∉ ``[−50, 100]`` ⇒ ``None``（不夹取）。
+    """
+    quarter_revenue = _single_quarter(revenue, period)
+    if quarter_revenue is None or quarter_revenue <= 0.0:
+        return None
+
+    current_revenue = revenue.get(period)
+    current_margin = gross_margin.get(period)
+    if current_revenue is None or current_margin is None:
+        return None
+    current_gross_profit = current_revenue * current_margin / 100.0
+
+    prev_period = _prev_quarter(period)
+    if prev_period is None:  # Q1：单季毛利 = 累计毛利
+        quarter_gross_profit = current_gross_profit
+    else:
+        prev_revenue = revenue.get(prev_period)
+        prev_margin = gross_margin.get(prev_period)
+        if prev_revenue is None or prev_margin is None:
+            return None
+        quarter_gross_profit = current_gross_profit - prev_revenue * prev_margin / 100.0
+
+    margin = quarter_gross_profit / quarter_revenue * 100.0
+    low, high = _Q_GROSS_MARGIN_RANGE
+    if not (low <= margin <= high):
+        return None
+    return margin
+
+
+def derive_marginal(fin_data: dict[str, Any] | None) -> dict[str, float | None]:
+    """从多期累计财务数据还原 4 个单季派生字段（设计 §3，F-Marginal PR-1 数据层）。
+
+    输入只用 ``get_financial_fact`` 现成的三列（§3.1，零新接口）：
+
+    - ``income[].revenue``：累计营业总收入（CNY）；
+    - ``income[].net_profit_attr_p``：累计归母净利（CNY）；
+    - ``fina[].gross_margin``：累计毛利率（PERCENT）。
+
+    目标期 ``t`` 取 ``income`` 表内**排序后最新报告期**；即使该期缺值也不回退到更早
+    报告期（§4.5「停牌/无新报告期：不向前找更早的」，避免跨期拼接）。
+
+    恒等式与边界严格按 §3.2：单季 = 累计(t) − 累计(t_prev)（Q1 取累计）；单季同比 =
+    单季(t)/单季(t−4) − 1（PERCENT）；单季毛利率见 :func:`_quarter_gross_margin`
+    （含 §3.5 口径近似披露）；单季毛利率同比变化 = ``q_gm(t) − q_gm(t−4)``（pp）。
+
+    逐腿边界：
+
+    - 单季营收 ≤ 0 ⇒ 营收腿 ``None``（分母无意义）；净利腿同理要求单季净利基数 > 0；
+    - 上年同期单季净利 ≤ 0（亏损/转盈）⇒ 净利同比 ``None``（百分比无意义），营收腿不受影响；
+    - ``|单季(t−4)| < 1% × 当期累计营收`` ⇒ 该腿 ``None``（基数不稳）；当期累计营收缺失时
+      无法评估该门槛，按保守取向同样给 ``None``；
+    - 单季毛利率 ∉ ``[−50, 100]`` ⇒ ``None``；缺 ``t``/``t_prev``/``t−4`` ⇒ 对应字段 ``None``。
+
+    Returns:
+        恒含 ``_Q_MARGINAL_FIELDS`` 4 个键的 dict，不可算的键为 ``None``。
+        **纯函数、无 IO、无缓存副作用**。
+    """
+    result: dict[str, float | None] = dict.fromkeys(_Q_MARGINAL_FIELDS)
+    data = fin_data or {}
+    income = data.get("income")
+    fina = data.get("fina")
+
+    revenue = _series(income, "revenue")
+    net_profit = _series(income, "net_profit_attr_p")
+    gross_margin = _series(fina, "gross_margin")
+
+    income_records = income if isinstance(income, (list, tuple)) else []
+    income_periods = [_normalize_period(record.get("period")) for record in income_records if isinstance(record, dict)]
+    valid_periods = [period for period in income_periods if period is not None]
+    if not valid_periods:
+        return result
+
+    target = max(valid_periods)  # 最新报告期（由排序后的报告期字符串决定）
+    base_period = _prev_year(target)  # 去年同季 t−4
+    current_revenue = revenue.get(target)  # 当期累计营收（基数不稳门槛的尺度）
+
+    # ── 质量门输入：当期单季毛利率（缺 t / t_prev ⇒ None）──
+    result["q_gross_margin"] = _quarter_gross_margin(revenue, gross_margin, target)
+
+    # ── 营收腿：单季营收同比（PERCENT）──
+    quarter_revenue = _single_quarter(revenue, target)
+    quarter_revenue_base = _single_quarter(revenue, base_period)
+    if (
+        quarter_revenue is not None
+        and quarter_revenue > 0.0  # 单季营收 ≤ 0 ⇒ 分母无意义
+        and quarter_revenue_base is not None
+        and current_revenue is not None
+        and abs(quarter_revenue_base) >= _Q_SMALL_BASE_RATIO * current_revenue  # 基数不稳
+    ):
+        result["q_revenue_yoy"] = (quarter_revenue / quarter_revenue_base - 1.0) * 100.0
+
+    # ── 净利腿：单季归母净利同比（PERCENT）──
+    quarter_net_profit = _single_quarter(net_profit, target)
+    quarter_net_profit_base = _single_quarter(net_profit, base_period)
+    if (
+        quarter_net_profit is not None
+        and quarter_net_profit_base is not None
+        and quarter_net_profit_base > 0.0  # 上年同期亏损/转盈 ⇒ 百分比无意义（§4.5）
+        and current_revenue is not None
+        and quarter_net_profit_base >= _Q_SMALL_BASE_RATIO * current_revenue  # 基数不稳
+    ):
+        result["q_net_profit_yoy"] = (quarter_net_profit / quarter_net_profit_base - 1.0) * 100.0
+
+    # ── 单季毛利率同比变化（pp，带符号）：t 与 t−4 各自还原后相减 ──
+    current_margin = result["q_gross_margin"]
+    base_margin = _quarter_gross_margin(revenue, gross_margin, base_period)
+    if current_margin is not None and base_margin is not None:
+        result["q_gross_margin_pp"] = current_margin - base_margin
+
+    return result
+
+
 def build_fundamental_factor(
     fin_data: dict[str, Any] | None,
     segments: Any = None,
@@ -355,6 +599,10 @@ def build_fundamental_factor(
 
     改造 E：``segments`` 为 company_track 的业务线分项（``SegmentCollection`` 或
     分项列表），从中提取 ``segment_fastest_yoy`` / ``segment_slowest_yoy``。
+
+    F 边际改善（设计 §3.4）：末尾用 :func:`derive_marginal` 统一赋值 4 个 ``q_*``
+    单季派生字段（多期还原产物，默认 ``None``）。它们**不参与** F 方向分计算
+    （PR-1 行为零变化），也不登记进 ``missing_facts``。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
@@ -365,6 +613,12 @@ def build_fundamental_factor(
     op_cf = _opt(cashflow.get("operating_cashflow"))
     capex = _opt(cashflow.get("capex"))
     free_cf = (op_cf - capex) if (op_cf is not None and capex is not None) else None
+
+    # F 边际改善的数据层（设计 §3.4）：同一份多期数据还原 4 个单季派生字段，
+    # 与 canonical 单期字段统一在一处构造，避免"builder 之外再算一份"的漂移。
+    # 键集合由 `_Q_MARGINAL_FIELDS` 单一来源驱动（新增字段不会漏赋值）。
+    marginal = derive_marginal(data)
+    marginal_values: dict[str, Any] = {name: marginal[name] for name in _Q_MARGINAL_FIELDS}
 
     factor = FundamentalFactor(
         revenue_yoy=_opt(fina.get("revenue_yoy")),
@@ -380,6 +634,7 @@ def build_fundamental_factor(
         goodwill=_opt(balance.get("goodwill")),
         segment_fastest_yoy=fastest,
         segment_slowest_yoy=slowest,
+        **marginal_values,
     )
     return factor, _missing_fields(factor, _FUNDAMENTAL_FIELDS)
 

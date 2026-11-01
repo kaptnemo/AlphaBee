@@ -13,6 +13,12 @@ sha256 ``d3d2406d390e687487249bc4e1fb62c40d6bbc83a3bf99ce5487ec7302a8a691``）�
   artifact JSON **剔除 8 个新增字段后**与 golden 逐字节相等；
 - **断言 B（新增字段定值）**：v1 下新增字段取「无 v2 语义」的确定值，且
   ``uncertain`` / ``factor_consistency`` / ``divergence_reason`` 与 v1 分类器内部判决逐值相同。
+
+F 边际改善（``MIDTERM_F_MARGINAL_DESIGN`` §3.3，PR-1）：``FundamentalFactor`` 新增 4 个
+``q_*`` 单季派生字段，属于 **additive 诊断字段**（golden 冻结时尚不存在，且不参与任何方向分/
+分布计算），故与顶层 8 字段、``score_breakdown`` 同口径从 golden 比较对象中剔除；它们的
+存在性与确定性由本文件的 :func:`test_v1_artifact_q_marginal_fields_are_none_and_excluded`
+与 ``tests/midterm/test_marginal_derivation.py`` / ``test_factors.py`` 单独钉住。
 """
 
 from __future__ import annotations
@@ -49,6 +55,14 @@ _NEW_FIELDS = (
     "adverse_divergence",
     "state_evidence",
     "factor_direction",
+)
+# F 边际改善（F-Marginal §3.3）新增的 4 个单季派生字段：与 score_breakdown 同属
+# additive 诊断字段（golden 冻结时尚不存在、不参与方向分/分布计算），同口径剔除。
+_Q_MARGINAL_FIELDS = (
+    "q_revenue_yoy",
+    "q_net_profit_yoy",
+    "q_gross_margin",
+    "q_gross_margin_pp",
 )
 _GOLDEN_PATH = Path(__file__).with_name("golden") / "v1_artifact_golden.json"
 _THESIS = "核心假设：份额提升与盈利改善"
@@ -129,20 +143,24 @@ def _canonical(payload: dict) -> str:
     """剔除新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。
 
     剔除两类：① 8 个 artifact 顶层字段（V2 design §6.1）；②
-    ``factor_snapshot.fundamental.score_breakdown``（L1，2026-11-01 的 F 可审计分解）——
-    后者在 golden 冻结时尚不存在，且是**诊断字段**（不参与任何方向分/分布计算），
-    故与顶层字段同口径剔除；它的存在性与确定性由
-    ``test_f_breakdown_written_and_deterministic`` 单独钉住。
+    ``factor_snapshot.fundamental`` 内的 ``score_breakdown``（L1，2026-11-01 的 F 可审计分解）
+    与 4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，2026-11-01 PR-1）——
+    后两者在 golden 冻结时尚不存在，且是**诊断/派生字段**（不参与任何方向分/分布计算），
+    故与顶层字段同口径剔除；它们的存在性与确定性由
+    ``test_f_breakdown_written_and_deterministic`` /
+    ``test_v1_artifact_q_marginal_fields_are_none_and_excluded`` 单独钉住。
     """
     trimmed = {key: value for key, value in payload.items() if key not in _NEW_FIELDS}
     factor_snapshot = trimmed.get("factor_snapshot")
     if isinstance(factor_snapshot, dict):
         fundamental = factor_snapshot.get("fundamental")
-        if isinstance(fundamental, dict) and "score_breakdown" in fundamental:
-            trimmed["factor_snapshot"] = {
-                **factor_snapshot,
-                "fundamental": {key: value for key, value in fundamental.items() if key != "score_breakdown"},
-            }
+        if isinstance(fundamental, dict):
+            dropped = {"score_breakdown", *_Q_MARGINAL_FIELDS}
+            if dropped & set(fundamental):
+                trimmed["factor_snapshot"] = {
+                    **factor_snapshot,
+                    "fundamental": {key: value for key, value in fundamental.items() if key not in dropped},
+                }
     return json.dumps(trimmed, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
@@ -216,6 +234,23 @@ def test_f_breakdown_written_and_deterministic(monkeypatch):
     assert old.factor_snapshot.fundamental.score_breakdown == {}
 
 
+def test_v1_artifact_q_marginal_fields_are_none_and_excluded(monkeypatch):
+    """F-Marginal §3.3（PR-1）：4 个 q_* 字段随帧落盘、缺省 None，且不进入 golden 比较口径。
+
+    golden 的输入 ``_snapshot()`` 只给 canonical 单期字段（无多期 income/fina），
+    因此派生字段必须全部 None——这正是「旧形状可回放」与「additive 不改变数值」的钉子。
+    """
+    _pin_default_midterm_config(monkeypatch)
+    payload = _evaluate_golden_input().model_dump(mode="json")
+    fundamental = payload["factor_snapshot"]["fundamental"]
+
+    for name in _Q_MARGINAL_FIELDS:
+        assert name in fundamental, f"{name} 必须随帧落盘（否则报告/跟踪无从消费）"
+        assert fundamental[name] is None, f"{name} 无多期数据时必须为 None（不静默造值）"
+    # 剔除口径生效：剔除后才与 golden 逐字节相等（断言 A 的前提）
+    assert _canonical(payload) == _golden_text()
+
+
 def test_old_frame_without_new_fields_loads_with_defaults():
     """旧 JSON（golden 即旧形状）可 model_validate：8 个字段回落默认，schema_version 仍 "1"。"""
     artifact = CompanyStateArtifact.model_validate(_golden_payload())
@@ -228,6 +263,9 @@ def test_old_frame_without_new_fields_loads_with_defaults():
     assert artifact.adverse_divergence is None
     assert artifact.state_evidence == {}
     assert artifact.factor_direction is None
+    # F 边际（F-Marginal §3.3）：旧帧无 q_* 键 ⇒ 回落 None（additive 默认值，schema_version 不升）
+    fundamental = artifact.factor_snapshot.fundamental
+    assert all(getattr(fundamental, name) is None for name in _Q_MARGINAL_FIELDS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
