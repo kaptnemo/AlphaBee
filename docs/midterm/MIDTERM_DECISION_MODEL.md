@@ -246,7 +246,11 @@ F        = saturate(F_growth + OCF惩罚 + beat + miss + 细分, 1)
 - **报告口径**：`shadow`/`on` 帧出现「F 边际（影子）」行（单季原始值、M_raw、Q、M、F_shadow、ΔF）与「边际模式」元信息行；`off` 帧与旧帧不出现（渲染逐字不变）。
 - **回滚**：`f_marginal_mode: off`（一行配置，无需改代码）。
 
-**影子观测指标**（`alphabee/midterm/marginal_shadow.py`；离线脚本 `scripts/f_marginal_shadow.py --state-dir data/midterm/state`）：
+**影子观测指标**（`alphabee/midterm/marginal_shadow.py`；离线脚本 `scripts/f_marginal_shadow.py`）：
+
+- 语料来源：`--source state`（缺省，tracking 帧 `data/midterm/state`）/ `--source task-records`（查询记录 `TaskRecord.midterm`，经 `alphabee/task_records/shadow.py` 适配）/ `--source both`（合并，state 优先）。
+- 样本单位 = **symbol-day**：同标的同日多次查询按 `dedupe_frames` 去重（`--no-dedupe` 可关，仅用于排查），避免查询频次放大 G-8 分母。
+- 查询帧只在**落库之后**可用（`TaskRecord.midterm` 为空的历史记录不计入，`skipped` 会显式计数）。
 
 | 指标 | 口径 | G-8 门槛 |
 |---|---|---|

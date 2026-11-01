@@ -317,6 +317,13 @@ midterm:
 | S4 加速度覆盖率 | `f_marginal_source > 0` 的帧占比 | ≥ 85%（数据可用性的现实检验） |
 | S5 人工抽检 | 每个翻转帧对照财报原文 | 翻转必须有原文依据 |
 
+**语料来源（两条链路，读取侧合并、写入侧不合并）**：
+
+- `data/midterm/state/<symbol>.jsonl`：`tracking/scheduler.py` 的跟踪帧（带 `stale_after` / `exit_conditions`，同标的同日幂等）。
+- `TaskRecord.midterm`（`data/task_records/**/*.json`）：一次性查询 run 的帧，经 `alphabee/task_records/shadow.py::load_task_record_frames` 适配；`midterm is None` 的旧记录只计数不抛。
+- **不把查询帧写进 state 目录**：那会与 `symbol:as_of_date` 幂等冲突（同日吞掉跟踪帧）、污染 tracking 的 `prev` 连续性（prior/thesis/evidence）并让 `stale_after=None` 静默绕过 preflight 陈旧阻断。
+- 样本单位 = **symbol-day**：`dedupe_frames` 默认按 `(symbol, as_of_date)` 去重；`--source both` 时 state 帧排在前面（优先保留字段更全者）。
+
 ### 5.3 开权重条件
 
 同时满足才把默认改为 `on`：门 1–7（§7.1）全绿 **且** S1–S3 达标 **且** 影子期 ≥ 50 帧。

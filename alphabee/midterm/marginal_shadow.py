@@ -6,7 +6,8 @@ G-8 门禁判读，供"是否可以把 ``f_marginal_mode`` 从 ``shadow`` 改为
 纪律（``alphabee-schema-steward`` / 纯函数优先）：
 
 - **只有 :func:`load_frames` 做 I/O**，且坏文件/坏行只计数不抛；:func:`frame_stats` /
-  :func:`shadow_report` 是纯函数（不读文件、不读配置、不联网、不修改入参）。
+  :func:`shadow_report` / :func:`dedupe_frames` 是纯函数（不读文件、不读配置、不联网、
+  不修改入参）。
 - **分类逻辑单一来源**：状态翻转不复制状态机公式，而是把帧内 ``variable_scores`` 的 F
   换成 ``f_shadow`` 后调用 :func:`alphabee.midterm.classifier_dispatch.classify_state`，
   并沿用帧内记录的 ``classifier_formula`` / ``classifier_order``（旧帧缺省 v1 / etf）。
@@ -53,6 +54,11 @@ G8_MIN_COVERAGE = 0.85  # 加速度覆盖率下限
 
 #: 危险翻转的落点（现行 S5 = 已证伪/退出，被影子判成仍在确认/加速 ⇒ 抹掉证伪信号）。
 _DANGEROUS_SHADOW_STATES: frozenset[str] = frozenset({"S1", "S2", "S3"})
+
+#: 帧去重口径（G-8 的「一帧」= 一个 symbol-day，与 tracking 帧「一日一帧」对齐）。
+DEDUPE_SYMBOL_DAY = "symbol-day"
+DEDUPE_NONE = "none"
+KNOWN_DEDUPE_SCOPES: tuple[str, ...] = (DEDUPE_SYMBOL_DAY, DEDUPE_NONE)
 
 # 帧内分类器口径缺省（旧帧无这两个字段 ⇒ 与产物落盘前的实际口径一致）。
 _DEFAULT_CLASSIFIER_ORDER = "etf"
@@ -136,6 +142,46 @@ def load_frames(paths: str | Path | Iterable[str | Path]) -> tuple[list[dict[str
         frames.extend(file_frames)
         skipped += file_skipped
     return frames, skipped
+
+
+def dedupe_frames(
+    frames: Iterable[dict[str, Any]],
+    *,
+    scope: str = DEDUPE_SYMBOL_DAY,
+) -> tuple[list[dict[str, Any]], int]:
+    """按口径去重帧（纯函数，保持首次出现顺序）；返回 ``(frames, dropped)``。
+
+    - ``scope="symbol-day"``（默认）：同一 ``(symbol, as_of_date)`` 只保留**首帧**。
+      与 tracking 帧「一日一帧」口径对齐，避免同一标的同日多跑几次查询把
+      G-8 的分母放大成"跑了几次"。
+    - ``scope="none"``：原样返回（``dropped=0``）。
+    - 缺 ``symbol`` 或 ``as_of_date`` 的帧**不参与去重**（无法判定同日，保留而不静默丢）。
+    - 非法 ``scope`` → ``ValueError``（调用方参数错误，不静默降级）。
+
+    跨源合并时把**更可信/字段更全的源排在前面**（如 state 帧先于 task_records 帧），
+    "保留首帧"即等价于"优先保留该源"。
+    """
+    if scope not in KNOWN_DEDUPE_SCOPES:
+        raise ValueError(f"未知去重口径: {scope!r}（可选 {KNOWN_DEDUPE_SCOPES}）")
+    if scope == DEDUPE_NONE:
+        return list(frames), 0
+
+    kept: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    dropped = 0
+    for frame in frames:
+        symbol = str(frame.get("symbol") or "").strip()
+        as_of = str(frame.get("as_of_date") or "").strip()
+        if not symbol or not as_of:
+            kept.append(frame)  # 无法判定同日 → 不去重
+            continue
+        key = (symbol, as_of)
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        kept.append(frame)
+    return kept, dropped
 
 
 def _expand_paths(paths: str | Path | Iterable[str | Path]) -> list[Path]:

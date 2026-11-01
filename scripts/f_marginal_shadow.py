@@ -2,15 +2,21 @@
 """F 边际改善影子期观测 CLI（设计 ``MIDTERM_F_MARGINAL_DESIGN`` §5.2 / §7.1 G-8）。
 
 薄壳：只做**参数解析 + I/O + 打印**，全部统计口径复用
-:mod:`alphabee.midterm.marginal_shadow`（``load_frames`` / ``shadow_report``），
-不在此复制任何公式。
+:mod:`alphabee.midterm.marginal_shadow`（``load_frames`` / ``dedupe_frames`` /
+``shadow_report``），不在此复制任何公式。
 
-用法::
+数据源（默认只读 tracking 帧，保持改造前行为）::
 
-    python scripts/f_marginal_shadow.py                          # 默认读 data/midterm/state
+    python scripts/f_marginal_shadow.py                          # 默认 data/midterm/state
     python scripts/f_marginal_shadow.py --state-dir data/midterm/state
     python scripts/f_marginal_shadow.py --paths a.jsonl b.json    # 指定文件（替代默认目录）
+    python scripts/f_marginal_shadow.py --source task-records     # 只读 task_records
+    python scripts/f_marginal_shadow.py --source both             # state + task_records 合并
     python scripts/f_marginal_shadow.py --json                    # 机器可读输出
+
+``--source both`` 时 state 帧排在前面，再由 ``dedupe_frames`` 按 ``(symbol, as_of_date)``
+去重（默认）；即同标的同日优先保留字段更全的 tracking 帧。``--no-dedupe`` 关闭去重
+（把同日多次查询当作多帧，仅用于排查，不用于 G-8 判读）。
 
 G-8 门槛（全部满足才允许把 ``f_marginal_mode`` 从 ``shadow`` 改为 ``on``）：
 真实帧 ≥ 50、``median|ΔF|`` ≤ 0.10、状态翻转率 ≤ 10%、危险翻转率 ≤ 3%、覆盖率 ≥ 85%。
@@ -30,11 +36,18 @@ from alphabee.midterm.marginal_shadow import (
     G8_MAX_FLIP_RATE,
     G8_MIN_COVERAGE,
     G8_MIN_FRAMES,
+    dedupe_frames,
     load_frames,
     shadow_report,
 )
 
 _DEFAULT_STATE_DIR = "data/midterm/state"
+
+#: 数据源（默认 ``state``，保持改造前的输出与语义不变）。
+_SOURCE_STATE = "state"
+_SOURCE_TASK_RECORDS = "task-records"
+_SOURCE_BOTH = "both"
+_SOURCES = (_SOURCE_STATE, _SOURCE_TASK_RECORDS, _SOURCE_BOTH)
 
 
 def _fmt(value: Any, digits: int = 4) -> str:
@@ -48,11 +61,19 @@ def _fmt(value: Any, digits: int = 4) -> str:
     return str(value)
 
 
-def _render_text(report: dict[str, Any], *, n_frames: int, skipped: int, sources: list[str]) -> str:
+def _render_text(
+    report: dict[str, Any],
+    *,
+    n_frames: int,
+    skipped: int,
+    sources: list[str],
+    duplicates: int = 0,
+) -> str:
+    dedupe_suffix = f"  去重丢弃={duplicates}" if duplicates else ""
     lines = [
         "F 边际影子观测（设计 §5.2 / §7.1 G-8）",
         f"  语料: {', '.join(sources) if sources else '—'}",
-        f"  帧数: n_frames={n_frames}  skipped={skipped}"
+        f"  帧数: n_frames={n_frames}  skipped={skipped}{dedupe_suffix}"
         f"  fundamental={report['n_fundamental_frames']}  含边际键={report['n_with_marginal']}",
         "S1 ΔF 分布:"
         f"  |ΔF| 中位数={_fmt(report['abs_delta_f_median'])}"
@@ -80,8 +101,60 @@ def _render_text(report: dict[str, Any], *, n_frames: int, skipped: int, sources
     return "\n".join(lines)
 
 
+def _load_state_frames(paths: list[str] | None, state_dir: str) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """读取 state 源帧（``--paths`` 优先于 ``--state-dir``）。"""
+    state_sources = list(paths) if paths else [state_dir]
+    frames, skipped = load_frames(state_sources)
+    return frames, skipped, [str(source) for source in state_sources]
+
+
+def _load_task_record_frames(task_records_dir: str | None) -> tuple[list[dict[str, Any]], int, str]:
+    """读取 task_records 源帧（``TaskStore`` 默认目录或 ``--task-records-dir``）。"""
+    from alphabee.task_records.shadow import load_task_record_frames as _adapt
+    from alphabee.task_records.store import TaskStore
+
+    store = TaskStore(base_dir=task_records_dir)
+    total = store.count()
+    # 显式传 total：``load_all`` 默认 limit=100，而 G-8 语料会超过 100 帧。
+    records = store.load_all(limit=total) if total else []
+    frames, skipped = _adapt(records)
+    return frames, skipped, f"task_records:{store.base_dir}"
+
+
+def _collect_frames(
+    args: argparse.Namespace,
+) -> tuple[list[dict[str, Any]], int, int, list[str]]:
+    """按 ``--source`` 汇总帧，返回 ``(frames, skipped, duplicates, sources)``。"""
+    frames: list[dict[str, Any]] = []
+    sources: list[str] = []
+    skipped = 0
+
+    if args.source in (_SOURCE_STATE, _SOURCE_BOTH):
+        state_frames, state_skipped, state_sources = _load_state_frames(args.paths, args.state_dir)
+        frames.extend(state_frames)
+        skipped += state_skipped
+        sources.extend(state_sources)
+
+    if args.source in (_SOURCE_TASK_RECORDS, _SOURCE_BOTH):
+        record_frames, record_skipped, record_source = _load_task_record_frames(args.task_records_dir)
+        frames.extend(record_frames)
+        skipped += record_skipped
+        sources.append(record_source)
+
+    duplicates = 0
+    if not args.no_dedupe:
+        frames, duplicates = dedupe_frames(frames)
+    return frames, skipped, duplicates, sources
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="F 边际改善影子期观测（S1–S4 + G-8 判读）")
+    parser.add_argument(
+        "--source",
+        choices=_SOURCES,
+        default=_SOURCE_STATE,
+        help="数据源：state（默认，tracking 帧）/ task-records（查询帧）/ both（合并）",
+    )
     parser.add_argument(
         "--state-dir",
         default=_DEFAULT_STATE_DIR,
@@ -91,21 +164,46 @@ def main(argv: list[str]) -> int:
         "--paths",
         nargs="*",
         default=None,
-        help="显式指定帧文件/目录（给出时**替代** --state-dir）",
+        help="显式指定 state 帧文件/目录（给出时**替代** --state-dir）",
+    )
+    parser.add_argument(
+        "--task-records-dir",
+        default=None,
+        help="task_records 根目录（缺省 TaskStore 默认目录；仅 --source task-records/both 使用）",
+    )
+    parser.add_argument(
+        "--no-dedupe",
+        action="store_true",
+        help="关闭 (symbol, as_of_date) 去重（同日多次查询算多帧，仅用于排查）",
     )
     parser.add_argument("--json", action="store_true", help="输出机器可读 JSON（含逐项指标与 G-8 判读）")
     args = parser.parse_args(argv)
 
-    sources: list[str] = list(args.paths) if args.paths else [args.state_dir]
-    frames, skipped = load_frames(sources)
+    if args.source == _SOURCE_TASK_RECORDS and args.paths:
+        parser.error("--paths 属于 state 源；--source task-records 时请改用 --task-records-dir")
+
+    frames, skipped, duplicates, sources = _collect_frames(args)
     report = shadow_report(frames)
 
     if args.json:
-        payload = {"sources": sources, "skipped": skipped, **report}
+        payload = {
+            "sources": sources,
+            "skipped": skipped,
+            "duplicates": duplicates,
+            **report,
+        }
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
 
-    print(_render_text(report, n_frames=len(frames), skipped=skipped, sources=sources))
+    print(
+        _render_text(
+            report,
+            n_frames=len(frames),
+            skipped=skipped,
+            sources=sources,
+            duplicates=duplicates,
+        )
+    )
     return 0
 
 

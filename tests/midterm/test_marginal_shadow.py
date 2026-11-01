@@ -409,3 +409,46 @@ def test_load_frames_empty_inputs(tmp_path):
     _write(tmp_path / "blank.jsonl", "\n  \n")
     assert load_frames(tmp_path / "empty.jsonl") == ([], 0)
     assert load_frames(tmp_path / "blank.jsonl") == ([], 0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 帧去重：样本单位 = symbol-day（G-8 分母口径）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_dedupe_frames_symbol_day_keeps_first_and_counts_drops():
+    from alphabee.midterm.marginal_shadow import DEDUPE_SYMBOL_DAY, dedupe_frames
+
+    first = _frame(f=-0.8, f_shadow=-0.9, source=7)
+    same_day = dict(first, f_shadow=-0.7)  # 同 symbol + as_of_date
+    next_day = dict(first, as_of_date="2026-11-02")
+    other_symbol = dict(first, symbol="600519.SH")
+
+    kept, dropped = dedupe_frames([first, same_day, next_day, other_symbol], scope=DEDUPE_SYMBOL_DAY)
+    assert kept == [first, next_day, other_symbol]
+    assert dropped == 1
+
+
+def test_dedupe_frames_keeps_frames_without_key():
+    """缺 symbol / as_of_date 的帧无法判定同日 ⇒ 保留（不静默丢）。"""
+    from alphabee.midterm.marginal_shadow import dedupe_frames
+
+    no_symbol = {"as_of_date": "2026-11-01", "state": {"argmax_state": "S1"}}
+    no_date = {"symbol": "600760.SH", "state": {"argmax_state": "S1"}}
+    frames = [no_symbol, dict(no_symbol), no_date, dict(no_date)]
+    kept, dropped = dedupe_frames(frames)
+    assert kept == frames
+    assert dropped == 0
+
+
+def test_dedupe_frames_scope_none_and_invalid():
+    from alphabee.midterm.marginal_shadow import DEDUPE_NONE, dedupe_frames
+
+    a = _frame(f=-0.8, f_shadow=-0.9, source=7)
+    b = dict(a, f_shadow=-0.7)
+    kept, dropped = dedupe_frames([a, b], scope=DEDUPE_NONE)
+    assert kept == [a, b]
+    assert dropped == 0
+
+    with pytest.raises(ValueError):
+        dedupe_frames([a], scope="week")
