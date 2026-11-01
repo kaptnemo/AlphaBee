@@ -538,6 +538,13 @@ def _render_meta(lines: list[str], decision: CompanyStateArtifact) -> None:
     if _is_v2_frame(decision):
         # §6.6 第 4 条：公式版本 provenance（v1 帧不输出，保持改造前渲染逐字不变）。
         lines.append(f"  formula={decision.classifier_formula or '—'}")
+    # F 边际模式 provenance（F-Marginal design §6.1/§6.5）：`shadow`/`on` 帧显式标注，
+    # 让读者知道本帧 F 里「边际项是否已生效」；`off` 与旧帧（无该字段 ⇒ 回落 off）
+    # 不输出该行，保持改造前渲染逐字不变。
+    if decision.f_marginal_mode == "shadow":
+        lines.append("  边际模式: f_marginal_mode=shadow（F 边际算但不生效，影子期观测中）")
+    elif decision.f_marginal_mode == "on":
+        lines.append("  边际模式: f_marginal_mode=on（F 边际已生效）")
 
 
 def render_midterm_decision_summary(

@@ -57,7 +57,6 @@ from alphabee.midterm.score_engine import (
     KNOWN_MARGINAL_MODES,
     MARGINAL_MODE_OFF,
     MARGINAL_MODE_ON,
-    MARGINAL_MODE_SHADOW,
     compress_scores,
     fundamental_breakdown,
 )
@@ -117,13 +116,35 @@ _DIRECTION_UP = 0.3
 _DIRECTION_DOWN = -0.3
 
 
+def _settings_default_marginal_mode() -> str:
+    """读 ``MidtermClassifierSettings`` 的**模型默认值**（不在本模块硬编码缺省模式）。
+
+    设计意图（t6 评审观察 ③）：PR-4 若把 ``MidtermClassifierSettings.f_marginal_mode``
+    的默认值改为 ``"on"``，本函数的「配置缺段/缺字段」回退必须随之变化，否则回退值会与
+    settings 默认值漂移（一个说 shadow、一个说 on）。因此这里**动态读取** FieldInfo 的
+    default，而不是写死 ``MARGINAL_MODE_SHADOW``。
+
+    读取失败（配置模块不可导入 / 字段缺失 / 默认值非法）⇒ ``"off"``（最保守）。
+    """
+    try:
+        from alphabee.config import MidtermClassifierSettings
+
+        default = MidtermClassifierSettings.model_fields["f_marginal_mode"].default
+    except Exception:  # noqa: BLE001 - 读默认值失败绝不打断决策
+        return MARGINAL_MODE_OFF
+    value = str(default or "").strip().lower()
+    return value if value in KNOWN_MARGINAL_MODES else MARGINAL_MODE_OFF
+
+
 def resolve_f_marginal_mode(mode: str | None = None) -> str:
     """解析 F 边际模式（F-Marginal design §6.4）：显式合法值优先；``None`` → 读配置。
 
     **三种语义必须区分**（不要一律回 shadow）：
 
     - **配置缺段/缺字段**（``settings.midterm`` 缺失或没有 ``f_marginal_mode``）→ 走
-      ``MidtermClassifierSettings`` 的默认值 ``"shadow"``（算但不生效，正是影子期要积累的语料）；
+      ``MidtermClassifierSettings`` 的**模型默认值**（当前 ``"shadow"``：算但不生效，正是
+      影子期要积累的语料）。默认值由 :func:`_settings_default_marginal_mode` 动态读取，
+      **不在本模块硬编码** —— 避免 PR-4 改模型默认值后回退值漂移；
     - **读配置抛异常 / 配置取值非法** → warn + ``"off"``（最保守：连派生都不做，避免在配置
       坏掉时往 artifact 写新键，也避免把坏配置静默升级成影子计算）；
     - **显式参数**（``evaluate(f_marginal_mode=...)`` / ``get_decision(...)``）优先于配置，
@@ -148,8 +169,8 @@ def resolve_f_marginal_mode(mode: str | None = None) -> str:
         return MARGINAL_MODE_OFF
 
     if configured is None:
-        # 缺段/缺字段：视为「未配置」→ settings 默认值 shadow（与 Pydantic 默认值同源）
-        return MARGINAL_MODE_SHADOW
+        # 缺段/缺字段：视为「未配置」→ 回退到 settings 模型的默认值（动态读取，不硬编码）
+        return _settings_default_marginal_mode()
     value = str(configured).strip().lower()
     if value in KNOWN_MARGINAL_MODES:
         return value

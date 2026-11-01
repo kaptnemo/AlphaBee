@@ -582,3 +582,29 @@ def test_marginal_line_survives_payload_roundtrip():
     text = _rendered_text(_f_marginal_decision(), _state)
     assert "F 边际（影子）" in text
     assert "F_shadow=-0.4933" in text
+
+
+# ── F 边际模式 provenance 行（F-Marginal §6.5 消费面；t6 评审观察 ①）──────────────
+
+
+def test_meta_renders_f_marginal_mode_for_shadow_and_on():
+    """shadow/on 帧在「元信息」节显式标注 F 边际模式（避免 F 口径不可审计）。"""
+    shadow = node.render_midterm_decision_summary(_company_state().model_copy(update={"f_marginal_mode": "shadow"}))
+    assert "边际模式: f_marginal_mode=shadow（F 边际算但不生效，影子期观测中）" in shadow
+    assert "边际模式" in shadow.split("── 元信息")[1]
+
+    on = node.render_midterm_decision_summary(_company_state().model_copy(update={"f_marginal_mode": "on"}))
+    assert "边际模式: f_marginal_mode=on（F 边际已生效）" in on
+    assert "边际模式" in on.split("── 元信息")[1]
+
+
+def test_meta_omits_f_marginal_mode_for_off_and_old_frames():
+    """off 与旧帧（无该字段 ⇒ 回落 off）不输出该行，保持改造前渲染逐字不变。"""
+    off = node.render_midterm_decision_summary(_company_state().model_copy(update={"f_marginal_mode": "off"}))
+    assert "边际模式" not in off
+    # 旧帧：golden（V2 之前的产物）不含 f_marginal_mode ⇒ 模型回落 off
+    old = node.render_midterm_decision_summary(_company_state())
+    assert "边际模式" not in old
+    # off 渲染与改造前逐字一致（sha 钉住）
+    assert hashlib.sha256(off.encode("utf-8")).hexdigest() == _V1_REPORT_SHA256
+    assert hashlib.sha256(old.encode("utf-8")).hexdigest() == _V1_REPORT_SHA256

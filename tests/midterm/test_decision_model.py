@@ -818,3 +818,30 @@ def test_get_decision_passes_f_marginal_mode(monkeypatch):
     assert art.variable_scores.f_fundamental_trend == pytest.approx(
         art.factor_snapshot.fundamental.score_breakdown["f"]
     )
+
+
+def test_resolve_f_marginal_mode_falls_back_to_model_default(monkeypatch):
+    """配置缺段/缺字段 ⇒ 回退到 ``MidtermClassifierSettings`` 的**模型默认值**（不硬编码）。
+
+    漂移测试（t6 评审观察 ③）：PR-4 若把模型默认值改为 ``on``/``off``，回退值必须随之变化；
+    若实现把 ``"shadow"`` 写死在 decision_model 里，本用例会红。
+    """
+    from alphabee.config import MidtermClassifierSettings
+    from alphabee.midterm.decision_model import resolve_f_marginal_mode
+
+    field = MidtermClassifierSettings.model_fields["f_marginal_mode"]
+    _pin_marginal_config(monkeypatch, drop_field=True)
+
+    monkeypatch.setattr(field, "default", "on")
+    assert resolve_f_marginal_mode() == "on"
+
+    monkeypatch.setattr(field, "default", "off")
+    assert resolve_f_marginal_mode() == "off"
+
+    monkeypatch.setattr(field, "default", "shadow")
+    assert resolve_f_marginal_mode() == "shadow"
+
+    # 缺整段（midterm=None）同样走模型默认值
+    monkeypatch.setattr(field, "default", "on")
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=None))
+    assert resolve_f_marginal_mode() == "on"
