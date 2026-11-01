@@ -182,16 +182,18 @@ def test_none_reads_config(monkeypatch):
 
 def test_route_tef_hits_module_attribute(monkeypatch):
     monkeypatch.setattr(tef, "classify_state", lambda scores, previous=None: "TEF_SENTINEL")
-    assert dispatch.classify_state(_scores(), order="tef") == "TEF_SENTINEL"
+    # formula 显式钉 v1：本用例只验证「顺序路由此模块」，不跟随本地 config.yaml 的
+    # formula_revision（v2 会路由到 classifier_v2，与本断言无关）。
+    assert dispatch.classify_state(_scores(), order="tef", formula="v1") == "TEF_SENTINEL"
 
 
 def test_route_etf_hits_module_attribute(monkeypatch):
     monkeypatch.setattr(etf, "classify_state", lambda scores, previous=None: "ETF_SENTINEL")
-    assert dispatch.classify_state(_scores(), order="etf") == "ETF_SENTINEL"
+    assert dispatch.classify_state(_scores(), order="etf", formula="v1") == "ETF_SENTINEL"
 
 
 def test_route_default_is_etf(monkeypatch):
-    _set_config(monkeypatch, classifier_order="etf")  # 钉住默认配置，不读本地 config.yaml
+    _set_config(monkeypatch, classifier_order="etf", formula_revision="v1")  # 钉住默认配置，不读本地 config.yaml
     monkeypatch.setattr(etf, "classify_state", lambda scores, previous=None: "ETF_SENTINEL")
     monkeypatch.setattr(tef, "classify_state", lambda scores, previous=None: "TEF_SENTINEL")
     assert dispatch.classify_state(_scores(), order=None) == "ETF_SENTINEL"

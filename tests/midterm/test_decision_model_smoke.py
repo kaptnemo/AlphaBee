@@ -114,7 +114,8 @@ def test_end_to_end_s3_no_evidence_ev_degraded():
 
 def test_langchao_000977_fixes_end_to_end():
     """端到端复验 000977 浪潮信息：6 个修复逐一确认生效。"""
-    art = evaluate(_langchao_000977_snapshot(), classifier_order="etf")
+    # 显式钉 v1：本用例的期望值建立在 v1 证据公式上，不跟随本地 config.yaml 的 formula_revision。
+    art = evaluate(_langchao_000977_snapshot(), classifier_order="etf", classifier_formula="v1")
 
     # ① factor_snapshot.state 已回写，与顶层 argmax_state 一致（不再残留 S0）
     assert art.factor_snapshot.state == art.state.argmax_state

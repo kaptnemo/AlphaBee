@@ -66,7 +66,9 @@ def test_wol_insight_injection_snapshot_regression():
     # 改造 A：洞察层结构化证据 → EvidenceEvent（纯规则，零 LLM）
     evidence = adapt_insight_evidence(insight, symbol=_SYMBOL, date=_AS_OF_DATE)
 
-    art = evaluate(_wol_snapshot(), evidence, prior_confidence=0.7, thesis=insight.core_view)
+    # 钉 v1：本快照的期望状态（S4 / 高熵 / 软阈值减仓）建立在 v1 证据公式的分布上，
+    # 不跟随本地 config.yaml 的 formula_revision（v2 的分布口径不同，见 V2 design §4）。
+    art = evaluate(_wol_snapshot(), evidence, prior_confidence=0.7, thesis=insight.core_view, classifier_formula="v1")
 
     # 1. 证据日志含结构性洞察（confirming + refuting）
     by_desc = {e.description: e for e in art.evidence_log}
