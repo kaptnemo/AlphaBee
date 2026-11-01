@@ -37,16 +37,30 @@ data:
 
 ## 中期分析（midterm）
 
-`midterm` 段承载中期决策层的分类器顺序与一致预期（consensus）数据源。**缺段 ⇒ 两个键都取内置默认值**，旧 `config.yaml` 仍可 import 且行为与改造前一致：
+`midterm` 段承载中期决策层的分类器顺序、F 边际改善模式与一致预期（consensus）数据源。**缺段 ⇒ 各键都取内置默认值**，旧 `config.yaml` 仍可 import 且行为与改造前一致：
 
 ```yaml
 midterm:
   classifier_order: etf              # etf = E→T→F（基准）；tef = T→E→F（价格先行变体）
+  f_marginal_mode: shadow            # off = 不算；shadow = 算但不进 F（缺省）；on = 进 F
   consensus_source: report_list      # report_list（默认） | f10_forecast | auto
 ```
 
 - `classifier_order`：`etf`（默认，E→T→F）或 `tef`（T→E→F 价格先行变体）；缺段 / 非法值 / 读配置异常一律 fail-open 回落 `etf`（`alphabee/midterm/classifier_dispatch.py`，行为变更登记见 `docs/roadmap/ROADMAP.md`）。
+- `f_marginal_mode`：F 因子「边际改善」三档（`off` / `shadow` / `on`），缺省 `shadow`；语义与 fail-open 落点见下节。
 - `consensus_source`：一致预期数据源的 provider 链（`alphabee/collectors/consensus/eastmoney.py::build_consensus`），取值与语义如下。
+
+### `midterm.f_marginal_mode`
+
+| 取值 | 语义 | `score_breakdown` |
+|------|------|-------------------|
+| `off` | 不算边际项（严格复现旧口径，故障隔离用） | 不含边际键 |
+| `shadow`（**默认**） | 算 `M/Q/F_shadow` 但不进 F（影子期观测；F 与改造前逐值相同） | 含 6 个边际键（仅单季数据可用时；降级帧不含） |
+| `on` | 边际项参与 F（`F_growth = 0.70·L + 0.30·M`；设计 §7.1 G-8 语料门槛未达标，**本轮不开启**） | 含 6 个边际键（仅单季数据可用时；降级帧不含） |
+
+- **fail-open 落点**：配置缺段 / 缺该字段 ⇒ 取 `MidtermClassifierSettings` 的默认值（当前 `shadow`）；读配置异常 / 取值非法 ⇒ logger warning + 回落 `off`（最保守：连派生都不做，绝不抛）。
+- **显式传参优先**：`decision_model.evaluate(..., f_marginal_mode=...)` / `get_decision(...)` 覆盖配置，与 `classifier_formula` 同构；显式值非法同样 warning + 回落 `off`。
+- **回滚**：把本键改为 `off`（一行配置）；影子观测工具与代码路径保留。观测指标（S1–S4）与开权门槛（G-8）见 `docs/midterm/MIDTERM_DECISION_MODEL.md` §3.4，变更登记见 `docs/roadmap/ROADMAP.md`「行为变更登记」。
 
 ### `midterm.consensus_source`
 

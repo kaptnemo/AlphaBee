@@ -120,6 +120,13 @@ midterm:
                               # 缺段 / 非法值 / 读配置异常 ⇒ warning 并回落 v1（绝不抛）。
                               # 回滚 = 本行改回 v1（一行配置，artifact 只多默认值字段）。
                               # 行为变更登记见 docs/roadmap/ROADMAP.md「行为变更登记」。
+  # F 边际改善模式（docs/implementation/midterm/MIDTERM_F_MARGINAL_DESIGN.md §5.1）：
+  #   off    = 不算（严格复现旧口径；score_breakdown 不含边际键，用于故障隔离）
+  #   shadow = 算但不进 F（**缺省**：影子期积累语料；F 与改造前逐值相同，只多诊断键）
+  #   on     = 边际项参与 F（需设计 §7.1 G-8 全绿 + 真实帧 ≥50，未达标不得开启）
+  # 缺段 / 缺字段 ⇒ 取模型默认值（当前 shadow）；读配置异常 / 非法值 ⇒ warning + 回落 off。
+  # 回滚 = 本行改 off（一行配置，F 恢复严格旧口径）。
+  f_marginal_mode: shadow
   # 一致预期 provider 链（docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md §5.3）：
   #   report_list  = 东财研报列表聚合（默认，行为与改造前逐字一致）
   #   f10_forecast = 东财 F10 盈利预测（coverage_count 变"机构家数"口径；revision 由

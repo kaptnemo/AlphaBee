@@ -176,6 +176,94 @@ class VariableScores(BaseModel):
 
 **约束**：压缩后 `FactorSnapshot` 原始值必须保留——classifier 读方向一致性（共振/背离）、EV 读估值分位与 EPS 绝对值，都需要原始量。
 
+### 3.4 F 因子口径：水平 + 加速度 + 质量门（F-Marginal）
+
+> 设计依据：`docs/implementation/midterm/MIDTERM_F_MARGINAL_DESIGN.md`（§3 数据层、§4 评分层、§5 影子→开权重、§7.1 校准门）。
+> 代码落点：`alphabee/midterm/factors.py::derive_marginal`（数据层）、`alphabee/midterm/score_engine.py::fundamental_breakdown`（F 的唯一评分入口）、`alphabee/midterm/decision_model.py::resolve_f_marginal_mode`（模式解析）。
+> **当前状态：配置缺省 `shadow`（算但不生效）** —— F 与改造前逐值相同；**`on`（边际项参与评分）未开启**（G-8 语料门槛未达，见 3.4.4）。
+
+#### 3.4.1 计算口径
+
+**水平项 L 不变**：仍是三个**累计同比**的饱和均值（入口 ±30pp 饱和；缺项按可用子集求均值，不补 0）。
+
+```text
+L      = mean( saturate(revenue_yoy, 30), saturate(net_profit_yoy, 30), saturate(eps_growth_yoy, 30) )
+Δ_rev  = q_revenue_yoy    − revenue_yoy                  # 单季同比 − 累计同比（pp）
+Δ_np   = q_net_profit_yoy − net_profit_yoy
+M_raw  = mean( saturate(Δ_rev, 25), saturate(Δ_np, 25) ) # 加速度；可单腿，缺失腿不补 0
+Q      = clip(1 + q_gross_margin_pp / 4, 0.20, 1.0)      # 质量门：单季毛利率同比变化 pp
+M      = M_raw × Q
+
+F_growth = 0.70·L + 0.30·M        # 有单季数据（marginal 非 None）
+F_growth = L                      # 无单季数据（降级路径，与改造前逐值相同）
+F        = saturate(F_growth + OCF惩罚 + beat + miss + 细分, 1)
+```
+
+**参数（`score_engine.py` 常量，不入 config；当前按设计值冻结待复核——影子期语料补齐后按设计 §7.2 的 ±0.05 聚合门正式复核）**：
+
+| 常量 | 取值 | 含义 |
+|---|---|---|
+| `F_MARGINAL_WEIGHT` | 0.30 | 边际项权重（水平项 = 0.70）；上限 0.4 |
+| `F_ACCEL_SCALE` | 25.0 | Δ 的饱和点：单季比累计快 +25pp → +1.0 |
+| `F_MARGIN_DELTA_SCALE` | 4.0 | 毛利率同比 −4pp → 质量门触底 |
+| `F_MARGIN_QUALITY_FLOOR` | 0.20 | 质量门下限（不归零：量/利加速本身仍是信息） |
+
+**单季派生字段**（`FundamentalFactor`，由 `derive_marginal` 从现有 8 期累计数据还原，**非 canonical 单期事实**；默认 `None`，不进 canonical 字段列表、也不进 `missing_facts` 缺失登记，缺失语义由 `f_marginal_source` 表达）：
+
+| 字段 | 含义 |
+|---|---|
+| `q_revenue_yoy` | 单季营收同比（PERCENT）= 单季值(t) / 单季值(t−4) − 1 |
+| `q_net_profit_yoy` | 单季归母净利同比（PERCENT） |
+| `q_gross_margin` | 单季毛利率（PERCENT） |
+| `q_gross_margin_pp` | 单季毛利率同比变化（pp，带符号） |
+
+评分层在 `FundamentalFactor.score_breakdown` 追加 6 个诊断键（仅 `shadow`/`on` 且单季数据可用时出现）：`marginal_raw`（M_raw）/ `marginal_quality`（Q）/ `marginal`（M）/ `f_shadow`（把 M 代入后的 F，即 `on` 档的 F）/ `f_shadow_delta`（= `f_shadow − f`）/ `f_marginal_source`（可用腿位掩码：1=营收腿、2=净利腿、4=质量腿）。
+
+#### 3.4.2 降级路径（无单季数据 ⇒ 与现行逐值相同）
+
+`marginal` 为 `None` 时**不写任何边际键**，`F_growth = L` —— 与改造前**逐值相同**（`abs=0`；golden 在剔除新增诊断字段后逐字节相等）。实现口径的降级条件：
+
+- 两条加速度腿**都**缺（`q_revenue_yoy` / `q_net_profit_yoy` 与其累计同比的组合均不可用）；或
+- 质量腿 `q_gross_margin_pp` 缺失 —— 质量门是边际项成立的必要条件，不拿半边数据报满额信用。
+
+数据层逐腿边界：单季营收 ≤ 0 ⇒ 营收腿缺失；上年同期单季净利 ≤ 0（亏损/转盈）⇒ 净利腿缺失（百分比无意义，改用营收腿）；`|单季值(t−4)| < 1% × 当期累计营收` ⇒ 该腿缺失（基数不稳）；缺期**不插值**、不用 TTM 顶替；Q1 单季 = 累计，年报 `t_prev` = 同年 9M（跨年按报告期字符串判定，不取数组下标）。
+
+#### 3.4.3 质量门为什么必须有（不允许 Q=1 兜底）
+
+`Q=1` 兜底等于「只要单季增速快就给满信用」。600760 实帧：现行 `F=−0.733`（`L=−0.933`）；若去掉质量门（`Q=1`），`F=0.70×(−0.933)+0.30×1.0+beat 0.2=−0.153` ⇒ 状态判到 **S0**、顶背离消失 —— 一个低基数季度把「证伪」抹成「没信号」。这正是设计 §0 第三行的失败模式，因此质量门不允许跳过：量/利加速仍是信息，但只有毛利率未实质恶化时才配拿满信用。
+
+**与 beat 的去重（设计 §4.4）**：仅 `on` 档、存在边际项、且 `Q < 1.0` 时 `beat` 折半（+0.2 → +0.1），避免「超预期」与「加速」对同一改善双重奖励；`shadow`/`off` 的 F **不折半**（否则违反影子不生效）。`shadow` 的 `f_shadow` 按 `on` 口径（含折半）计算，故 `f_shadow_delta` 已含该效应。600760 帧因此 `on` 档 `F=−0.4933`（未折半反事实为 `−0.3933`，差值 0.10 恰为 beat 折半量）；该偏差已在 `docs/roadmap/ROADMAP.md`「行为变更登记」的规格偏差行登记。
+
+#### 3.4.4 三档模式、影子观测与开权门槛
+
+| 模式 | 语义 |
+|---|---|
+| `off` | 不算边际项（函数默认参数 `marginal_mode="off"`）：`score_breakdown` 不含边际键，用于严格复现旧口径与故障隔离 |
+| `shadow` | 算但不进 F（**配置缺省** `midterm.f_marginal_mode=shadow`）：只多 6 个诊断键与报告影子行，F 逐值不变 |
+| `on` | 边际项参与评分（`F_growth=0.70·L+0.30·M`，并触发 §4.4 beat 去重）；**本轮不开启** |
+
+- **纯函数纪律**：`score_engine` 不读配置；`decision_model.resolve_f_marginal_mode` 每次决策解析一次（显式参数优先；配置缺段/缺字段 ⇒ 模型默认值，当前 `shadow`；读配置异常/取值非法 ⇒ warning + 回落 `off`），解析结果写入 `CompanyStateArtifact.f_marginal_mode`（provenance；旧帧回落 `"off"`）。
+- **报告口径**：`shadow`/`on` 帧出现「F 边际（影子）」行（单季原始值、M_raw、Q、M、F_shadow、ΔF）与「边际模式」元信息行；`off` 帧与旧帧不出现（渲染逐字不变）。
+- **回滚**：`f_marginal_mode: off`（一行配置，无需改代码）。
+
+**影子观测指标**（`alphabee/midterm/marginal_shadow.py`；离线脚本 `scripts/f_marginal_shadow.py --state-dir data/midterm/state`）：
+
+| 指标 | 口径 | G-8 门槛 |
+|---|---|---|
+| S1 `ΔF` 分布 | `f_shadow − f` 的 \|ΔF\| 中位数 / P90 | 中位 ≤ 0.10 |
+| S2 状态翻转率 | `argmax(F_shadow) ≠ argmax(F)` 的帧占比 | ≤ 10% |
+| S3 危险翻转率 | 现判 `S5` 而影子判到 `{S1,S2,S3}` 的帧占比 | ≤ 3% |
+| S4 加速度覆盖率 | `f_marginal_source > 0` 的帧占比 | ≥ 85% |
+| 语料规模 | 真实帧数 | ≥ 50 |
+
+**开权门槛与当前结论**：G-8 全绿 + 影子期 ≥ 50 帧 + 单独登记，才允许把缺省改为 `on`（设计 §9「未达标不得开 `on`」）。本机 `data/midterm/state` 实测仅 **2 帧**（影子层上线前的旧帧，无边际键）⇒ 覆盖率 0、S1–S3 不可算、G-8 五项均不达标 ⇒ **PR-4 开权重未执行，缺省保持 `shadow`**。
+
+#### 3.4.5 口径近似（设计 §3.5，必须披露）
+
+- **单季毛利差分**：单季毛利 = 累计营收(t) × 累计毛利率(t) − 累计营收(t−1 期) × 累计毛利率(t−1 期)；单季毛利率 = 单季毛利 / 单季营收。
+- **等价假定**：上式假定 Tushare 的 `grossprofit_margin` 与 `total_revenue` **同分母**；两者实际分别是「毛利 / 营业收入」与「营业总收入」，**对营业外收入占比大的公司有偏差**（主业公司可忽略）。
+- **精确解法（设计 §3.5 的 P1.5，本轮不默认做）**：在财务取数 fields 补 `oper_cost`，并把单季毛利率改为（单季营收 − 单季营业成本）/ 单季营收；先由影子期观测复核上述近似偏差，再决定是否切换。
+
 ---
 
 ## 4. Layer 2a：因子模式 → State（classifier，非求和）
