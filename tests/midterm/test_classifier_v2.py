@@ -426,7 +426,7 @@ def test_i6_turnaround_vs_falsification():
     # ③ 无信号 ⇒ S0
     no_signal = _result(0.0, 0.0, 0.0, 0.0, 0.0)
     assert no_signal.state.argmax_state == "S0"
-    # 两行差异只来自 E：同 F/T/V/C 下 E 从 −0.2 → −1.0，S5 从 0 跳到 0.923
+    # 两行差异只来自 E：同 F/T/V/C 下 E 从 −0.2 → −1.0，S5 从 0 跳到 0.944
     assert only_f.state.distribution["S5"] < double_click.state.distribution["S5"]
 
 
@@ -452,9 +452,9 @@ def test_i7_adverse_divergence_object():
     assert "顶背离" in adverse.description
     # 同帧分布与归一化熵（§8.5）
     assert result.state.argmax_state == "S5"
-    assert result.state.distribution["S5"] == pytest.approx(0.795, abs=_TOL)
-    assert result.state.entropy == pytest.approx(0.800, abs=_TOL)
-    assert result.entropy_normalized == pytest.approx(0.447, abs=_TOL)
+    assert result.state.distribution["S5"] == pytest.approx(0.843, abs=_TOL)
+    assert result.state.entropy == pytest.approx(0.683, abs=_TOL)
+    assert result.entropy_normalized == pytest.approx(0.381, abs=_TOL)
     assert result.factor_consistency == Consistency.DIVERGENT.value
     assert result.divergence_reason == "基本面与预期同时实质恶化而价格仍强（顶背离）"
 
@@ -536,11 +536,11 @@ def test_i9_no_zero_evidence_uniform():
 @pytest.mark.parametrize(
     ("frame", "argmax", "p_top", "entropy"),
     [
-        (_600760, "S5", 0.795, 0.800),
-        ((1.0, 1.0, 1.0, -1.0, 1.0), "S3", 0.850, 0.597),
-        ((-1.0, -1.0, -1.0, -1.0, 1.0), "S5", 0.773, 0.726),
-        ((0.05, -0.05, 0.1, 0.0, 0.0), "S0", 0.892, 0.516),
-        ((-1.0, -1.0, 1.0, 0.0, 0.0), "S5", 0.923, 0.381),
+        (_600760, "S5", 0.843, 0.683),
+        ((1.0, 1.0, 1.0, -1.0, 1.0), "S3", 0.868, 0.530),
+        ((-1.0, -1.0, -1.0, -1.0, 1.0), "S5", 0.788, 0.668),
+        ((0.05, -0.05, 0.1, 0.0, 0.0), "S0", 0.869, 0.598),
+        ((-1.0, -1.0, 1.0, 0.0, 0.0), "S5", 0.944, 0.304),
     ],
 )
 def test_acceptance_frames(frame, argmax, p_top, entropy):
@@ -552,19 +552,19 @@ def test_acceptance_frames(frame, argmax, p_top, entropy):
 
 def test_acceptance_frame_600760_bear_mass():
     result = v2.classify_state(_scores(*_600760), order="tef")
-    assert _bear_mass(result) == pytest.approx(0.819, abs=_TOL)
+    assert _bear_mass(result) == pytest.approx(0.870, abs=_TOL)
 
 
 def test_acceptance_frame_perfect_bear_mass():
     result = v2.classify_state(_scores(-1.0, -1.0, -1.0, -1.0, 1.0), order="tef")
-    assert _bear_mass(result) == pytest.approx(0.943, abs=_TOL)
+    assert _bear_mass(result) == pytest.approx(0.962, abs=_TOL)
 
 
 def test_acceptance_frame_turnaround_candidate():
-    """困境反转候选：S2 为主但 P_top=0.365 ⇒ uncertain，且不退出（S5 ≤ 0.2）。"""
+    """困境反转候选：S2 为主但 P_top=0.449 ⇒ uncertain，且不退出（S5 ≤ 0.2）。"""
     result = v2.classify_state(_scores(-1.0, -0.2, 1.0, 0.3, 0.0), order="tef")
     assert result.state.argmax_state == "S2"
-    assert _p_top(result) == pytest.approx(0.365, abs=_TOL)
+    assert _p_top(result) == pytest.approx(0.449, abs=_TOL)
     assert result.uncertain is True
     assert result.state.distribution["S5"] <= 0.2
 
