@@ -585,8 +585,10 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
         else:
             band = getattr(position, "position_band", "") if position is not None else ""
         degraded = bool(md.get("degraded", False)) if isinstance(md, dict) else getattr(md, "degraded", False)
-        # 状态证据 V2（design §6.7）：只读渲染 formula / 不确定 / 顶背离标签；
+        # 状态证据 V2（design §6.7）：只读渲染 顺序 / 公式 / 不确定 / 顶背离标签；
         # 旧 artifact 缺字段时一律不输出标签（按现状渲染，不新增计算）。
+        # 顺序与公式成对展示：二者共同决定分布口径（同一标的换任一者后分布不可互比）。
+        order = md.get("classifier_order", "") if isinstance(md, dict) else getattr(md, "classifier_order", "")
         formula = md.get("classifier_formula", "") if isinstance(md, dict) else getattr(md, "classifier_formula", "")
         uncertain = bool(md.get("uncertain", False)) if isinstance(md, dict) else bool(getattr(md, "uncertain", False))
         adverse = md.get("adverse_divergence") if isinstance(md, dict) else getattr(md, "adverse_divergence", None)
@@ -594,6 +596,7 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
             adverse_severity = adverse.get("severity")
         else:
             adverse_severity = getattr(adverse, "severity", None) if adverse is not None else None
+        order_tag = f"  │ 顺序 {color(str(order), Color.CYAN)}" if order else ""
         formula_tag = f"  │ 公式 {color(str(formula), Color.CYAN)}" if formula else ""
         uncertain_tag = color("  │ ⚠ 不确定", Color.YELLOW) if uncertain else ""
         adverse_tag = (
@@ -610,7 +613,7 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
             f"  │ 熵 {ent_str}"
             f"  │ 仓位 {color(band or '—', Color.CYAN)}"
             f"  │ 证据 {len(evidence)} 条"
-            f"{formula_tag}{uncertain_tag}{adverse_tag}"
+            f"{order_tag}{formula_tag}{uncertain_tag}{adverse_tag}"
             f"{deg_tag}{issue_tag}"
         )
         print()

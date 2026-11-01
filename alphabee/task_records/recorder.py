@@ -101,7 +101,9 @@ class TaskRecorder:
             midterm_evidence_count=len(midterm_val.evidence_log) if midterm_val else 0,
             # 状态证据 V2 design §6.9（additive）：从 artifact 取值；旧 artifact 缺字段/无顶背离
             # ⇒ 默认值（"" / False / 0.0），绝不抛。
-            midterm_formula=str(getattr(midterm_val, "classifier_formula", "") or "") if midterm_val else "",
+            # 计算口径成对记录：顺序（classifier_order）+ 公式版本（classifier_formula）。
+            midterm_classifier_order=(str(getattr(midterm_val, "classifier_order", "") or "") if midterm_val else ""),
+            midterm_formula_revision=str(getattr(midterm_val, "classifier_formula", "") or "") if midterm_val else "",
             midterm_uncertain=bool(getattr(midterm_val, "uncertain", False)) if midterm_val else False,
             midterm_adverse_severity=self._adverse_severity(midterm_val),
             # ── 标的上下文 ──

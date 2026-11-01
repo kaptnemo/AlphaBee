@@ -88,10 +88,19 @@ def _meta_lines(record: TaskRecord, raw: dict[str, Any]) -> list[str]:
             f"置信度 {record.midterm_confidence:.2f} "
             f"证据 {record.midterm_evidence_count} 条"
         )
-        # 状态证据 V2 design §6.9：新记录才追加 formula / 不确定 / 顶背离（旧记录保持原行，
-        # 不出现空标签）。顶背离仅在 severity > 0 时展示——0.0 表示「无顶背离」，不打印噪声值。
-        if record.midterm_formula:
-            line += f" · formula {record.midterm_formula}"
+        # 状态证据 V2 design §6.9：新记录才追加计算口径 / 不确定 / 顶背离（旧记录保持原行，
+        # 不出现空标签）。口径 = 顺序 + 公式版本，成对展示（二者共同决定分布，不可只显示其一）。
+        # 顶背离仅在 severity > 0 时展示——0.0 表示「无顶背离」，不打印噪声值。
+        provenance = " · ".join(
+            part
+            for part in (
+                f"顺序 {record.midterm_classifier_order}" if record.midterm_classifier_order else "",
+                f"formula {record.midterm_formula_revision}" if record.midterm_formula_revision else "",
+            )
+            if part
+        )
+        if provenance:
+            line += f" · {provenance}"
             line += f" · 不确定 {'是' if record.midterm_uncertain else '否'}"
             if record.midterm_adverse_severity > 0.0:
                 line += f" · 顶背离 {record.midterm_adverse_severity:.2f}"

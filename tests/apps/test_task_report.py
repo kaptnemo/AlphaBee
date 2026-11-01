@@ -193,24 +193,41 @@ def test_cli_task_report_wiring(tmp_path, capsys, monkeypatch) -> None:
     assert "## 核心观点摘要" in captured
 
 
-# ── 状态证据 V2（design §6.9）：formula / 不确定 / 顶背离 渲染 ─────────────────
+# ── 状态证据 V2（design §6.9）：口径（顺序 + formula）/ 不确定 / 顶背离 渲染 ────
 
 
-def test_meta_line_renders_formula_uncertain_and_adverse() -> None:
-    md = build_report_markdown(_record(midterm_formula="v2", midterm_uncertain=False, midterm_adverse_severity=0.76))
-    assert "**中期决策**: 状态 S3 置信度 0.85 证据 12 条 · formula v2 · 不确定 否 · 顶背离 0.76" in md
+def test_meta_line_renders_provenance_uncertain_and_adverse() -> None:
+    md = build_report_markdown(
+        _record(
+            midterm_classifier_order="tef",
+            midterm_formula_revision="v2",
+            midterm_uncertain=False,
+            midterm_adverse_severity=0.76,
+        )
+    )
+    assert "**中期决策**: 状态 S3 置信度 0.85 证据 12 条 · 顺序 tef · formula v2 · 不确定 否 · 顶背离 0.76" in md
 
 
 def test_meta_line_renders_uncertain_yes() -> None:
-    md = build_report_markdown(_record(midterm_formula="v1", midterm_uncertain=True))
-    assert "· formula v1 · 不确定 是" in md
+    md = build_report_markdown(
+        _record(midterm_classifier_order="etf", midterm_formula_revision="v1", midterm_uncertain=True)
+    )
+    assert "· 顺序 etf · formula v1 · 不确定 是" in md
     assert "顶背离" not in md  # severity 0.0 = 无顶背离，不打印噪声值
 
 
+def test_meta_line_renders_order_only_without_formula() -> None:
+    """口径字段独立渲染：只有顺序时不得吞掉顺序，也不得伪造 formula。"""
+    md = build_report_markdown(_record(midterm_classifier_order="tef"))
+    assert "· 顺序 tef · 不确定 否" in md
+    assert "formula" not in md
+
+
 def test_meta_line_old_record_keeps_current_rendering() -> None:
-    """旧记录（无 formula 字段）保持现状：不出现空标签。"""
-    md = build_report_markdown(_record())  # _record 未设 formula / uncertain / severity
+    """旧记录（无口径字段）保持现状：不出现空标签。"""
+    md = build_report_markdown(_record())  # _record 未设 order / formula / uncertain / severity
     assert "**中期决策**: 状态 S3 置信度 0.85 证据 12 条" in md
+    assert "顺序" not in md
     assert "formula" not in md
     assert "不确定" not in md
     assert "顶背离" not in md
@@ -228,6 +245,7 @@ def _midterm_payload(**overrides) -> dict:
         "evidence_log": [{"id": "e1"}, {"id": "e2"}],
         "position": {"position_band": "减仓"},
         "degraded": False,
+        "classifier_order": "tef",
         "classifier_formula": "v2",
         "uncertain": True,
         "adverse_divergence": {"severity": 0.7626},
@@ -252,9 +270,10 @@ def _render_midterm_cli_branch(capsys, md_value: dict) -> str:
     return capsys.readouterr().out
 
 
-def test_cli_midterm_branch_renders_formula_uncertain_and_adverse(capsys) -> None:
+def test_cli_midterm_branch_renders_provenance_uncertain_and_adverse(capsys) -> None:
     out = _render_midterm_cli_branch(capsys, _midterm_payload())
     assert "认知状态: S5" in out
+    assert "顺序 tef" in out
     assert "公式 v2" in out
     assert "不确定" in out
     assert "顶背离 0.76" in out
@@ -262,10 +281,11 @@ def test_cli_midterm_branch_renders_formula_uncertain_and_adverse(capsys) -> Non
 
 def test_cli_midterm_branch_old_payload_keeps_current_rendering(capsys) -> None:
     payload = _midterm_payload()
-    for key in ("classifier_formula", "uncertain", "adverse_divergence"):
+    for key in ("classifier_order", "classifier_formula", "uncertain", "adverse_divergence"):
         payload.pop(key)
     out = _render_midterm_cli_branch(capsys, payload)
     assert "认知状态: S5" in out
+    assert "顺序" not in out
     assert "公式" not in out
     assert "不确定" not in out
     assert "顶背离" not in out

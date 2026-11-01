@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def _make_id() -> str:
@@ -107,7 +107,11 @@ class TaskRecord(BaseModel):
     midterm_confidence: float = 0.0  # P(H|Evidence) 后验
     midterm_evidence_count: int = 0  # evidence_log 长度
     # 状态证据 V2 design §6.9（additive，全部带默认值）：旧记录反序列化不受影响。
-    midterm_formula: str = ""  # 本帧公式版本 "v1"/"v2"（"" = 旧记录 / 未产出决策）
+    # 计算口径（provenance）：顺序 + 公式版本共同定位「这一帧的状态证据由哪套规则算出」，
+    # 缺一不可（换顺序/换公式后同一标的的分布不可互比）。与 artifact 的
+    # ``classifier_order`` / ``classifier_formula``（= 配置 ``midterm.formula_revision``）同源。
+    midterm_classifier_order: str = ""  # 本帧分类器顺序 "etf"/"tef"（"" = 旧记录 / 未产出决策）
+    midterm_formula_revision: str = ""  # 本帧公式版本（= 配置 midterm.formula_revision）"v1"/"v2"（"" = 同上）
     midterm_uncertain: bool = False  # 语义不确定（v1：熵高或背离；v2：P_top 低或非顶背离的背离）
     midterm_adverse_severity: float = 0.0  # 顶背离严重度 ∈[0,1]（0.0 = 无顶背离 / 旧记录）
 
@@ -118,6 +122,22 @@ class TaskRecord(BaseModel):
     company_track_label: str = ""  # 真实赛道标签（COMPANY_TRACK Phase F6）
     company_business_model: str = ""  # 商业模式 archetype
     peer_group: list[str] = Field(default_factory=list)  # 对标组代码
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_formula_field(cls, data: Any) -> Any:
+        """兼容改名：旧记录 ``midterm_formula`` → ``midterm_formula_revision``（只读迁移）。
+
+        2026-10-31 改名前的落库 JSON 用的是 ``midterm_formula``。Pydantic 默认
+        ``extra="ignore"``，改名后未知键会被静默丢弃 ⇒ 历史记录的公式版本丢失。
+        这里在**校验前**做一次键搬迁（``setdefault``，新名优先），写侧只写新名
+        （``model_dump`` 不再产出旧名），属「显式兼容读取」，不改写旧文件。
+        """
+        if isinstance(data, dict) and "midterm_formula" in data:
+            data = dict(data)
+            legacy = data.pop("midterm_formula")
+            data.setdefault("midterm_formula_revision", legacy)
+        return data
 
     def to_summary(self) -> dict[str, Any]:
         """产出可用作统计输入的精简摘要。"""
@@ -138,7 +158,8 @@ class TaskRecord(BaseModel):
             "midterm_state": self.midterm_state,
             "midterm_confidence": self.midterm_confidence,
             "midterm_evidence_count": self.midterm_evidence_count,
-            "midterm_formula": self.midterm_formula,
+            "midterm_classifier_order": self.midterm_classifier_order,
+            "midterm_formula_revision": self.midterm_formula_revision,
             "midterm_uncertain": self.midterm_uncertain,
             "midterm_adverse_severity": self.midterm_adverse_severity,
             "signal_levels": signal_levels,
