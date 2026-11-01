@@ -79,6 +79,33 @@ _E_REVISION_EXEMPT = 0.3  # E 上修阈值（e_revision > 0.3 = 强催化）
 _CROWDING_EXEMPT_HALF = 0.5  # 启动期高换手豁免：拥挤度扣分减半
 _REGIME_LIFT = 0.1  # regime 软约束：E↑ + segment divergence 时市场暴露上下限上浮幅度
 
+# ─────────────────────────────────────────────────────────────────────────────
+# F 边际改善（设计 MIDTERM_F_MARGINAL_DESIGN §4.1；结构性示意，**不进 config**）
+#
+# 参数冻结（§7.2）在 P2 影子期后完成：冻结时把语料规模与达标指标写进本节注释，
+# 并由 ``tests/midterm/test_f_marginal_scoring.py`` 以 ±0.05 容差复核聚合门。
+# ─────────────────────────────────────────────────────────────────────────────
+
+F_MARGINAL_WEIGHT = 0.30  # 边际项权重（水平项权重 = 1 − 0.30）；上限 0.4（§4.2）
+F_ACCEL_SCALE = 25.0  # PERCENT 加速度饱和点（一季比趋势快 25pp → +1）
+F_MARGIN_DELTA_SCALE = 4.0  # PERCENT 毛利率变化尺度（−4pp → 质量门触底）
+F_MARGIN_QUALITY_FLOOR = 0.20  # 质量门下限（不归零：量/利加速本身仍是信息）
+
+# 三档模式（§5.1）：off = 不算（严格复现旧口径）；shadow = 算但不进 F（缺省）；
+# on = 进 F（P1，门禁通过后显式开启）。**纯函数纪律**：本模块不读 config，模式由
+# ``decision_model.resolve_f_marginal_mode`` 解析后以 keyword 参数传入（缺省 off）。
+MARGINAL_MODE_OFF = "off"
+MARGINAL_MODE_SHADOW = "shadow"
+MARGINAL_MODE_ON = "on"
+KNOWN_MARGINAL_MODES: tuple[str, ...] = (MARGINAL_MODE_OFF, MARGINAL_MODE_SHADOW, MARGINAL_MODE_ON)
+
+# ``f_marginal_source`` 位掩码（§5.2 S4 加速度覆盖率统计口径）：按**可用腿**置位。
+# 1 = 营收腿（q_revenue_yoy 与 revenue_yoy 均在）、2 = 净利腿、4 = 质量腿（q_gross_margin_pp）。
+# 0 = 降级（两腿都缺或质量腿缺失）——降级帧不写边际键，等价于 source=0。
+_MARGINAL_SOURCE_REVENUE = 1
+_MARGINAL_SOURCE_NET_PROFIT = 2
+_MARGINAL_SOURCE_QUALITY = 4
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 通用辅助（纯函数）
@@ -164,7 +191,84 @@ def _segment_bonus(f: FundamentalFactor) -> float:
     return 0.0
 
 
-def fundamental_breakdown(f: FundamentalFactor, e: ExpectationFactor) -> dict[str, float] | None:
+# ─────────────────────────────────────────────────────────────────────────────
+# F 边际项（设计 §4.1）：加速度 Δ + 质量门 Q
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _normalize_marginal_mode(marginal_mode: str | None) -> str:
+    """模式归一：合法值原样返回；缺失/非法 → ``off``（最保守，绝不因模式串制造新键）。
+
+    resolve 层（``decision_model.resolve_f_marginal_mode``）已保证合法值，这里只是
+    直接调用 ``fundamental_breakdown`` 时的防御：非法值不得被静默升级为 shadow。
+    """
+    value = str(marginal_mode or "").strip().lower()
+    return value if value in KNOWN_MARGINAL_MODES else MARGINAL_MODE_OFF
+
+
+def _marginal_legs(f: FundamentalFactor) -> list[float]:
+    """两条加速度腿（pp）：``Δ_rev = q_revenue_yoy − revenue_yoy``、``Δ_np`` 同理。
+
+    可单腿（另一腿缺失只用可用腿，**不补 0**）；两腿都缺 ⇒ 空列表。
+    """
+    deltas: list[float] = []
+    if f.q_revenue_yoy is not None and f.revenue_yoy is not None:
+        deltas.append(f.q_revenue_yoy - f.revenue_yoy)
+    if f.q_net_profit_yoy is not None and f.net_profit_yoy is not None:
+        deltas.append(f.q_net_profit_yoy - f.net_profit_yoy)
+    return deltas
+
+
+def _marginal_source(f: FundamentalFactor) -> int:
+    """``f_marginal_source`` 位掩码：1=营收腿、2=净利腿、4=质量腿（按**可用**置位）。
+
+    只有 ``_marginal`` 非 ``None`` 时才会写进分解（值 ∈ {5, 6, 7}）；降级帧不写该键，
+    语义等价于 ``0``（两腿都缺 / 质量腿缺失）。
+    """
+    source = 0
+    if f.q_revenue_yoy is not None and f.revenue_yoy is not None:
+        source |= _MARGINAL_SOURCE_REVENUE
+    if f.q_net_profit_yoy is not None and f.net_profit_yoy is not None:
+        source |= _MARGINAL_SOURCE_NET_PROFIT
+    if f.q_gross_margin_pp is not None:
+        source |= _MARGINAL_SOURCE_QUALITY
+    return source
+
+
+def _marginal(f: FundamentalFactor) -> tuple[float, float, float] | None:
+    """F 边际项 ``(M_raw, Q, M)``（设计 §4.1）；不可算 → ``None``（降级，F 回落水平项 L）。
+
+    - ``Δ_rev = q_revenue_yoy − revenue_yoy``、``Δ_np = q_net_profit_yoy − net_profit_yoy``（pp）：
+      量的是**加速度**而非「单季水平」——直接用 ``q_yoy`` 水平会与 L 重复计分（一家常年
+      +30% 的公司会被算两次，§4.1 口径说明）；
+    - ``M_raw = mean(saturate(Δ, F_ACCEL_SCALE))``：可单腿（不把缺失腿当 0 稀释）；
+    - ``Q = clip(1 + q_gross_margin_pp / F_MARGIN_DELTA_SCALE, F_MARGIN_QUALITY_FLOOR, 1.0)``；
+    - ``M = M_raw × Q``。
+
+    **降级规则（§4.3 未逐字规定处的取舍）**：两条加速度腿都缺，**或**质量腿
+    （``q_gross_margin_pp``）缺失 ⇒ ``None``。理由：质量门是边际项成立的必要条件——
+    没有质地的「加速」正是 §0 第三行要防的失败模式（一次低基数季度把「证伪」抹成
+    「没信号」），所以不拿半边数据报满额信用。
+    """
+    deltas = _marginal_legs(f)
+    if not deltas or f.q_gross_margin_pp is None:
+        return None
+    m_raw = _mean([_saturate(delta, F_ACCEL_SCALE) for delta in deltas])
+    if m_raw is None:  # 理论上不可达（deltas 非空），防御保留
+        return None
+    quality = max(
+        F_MARGIN_QUALITY_FLOOR,
+        min(1.0, 1.0 + f.q_gross_margin_pp / F_MARGIN_DELTA_SCALE),
+    )
+    return m_raw, quality, m_raw * quality
+
+
+def fundamental_breakdown(
+    f: FundamentalFactor,
+    e: ExpectationFactor,
+    *,
+    marginal_mode: str = MARGINAL_MODE_OFF,
+) -> dict[str, float] | None:
     """F 方向分的**可审计分解**（L1）：返回逐项与饱和标志；全部 YoY 缺失 → ``None``。
 
     键（全部 ``float``，缺失项不出现）：
@@ -172,14 +276,36 @@ def fundamental_breakdown(f: FundamentalFactor, e: ExpectationFactor) -> dict[st
     - ``revenue_yoy`` / ``net_profit_yoy`` / ``eps_growth_yoy``：原始 PERCENT；
     - ``revenue_term`` / ``net_profit_term`` / ``eps_term``：``_saturate(yoy, _FUNDAMENTAL_YOY_SCALE)`` 后的项；
     - ``revenue_saturated`` / ...：该项是否越过 ±30 饱和点（1.0/0.0）；
-    - ``growth_mean``：三项均值；``ocf_penalty`` / ``beat_bonus`` / ``miss_penalty`` / ``segment_bonus``：修正项；
+    - ``growth_mean``：水平项 L = 三项均值；``ocf_penalty`` / ``beat_bonus`` / ``miss_penalty`` /
+      ``segment_bonus``：修正项；
     - ``raw``：修正后合计；``f``：最终方向分（clip 后）；
     - ``input_saturated``：至少一项 YoY 越过饱和点（原始幅度已丢失）；
     - ``output_saturated``：合计越过 ±1（越界部分被 clip）。
 
+    F 边际改善（§6.1，``marginal_mode`` 三档；缺省 ``off`` ⇒ 键与值逐项不变）：
+
+    - ``off``：不算边际项，**输出与改造前逐值相同**（所有既有调用点零变化）；
+    - ``shadow``：算 ``M`` 并写 6 个边际键，但 F 仍只用水平项（``f_growth = L``）；
+    - ``on``：``f_growth = (1 − F_MARGINAL_WEIGHT)·L + F_MARGINAL_WEIGHT·M``；
+    - 边际键：``marginal_raw``(M_raw) / ``marginal_quality``(Q) / ``marginal``(M) /
+      ``f_shadow``（**把 M 代入后的 F**，即 on 模式的 F）/ ``f_shadow_delta``(= f_shadow − f) /
+      ``f_marginal_source``（可用腿位掩码，见 :func:`_marginal_source`）。
+      降级帧（``_marginal`` 为 ``None``）**不写边际键**：等价于 source=0，且保证
+      ``on``/``shadow`` 的分解与 ``off`` 逐键相同（降级恒等）；
+    - ``f_shadow`` 在 ``on`` 模式恒等于 ``f``（delta=0）：两种模式共用同一"代入 M"口径，
+      shadow 因此是真正的**开权重预演**（S1 ``ΔF`` 直接可用）。
+
+    §4.4 去重：仅 ``on`` 且 ``marginal`` 非 ``None`` 且 ``Q < 1.0`` 时 ``beat *= 0.5``
+    （避免「超预期」与「加速」对同一改善双重奖励）；``shadow``/``off`` 不折半
+    （否则 F 会变，违反 G-7）。``f_shadow`` 按 on 口径计算，故 shadow 模式下的
+    ``f_shadow_delta`` 已包含该去重效应。
+
     本函数是 F 的**唯一计算入口**：:func:`_fundamental_trend` 只取 ``["f"]``，报告/记录消费
     ``breakdown``——避免"决策算一份、报告再算一份"的漂移（``alphabee-schema-steward`` 单一来源）。
     """
+    mode = _normalize_marginal_mode(marginal_mode)
+    marginal = _marginal(f) if mode != MARGINAL_MODE_OFF else None
+
     yoys = {
         "revenue_yoy": f.revenue_yoy,
         "net_profit_yoy": f.net_profit_yoy,
@@ -205,9 +331,25 @@ def fundamental_breakdown(f: FundamentalFactor, e: ExpectationFactor) -> dict[st
 
     ocf_penalty = _operating_cashflow_penalty(f)
     beat_bonus = _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
+    # §4.4 去重：仅 on + 有边际项 + 质量门未满（Q<1）时 beat 折半；shadow/off 不折半。
+    beat_deduped = beat_bonus
+    if marginal is not None and marginal[1] < 1.0:
+        beat_deduped = beat_bonus * 0.5
     miss_penalty = _miss_penalty(f.net_profit_yoy, e.profit_forecast_min_change)
     segment_bonus = _segment_bonus(f)
-    raw = growth + ocf_penalty + beat_bonus + miss_penalty + segment_bonus
+
+    # 边际项：M 代入后的增长项（on 口径）。shadow 只算不用，on 真正替换 L。
+    f_shadow: float | None = None
+    if marginal is not None:
+        m = marginal[2]
+        growth_mixed = (1.0 - F_MARGINAL_WEIGHT) * growth + F_MARGINAL_WEIGHT * m
+        f_shadow = _saturate(growth_mixed + ocf_penalty + beat_deduped + miss_penalty + segment_bonus, 1.0)
+        f_growth = growth_mixed if mode == MARGINAL_MODE_ON else growth
+    else:
+        f_growth = growth
+
+    beat_for_f = beat_deduped if mode == MARGINAL_MODE_ON else beat_bonus
+    raw = f_growth + ocf_penalty + beat_for_f + miss_penalty + segment_bonus
     final = _saturate(raw, 1.0)
 
     breakdown: dict[str, float] = {**present, **term_values}
@@ -216,7 +358,7 @@ def fundamental_breakdown(f: FundamentalFactor, e: ExpectationFactor) -> dict[st
         {
             "growth_mean": growth,
             "ocf_penalty": ocf_penalty,
-            "beat_bonus": beat_bonus,
+            "beat_bonus": beat_for_f,
             "miss_penalty": miss_penalty,
             "segment_bonus": segment_bonus,
             "raw": raw,
@@ -225,10 +367,27 @@ def fundamental_breakdown(f: FundamentalFactor, e: ExpectationFactor) -> dict[st
             "output_saturated": 1.0 if abs(raw) > 1.0 else 0.0,
         }
     )
+    if marginal is not None and f_shadow is not None:
+        m_raw, quality, m = marginal
+        breakdown.update(
+            {
+                "marginal_raw": m_raw,
+                "marginal_quality": quality,
+                "marginal": m,
+                "f_shadow": f_shadow,
+                "f_shadow_delta": f_shadow - final,
+                "f_marginal_source": float(_marginal_source(f)),
+            }
+        )
     return breakdown
 
 
-def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | None:
+def _fundamental_trend(
+    f: FundamentalFactor,
+    e: ExpectationFactor,
+    *,
+    marginal_mode: str = MARGINAL_MODE_OFF,
+) -> float | None:
     """F 方向分：边际改善 + 经营现金流惩罚 + 超预期 beat + 结构性亮点（改造 E）。
 
     §3.3 口径 ``gross_margin_trend + revenue_yoy + net_profit_yoy`` 的边际方向；
@@ -241,12 +400,14 @@ def _fundamental_trend(f: FundamentalFactor, e: ExpectationFactor) -> float | No
     - 预告 miss（P0-2 预期差）：net_profit_yoy 远低于预告下限 → 显著扣分
       （预告 +30~40% 但实际 +1.54% 的预期差是框架核心信号，不能只奖 beat 不罚 miss）；
     - 结构性亮点（改造 E）：最快细分增速显著跑赢整体（segment divergence > 15pp）
-      → 正向修正（整体 +17.94% 但高速通信线 +35.44% 的「结构性突变」）。
+      → 正向修正（整体 +17.94% 但高速通信线 +35.44% 的「结构性突变」）；
+    - 边际改善（F-Marginal §4.3，``marginal_mode``）：``on`` 时把水平项 L 与边际项 M 混合；
+      ``shadow`` 只落盘不生效；``off``/无单季数据 ⇒ 逐值等于改造前公式（G3 降级恒等）。
 
     全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。逐项口径见
     :func:`fundamental_breakdown`（本函数只取其中的 ``f``，单一来源）。
     """
-    breakdown = fundamental_breakdown(f, e)
+    breakdown = fundamental_breakdown(f, e, marginal_mode=marginal_mode)
     return breakdown["f"] if breakdown is not None else None
 
 
@@ -455,7 +616,7 @@ def _market_summary(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def compress_scores(snapshot: FactorSnapshot | None) -> VariableScores:
+def compress_scores(snapshot: FactorSnapshot | None, *, marginal_mode: str = MARGINAL_MODE_OFF) -> VariableScores:
     """把七因子快照压缩为七方向分（``FactorSnapshot → VariableScores``）。
 
     七个方向分独立产出、不跨因子求和；任一因子方向分输入缺失时对应字段为 ``None``。
@@ -465,6 +626,10 @@ def compress_scores(snapshot: FactorSnapshot | None) -> VariableScores:
 
     Args:
         snapshot: 七因子快照（``alphabee.midterm.factors.get_factor_snapshot`` 产物）。
+        marginal_mode: F 边际模式（F-Marginal §6.3）：``off``（缺省，逐值等于改造前）/
+            ``shadow``（算但不进 F）/ ``on``（进 F）。缺省 ``off`` 保证所有既有直接调用点
+            （含单测 ``compress_scores(snap)``）行为逐值不变；``decision_model.evaluate``
+            会 resolve 配置后显式传入。
 
     Returns:
         ``VariableScores``：``m`` 为市场摘要（复用 ``market_score`` 0-100），
@@ -483,7 +648,7 @@ def compress_scores(snapshot: FactorSnapshot | None) -> VariableScores:
 
     return VariableScores(
         m=_market_summary(snapshot.market, e_revision=e_revision, segment_divergence=segment_divergence),
-        f_fundamental_trend=_fundamental_trend(snapshot.fundamental, snapshot.expectation),
+        f_fundamental_trend=_fundamental_trend(snapshot.fundamental, snapshot.expectation, marginal_mode=marginal_mode),
         e_revision=e_revision,
         t_relative_strength=_relative_strength(snapshot.trend),
         v_valuation_percentile=_valuation_percentile(snapshot.valuation),

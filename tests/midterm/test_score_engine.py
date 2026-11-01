@@ -618,3 +618,100 @@ def test_revision_anchor_negative_from_adjacent_period_downgrade():
     e = ExpectationFactor(forecast_revision_anchor=-20.0, coverage_count=3)
     assert _forecast_revision_anchor(e) < 0
     assert compress_scores(_snapshot(expectation=e)).e_revision < 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F 边际改善三档（F-Marginal §6.3）：off 缺省零变化 / shadow 只算不生效 / on 混合
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _marginal_fund(**overrides) -> FundamentalFactor:
+    """600760 口径的单季派生输入（PR-1 数据层产物）。"""
+    values: dict = {
+        "revenue_yoy": -34.19,
+        "net_profit_yoy": -26.0,
+        "eps_growth_yoy": -28.0,
+        "q_revenue_yoy": 23.29,
+        "q_net_profit_yoy": 137.0,
+        "q_gross_margin": 9.63,
+        "q_gross_margin_pp": -3.4,
+    }
+    values.update(overrides)
+    return FundamentalFactor(**values)
+
+
+def _marginal_exp() -> ExpectationFactor:
+    return ExpectationFactor(profit_forecast_min_change=-58.23, profit_forecast_max_change=-58.23)
+
+
+_MARGINAL_KEY_PREFIXES = ("marginal", "f_shadow", "f_marginal_source")
+
+
+def test_fundamental_breakdown_off_default_has_no_marginal_keys():
+    """off（缺省）⇒ 完全没有边际键：既有直接调用点逐值/逐键不变。"""
+    f = _marginal_fund()
+    e = _marginal_exp()
+    default = fundamental_breakdown(f, e)
+    explicit_off = fundamental_breakdown(f, e, marginal_mode="off")
+    assert default == explicit_off
+    assert not any(key.startswith(_MARGINAL_KEY_PREFIXES) for key in default)
+
+
+def test_fundamental_breakdown_shadow_adds_keys_but_keeps_f():
+    """shadow ⇒ 追加 6 个边际键，F/raw/beat 等 L1 键逐值不变（G-7）。"""
+    f = _marginal_fund()
+    e = _marginal_exp()
+    off = fundamental_breakdown(f, e)
+    shadow = fundamental_breakdown(f, e, marginal_mode="shadow")
+
+    assert shadow["f"] == pytest.approx(off["f"])
+    assert shadow["beat_bonus"] == pytest.approx(off["beat_bonus"])  # shadow 不折半
+    assert shadow["raw"] == pytest.approx(off["raw"])
+    assert shadow["marginal_raw"] == pytest.approx(1.0)
+    assert shadow["marginal_quality"] == pytest.approx(0.2)
+    assert shadow["marginal"] == pytest.approx(0.2)
+    assert shadow["f_marginal_source"] == 7.0
+    # f_shadow 是「on 模式下的 F」⇒ 已包含 §4.4 的 beat 折半（0.2 → 0.1）
+    assert shadow["f_shadow"] == pytest.approx(0.7 * off["growth_mean"] + 0.3 * 0.2 + 0.1, abs=1e-9)
+    assert shadow["f_shadow_delta"] == pytest.approx(shadow["f_shadow"] - shadow["f"], abs=1e-12)
+
+
+def test_fundamental_breakdown_on_mixes_growth_and_shadow_equals_f():
+    """on ⇒ f_growth=(1−W)·L+W·M；f_shadow 与 f 相同（delta=0），beat 按 §4.4 折半。"""
+    f = _marginal_fund()
+    e = _marginal_exp()
+    off = fundamental_breakdown(f, e)
+    on = fundamental_breakdown(f, e, marginal_mode="on")
+
+    expected_growth = 0.7 * off["growth_mean"] + 0.3 * 0.2
+    expected = expected_growth + on["ocf_penalty"] + on["beat_bonus"] + on["miss_penalty"] + on["segment_bonus"]
+    assert on["f"] == pytest.approx(expected, abs=1e-9)
+    assert on["beat_bonus"] == pytest.approx(0.1)  # Q<1 ⇒ 折半
+    assert on["f_shadow"] == pytest.approx(on["f"])
+    assert on["f_shadow_delta"] == pytest.approx(0.0, abs=1e-12)
+    assert on["f"] > off["f"]
+
+
+def test_fundamental_breakdown_invalid_mode_falls_back_to_off():
+    """直接调用传非法模式 ⇒ 最保守 off（绝不静默升级为 shadow/on）。"""
+    f = _marginal_fund()
+    e = _marginal_exp()
+    assert fundamental_breakdown(f, e, marginal_mode="bogus") == fundamental_breakdown(f, e)
+    assert fundamental_breakdown(f, e, marginal_mode=None) == fundamental_breakdown(f, e)
+
+
+def test_compress_scores_passes_marginal_mode():
+    """compress_scores 透传：off/shadow 的 F 相同，on 用混合后 F（等于分解里的 f）。"""
+    snap_off = _snapshot(fundamental=_marginal_fund(), expectation=_marginal_exp())
+    snap_shadow = _snapshot(fundamental=_marginal_fund(), expectation=_marginal_exp())
+    snap_on = _snapshot(fundamental=_marginal_fund(), expectation=_marginal_exp())
+
+    off = compress_scores(snap_off)
+    shadow = compress_scores(snap_shadow, marginal_mode="shadow")
+    on = compress_scores(snap_on, marginal_mode="on")
+
+    assert shadow.f_fundamental_trend == pytest.approx(off.f_fundamental_trend)
+    assert on.f_fundamental_trend == pytest.approx(
+        fundamental_breakdown(_marginal_fund(), _marginal_exp(), marginal_mode="on")["f"]
+    )
+    assert on.f_fundamental_trend > off.f_fundamental_trend

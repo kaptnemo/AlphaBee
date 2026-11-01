@@ -577,7 +577,7 @@ def test_evaluate_writes_v2_fields_from_classifier_result(monkeypatch):
         c_crowding=-0.1902,
         r_risk=-0.08741,
     )
-    monkeypatch.setattr(dm, "compress_scores", lambda snapshot: scores)
+    monkeypatch.setattr(dm, "compress_scores", lambda snapshot, **kwargs: scores)
     art = dm.evaluate(FactorSnapshot(symbol="600760.SH"), classifier_order="tef", classifier_formula="v2")
     expected = classifier_v2.classify_state(scores, order="tef")
 
@@ -592,7 +592,7 @@ def test_evaluate_writes_v2_fields_from_classifier_result(monkeypatch):
     # §6.3 v2 口径：0.7×mean(F,E) + 0.3×mean(F,E,T)
     assert art.factor_direction == pytest.approx(0.7 * (-1.0 + -0.5169) / 2 + 0.3 * (-1.0 + -0.5169 + 1.0) / 3)
     # 同帧 v1 仍是旧口径（六因子均值）且无 v2 字段
-    monkeypatch.setattr(dm, "compress_scores", lambda snapshot: scores)
+    monkeypatch.setattr(dm, "compress_scores", lambda snapshot, **kwargs: scores)
     art_v1 = dm.evaluate(FactorSnapshot(symbol="600760.SH"), classifier_order="tef", classifier_formula="v1")
     assert art_v1.classifier_formula == "v1"
     assert art_v1.state_evidence == {}
@@ -676,3 +676,145 @@ def test_factor_direction_v1_unchanged_six_factor_mean():
     assert dm._factor_direction(scores) == pytest.approx(_six_factor_mean(scores))  # noqa: SLF001
     assert dm._factor_direction(scores, formula="v1") == pytest.approx(_six_factor_mean(scores))  # noqa: SLF001
     assert dm._factor_direction(VariableScores(), formula="v1") is None  # noqa: SLF001
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F 边际模式（F-Marginal design §6.4）：resolve 三档语义 / evaluate provenance / 透传
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _pin_marginal_config(monkeypatch, *, mode: str | None = "shadow", drop_field: bool = False) -> None:
+    """钉住配置：``drop_field=True`` 模拟「缺字段」（stub 无 f_marginal_mode）。"""
+    midterm = SimpleNamespace(classifier_order="etf", formula_revision="v1")
+    if not drop_field:
+        midterm.f_marginal_mode = mode
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=midterm))
+
+
+def test_resolve_f_marginal_mode_explicit_value_wins(monkeypatch):
+    """显式合法值优先于配置（与 classifier_formula 同构）。"""
+    from alphabee.midterm.decision_model import resolve_f_marginal_mode
+
+    _pin_marginal_config(monkeypatch, mode="off")
+    assert resolve_f_marginal_mode("on") == "on"
+    assert resolve_f_marginal_mode("shadow") == "shadow"
+    assert resolve_f_marginal_mode("OFF") == "off"  # 大小写归一
+    assert resolve_f_marginal_mode() == "off"  # 未显式传 ⇒ 跟随配置
+
+
+def test_resolve_f_marginal_mode_config_missing_field_defaults_to_shadow(monkeypatch):
+    """配置缺字段（旧 Settings/桩）⇒ 走 settings 默认值 shadow（算但不生效）。"""
+    from alphabee.midterm.decision_model import resolve_f_marginal_mode
+
+    _pin_marginal_config(monkeypatch, drop_field=True)
+    assert resolve_f_marginal_mode() == "shadow"
+
+    # 配置缺整段（midterm=None）同样回落 shadow
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=None))
+    assert resolve_f_marginal_mode() == "shadow"
+
+
+def test_resolve_f_marginal_mode_config_exception_falls_back_to_off(monkeypatch):
+    """读配置抛异常 ⇒ warn + off（最保守：连派生都不做，绝不抛）。"""
+    from alphabee.midterm.decision_model import resolve_f_marginal_mode
+
+    def _boom():
+        raise RuntimeError("config broken")
+
+    monkeypatch.setattr("alphabee.config.get_settings", _boom)
+    assert resolve_f_marginal_mode() == "off"
+
+
+def test_resolve_f_marginal_mode_invalid_values_fall_back_to_off(monkeypatch):
+    """配置值非法 / 显式值非法 ⇒ off（不静默升级为 shadow）。"""
+    from alphabee.midterm.decision_model import resolve_f_marginal_mode
+
+    _pin_marginal_config(monkeypatch, mode="shadows")  # 配置值非法
+    assert resolve_f_marginal_mode() == "off"
+    _pin_marginal_config(monkeypatch, mode="on")
+    assert resolve_f_marginal_mode("bogus") == "off"  # 显式值非法
+
+
+def test_evaluate_writes_f_marginal_mode_provenance(monkeypatch):
+    """artifact.f_marginal_mode = 解析后的实际值；缺省 config（缺字段）⇒ shadow。"""
+    _pin_marginal_config(monkeypatch, drop_field=True)
+    assert evaluate(_snapshot(), []).f_marginal_mode == "shadow"
+
+    _pin_marginal_config(monkeypatch, drop_field=True)
+    assert evaluate(_snapshot(), [], f_marginal_mode="off").f_marginal_mode == "off"
+    _pin_marginal_config(monkeypatch, drop_field=True)
+    assert evaluate(_snapshot(), [], f_marginal_mode="on").f_marginal_mode == "on"
+
+
+def _snapshot_with_marginal() -> FactorSnapshot:
+    """600760 口径：单季派生字段齐备（shadow/on 才有边际键）。"""
+    return _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=-34.19,
+            net_profit_yoy=-26.0,
+            eps_growth_yoy=-28.0,
+            q_revenue_yoy=23.29,
+            q_net_profit_yoy=137.0,
+            q_gross_margin=9.63,
+            q_gross_margin_pp=-3.4,
+        )
+    )
+
+
+def test_evaluate_links_mode_to_score_breakdown(monkeypatch):
+    """模式 ↔ 分解联动：off 无边际键；shadow 有键且 F 不变；on 的 F 取分解里的 f。"""
+    _pin_marginal_config(monkeypatch, drop_field=True)
+
+    off = evaluate(_snapshot_with_marginal(), [], f_marginal_mode="off")
+    off_bd = off.factor_snapshot.fundamental.score_breakdown
+    assert not any(key.startswith(("marginal", "f_shadow", "f_marginal_source")) for key in off_bd)
+
+    shadow = evaluate(_snapshot_with_marginal(), [], f_marginal_mode="shadow")
+    shadow_bd = shadow.factor_snapshot.fundamental.score_breakdown
+    assert shadow_bd["marginal"] == pytest.approx(0.2)
+    assert shadow_bd["f_marginal_source"] == 7.0
+    assert shadow.variable_scores.f_fundamental_trend == pytest.approx(off.variable_scores.f_fundamental_trend)
+    assert shadow.factor_snapshot.fundamental.score_breakdown["f"] == pytest.approx(
+        shadow.variable_scores.f_fundamental_trend
+    )
+
+    on = evaluate(_snapshot_with_marginal(), [], f_marginal_mode="on")
+    on_bd = on.factor_snapshot.fundamental.score_breakdown
+    assert on_bd["f"] == pytest.approx(on.variable_scores.f_fundamental_trend)
+    assert on.variable_scores.f_fundamental_trend > off.variable_scores.f_fundamental_trend
+    assert on.f_marginal_mode == "on"
+
+
+def test_evaluate_default_config_shadow_is_behavior_neutral(monkeypatch):
+    """缺省 shadow 下，与显式 off 的 artifact 剔除 provenance/诊断键后逐值相同（F 不变）。"""
+    _pin_marginal_config(monkeypatch, drop_field=True)
+    default = evaluate(_snapshot_with_marginal(), [])
+    off = evaluate(_snapshot_with_marginal(), [], f_marginal_mode="off")
+    assert default.f_marginal_mode == "shadow"
+    assert default.variable_scores.model_dump() == off.variable_scores.model_dump()
+    assert default.state == off.state
+    assert default.expected_value == off.expected_value
+    assert default.position == off.position
+    # shadow 只多分解键（去掉边际键后与 off 分解逐键相同）
+    shadow_bd = {
+        key: value
+        for key, value in default.factor_snapshot.fundamental.score_breakdown.items()
+        if not key.startswith(("marginal", "f_shadow", "f_marginal_source"))
+    }
+    assert shadow_bd == off.factor_snapshot.fundamental.score_breakdown
+
+
+def test_get_decision_passes_f_marginal_mode(monkeypatch):
+    """get_decision 透传 f_marginal_mode（keyword-only）到 evaluate。"""
+    import alphabee.midterm.factors as factors_mod
+    from alphabee.midterm.decision_model import resolve_f_marginal_mode
+
+    assert resolve_f_marginal_mode() == "shadow"  # 缺字段 ⇒ settings 默认值
+    _pin_marginal_config(monkeypatch, drop_field=True)
+    snap = _snapshot_with_marginal()
+    monkeypatch.setattr(factors_mod, "get_factor_snapshot", lambda symbol, include_market=True: snap)
+    art = get_decision("600760.SH", f_marginal_mode="on")
+    assert art.f_marginal_mode == "on"
+    assert art.variable_scores.f_fundamental_trend == pytest.approx(
+        art.factor_snapshot.fundamental.score_breakdown["f"]
+    )

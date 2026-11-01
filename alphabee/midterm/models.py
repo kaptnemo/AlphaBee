@@ -619,6 +619,10 @@ class CompanyStateArtifact(BaseModel):
     # 情景方向分（scenario_probability 的驱动方向）：v2 = 0.7×mean(F,E)+0.3×mean(F,E,T)；
     # v1 = 六因子等权均值（逐值不变）。
     factor_direction: float | None = None
+    # F 边际模式 provenance（F-Marginal design §6.1，additive）：本帧解析后的边际模式
+    # （off / shadow / on）；旧帧无该字段 → 回落 "off"（语义 = 未记录/未启用，正确）。
+    # schema_version 不升（additive 默认值，沿用 V2 先例）。
+    f_marginal_mode: str = "off"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

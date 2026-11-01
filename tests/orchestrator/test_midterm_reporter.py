@@ -496,3 +496,89 @@ def test_render_without_breakdown_keeps_legacy_lines():
     assert "F 基本面: direction=deteriorating  score=0" in text
     assert "F 分解" not in text
     assert "F 修正" not in text
+
+
+# ── F 边际改善（F-Marginal §6.5）：影子行仅在 score_breakdown 含 marginal 键时出现──────
+
+
+def _f_marginal_decision() -> CompanyStateArtifact:
+    """shadow 帧：600760 口径（单季量利双升、毛利率 −3.4pp ⇒ Q=0.2）。"""
+    breakdown = {
+        "revenue_yoy": -34.19,
+        "revenue_term": -1.0,
+        "revenue_saturated": 1.0,
+        "net_profit_yoy": -26.0,
+        "net_profit_term": -0.86666,
+        "net_profit_saturated": 0.0,
+        "eps_growth_yoy": -28.0,
+        "eps_term": -0.93333,
+        "eps_saturated": 0.0,
+        "growth_mean": -0.93333,
+        "ocf_penalty": 0.0,
+        "beat_bonus": 0.2,
+        "miss_penalty": 0.0,
+        "segment_bonus": 0.0,
+        "raw": -0.73333,
+        "f": -0.73333,
+        "input_saturated": 1.0,
+        "output_saturated": 0.0,
+        "marginal_raw": 1.0,
+        "marginal_quality": 0.2,
+        "marginal": 0.2,
+        "f_shadow": -0.49333,
+        "f_shadow_delta": 0.24,
+        "f_marginal_source": 7.0,
+    }
+    snapshot = FactorSnapshot(
+        symbol="600760.SH",
+        as_of_date="2026-11-01",
+        fundamental=FundamentalFactor(
+            revenue_yoy=-34.19,
+            net_profit_yoy=-26.0,
+            eps_growth_yoy=-28.0,
+            q_revenue_yoy=23.29,
+            q_net_profit_yoy=137.0,
+            q_gross_margin=9.63,
+            q_gross_margin_pp=-3.4,
+            direction="deteriorating",
+            score=0.0,
+            score_breakdown=breakdown,
+        ),
+    )
+    return _company_state().model_copy(
+        update={"factor_snapshot": snapshot, "f_marginal_mode": "shadow"},
+    )
+
+
+def test_render_f_marginal_line_for_shadow_frame():
+    """shadow 帧出现「F 边际（影子）」行，含单季原始值、M_raw、Q、F_shadow 与 ΔF。"""
+    text = node.render_midterm_decision_summary(_f_marginal_decision())
+    line = next((item for item in text.splitlines() if "F 边际（影子）" in item), None)
+    assert line is not None, "shadow 帧必须渲染 F 边际（影子）行"
+    assert "单季营收 23.29" in line
+    assert "单季净利 137" in line
+    assert "单季毛利率 9.63" in line
+    assert "pp -3.4" in line
+    assert "M_raw=1" in line
+    assert "Q=0.2" in line
+    assert "M=0.2" in line
+    assert "F_shadow=-0.4933" in line
+    assert "ΔF=0.24" in line
+    # 与 L1 分解行共存（不覆盖、不重算）
+    assert "F 分解: 营收 -34.19→-1（饱和）" in text
+    assert "⇒ F=-0.7333（未饱和，合计 -0.7333）" in text
+
+
+def test_render_f_marginal_line_absent_for_off_frame():
+    """off 帧（有 L1 分解、无 marginal 键）不出现 F 边际行——与改造前逐字一致。"""
+    text = node.render_midterm_decision_summary(_f_breakdown_decision())
+    assert "F 边际（影子）" not in text
+    assert "F_shadow" not in text
+    assert "F 分解" in text  # L1 行仍在
+
+
+def test_marginal_line_survives_payload_roundtrip():
+    """接线路径（payload → 节点 → summary artifact）同样带影子行。"""
+    text = _rendered_text(_f_marginal_decision(), _state)
+    assert "F 边际（影子）" in text
+    assert "F_shadow=-0.4933" in text

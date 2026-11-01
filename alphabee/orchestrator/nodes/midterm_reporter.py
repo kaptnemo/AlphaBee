@@ -347,11 +347,39 @@ def _render_variable_scores(lines: list[str], decision: CompanyStateArtifact) ->
         )
 
 
-def _render_f_breakdown(lines: list[str], breakdown: dict[str, float]) -> None:
+def _render_f_marginal(lines: list[str], breakdown: Mapping[str, Any], factor: Any) -> None:
+    """F 边际（影子）行（F-Marginal design §6.5）：仅当分解含 ``marginal`` 键时输出。
+
+    ``q_*`` 原始值是**数据层**派生字段（在 ``FundamentalFactor`` 上），``marginal*`` /
+    ``f_shadow*`` 是**评分层**分解键（在 ``score_breakdown`` 上），故两处都要读；
+    本函数**不重算**任何值，也不参与方向分（off / 旧帧 / 降级帧不出现该行）。
+
+    行的语义：``shadow`` 模式给出「若开权重 F 会变成多少」的预演（``F_shadow`` 与 ``ΔF``），
+    ``on`` 模式下 ``F_shadow`` 等于 ``F``、``ΔF=0``（同一「代入 M」口径）。
+    """
+    q_revenue = _fmt(_attr(factor, "q_revenue_yoy"))
+    q_net_profit = _fmt(_attr(factor, "q_net_profit_yoy"))
+    q_gross_margin = _fmt(_attr(factor, "q_gross_margin"))
+    q_gross_margin_pp = _fmt(_attr(factor, "q_gross_margin_pp"))
+    lines.append(
+        f"      F 边际（影子）: 单季营收 {q_revenue}  单季净利 {q_net_profit}"
+        f"  单季毛利率 {q_gross_margin}（pp {q_gross_margin_pp}）"
+        f"  M_raw={_fmt(breakdown.get('marginal_raw'))}"
+        f"  Q={_fmt(breakdown.get('marginal_quality'))}"
+        f"  M={_fmt(breakdown.get('marginal'))}"
+        f"  F_shadow={_fmt(breakdown.get('f_shadow'))}"
+        f"  ΔF={_fmt(breakdown.get('f_shadow_delta'))}"
+    )
+
+
+def _render_f_breakdown(lines: list[str], breakdown: Mapping[str, Any], factor: Any = None) -> None:
     """F 方向分的可审计分解（L1，2026-11-01）：原始 YoY → 饱和项（标注是否触顶）+ 修正项 + 结论。
 
     只渲染 ``factor_snapshot.fundamental.score_breakdown`` 已落盘的分解，**不重算公式**
     （与 ``score_engine.fundamental_breakdown`` 单一来源，避免报告与决策漂移）。
+
+    F 边际（F-Marginal §6.5）：当分解含 ``marginal`` 键（shadow/on 且单季数据可用）时，
+    追加「F 边际（影子）」行；``factor`` 用于读取 ``q_*`` 原始单季派生值。
     """
     parts: list[str] = []
     for raw_key, term_key, sat_key, label in _F_BREAKDOWN_TERMS:
@@ -370,6 +398,8 @@ def _render_f_breakdown(lines: list[str], breakdown: dict[str, float]) -> None:
     lines.append(
         f"      F 修正: {'  '.join(fixes)}  ⇒ F={_fmt(breakdown.get('f'))}（{flag}，合计 {_fmt(breakdown.get('raw'))}）"
     )
+    if "marginal" in breakdown:
+        _render_f_marginal(lines, breakdown, factor)
 
 
 def _render_factor_snapshot(lines: list[str], decision: CompanyStateArtifact) -> None:
@@ -393,7 +423,7 @@ def _render_factor_snapshot(lines: list[str], decision: CompanyStateArtifact) ->
         if data:
             lines.append(f"      {_fmt(data)}")
         if breakdown:
-            _render_f_breakdown(lines, breakdown)
+            _render_f_breakdown(lines, breakdown, factor)
     if snapshot.missing_facts:
         lines.append(f"  缺失字段: {', '.join(snapshot.missing_facts)}")
 

@@ -434,3 +434,103 @@ def test_q_fields_default_to_none_and_are_documented_as_derived():
         assert getattr(factor, name) is None
     # 设计 §3.3 要求 docstring 写明派生字段治理口径（防止后续被当成 canonical 事实）
     assert "多期还原派生字段，非 canonical 单期事实" in (FundamentalFactor.__doc__ or "")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 边界定值（t3 评审补强）：分母门槛的严格不等式语义 + 单季毛利率端点语义
+#
+# 这两组用例把「恰等门槛/恰在端点 ⇒ 保留」钉死。若把实现改成 `>`（要求严格大于门槛）
+# 或把区间判据改成 `low < x < high`（端点排除），对应用例必然变红——语义不能漂移。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _threshold_dataset(base_single_revenue: float, base_single_net_profit: float) -> dict[str, Any]:
+    """1% 门槛用例：t=20250930 当期累计营收 500 ⇒ 门槛 = 5.0（严格 ``<`` 才判 None）。
+
+    单季营收(t) = 500 − 400 = 100；去年同季单季营收 = ``base_single_revenue``。
+    单季净利(t) = 60 − 40 = 20；去年同季单季净利 = ``base_single_net_profit``。
+    """
+    return _fin_data(
+        income=[
+            _income("20240630", 300.0, 50.0),
+            _income("20240930", 300.0 + base_single_revenue, 50.0 + base_single_net_profit),
+            _income("20250630", 400.0, 40.0),
+            _income("20250930", 500.0, 60.0),
+        ],
+        fina=[
+            _fina("20240630", 20.0),
+            _fina("20240930", 20.0),
+            _fina("20250630", 20.0),
+            _fina("20250930", 20.0),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("base_single_revenue", "expected"),
+    [
+        (5.00, 1900.0),  # 恰等门槛（1% × 500）⇒ 保留：严格不等式才是「过小」
+        (4.99, None),  # 恰低于门槛 ⇒ None
+        (5.01, (100.0 / 5.01 - 1.0) * 100.0),  # 恰高于门槛 ⇒ 保留
+    ],
+)
+def test_small_base_threshold_uses_strict_inequality(base_single_revenue: float, expected: float | None):
+    result = derive_marginal(_threshold_dataset(base_single_revenue, base_single_net_profit=100.0))
+    if expected is None:
+        assert result["q_revenue_yoy"] is None
+    else:
+        assert result["q_revenue_yoy"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("base_single_net_profit", "expected"),
+    [
+        (5.00, 300.0),  # 单季净利 20 / 去年同季 5 ⇒ +300%
+        (4.99, None),
+        (5.01, (20.0 / 5.01 - 1.0) * 100.0),
+    ],
+)
+def test_small_base_threshold_applies_to_net_profit_leg(base_single_net_profit: float, expected: float | None):
+    result = derive_marginal(
+        _threshold_dataset(base_single_revenue=100.0, base_single_net_profit=base_single_net_profit)
+    )
+    if expected is None:
+        assert result["q_net_profit_yoy"] is None
+        assert result["q_revenue_yoy"] is not None  # 营收腿不受净利腿门槛影响
+    else:
+        assert result["q_net_profit_yoy"] == pytest.approx(expected)
+
+
+def _margin_endpoint_dataset(current_gross_margin: float) -> dict[str, Any]:
+    """毛利率端点用例：单季营收 100、上一期累计毛利 400×0.20=80。
+
+    单季毛利率 = (500×gm − 80) / 100 × 100；因此 gm=36 ⇒ 100%、gm=6 ⇒ −50%。
+    """
+    return _fin_data(
+        income=[
+            _income("20250630", 400.0, 40.0),
+            _income("20250930", 500.0, 60.0),
+        ],
+        fina=[
+            _fina("20250630", 20.0),
+            _fina("20250930", current_gross_margin),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("current_gross_margin", "expected"),
+    [
+        (36.0, 100.0),  # 恰在上界 ⇒ 保留（闭区间）
+        (36.00002, None),  # 略高于上界 ⇒ None（不夹取）
+        (6.0, -50.0),  # 恰在下界 ⇒ 保留
+        (5.99998, None),  # 略低于下界 ⇒ None
+    ],
+)
+def test_single_quarter_gross_margin_endpoints_are_inclusive(current_gross_margin: float, expected: float | None):
+    result = derive_marginal(_margin_endpoint_dataset(current_gross_margin))
+    if expected is None:
+        assert result["q_gross_margin"] is None
+        assert result["q_gross_margin_pp"] is None
+    else:
+        assert result["q_gross_margin"] == pytest.approx(expected)

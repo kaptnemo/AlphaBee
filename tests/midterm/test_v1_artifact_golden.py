@@ -10,15 +10,21 @@ sha256 ``d3d2406d390e687487249bc4e1fb62c40d6bbc83a3bf99ce5487ec7302a8a691``）�
 两段式断言（避免「additive 字段」与「逐字节相等」自相矛盾）：
 
 - **断言 A（数值零回归）**：默认公式（``classifier_formula=None`` → 配置缺省 ``"v1"``）产出的
-  artifact JSON **剔除 8 个新增字段后**与 golden 逐字节相等；
+  artifact JSON **剔除新增 additive 字段后**（口径见 :func:`_canonical`）与 golden 逐字节相等；
 - **断言 B（新增字段定值）**：v1 下新增字段取「无 v2 语义」的确定值，且
   ``uncertain`` / ``factor_consistency`` / ``divergence_reason`` 与 v1 分类器内部判决逐值相同。
 
-F 边际改善（``MIDTERM_F_MARGINAL_DESIGN`` §3.3，PR-1）：``FundamentalFactor`` 新增 4 个
-``q_*`` 单季派生字段，属于 **additive 诊断字段**（golden 冻结时尚不存在，且不参与任何方向分/
-分布计算），故与顶层 8 字段、``score_breakdown`` 同口径从 golden 比较对象中剔除；它们的
-存在性与确定性由本文件的 :func:`test_v1_artifact_q_marginal_fields_are_none_and_excluded`
-与 ``tests/midterm/test_marginal_derivation.py`` / ``test_factors.py`` 单独钉住。
+F 边际改善（``MIDTERM_F_MARGINAL_DESIGN``）：PR-1 在 ``FundamentalFactor`` 新增 4 个
+``q_*`` 单季派生字段，PR-2 在 ``CompanyStateArtifact`` 新增 ``f_marginal_mode`` 并在
+``score_breakdown`` 追加边际键。三者都是 **additive 诊断/provenance 字段**（golden 冻结时
+尚不存在，且不参与任何方向分/分布计算），故与顶层 8 字段、``score_breakdown`` 同口径从
+golden 比较对象中剔除；它们的存在性、定值与确定性由本文件的
+:func:`test_v1_artifact_q_marginal_fields_are_none_and_excluded` /
+:func:`test_v1_artifact_f_marginal_mode_default_and_keys` 单独钉住。
+
+**F 边际缺省 shadow 不影响断言 A**：缺省 ``f_marginal_mode="shadow"`` 只多算分解键，
+F 逐值不变（G3/G7）；golden 的输入无多期单季字段 ⇒ 降级，分解连边际键都不写，
+``score_breakdown`` 与 off 逐键相同。
 """
 
 from __future__ import annotations
@@ -55,6 +61,8 @@ _NEW_FIELDS = (
     "adverse_divergence",
     "state_evidence",
     "factor_direction",
+    # F 边际模式 provenance（F-Marginal §6.1，PR-2）：additive 字段，golden 冻结时尚不存在。
+    "f_marginal_mode",
 )
 # F 边际改善（F-Marginal §3.3）新增的 4 个单季派生字段：与 score_breakdown 同属
 # additive 诊断字段（golden 冻结时尚不存在、不参与方向分/分布计算），同口径剔除。
@@ -63,6 +71,15 @@ _Q_MARGINAL_FIELDS = (
     "q_net_profit_yoy",
     "q_gross_margin",
     "q_gross_margin_pp",
+)
+# score_breakdown 里的边际分解键（F-Marginal §6.1）：shadow/on 且单季数据可用时出现。
+_MARGINAL_KEYS = (
+    "marginal_raw",
+    "marginal_quality",
+    "marginal",
+    "f_shadow",
+    "f_shadow_delta",
+    "f_marginal_source",
 )
 _GOLDEN_PATH = Path(__file__).with_name("golden") / "v1_artifact_golden.json"
 _THESIS = "核心假设：份额提升与盈利改善"
@@ -142,13 +159,14 @@ def _evidence() -> list[EvidenceEvent]:
 def _canonical(payload: dict) -> str:
     """剔除新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。
 
-    剔除两类：① 8 个 artifact 顶层字段（V2 design §6.1）；②
-    ``factor_snapshot.fundamental`` 内的 ``score_breakdown``（L1，2026-11-01 的 F 可审计分解）
-    与 4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，2026-11-01 PR-1）——
+    剔除两类：① 9 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
+    ``f_marginal_mode``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
+    （L1，2026-11-01 的 F 可审计分解）与 4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，PR-1）——
     后两者在 golden 冻结时尚不存在，且是**诊断/派生字段**（不参与任何方向分/分布计算），
     故与顶层字段同口径剔除；它们的存在性与确定性由
     ``test_f_breakdown_written_and_deterministic`` /
-    ``test_v1_artifact_q_marginal_fields_are_none_and_excluded`` 单独钉住。
+    ``test_v1_artifact_q_marginal_fields_are_none_and_excluded`` /
+    ``test_v1_artifact_f_marginal_mode_default_and_keys`` 单独钉住。
     """
     trimmed = {key: value for key, value in payload.items() if key not in _NEW_FIELDS}
     factor_snapshot = trimmed.get("factor_snapshot")
@@ -173,7 +191,10 @@ def _golden_payload() -> dict:
 
 
 def _pin_default_midterm_config(monkeypatch, *, formula_revision: str = "v1", classifier_order: str = "etf") -> None:
-    """钉住配置缺省（两条 resolve 都在调用时 ``from alphabee.config import get_settings``）。"""
+    """钉住配置缺省（三条 resolve 都在调用时 ``from alphabee.config import get_settings``）。
+
+    stub **不含** ``f_marginal_mode`` ⇒ 走「缺字段 ⇒ settings 默认值 shadow」分支（F 仍然逐值不变）。
+    """
     stub = SimpleNamespace(
         midterm=SimpleNamespace(classifier_order=classifier_order, formula_revision=formula_revision)
     )
@@ -194,7 +215,7 @@ def test_v1_artifact_golden_numeric_zero_regression(monkeypatch):
     artifact = _evaluate_golden_input()
     payload = artifact.model_dump(mode="json")
 
-    # 8 个新增字段确实存在（否则「剔除后相等」会退化成「根本不写」的假通过）
+    # 新增 additive 字段确实存在（否则「剔除后相等」会退化成「根本不写」的假通过）
     assert set(_NEW_FIELDS) <= set(payload)
     canonical = _canonical(payload)
     assert canonical.strip(), "golden 比较对象不得为空壳"
@@ -206,7 +227,7 @@ def test_v1_artifact_golden_numeric_zero_regression(monkeypatch):
 
 
 def test_v1_artifact_golden_is_stable_across_runs(monkeypatch):
-    """同一输入两次 evaluate ⇒ 剔除 8 字段后逐字节一致（golden 的可复现前提）。"""
+    """同一输入两次 evaluate ⇒ 剔除 additive 字段后逐字节一致（golden 的可复现前提）。"""
     _pin_default_midterm_config(monkeypatch)
     first = _canonical(_evaluate_golden_input().model_dump(mode="json"))
     second = _canonical(_evaluate_golden_input().model_dump(mode="json"))
@@ -251,6 +272,66 @@ def test_v1_artifact_q_marginal_fields_are_none_and_excluded(monkeypatch):
     assert _canonical(payload) == _golden_text()
 
 
+def _snapshot_with_marginal() -> FactorSnapshot:
+    """带单季派生字段的确定性帧（600760 口径）：shadow 下应落 marginal 键、F 不变。"""
+    snap = _snapshot()
+    snap.fundamental = FundamentalFactor(
+        revenue_yoy=-34.19,
+        net_profit_yoy=-26.0,
+        eps_growth_yoy=-28.0,
+        roe=18.5,
+        operating_cashflow=1.026e9,
+        q_revenue_yoy=23.29,
+        q_net_profit_yoy=137.0,
+        q_gross_margin=9.63,
+        q_gross_margin_pp=-3.4,
+    )
+    return snap
+
+
+def test_v1_artifact_f_marginal_mode_default_and_keys(monkeypatch):
+    """F-Marginal §6.1（PR-2）：缺省 shadow 落 marginal 键但不改 F；off 不落键；两次运行一致。
+
+    断言 A/B 之外的另一半：**additive 字段确实被写入**（否则「剔除后相等」会退化成
+    「根本不写」的假通过），且 off 与 shadow 的 F 逐值相同（G-7 影子不生效）。
+    """
+    _pin_default_midterm_config(monkeypatch)  # stub 无 f_marginal_mode 字段 ⇒ 缺省 shadow
+    snap_shadow = _snapshot_with_marginal()
+    shadow = evaluate(snap_shadow, _evidence(), prior_confidence=0.5, thesis=_THESIS, classifier_order="etf")
+    again = evaluate(
+        _snapshot_with_marginal(), _evidence(), prior_confidence=0.5, thesis=_THESIS, classifier_order="etf"
+    )
+    off = evaluate(
+        _snapshot_with_marginal(),
+        _evidence(),
+        prior_confidence=0.5,
+        thesis=_THESIS,
+        classifier_order="etf",
+        f_marginal_mode="off",
+    )
+
+    assert shadow.f_marginal_mode == "shadow"
+    assert off.f_marginal_mode == "off"
+    breakdown = shadow.factor_snapshot.fundamental.score_breakdown
+    for key in _MARGINAL_KEYS:
+        assert key in breakdown, f"shadow 帧缺边际键 {key}"
+    assert breakdown["marginal"] == pytest.approx(0.2)  # M_raw=1 × Q=0.2 的质量门
+    # 该 golden 帧无业绩预告区间 ⇒ 无 beat：f_shadow = 0.7×L(-0.9333) + 0.3×M(0.2) = -0.5933
+    assert breakdown["f_shadow"] == pytest.approx(0.7 * (-0.933333) + 0.3 * 0.2, abs=1e-4)
+    # G-7：shadow 只算不进 F —— F 与 off 逐值相等（abs=0）
+    assert shadow.variable_scores.f_fundamental_trend == off.variable_scores.f_fundamental_trend
+    assert breakdown["f"] == pytest.approx(off.factor_snapshot.fundamental.score_breakdown["f"])
+    # off：分解不含任何边际键（旧口径逐键不变）
+    off_breakdown = off.factor_snapshot.fundamental.score_breakdown
+    assert not any(key.startswith(("marginal", "f_shadow", "f_marginal_source")) for key in off_breakdown)
+    # 确定性：同一输入两次运行分解逐值一致
+    assert again.factor_snapshot.fundamental.score_breakdown == breakdown
+    assert again.f_marginal_mode == "shadow"
+    # G-7 的强化口径：shadow 与 off 的 artifact 在剔除 additive 字段后**逐字节相同**
+    # （边际只多诊断键，不改变任何方向分/状态/EV；不同输入才与 golden 逐字节相等）
+    assert _canonical(shadow.model_dump(mode="json")) == _canonical(off.model_dump(mode="json"))
+
+
 def test_old_frame_without_new_fields_loads_with_defaults():
     """旧 JSON（golden 即旧形状）可 model_validate：8 个字段回落默认，schema_version 仍 "1"。"""
     artifact = CompanyStateArtifact.model_validate(_golden_payload())
@@ -263,9 +344,10 @@ def test_old_frame_without_new_fields_loads_with_defaults():
     assert artifact.adverse_divergence is None
     assert artifact.state_evidence == {}
     assert artifact.factor_direction is None
-    # F 边际（F-Marginal §3.3）：旧帧无 q_* 键 ⇒ 回落 None（additive 默认值，schema_version 不升）
+    # F 边际（F-Marginal §3.3/§6.1）：旧帧无 q_* / f_marginal_mode 键 ⇒ 回落 None / "off"
     fundamental = artifact.factor_snapshot.fundamental
     assert all(getattr(fundamental, name) is None for name in _Q_MARGINAL_FIELDS)
+    assert artifact.f_marginal_mode == "off"  # 旧帧语义 = 未记录/未启用
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -279,6 +361,8 @@ def test_v1_artifact_new_fields_are_fixed(monkeypatch):
 
     # v2 专属语义在 v1 下必须为空（不制造 v2 证据）
     assert artifact.classifier_formula == "v1"
+    # F 边际 provenance（F-Marginal §6.1）：配置 stub 缺字段 ⇒ 缺省 shadow（F 仍逐值不变）
+    assert artifact.f_marginal_mode == "shadow"
     assert artifact.entropy_normalized is None
     assert artifact.adverse_divergence is None
     assert artifact.state_evidence == {}
