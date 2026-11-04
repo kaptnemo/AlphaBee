@@ -6,6 +6,8 @@ import datetime
 import math
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
+
 if TYPE_CHECKING:
     from alphabee.agents.facts.models import FinancialFacts
 
@@ -15,9 +17,85 @@ from alphabee.tools.cache import SyncTTLCache
 
 _CACHE: SyncTTLCache[dict[str, Any]] = SyncTTLCache(ttl_seconds=600.0)
 
+#: fina_indicator 同报告期并列时的「非空字段优先」排序键（canonical 名）：
+#: Tushare 的 ``update_flag=1`` 行通常有扣非/毛利率值、``0`` 行常为 NaN；若两行的
+#: ``period/ann_date/update_flag`` 完全一致，用非空计数降序保证取到有值行（P0-2）。
+_FINA_NONNULL_PREFERENCE: tuple[str, ...] = ("net_profit_dedt", "gross_margin")
 
-def _dedup(df: Any, col: str = "period") -> Any:
-    return df.drop_duplicates(subset=[col]).reset_index(drop=True)
+#: Tushare 内部列：去重后丢弃，避免泄漏到下游（``ann_date`` 作为 provenance 保留）。
+_DEDUP_INTERNAL_COLUMNS: tuple[str, ...] = ("report_type", "update_flag")
+
+
+def _normalize_ann_date(ann_date: pd.Series, fallback: pd.Series) -> pd.Series:
+    """``ann_date`` 归一为可比较的 ``YYYYMMDD``；缺失/非法回落报告期 ``period``。
+
+    兼容 ``20250328`` / ``2025-03-28`` 两种写法；``NaN``（``astype(str)`` 后为
+    ``"nan"``）、空串、非 8 位数字一律回落 ``fallback``（报告期），避免 ``"nan"``
+    字符串在降序排序里排到数字之前（P0-2 §5.2 关键边界）。
+    """
+    text = ann_date.astype(str).str.replace("-", "", regex=False).str.strip()
+    valid = text.str.fullmatch(r"\d{8}")
+    return text.where(valid.fillna(False), fallback.astype(str).str.strip())
+
+
+def _dedup(
+    df: Any,
+    col: str = "period",
+    *,
+    prefer_nonnull: tuple[str, ...] = (),
+) -> Any:
+    """同报告期去重：合并报表优先 + 最新公告 + 最新修订 + 非空优先（P0-2）。
+
+    Tushare 同一报告期存在多行：同一 ``end_date`` 的修订（``update_flag=0/1``）、
+    更正公告（不同 ``ann_date``）、以及合并/母公司/单季等报表类型（``report_type``）。
+    旧实现 ``drop_duplicates(keep="first")`` 依赖返回行序，可能取到初值/快报值
+    （实测 688981 2024 年报取到 2025-02-12 的 57,745,538,740.4 而非最终
+    57,795,570,000）。本函数按以下口径取**最新修订**：
+
+    1. 合并报表优先：``report_type == 1`` 存在时只保留合并报表；没有 1 时保留全部
+       （fail-open，不因过滤丢数据）；
+    2. 同报告期按 ``ann_date``（归一并缺失回落 ``period``）与 ``update_flag`` 降序；
+       ``prefer_nonnull`` 非空时追加「非空字段计数降序」稳定排序键（fina_indicator
+       用：同 ``period/ann_date/update_flag`` 时优先有值行）；
+    3. 同 ``period`` 取首条（= 最新公告 + 最新修订）；
+    4. 丢弃 Tushare 内部列 ``report_type`` / ``update_flag``（及排序辅助列），
+       保留 ``ann_date``（provenance）与 ``company_type``（``comp_type`` 映射）。
+
+    不改变行序语义：返回的 ``period`` 仍为降序（``ref_dates`` 依赖该顺序）。
+    空 DataFrame / ``None`` 原样返回（不制造列）。
+    """
+    if df is None or df.empty:
+        return df
+
+    work = df.copy()
+
+    # 1) 合并报表优先（report_type 归一为数值后比较，兼容 "1" / 1 / 1.0）
+    if "report_type" in work.columns:
+        report_type = pd.to_numeric(work["report_type"], errors="coerce")
+        if (report_type == 1).any():
+            work = work.loc[report_type == 1]
+
+    # 2) 同报告期按 ann_date、update_flag 降序；ann_date 缺失/非法回落 period
+    fallback = work[col]
+    ann = _normalize_ann_date(work["ann_date"], fallback) if "ann_date" in work.columns else fallback.astype(str)
+    work = work.assign(
+        _ann=ann,
+        _upd=(pd.to_numeric(work["update_flag"], errors="coerce").fillna(0) if "update_flag" in work.columns else 0),
+    )
+    sort_keys = [col, "_ann", "_upd"]
+    prefer_columns = [name for name in prefer_nonnull if name in work.columns]
+    if prefer_columns:
+        # 非空计数降序：同 period/ann_date/update_flag 并列时优先「有值」的行
+        work = work.assign(_nonnull=work[prefer_columns].notna().sum(axis=1))
+        sort_keys.append("_nonnull")
+    work = work.sort_values(sort_keys, ascending=False, kind="stable")
+
+    # 3) 同报告期取首条（最新公告 + 最新修订；并列时非空优先）
+    work = work.drop_duplicates(subset=[col], keep="first").reset_index(drop=True)
+
+    # 4) 清理内部列；保留 ann_date（provenance）与 company_type（映射自 comp_type）
+    drop_cols = [name for name in (*_DEDUP_INTERNAL_COLUMNS, "_ann", "_upd", "_nonnull") if name in work.columns]
+    return work.drop(columns=drop_cols)
 
 
 def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
@@ -36,6 +114,11 @@ def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
 
     Returns:
         包含多期财务数据的字典，所有字段使用 AlphaBee 标准命名。
+
+    去重口径（P0-2）：每个报告期只保留**合并报表 + 最新公告 + 最新修订**的首条；
+    ``ann_date``（公告日）作为 provenance 随行保留，``comp_type`` 映射为
+    ``company_type``，``report_type`` / ``update_flag`` 等 Tushare 内部列在去重后丢弃。
+    ``ref_dates`` 仍为报告期降序（最新一期在前）。
     """
     periods = max(1, min(periods, 20))
     ts_code = normalize_ts_code(symbol)
@@ -47,14 +130,15 @@ def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
             income_df = helper.income(
                 ts_code=ts_code,
                 start_date=start,
-                fields="ts_code,end_date,total_revenue,operate_profit,"
-                "n_income,n_income_attr_p,ebitda,basic_eps,interest_expense,"
-                "income_tax,total_profit",
+                fields="ts_code,ann_date,end_date,report_type,update_flag,comp_type,"
+                "total_revenue,revenue,operate_profit,n_income,n_income_attr_p,ebitda,"
+                "basic_eps,interest_expense,income_tax,total_profit",
             ).data
             balance_df = helper.balancesheet(
                 ts_code=ts_code,
                 start_date=start,
-                fields="ts_code,end_date,total_assets,total_liab,"
+                fields="ts_code,ann_date,end_date,report_type,update_flag,"
+                "total_assets,total_liab,"
                 "total_hldr_eqy_exc_min_int,money_cap,"
                 "total_cur_assets,total_cur_liab,accounts_receiv,"
                 "inventories,goodwill,cip,fix_assets",
@@ -62,24 +146,24 @@ def get_financial_fact(symbol: str, periods: int = 8) -> dict[str, Any]:
             cashflow_df = helper.cashflow(
                 ts_code=ts_code,
                 start_date=start,
-                fields="ts_code,end_date,n_cashflow_act,n_cashflow_inv_act,"
+                fields="ts_code,ann_date,end_date,report_type,update_flag,"
+                "n_cashflow_act,n_cashflow_inv_act,"
                 "n_cash_flows_fnc_act,c_pay_acq_const_fiolta,"
                 "c_pay_dist_dpcp_int_pvd,c_paid_to_for_empl",
             ).data
             fina_df = helper.fina_indicator(
                 ts_code=ts_code,
                 start_date=start,
-                fields="ts_code,end_date,roe,roa,grossprofit_margin,netprofit_margin,"
-                "current_ratio,quick_ratio,debt_to_assets,"
-                "or_yoy,netprofit_yoy,basic_eps_yoy,"
-                "interestdebt,profit_dedt,daa,fixed_assets,"
+                fields="ts_code,ann_date,end_date,update_flag,roe,roa,grossprofit_margin,netprofit_margin,"
+                "current_ratio,quick_ratio,debt_to_assets,or_yoy,netprofit_yoy,basic_eps_yoy,"
+                "interestdebt,profit_dedt,dt_netprofit_yoy,daa,fixed_assets,"
                 "saleexp_to_gr,adminexp_of_gr,finaexp_of_gr,rd_exp",
             ).data
 
         income_df = _dedup(income_df)
         balance_df = _dedup(balance_df)
         cashflow_df = _dedup(cashflow_df)
-        fina_df = _dedup(fina_df)
+        fina_df = _dedup(fina_df, prefer_nonnull=_FINA_NONNULL_PREFERENCE)
 
         ref_dates = income_df.head(periods)["period"].tolist()
 

@@ -8,6 +8,8 @@
 income:
   end_date:             period
   total_revenue:        revenue
+  revenue:              operating_revenue
+  comp_type:            company_type
   operate_profit:       operating_profit
   n_income:             net_profit
   n_income_attr_p:      net_profit_attr_p
@@ -16,6 +18,10 @@ income:
   interest_expense:     interest_expense
   income_tax:           income_tax_expense
   total_profit:         total_profit
+# 注：Tushare income.total_revenue = 营业总收入（canonical revenue，语义不变）；
+#     income.revenue = 营业收入（canonical operating_revenue，P1-4 的边际口径）。
+#     同一接口同时返回，必须映射为不同 canonical 列，不能重名。
+#     ann_date（公告日）作为 provenance 原样保留，不在此映射（去重后仍随行返回）。
 
 # ─────────────────────────────────────────
 # 资产负债表 balancesheet()
@@ -63,6 +69,7 @@ fina_indicator:
   basic_eps_yoy:          eps_growth_yoy
   interestdebt:           interest_bearing_debt
   profit_dedt:            net_profit_dedt
+  dt_netprofit_yoy:       net_profit_dedt_yoy
   daa:                    depreciation_amortization
   fixed_assets:           fixed_assets_total
   saleexp_to_gr:          sales_expense_ratio

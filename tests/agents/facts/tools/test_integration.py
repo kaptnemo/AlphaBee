@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 
+import pandas as pd
 import pytest
 
 from alphabee.agents.facts.tools._utils import normalize_ts_code, to_pure_code
@@ -247,6 +248,61 @@ class TestFinancialFactIntegration:
 
         data = get_financial_fact(_KWEICHOW_MOUTAI, periods=1)
         assert len(data["ref_dates"]) == 1
+
+    # ── P0-2：去重取最新修订 + 新列可用（真实接口实测）─────────────
+
+    @tushare_required
+    def test_dedup_takes_latest_revision_for_688981(self):
+        """688981 2024 年报同 period 三行 ⇒ 取最终修订值 57,795,570,000（非旧值）。"""
+        from alphabee.agents.facts.tools.financial_fact import get_financial_fact
+
+        data = get_financial_fact("688981.SH", periods=8)
+        income = {row["period"]: row for row in data["income"]}
+        row = income.get("20241231")
+        assert row is not None, "688981 应含 2024 年报"
+        # 旧口径（keep="first"）会保留 2025-02-12 的 57,745,538,740.4 初值
+        assert row["revenue"] == pytest.approx(57_795_570_000.0, rel=1e-9)
+        assert row["ann_date"] == "20250328"
+        # 新列：营业收入（income.revenue）与公司类型（income.comp_type）随行可得
+        assert not pd.isna(row["operating_revenue"])
+        assert str(row["company_type"]) in {"1", "2", "3", "4"}
+        # 内部列不泄漏
+        assert "report_type" not in row
+        assert "update_flag" not in row
+
+    @tushare_required
+    def test_dedup_fina_keeps_nonnull_profit_dedt_for_000002(self):
+        """000002 2026Q3 fina 两行（flag=1 有值 / 0 为 NaN）⇒ 去重后扣非非空。"""
+        from alphabee.agents.facts.tools.financial_fact import get_financial_fact
+
+        data = get_financial_fact("000002.SZ", periods=8)
+        fina = {row["period"]: row for row in data["fina"]}
+        row = fina.get("20260930")
+        assert row is not None, "000002 应含 2026Q3 财务指标"
+        assert not pd.isna(row["net_profit_dedt"]), "扣非行被 update_flag=0 的 NaN 行挤掉"
+        assert row["net_profit_dedt"] < 0  # 2026Q3 扣非归母为负
+        assert not pd.isna(row["net_profit_dedt_yoy"])  # 新列 dt_netprofit_yoy 可用
+        assert str(row["ann_date"]).isdigit() and len(str(row["ann_date"])) == 8
+
+    @tushare_required
+    def test_new_source_columns_across_four_tables(self):
+        """四接口新列可用：ann_date（四表） + company_type/operating_revenue（income） + dt 同比（fina）。"""
+        from alphabee.agents.facts.tools.financial_fact import get_financial_fact
+
+        data = get_financial_fact(_KWEICHOW_MOUTAI, periods=4)
+        for table in ("income", "balance", "cashflow", "fina"):
+            assert data[table], f"{table} 不应为空"
+        income_row = data["income"][0]
+        fina_row = data["fina"][0]
+        assert str(income_row["ann_date"]).isdigit() and len(str(income_row["ann_date"])) == 8
+        assert "operating_revenue" in income_row
+        assert "company_type" in income_row
+        assert "net_profit_dedt_yoy" in fina_row
+        for table in ("balance", "cashflow"):
+            row = data[table][0]
+            assert str(row["ann_date"]).isdigit() and len(str(row["ann_date"])) == 8
+            assert "update_flag" not in row
+            assert "report_type" not in row
 
 
 # ══════════════════════════════════════════════════════════════════════

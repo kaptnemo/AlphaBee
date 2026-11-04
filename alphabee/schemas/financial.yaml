@@ -21,6 +21,26 @@ revenue:
     tushare: [total_revenue]
   notes: 取自利润表，包含主营业务收入及其他业务收入。
 
+operating_revenue:
+  category: financial
+  type: float
+  unit: CNY
+  frequency: [quarterly, annual]
+  description: 营业收入（与营业总收入 revenue 区分）
+  aliases:
+    zh: [营业收入, 主营营业收入]
+    en: [operating revenue]
+  required_by:
+    derived_facts: []
+    midterm: [q_revenue_yoy, q_gross_margin]
+  source_mappings:
+    tushare: [revenue]
+  notes: >-
+    取自利润表 income.revenue，是营业收入口径；**不等于** revenue
+    （income.total_revenue = 营业总收入，语义不变），两者不可混用。
+    P1-4 起 q_revenue_yoy / q_gross_margin 优先使用本字段，缺失时回落 revenue
+    （由 FundamentalFactor.marginal_revenue_basis 记录实际口径）。
+
 operating_profit:
   category: financial
   type: float
@@ -82,6 +102,25 @@ net_profit_dedt:
   notes: >-
     Tushare fina_indicator 字段 profit_dedt，报告期累计值（三季报 = 前三季度累计）；
     与 net_profit_attr_p 的差额近似为非经常性损益的税后贡献，是剔除一次性收益后的核心盈利口径。
+
+net_profit_dedt_yoy:
+  category: financial
+  type: float
+  unit: PERCENT
+  frequency: [quarterly, annual]
+  description: 扣非归母净利润累计同比增速（%），报告期累计口径
+  aliases:
+    zh: [扣非净利润同比, 扣非累计同比, 扣非净利增速]
+    en: [deducted net profit YoY, recurring net profit growth]
+  required_by:
+    derived_facts: []
+    midterm: [f_recurring_mode]
+  source_mappings:
+    tushare: [dt_netprofit_yoy]
+  notes: >-
+    Tushare fina_indicator 字段 dt_netprofit_yoy，报告期累计同比（三季报 = 前三季度累计）。
+    负基数语义：上年同期扣非为负/零时百分比无经济含义，消费方必须用上年同期扣非
+    （net_profit_dedt 的 t−4 期值）判断基数是否为正，负基数不得参与同比比较。
 
 ebitda:
   category: financial
@@ -642,3 +681,26 @@ inventory_yoy:
     derived_facts: [inventory_pressure]
   source_mappings: {}
   notes: 由调用方从多期 inventory 数据计算：(inventory_t - inventory_t-4) / abs(inventory_t-4) * 100。
+
+# ─────────────────────────────────────────
+# 公司属性（利润表附带）
+# ─────────────────────────────────────────
+
+company_type:
+  category: financial
+  type: str
+  unit: TEXT
+  frequency: [quarterly, annual]
+  description: 公司类型（Tushare comp_type：1 一般工业 / 2 银行 / 3 保险 / 4 证券）
+  aliases:
+    zh: [公司类型, 行业类型]
+    en: [company type, comp type]
+  required_by:
+    derived_facts: []
+    midterm: [is_financial]
+  source_mappings:
+    tushare: [comp_type]
+  notes: >-
+    取自利润表 income.comp_type（不在 fina_indicator）。取值：1 一般工业、2 银行、
+    3 保险、4 证券；缺失 ⇒ 空/None（消费方 fail-open 视为非金融，并在 missing_facts
+    登记）。P1-5 起用于识别金融股（{"2","3","4"}），跳过 OCF 符号惩罚与边际层。

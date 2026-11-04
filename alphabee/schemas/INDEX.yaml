@@ -9,7 +9,7 @@ domains:
   financial:
     file: schemas/financial.yaml
     description: 财务报表域（利润表、资产负债表、现金流量表、财务比率、成长性）
-    field_count: 42
+    field_count: 45
     primary_source: tushare
     apis: [income, balancesheet, cashflow, fina_indicator]
 
@@ -176,6 +176,20 @@ field_gaps:
     used_by: risk（R 因子，原设计 §7.3 违规处罚）
     gap: Tushare 无 penalty 接口（t3 实测「请指定正确的接口名」）；已改用 fina_audit 审计意见承载（见 risk.yaml audit_opinion）
 
+  - field: "q_revenue_yoy / q_net_profit_yoy / q_gross_margin / q_gross_margin_pp"
+    used_by: midterm/factors.py derive_marginal + midterm/score_engine.py 边际项
+    gap: >-
+      由多期累计财务数据差分还原（累计→单季）的派生字段，不是数据源的单期事实，
+      **不**进 canonical（schemas/financial.yaml）；只随 FundamentalFactor 落盘，
+      缺失语义由 score_breakdown 的边际键表达。
+
+  - field: "report_period / report_ann_date"
+    used_by: midterm/models.py FundamentalFactor（F 的报告期 provenance）
+    gap: >-
+      模型 provenance 字段（报告期/公告日），**不**进 canonical（schemas/INDEX.yaml 的
+      financial 域也不计数）；由财务事实工具层写入模型，用于 beat/miss 期间对齐与
+      报告期陈旧标记，不参与方向分计算。
+
 # ─────────────────────────────────────────
 # 本批新增字段的下游消费登记（无 dead-end 校验）
 # ─────────────────────────────────────────
@@ -204,3 +218,6 @@ field_consumers:
     - pe_ttm_5y_percentile / pb_5y_percentile（V 因子；估值分位规则后续实现）
     - rs_industry_market / industry_breadth_20 / industry_breadth_60（T 因子行业级；breadth 信号规则后续实现）
     - risk audit_opinion / audit_agency / audit_fees / audit_sign（R 因子；midterm/models.py AuditSnapshot 承载）
+    - operating_revenue（income.revenue；P1-4 起 midterm 的 q_revenue_yoy / q_gross_margin 消费）
+    - net_profit_dedt_yoy（fina_indicator.dt_netprofit_yoy；P1-3 起 f_recurring_mode 的扣非锚消费）
+    - company_type（income.comp_type；P1-5 起 FundamentalFactor.is_financial 消费）
