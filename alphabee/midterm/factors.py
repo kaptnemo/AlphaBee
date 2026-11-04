@@ -359,7 +359,9 @@ def _segment_extremes(segments: Any) -> tuple[float | None, float | None]:
 #: 同一财年的上一报告期（报告期后缀 → 上一期后缀）；Q1（0331）无同年上一期。
 _Q_PREV: dict[str, str] = {"0630": "0331", "0930": "0630", "1231": "0930"}
 
-#: 单季值(t−4) 的基数不稳门槛：|单季(t−4)| < 1% × 当期累计营收 ⇒ 该腿 None（§3.2）。
+#: 单季值(t−4) 的基数不稳门槛：|单季(t−4)| < 1% × 当期**单季营收** ⇒ 该腿 None（§3.2）。
+#: P1-1 起分母从「当期累计营收」改为「当期单季营收」：低毛利行业（600028/601668）的
+#: 累计营收很大，用累计营收当门槛会把正常体量的上年同期单季净利误判为「基数过小」。
 _Q_SMALL_BASE_RATIO = 0.01
 
 #: 单季毛利率合理区间（PERCENT，§3.2 数据异常）；越界显式 None，**不静默夹取**。
@@ -465,6 +467,24 @@ def _series(records: Any, field: str) -> dict[str, float]:
     return series
 
 
+def _marginal_revenue_series(income: Any) -> tuple[Mapping[str, float], str]:
+    """边际营收序列：优先 canonical ``operating_revenue``（营业收入），缺失回落 ``revenue``。
+
+    返回 ``(series, basis)``：``basis`` ∈ ``{"operating_revenue", "total_revenue"}``，用于
+    ``FundamentalFactor.marginal_revenue_basis`` 留痕。口径依据（设计 P1-4）：
+
+    - L 的 ``revenue_yoy`` 是 **营业收入**同比，边际的 ``q_revenue_yoy``
+      必须同口径才能相减成「加速度」；用营业总收入（canonical ``revenue``）会引入
+      ±0.1~0.2pp 的口径噪声（600519 Q1：6.538 vs 6.336）。
+    - ``q_gross_margin`` 的分子（毛利）与 canonical ``gross_margin`` 的分母都是营业收入，
+      因此营收序列同样用 ``operating_revenue``；仅在缺失时才回落总营收并承认近似。
+    """
+    operating_revenue = _series(income, "operating_revenue")
+    if operating_revenue:
+        return operating_revenue, "operating_revenue"
+    return _series(income, "revenue"), "total_revenue"
+
+
 def _single_quarter(series: Mapping[str, float], period: str) -> float | None:
     """单季值：Q1 取累计，其余取 ``累计(t) − 累计(t_prev)``；缺任一 → ``None``。
 
@@ -490,10 +510,11 @@ def _quarter_gross_margin(
 ) -> float | None:
     """单季毛利率（PERCENT）：``累计营收 × 累计毛利率`` 差分求单季毛利，再除单季营收。
 
-    **口径近似（设计 §3.5，必须披露）**：假定 ``gross_margin`` 与 ``revenue`` 同分母
-    （营业总收入）。两者实际分别为「毛利/营业收入」与「营业总收入」，**对营业外收入
-    占比大的公司有偏差**（主业公司可忽略）。精确解法需补 ``oper_cost`` 改口径
-    （设计 §3.5 P1.5，本轮不做）。
+    **口径（P1-4）**：``revenue`` 由调用方选择——``derive_marginal`` 传入
+    :func:`_marginal_revenue_series` 选出的序列（优先 ``operating_revenue`` 营业收入，
+    与 ``gross_margin`` 的分母同源）；仅当 ``operating_revenue`` 缺失回落 ``total_revenue``
+    时才存在设计 §3.5 披露的近似（毛利分子为营业收入口径、分母为营业总收入口径）。
+    精确解法需补 ``oper_cost``（设计 §3.5 P1.5，本轮不做）。
 
     边界（§3.2）：单季营收缺失/≤ 0 ⇒ ``None``；累计营收或累计毛利率缺任一 ⇒ ``None``；
     单季毛利率 ∉ ``[−50, 100]`` ⇒ ``None``（不夹取）。
@@ -530,7 +551,8 @@ def derive_marginal(fin_data: dict[str, Any] | None) -> dict[str, float | None]:
 
     输入只用 ``get_financial_fact`` 现成的三列（§3.1，零新接口）：
 
-    - ``income[].revenue``：累计营业总收入（CNY）；
+    - ``income[].operating_revenue``：累计营业收入（CNY，优先）；缺失时回落
+      ``income[].revenue``（累计营业总收入）——口径选择见 :func:`_marginal_revenue_series`；
     - ``income[].net_profit_attr_p``：累计归母净利（CNY）；
     - ``fina[].gross_margin``：累计毛利率（PERCENT）。
 
@@ -539,14 +561,15 @@ def derive_marginal(fin_data: dict[str, Any] | None) -> dict[str, float | None]:
 
     恒等式与边界严格按 §3.2：单季 = 累计(t) − 累计(t_prev)（Q1 取累计）；单季同比 =
     单季(t)/单季(t−4) − 1（PERCENT）；单季毛利率见 :func:`_quarter_gross_margin`
-    （含 §3.5 口径近似披露）；单季毛利率同比变化 = ``q_gm(t) − q_gm(t−4)``（pp）。
+    （营收口径见 :func:`_marginal_revenue_series`）；单季毛利率同比变化 =
+    ``q_gm(t) − q_gm(t−4)``（pp）。
 
     逐腿边界：
 
-    - 单季营收 ≤ 0 ⇒ 营收腿 ``None``（分母无意义）；净利腿同理要求单季净利基数 > 0；
+    - 单季营收 None/≤ 0 ⇒ 营收腿与净利腿均 ``None``（分母无意义，保守）；
     - 上年同期单季净利 ≤ 0（亏损/转盈）⇒ 净利同比 ``None``（百分比无意义），营收腿不受影响；
-    - ``|单季(t−4)| < 1% × 当期累计营收`` ⇒ 该腿 ``None``（基数不稳）；当期累计营收缺失时
-      无法评估该门槛，按保守取向同样给 ``None``；
+    - ``|单季(t−4)| < 1% × 当期单季营收`` ⇒ 该腿 ``None``（基数不稳，P1-1 起门槛分母为
+      当期**单季营收**，不再用累计营收）；
     - 单季毛利率 ∉ ``[−50, 100]`` ⇒ ``None``；缺 ``t``/``t_prev``/``t−4`` ⇒ 对应字段 ``None``。
 
     Returns:
@@ -558,7 +581,7 @@ def derive_marginal(fin_data: dict[str, Any] | None) -> dict[str, float | None]:
     income = data.get("income")
     fina = data.get("fina")
 
-    revenue = _series(income, "revenue")
+    revenue, _basis = _marginal_revenue_series(income)
     net_profit = _series(income, "net_profit_attr_p")
     gross_margin = _series(fina, "gross_margin")
 
@@ -566,20 +589,20 @@ def derive_marginal(fin_data: dict[str, Any] | None) -> dict[str, float | None]:
     if not target:
         return result
     base_period = _prev_year(target)  # 去年同季 t−4
-    current_revenue = revenue.get(target)  # 当期累计营收（基数不稳门槛的尺度）
 
     # ── 质量门输入：当期单季毛利率（缺 t / t_prev ⇒ None）──
     result["q_gross_margin"] = _quarter_gross_margin(revenue, gross_margin, target)
 
-    # ── 营收腿：单季营收同比（PERCENT）──
+    # ── 基数门槛尺度（P1-1）：当期单季营收；不可得/≤ 0 ⇒ 两条同比腿均不可算 ──
     quarter_revenue = _single_quarter(revenue, target)
+    if quarter_revenue is None or quarter_revenue <= 0.0:
+        return result  # 只有毛利率腿可能已写入；营收/净利腿保持 None
+
+    # ── 营收腿：单季营收同比（PERCENT）──
     quarter_revenue_base = _single_quarter(revenue, base_period)
     if (
-        quarter_revenue is not None
-        and quarter_revenue > 0.0  # 单季营收 ≤ 0 ⇒ 分母无意义
-        and quarter_revenue_base is not None
-        and current_revenue is not None
-        and abs(quarter_revenue_base) >= _Q_SMALL_BASE_RATIO * current_revenue  # 基数不稳
+        quarter_revenue_base is not None
+        and abs(quarter_revenue_base) >= _Q_SMALL_BASE_RATIO * quarter_revenue  # 基数不稳
     ):
         result["q_revenue_yoy"] = (quarter_revenue / quarter_revenue_base - 1.0) * 100.0
 
@@ -590,8 +613,7 @@ def derive_marginal(fin_data: dict[str, Any] | None) -> dict[str, float | None]:
         quarter_net_profit is not None
         and quarter_net_profit_base is not None
         and quarter_net_profit_base > 0.0  # 上年同期亏损/转盈 ⇒ 百分比无意义（§4.5）
-        and current_revenue is not None
-        and quarter_net_profit_base >= _Q_SMALL_BASE_RATIO * current_revenue  # 基数不稳
+        and quarter_net_profit_base >= _Q_SMALL_BASE_RATIO * quarter_revenue  # 基数不稳
     ):
         result["q_net_profit_yoy"] = (quarter_net_profit / quarter_net_profit_base - 1.0) * 100.0
 
@@ -628,6 +650,10 @@ def build_fundamental_factor(
     单季还原目标期（P0-3）：``marginal_period`` 取 ``income`` 最新合法报告期
     （:func:`_latest_income_period`；缺失 ⇒ ``""``），供评分层判定 Q1 降级与
     ``report_period_mismatch`` 诊断。非 canonical 字段，不登记 ``missing_facts``。
+
+    边际营收口径（P1-4）：``marginal_revenue_basis`` 记录 ``q_revenue_yoy`` /
+    ``q_gross_margin`` 实际使用的营收序列（``operating_revenue`` 优先、缺失回落
+    ``total_revenue``；无有效营收序列 ⇒ ``""``）。非 canonical 字段，不登记 ``missing_facts``。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
@@ -644,6 +670,7 @@ def build_fundamental_factor(
     # 键集合由 `_Q_MARGINAL_FIELDS` 单一来源驱动（新增字段不会漏赋值）。
     marginal = derive_marginal(data)
     marginal_values: dict[str, Any] = {name: marginal[name] for name in _Q_MARGINAL_FIELDS}
+    revenue_series, revenue_basis = _marginal_revenue_series(data.get("income"))
 
     factor = FundamentalFactor(
         revenue_yoy=_opt(fina.get("revenue_yoy")),
@@ -662,6 +689,7 @@ def build_fundamental_factor(
         **marginal_values,
         report_period=_normalize_period(fina.get("period")) or "",
         marginal_period=_latest_income_period(data.get("income")),
+        marginal_revenue_basis=revenue_basis if revenue_series else "",
     )
     return factor, _missing_fields(factor, _FUNDAMENTAL_FIELDS)
 

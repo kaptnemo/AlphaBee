@@ -228,6 +228,26 @@ def test_build_fundamental_factor_writes_marginal_period_and_mismatch_diagnostic
     assert build_fundamental_factor(invalid)[0].marginal_period == ""
 
 
+def test_build_fundamental_factor_records_marginal_revenue_basis():
+    """P1-4：``marginal_revenue_basis`` 记录边际营收实际口径（优先/回落/无序列）。"""
+    # 夹具只有 revenue（营业总收入）⇒ 回落口径
+    factor, missing = build_fundamental_factor(_fin_marginal())
+    assert factor.marginal_revenue_basis == "total_revenue"
+    assert "marginal_revenue_basis" not in missing  # provenance 非 canonical，不登记缺失
+
+    # 增加 operating_revenue（营业收入）⇒ 优先口径
+    with_operating = _fin_marginal()
+    for record in with_operating["income"]:
+        record["operating_revenue"] = record["revenue"]
+    operating_factor, _ = build_fundamental_factor(with_operating)
+    assert operating_factor.marginal_revenue_basis == "operating_revenue"
+    # 同一组数值下 q_* 逐值一致（口径切换只改分母来源，不改夹具数值）
+    assert operating_factor.q_revenue_yoy == pytest.approx(factor.q_revenue_yoy)
+
+    # income 缺失/无有效营收 ⇒ 空串
+    assert build_fundamental_factor(_fin())[0].marginal_revenue_basis == ""
+
+
 def test_build_fundamental_factor_segment_extremes():
     """改造 E：从 segments 提取最快/最慢细分同比增速（list 形态）。"""
     segments = [
@@ -671,7 +691,12 @@ def test_get_factor_snapshot_include_market_false(patch_sources: None, monkeypat
 
 
 def test_no_external_field_leakage_in_source():
-    """factors.py 源码不得出现外部数据源字段名（只允许 canonical 名）。"""
+    """factors.py 源码不得出现外部数据源字段名（只允许 canonical 名）。
+
+    P1-4 例外：``total_revenue`` 是设计 §10 指定的 ``marginal_revenue_basis`` 枚举值
+    （``operating_revenue`` / ``total_revenue``），属于**口径枚举**而非取数 key；
+    因此不再作为文本泄漏判据，改为单独断言它不得以记录取值 key 的形式出现。
+    """
     src = factors_mod.__file__
     with open(src, encoding="utf-8") as f:
         text = f.read()
@@ -691,12 +716,15 @@ def test_no_external_field_leakage_in_source():
         "grossprofit_margin",
         '"sc"',
         '"rk"',
-        "total_revenue",
         "n_income",
         "total_liab",
     )
     for token in forbidden:
         assert token not in text, f"外部字段名泄漏到 factors.py: {token}"
+    # ``total_revenue`` 只允许作为口径枚举值：不得用于记录取值（get / 下标）
+    assert 'get("total_revenue")' not in text
+    assert "['total_revenue']" not in text
+    assert '["total_revenue"]' not in text
 
 
 def test_factor_snapshot_round_trip(patch_sources: None):

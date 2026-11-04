@@ -5,7 +5,8 @@
 - 单季值 = 累计(t) − 累计(t_prev)，Q1（0331）取累计；``t_prev`` 由**报告期字符串**
   决定（0630→0331、0930→0630、1231→0930），不取数组下标；
 - 单季同比 = 单季(t)/单季(t−4) − 1（PERCENT）；单季毛利率 = 单季毛利/单季营收，
-  其中单季毛利 = ``累计营收 × 累计毛利率`` 差分（§3.5 口径近似）；
+  其中单季毛利 = ``累计营收 × 累计毛利率`` 差分（P1-4 起营收序列优先营业收入
+  ``operating_revenue``，缺失回落营业总收入 ``revenue``）；
 - 缺期/数据异常 ⇒ 对应字段 ``None``（**不插值、不用 TTM 顶替**）。
 
 全部用合成数据，无网络、无数据源副作用（只导入 ``factors`` 的纯函数）。
@@ -35,7 +36,7 @@ _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "alphabee" / "schemas" / "f
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 合成数据构造（只用 §3.1 的三列：revenue / net_profit_attr_p / gross_margin）
+# 合成数据构造（§3.1 三列：income.revenue（或 operating_revenue 优先）/ net_profit_attr_p / gross_margin）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -265,13 +266,13 @@ def test_d6_prior_year_net_profit_non_positive_keeps_revenue_leg():
 
 
 def test_d7_small_prior_year_revenue_base_kills_revenue_leg():
-    """D7：|单季营收(t−4)| < 1% × 当期累计营收 ⇒ 营收腿 None，净利腿不受影响。"""
+    """D7：|单季营收(t−4)| < 1% × 当期单季营收（P1-1）⇒ 营收腿 None，净利腿不受影响。"""
     fin = _fin_data(
         income=[
             _income("20240630", 450.0, 30.0),
-            _income("20240930", 455.0, 60.0),  # 2024Q3 单季营收 = 5 < 1% × 600 = 6
+            _income("20240930", 452.0, 60.0),  # 2024Q3 单季营收 = 2 < 1% × 270 = 2.7
             _income("20250630", 330.0, 20.0),
-            _income("20250930", 600.0, 40.0),  # 单季净利 20；2024Q3 单季净利 30 ≥ 6
+            _income("20250930", 600.0, 40.0),  # 单季净利 20；2024Q3 单季净利 30 ≥ 2.7
         ],
         fina=[_fina("20240630", 20.0), _fina("20240930", 22.0), _fina("20250630", 18.0), _fina("20250930", 19.0)],
     )
@@ -282,11 +283,14 @@ def test_d7_small_prior_year_revenue_base_kills_revenue_leg():
 
 
 def test_d7_small_prior_year_net_profit_base_kills_net_leg():
-    """D7：上年同季单季净利是正数但过小 ⇒ 净利腿 None，营收腿不受影响。"""
+    """D7：上年同季单季净利是正数但过小 ⇒ 净利腿 None，营收腿不受影响。
+
+    门槛 = 1% × 当期单季营收 = 2.7（P1-1）；基数 2.0 < 2.7 ⇒ 净利腿 None。
+    """
     fin = _fin_data(
         income=[
             _income("20240630", 250.0, 50.0),
-            _income("20240930", 450.0, 53.0),  # 2024Q3 单季净利 = 3 < 1% × 600 = 6
+            _income("20240930", 450.0, 52.0),  # 2024Q3 单季净利 = 2.0 < 1% × 270 = 2.7
             _income("20250630", 330.0, 20.0),
             _income("20250930", 600.0, 40.0),
         ],
@@ -296,6 +300,101 @@ def test_d7_small_prior_year_net_profit_base_kills_net_leg():
 
     assert result["q_net_profit_yoy"] is None
     assert result["q_revenue_yoy"] == pytest.approx(35.0)
+
+
+def test_d7_prior_year_net_profit_base_above_single_quarter_threshold_passes():
+    """D7 对照（P1-1）：基数 3.0 ≥ 1% × 单季营收 270 = 2.7 ⇒ 净利腿保留。
+
+    旧口径（1% × 累计营收 600 = 6）会误杀该腿——本用例钉住门槛分母已改为单季营收。
+    """
+    fin = _fin_data(
+        income=[
+            _income("20240630", 250.0, 50.0),
+            _income("20240930", 450.0, 53.0),  # 2024Q3 单季净利 = 3.0 ≥ 2.7
+            _income("20250630", 330.0, 20.0),
+            _income("20250930", 600.0, 40.0),  # 单季净利 20
+        ],
+        fina=[_fina("20240630", 20.0), _fina("20240930", 22.0), _fina("20250630", 18.0), _fina("20250930", 19.0)],
+    )
+    result = derive_marginal(fin)
+
+    assert result["q_net_profit_yoy"] == pytest.approx((20.0 / 3.0 - 1.0) * 100.0)
+    assert result["q_revenue_yoy"] == pytest.approx(35.0)
+
+
+def test_d7_600028_like_large_cumulative_revenue_small_single_quarter_passes():
+    """P1-1：600028-like——累计营收很大、单季营收小，低毛利公司净利腿不应被门槛误杀。
+
+    量级取设计实测：9M 累计营收 22063 亿、单季营收 363 亿、上年同期单季净利 85.01 亿。
+    旧口径门槛 1% × 22063 = 220.63 亿 > 85.01 ⇒ 净利腿 None；新口径 1% × 363 = 3.63 亿 ⇒ 通过。
+    """
+    fin = _fin_data(
+        income=[
+            _income("20240630", 21000.0, 160.0),
+            _income("20240930", 21300.0, 245.01),  # 2024Q3 单季营收 300、单季净利 85.01
+            _income("20250630", 21700.0, 150.0),
+            _income("20250930", 22063.0, 240.0),  # 2025Q3 单季营收 363、单季净利 90
+        ],
+        fina=[_fina("20240630", 15.0), _fina("20240930", 16.0), _fina("20250630", 14.0), _fina("20250930", 15.0)],
+    )
+    result = derive_marginal(fin)
+
+    assert result["q_net_profit_yoy"] == pytest.approx((90.0 / 85.01 - 1.0) * 100.0)
+    assert result["q_revenue_yoy"] == pytest.approx((363.0 / 300.0 - 1.0) * 100.0)
+
+
+def test_d7_601668_like_large_cumulative_revenue_small_single_quarter_passes():
+    """P1-1：601668-like——建筑股 9M 累计营收 13520 亿、单季营收 120 亿、上年同期单季净利 77.78 亿。
+
+    旧口径门槛 1% × 13520 = 135.2 亿 > 77.78 ⇒ None；新口径 1% × 120 = 1.2 亿 ⇒ 通过。
+    """
+    fin = _fin_data(
+        income=[
+            _income("20240630", 13200.0, 150.0),
+            _income("20240930", 13357.0, 227.78),  # 2024Q3 单季营收 157、单季净利 77.78
+            _income("20250630", 13400.0, 140.0),
+            _income("20250930", 13520.0, 220.0),  # 2025Q3 单季营收 120、单季净利 80
+        ],
+        fina=[_fina("20240630", 9.0), _fina("20240930", 10.0), _fina("20250630", 8.0), _fina("20250930", 9.0)],
+    )
+    result = derive_marginal(fin)
+
+    assert result["q_net_profit_yoy"] == pytest.approx((80.0 / 77.78 - 1.0) * 100.0)
+    assert result["q_revenue_yoy"] == pytest.approx((120.0 / 157.0 - 1.0) * 100.0)
+
+
+def test_d7_true_small_net_profit_base_still_rejected():
+    """P1-1 反例：真实低基数（单季净利 2 亿 / 单季营收 1000 亿）仍被拒（1% = 10 亿 > 2 亿）。"""
+    fin = _fin_data(
+        income=[
+            _income("20240630", 8000.0, 500.0),
+            _income("20240930", 9000.0, 502.0),  # 2024Q3 单季营收 1000、单季净利 2.0
+            _income("20250630", 8500.0, 600.0),
+            _income("20250930", 9500.0, 700.0),  # 2025Q3 单季营收 1000、单季净利 100
+        ],
+        fina=[_fina("20240630", 20.0), _fina("20240930", 20.0), _fina("20250630", 20.0), _fina("20250930", 20.0)],
+    )
+    result = derive_marginal(fin)
+
+    assert result["q_net_profit_yoy"] is None  # 2 < 1% × 1000 = 10
+    assert result["q_revenue_yoy"] == pytest.approx((1000.0 / 1000.0 - 1.0) * 100.0)
+
+
+def test_d7_missing_or_non_positive_single_quarter_revenue_kills_both_legs():
+    """P1-1：当期单季营收 None/≤ 0 ⇒ 营收腿与净利腿均 None（分母无意义，保守）。"""
+    fin = _fin_data(
+        income=[
+            _income("20240630", 250.0, 30.0),
+            _income("20240930", 450.0, 45.0),
+            _income("20250630", 330.0, 20.0),
+            _income("20250930", 300.0, 40.0),  # 2025Q3 单季营收 = 300 − 330 = −30
+        ],
+        fina=[_fina("20240630", 20.0), _fina("20240930", 22.0), _fina("20250630", 18.0), _fina("20250930", 19.0)],
+    )
+    result = derive_marginal(fin)
+
+    assert result["q_revenue_yoy"] is None
+    assert result["q_net_profit_yoy"] is None
 
 
 @pytest.mark.parametrize("reported_margin", [80.0, -20.0])
@@ -445,10 +544,11 @@ def test_q_fields_default_to_none_and_are_documented_as_derived():
 
 
 def _threshold_dataset(base_single_revenue: float, base_single_net_profit: float) -> dict[str, Any]:
-    """1% 门槛用例：t=20250930 当期累计营收 500 ⇒ 门槛 = 5.0（严格 ``<`` 才判 None）。
+    """1% 门槛用例：t=20250930 当期**单季营收** 100 ⇒ 门槛 = 1.0（严格 ``<`` 才判 None）。
 
     单季营收(t) = 500 − 400 = 100；去年同季单季营收 = ``base_single_revenue``。
     单季净利(t) = 60 − 40 = 20；去年同季单季净利 = ``base_single_net_profit``。
+    （P1-1：门槛分母是单季营收，不是累计营收 500。）
     """
     return _fin_data(
         income=[
@@ -469,9 +569,9 @@ def _threshold_dataset(base_single_revenue: float, base_single_net_profit: float
 @pytest.mark.parametrize(
     ("base_single_revenue", "expected"),
     [
-        (5.00, 1900.0),  # 恰等门槛（1% × 500）⇒ 保留：严格不等式才是「过小」
-        (4.99, None),  # 恰低于门槛 ⇒ None
-        (5.01, (100.0 / 5.01 - 1.0) * 100.0),  # 恰高于门槛 ⇒ 保留
+        (1.00, 9900.0),  # 恰等门槛（1% × 单季营收 100）⇒ 保留：严格不等式才是「过小」
+        (0.99, None),  # 恰低于门槛 ⇒ None
+        (1.01, (100.0 / 1.01 - 1.0) * 100.0),  # 恰高于门槛 ⇒ 保留
     ],
 )
 def test_small_base_threshold_uses_strict_inequality(base_single_revenue: float, expected: float | None):
@@ -485,9 +585,9 @@ def test_small_base_threshold_uses_strict_inequality(base_single_revenue: float,
 @pytest.mark.parametrize(
     ("base_single_net_profit", "expected"),
     [
-        (5.00, 300.0),  # 单季净利 20 / 去年同季 5 ⇒ +300%
-        (4.99, None),
-        (5.01, (20.0 / 5.01 - 1.0) * 100.0),
+        (1.00, 1900.0),  # 恰等门槛 ⇒ 保留（单季净利 20 / 去年同季 1.00 ⇒ +1900%）
+        (0.99, None),
+        (1.01, (20.0 / 1.01 - 1.0) * 100.0),
     ],
 )
 def test_small_base_threshold_applies_to_net_profit_leg(base_single_net_profit: float, expected: float | None):

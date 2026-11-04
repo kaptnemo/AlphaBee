@@ -187,6 +187,10 @@ class FundamentalFactor(BaseModel):
     # Q1（0331）单季 = 累计 ⇒ 加速度不可识别，score_engine 据此把边际项降级为 None
     # （不写任何边际键）；缺失/旧帧 ⇒ ""（非 Q1，行为与改造前一致）。非 canonical 字段。
     marginal_period: str = ""
+    # 边际营收口径（P1-4，additive、默认空串）：``operating_revenue``（营业收入，优先）
+    # 或 ``total_revenue``（营业总收入，缺 operating_revenue 时回落）；无有效营收序列 ⇒ ""。
+    # 非 canonical 字段：记录 q_revenue_yoy / q_gross_margin 实际使用的分母口径。
+    marginal_revenue_basis: str = ""
 
 
 class ExpectationFactor(BaseModel):
