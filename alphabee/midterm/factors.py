@@ -222,6 +222,43 @@ def _first(records: Any) -> dict[str, Any]:
     return records if isinstance(records, dict) else {}
 
 
+def _ann_date_text(value: Any) -> str:
+    """``ann_date`` 归一为 ``YYYY-MM-DD``（P2-1）；缺失/非法（非 8 位数字）⇒ ``""``。
+
+    兼容 ``20261031`` / ``2026-10-31`` 两种源格式；全链路统一存 dashed（报告直接展示）。
+    """
+    if value is None or isinstance(value, bool):
+        return ""
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if len(digits) < 8:
+        return ""
+    return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+
+
+def _parse_ymd(value: Any) -> datetime.date | None:
+    """``YYYYMMDD`` / ``YYYY-MM-DD`` → ``datetime.date``；缺失/非法日历日期 ⇒ ``None``。"""
+    text = _ann_date_text(value)
+    if not text:
+        return None
+    try:
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _report_age_days(ann_date: str, as_of: str) -> int | None:
+    """公告日距 ``as_of`` 的自然日天数（P2-1 纯函数）；任一缺失/非法 ⇒ ``None``。
+
+    只做日期差（自然日，非交易日）；``as_of`` 通常是快照的 ``as_of_date``（today）。
+    不在 builder 里调用（builder 是纯函数，不读系统时间）。
+    """
+    announced = _parse_ymd(ann_date)
+    reference = _parse_ymd(as_of)
+    if announced is None or reference is None:
+        return None
+    return (reference - announced).days
+
+
 def _company_type(income: Any) -> str | None:
     """从 ``income`` 最新记录读公司类型（canonical ``company_type``）；缺失/非法 ⇒ ``None``。
 
@@ -790,13 +827,21 @@ def build_fundamental_factor(
     ``net_profit_dedt_yoy``；``net_profit_dedt_base_positive`` 由
     :func:`_net_profit_dedt_base_positive` 用上年同期（``report_period`` 的 t−4）扣非值
     判定（缺失 ⇒ ``None``，评分层据此回落归母项）。
+
+    报告期 provenance（P2-1）：``report_ann_date`` 取 L 所用最新记录（``fina`` 最新；
+    缺失回落 ``income`` 最新）的 ``ann_date``，归一为 ``YYYY-MM-DD``（缺失 ⇒ ``""``）。
+    ``report_age_days`` 不在 builder 计算（纯函数不读系统时间），由
+    :func:`get_factor_snapshot` 用 ``_report_age_days`` 按 ``as_of_date`` 计算。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
     balance = _first(data.get("balance"))
     cashflow = _first(data.get("cashflow"))
+    income = _first(data.get("income"))
     company_type = _company_type(data.get("income"))
     report_period = _normalize_period(fina.get("period")) or ""
+    # P2-1：公告日取 L 所用最新记录（fina 优先，缺失回落 income），统一 YYYY-MM-DD。
+    report_ann_date = _ann_date_text(fina.get("ann_date")) or _ann_date_text(income.get("ann_date"))
     fastest, slowest, segment_period, segment_basis, segment_fastest_share = _segment_extremes_v2(segments)
 
     op_cf = _opt(cashflow.get("operating_cashflow"))
@@ -834,6 +879,7 @@ def build_fundamental_factor(
         segment_basis=segment_basis,
         **marginal_values,
         report_period=report_period,
+        report_ann_date=report_ann_date,
         marginal_period=_latest_income_period(data.get("income")),
         marginal_revenue_basis=revenue_basis if revenue_series else "",
     )
@@ -1146,6 +1192,8 @@ def get_factor_snapshot(symbol: str, *, include_market: bool = True) -> FactorSn
     fin_data = _safe_call(_get_financial_fact, [ts_code], degraded, "fundamental")
     segments_collection = _safe_call(_fetch_segments, [ts_code], degraded, "segments")
     fundamental, f_missing = build_fundamental_factor(fin_data, segments=segments_collection)
+    # P2-1：报告期距今天数在编排层计算（builder 纯函数不读系统时间）。
+    fundamental.report_age_days = _report_age_days(fundamental.report_ann_date, snapshot.as_of_date)
     snapshot.fundamental = fundamental
     missing.extend(f_missing)
 

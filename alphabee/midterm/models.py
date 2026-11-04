@@ -206,6 +206,13 @@ class FundamentalFactor(BaseModel):
     # 非 canonical 字段（不参与 missing_facts）：缺失/非法 ⇒ ""，beat/miss 期间守卫据此
     # fail-closed（无法证明与预告同期时宁可不产，也不保留错期证据）。
     report_period: str = ""
+    # 报告期公告日（``YYYY-MM-DD``；P2-1，additive、默认空串）。取 L 所用最新记录
+    # （fina 最新；缺失回落 income 最新）的 ann_date；缺失/非法 ⇒ ""。
+    report_ann_date: str = ""
+    # 公告日距快照 as_of_date 的自然日天数（P2-1，additive、默认 None）：由
+    # ``factors.get_factor_snapshot`` 在构建后计算（builder 纯函数不读系统时间）；
+    # 公告日缺失/非法 ⇒ None（不猜测）。仅展示/provenance，不参与任何方向分。
+    report_age_days: int | None = None
     # 单季还原的目标报告期（``income`` 最新合法期，``YYYYMMDD``；P0-3，additive、默认空串）。
     # Q1（0331）单季 = 累计 ⇒ 加速度不可识别，score_engine 据此把边际项降级为 None
     # （不写任何边际键）；缺失/旧帧 ⇒ ""（非 Q1，行为与改造前一致）。非 canonical 字段。

@@ -79,6 +79,59 @@ _F_BREAKDOWN_TERMS: tuple[tuple[str, str, str, str], ...] = (
     ("eps_growth_yoy", "eps_term", "eps_saturated", "EPS"),
 )
 
+# P2-1：财报公告日超过该天数 ⇒ 报告标注「陈旧」（模块常量，不进 config；后续可校准）。
+_F_STALE_DAYS = 120
+
+# 报告期后缀 → 季度标签（P2-1 展示用；非法后缀原样回显）。
+_QUARTER_LABELS: dict[str, str] = {"0331": "Q1", "0630": "Q2", "0930": "Q3", "1231": "Q4"}
+
+
+def _period_quarter_label(period: str) -> str:
+    """``20260930`` / ``2026-09-30`` → ``2026Q3``；非法/未知后缀 ⇒ 原值（不猜测）。"""
+    raw = str(period or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 8:
+        year, suffix = digits[:4], digits[4:8]
+        quarter = _QUARTER_LABELS.get(suffix)
+        if quarter:
+            return f"{year}{quarter}"
+        return digits[:8]
+    return raw
+
+
+def _format_ann_date(ann_date: str) -> str:
+    """``ann_date`` 统一展示为 ``YYYY-MM-DD``（兼容旧帧的 ``YYYYMMDD``）；非法 ⇒ 原值。"""
+    raw = str(ann_date or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 8:
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    return raw
+
+
+def _f_data_period_line(factor: Any) -> str:
+    """F 数据期 provenance 行（P2-1）；``report_period`` 为空 ⇒ ``""``（旧帧不新增行）。
+
+    格式：``F 数据期: 2026Q3（公告 2026-10-31，距今 2 天）``；``report_age_days >
+    _F_STALE_DAYS`` 追加 ``，**陈旧**``；公告日缺失 ⇒ ``公告未知``（显式，不静默隐藏）。
+    """
+    period = str(_attr(factor, "report_period") or "").strip()
+    if not period:
+        return ""
+    ann_date = _format_ann_date(str(_attr(factor, "report_ann_date") or ""))
+    age_raw = _attr(factor, "report_age_days")
+    age: int | None = None
+    if isinstance(age_raw, int) and not isinstance(age_raw, bool):
+        age = age_raw
+    elif isinstance(age_raw, float):
+        age = int(age_raw)
+    stale = "，**陈旧**" if age is not None and age > _F_STALE_DAYS else ""
+    if not ann_date:
+        return f"F 数据期: {_period_quarter_label(period)}（公告未知）"
+    if age is None:
+        return f"F 数据期: {_period_quarter_label(period)}（公告 {ann_date}）"
+    return f"F 数据期: {_period_quarter_label(period)}（公告 {ann_date}，距今 {age} 天{stale}）"
+
+
 # M 因子（market_regime）摘要字段：优先取 factor_snapshot.market，退回 variable_scores.m。
 _MARKET_FIELDS: tuple[str, ...] = (
     "regime",
@@ -390,6 +443,10 @@ def _render_f_breakdown(lines: list[str], breakdown: Mapping[str, Any], factor: 
 
     F 边际（F-Marginal §6.5）：当分解含 ``marginal`` 键（shadow/on 且单季数据可用）时，
     追加「F 边际（影子）」行；``factor`` 用于读取 ``q_*`` 原始单季派生值。
+
+    报告期 provenance（P2-1）：``factor.report_period`` 非空时追加「F 数据期」行
+    （数据期 + 公告日 + 距今天数；>120 天标「陈旧」）；旧帧（无字段/无 factor）
+    不新增任何行，既有报告行逐字不变。
     """
     parts: list[str] = []
     for raw_key, term_key, sat_key, label in _F_BREAKDOWN_TERMS:
@@ -408,6 +465,9 @@ def _render_f_breakdown(lines: list[str], breakdown: Mapping[str, Any], factor: 
     lines.append(
         f"      F 修正: {'  '.join(fixes)}  ⇒ F={_fmt(breakdown.get('f'))}（{flag}，合计 {_fmt(breakdown.get('raw'))}）"
     )
+    period_line = _f_data_period_line(factor)
+    if period_line:
+        lines.append(f"      {period_line}")
     if "marginal" in breakdown:
         _render_f_marginal(lines, breakdown, factor)
 

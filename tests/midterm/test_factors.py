@@ -815,6 +815,49 @@ def patch_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(factors_mod, "_fetch_segments", _fetch_segments)
 
 
+def test_build_fundamental_factor_report_ann_date_sources():
+    """P2-1：report_ann_date 取 fina 最新 ann_date，缺失回落 income 最新；统一 YYYY-MM-DD。"""
+    data = _fin_marginal()
+    data["fina"][0]["ann_date"] = "20251028"
+    factor, _ = build_fundamental_factor(data)
+    assert factor.report_ann_date == "2025-10-28"
+    assert factor.report_age_days is None  # builder 纯函数不读系统时间
+
+    fallback = _fin_marginal()
+    fallback["income"][0]["ann_date"] = "2025-10-20"  # fina 无 ann_date ⇒ 回落 income
+    assert build_fundamental_factor(fallback)[0].report_ann_date == "2025-10-20"
+
+    assert build_fundamental_factor(_fin())[0].report_ann_date == ""  # 两处都缺 ⇒ ""
+
+
+def test_get_factor_snapshot_computes_report_age_days(patch_sources: None, monkeypatch: pytest.MonkeyPatch):
+    """P2-1：编排层按 as_of_date=today 计算 report_age_days（注入固定 today）。"""
+    import datetime as dt
+
+    class _FixedDate(dt.date):
+        @classmethod
+        def today(cls) -> dt.date:
+            return dt.date(2025, 5, 1)
+
+    monkeypatch.setattr(factors_mod, "datetime", SimpleNamespace(date=_FixedDate))
+    monkeypatch.setattr(
+        factors_mod,
+        "_get_financial_fact",
+        lambda _s: {
+            "fina": [{"period": "20241231", "ann_date": "2025-01-01", "revenue_yoy": 10.0}],
+            "income": [],
+            "cashflow": [],
+            "balance": [],
+        },
+    )
+    snap = get_factor_snapshot("600519.SH", include_market=False)
+
+    assert snap.as_of_date == "2025-05-01"
+    assert snap.fundamental.report_period == "20241231"
+    assert snap.fundamental.report_ann_date == "2025-01-01"
+    assert snap.fundamental.report_age_days == 120  # 自然日差（1/1 → 5/1）
+
+
 def test_get_factor_snapshot_orchestrates_seven_factors(patch_sources: None):
     snap = get_factor_snapshot("300750.SZ")
     assert isinstance(snap, FactorSnapshot)

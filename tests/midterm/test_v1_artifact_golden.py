@@ -96,6 +96,9 @@ _FUNDAMENTAL_PERIOD_FIELDS = (
     "segment_period",
     "segment_fastest_share",
     "segment_basis",
+    # P2-1 新增的报告期 provenance 字段（golden 冻结时尚不存在；additive）。
+    "report_ann_date",
+    "report_age_days",
 )
 _EXPECTATION_PERIOD_FIELDS = ("profit_forecast_period",)
 # score_breakdown 里的边际分解键（F-Marginal §6.1）：shadow/on 且单季数据可用时出现。
@@ -400,6 +403,9 @@ def test_old_frame_without_new_fields_loads_with_defaults():
     assert fundamental.segment_fastest_share is None
     assert fundamental.segment_basis == ""
     assert artifact.segment_bonus_mode == ""
+    # P2-1 报告期 provenance 是 additive 字段：旧帧无该键 ⇒ 回落 ""/None
+    assert fundamental.report_ann_date == ""
+    assert fundamental.report_age_days is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -438,6 +444,9 @@ def test_v1_artifact_new_fields_are_fixed(monkeypatch):
     assert artifact.factor_snapshot.fundamental.segment_fastest_share is None
     assert artifact.factor_snapshot.fundamental.segment_basis == ""
     assert artifact.segment_bonus_mode == "period_aligned"
+    # P2-1：golden 帧无 ann_date 输入 ⇒ 两字段钉默认（纯展示/provenance，F 不变）
+    assert artifact.factor_snapshot.fundamental.report_ann_date == ""
+    assert artifact.factor_snapshot.fundamental.report_age_days is None
 
     # factor_direction = 改动前六因子均值：用 golden 里的方向分独立算一遍对比
     golden_scores = _golden_payload()["variable_scores"]
