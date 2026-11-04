@@ -293,7 +293,7 @@ def test_evaluate_classifier_order_routes_and_differs_by_design(monkeypatch):
 
     # S2 门控翻转输入：f_up=1, e_up=0, t_up=1 ⇒ ETF argmax=S1，TEF argmax=S2
     scores = _scores(f=1.0, e=0.0, t=1.0)
-    monkeypatch.setattr(decision_model, "compress_scores", lambda snapshot: scores)
+    monkeypatch.setattr(decision_model, "compress_scores", lambda snapshot, **kwargs: scores)
 
     etf_artifact = decision_model.evaluate(FactorSnapshot(symbol="600519.SH"), classifier_order="etf")
     tef_artifact = decision_model.evaluate(FactorSnapshot(symbol="600519.SH"), classifier_order="tef")
@@ -387,7 +387,7 @@ def test_evaluate_writes_classifier_order_to_artifact(monkeypatch):
     from alphabee.midterm.models import FactorSnapshot
 
     scores = _scores(f=1.0, e=0.0, t=1.0)
-    monkeypatch.setattr(decision_model, "compress_scores", lambda snapshot: scores)
+    monkeypatch.setattr(decision_model, "compress_scores", lambda snapshot, **kwargs: scores)
 
     tef_artifact = decision_model.evaluate(FactorSnapshot(symbol="600519.SH"), classifier_order="tef")
     assert tef_artifact.classifier_order == "tef"

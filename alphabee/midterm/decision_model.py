@@ -55,8 +55,10 @@ from alphabee.midterm.models import (
 from alphabee.midterm.position import build_position
 from alphabee.midterm.score_engine import (
     KNOWN_MARGINAL_MODES,
+    KNOWN_OCF_PENALTY_BASES,
     MARGINAL_MODE_OFF,
     MARGINAL_MODE_ON,
+    OCF_PENALTY_BASIS_SIGN,
     compress_scores,
     fundamental_breakdown,
 )
@@ -178,6 +180,60 @@ def resolve_f_marginal_mode(mode: str | None = None) -> str:
     return MARGINAL_MODE_OFF
 
 
+def _settings_default_ocf_penalty_basis() -> str:
+    """读 ``MidtermClassifierSettings`` 的**模型默认值**（不硬编码生产默认）。
+
+    与 :func:`_settings_default_marginal_mode` 同构：配置缺段/缺字段时回退到
+    ``MidtermClassifierSettings.model_fields["ocf_penalty_basis"].default``（当前 ``"ttm"``），
+    读取失败（配置不可导入/字段缺失/默认值非法）⇒ ``"sign"``（最保守，旧行为）。
+    """
+    try:
+        from alphabee.config import MidtermClassifierSettings
+
+        default = MidtermClassifierSettings.model_fields["ocf_penalty_basis"].default
+    except Exception:  # noqa: BLE001 - 读默认值失败绝不打断决策
+        return OCF_PENALTY_BASIS_SIGN
+    value = str(default or "").strip().lower()
+    return value if value in KNOWN_OCF_PENALTY_BASES else OCF_PENALTY_BASIS_SIGN
+
+
+def resolve_ocf_penalty_basis(basis: str | None = None) -> str:
+    """解析 OCF 惩罚口径（P1-2 设计 §3.3）：显式合法值优先；``None`` → 读配置。
+
+    三态（与 ``resolve_f_marginal_mode`` 同构）：
+
+    - **配置缺段/缺字段** ⇒ 动态读 ``MidtermClassifierSettings`` 的**模型默认**（当前
+      ``"ttm"``，不在本模块硬编码；避免默认值漂移）；
+    - **读配置抛异常 / 取值非法** ⇒ warn + ``"sign"``（最保守：回滚到旧口径，绝不因配置
+      坏掉而启用会改变 F 的新口径）；
+    - **显式参数**（``evaluate(ocf_penalty_basis=...)``）优先于配置；显式值非法同样
+      warn + ``"sign"``（绝不抛）。
+    """
+    if basis is not None:
+        value = str(basis).strip().lower()
+        if value in KNOWN_OCF_PENALTY_BASES:
+            return value
+        logger.warning("ocf_penalty_basis 非法值 %r，回落 sign", basis)
+        return OCF_PENALTY_BASIS_SIGN
+
+    try:
+        from alphabee.config import get_settings
+
+        configured = getattr(getattr(get_settings(), "midterm", None), "ocf_penalty_basis", None)
+    except Exception as exc:  # noqa: BLE001 - 配置不可用绝不打断决策
+        logger.warning("midterm.ocf_penalty_basis 配置不可用（%s），回落 sign", exc)
+        return OCF_PENALTY_BASIS_SIGN
+
+    if configured is None:
+        # 缺段/缺字段：视为「未配置」→ 回退到 settings 模型的默认值（动态读取，不硬编码）
+        return _settings_default_ocf_penalty_basis()
+    value = str(configured).strip().lower()
+    if value in KNOWN_OCF_PENALTY_BASES:
+        return value
+    logger.warning("midterm.ocf_penalty_basis 配置值非法 %r，回落 sign", configured)
+    return OCF_PENALTY_BASIS_SIGN
+
+
 def _score_0_100(direction_score: float | None) -> float | None:
     """``[-1, 1]`` 方向分 → ``0-100`` 分数（50=中性，100=最有利，0=最不利）。
 
@@ -226,7 +282,12 @@ def _writeback_directions(snapshot: FactorSnapshot, scores: VariableScores) -> N
     _apply(snapshot.risk, scores.r_risk, "risk_declining", "risk_rising", "neutral")
 
 
-def _writeback_f_breakdown(snapshot: FactorSnapshot, *, marginal_mode: str = MARGINAL_MODE_OFF) -> None:
+def _writeback_f_breakdown(
+    snapshot: FactorSnapshot,
+    *,
+    marginal_mode: str = MARGINAL_MODE_OFF,
+    ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
+) -> None:
     """把 F 的可审计分解回写进 ``fundamental.score_breakdown``（L1，2026-11-01）。
 
     与 :func:`_writeback_directions` 同一处回写窗口（``evaluate`` 内），但职责正交：
@@ -238,11 +299,15 @@ def _writeback_f_breakdown(snapshot: FactorSnapshot, *, marginal_mode: str = MAR
     ``marginal_mode``（F-Marginal §6.4）：原样透传给 :func:`fundamental_breakdown`；
     ``shadow``/``on`` 且单季数据可用时追加 6 个边际键（marginal_raw / marginal_quality /
     marginal / f_shadow / f_shadow_delta / f_marginal_source），``off`` 不写（旧帧零变化）。
+
+    ``ocf_penalty_basis``（P1-2/P1-5）：解析后的实际口径（``ttm`` / ``sign``），透传后写入
+    ``ocf_ttm`` / ``ocf_penalty_basis`` / ``financial_sector`` 诊断键；缺省 ``sign`` 保持旧行为。
     """
     breakdown = fundamental_breakdown(
         snapshot.fundamental,
         snapshot.expectation,
         marginal_mode=marginal_mode,
+        ocf_penalty_basis=ocf_penalty_basis,
     )
     if breakdown is not None:
         snapshot.fundamental.score_breakdown = breakdown
@@ -455,6 +520,7 @@ def evaluate(
     classifier_order: str | None = None,
     classifier_formula: str | None = None,
     f_marginal_mode: str | None = None,
+    ocf_penalty_basis: str | None = None,
 ) -> CompanyStateArtifact:
     """串起四引擎，把 FactorSnapshot 决策为 CompanyStateArtifact（§6 三轴 + §9）。
 
@@ -487,6 +553,11 @@ def evaluate(
             让影子期自动积累语料；配置异常/非法回落 ``"off"``）。解析一次后同时用于
             ``compress_scores`` 与 ``_writeback_f_breakdown``，并把实际值写入 artifact
             ``f_marginal_mode``（provenance）。
+        ocf_penalty_basis: OCF 惩罚口径（P1-2 design §8）：``"ttm"``（生产缺省，滚动 12
+            个月 OCF；金融股跳过、TTM 缺失回落 sign）/ ``"sign"``（旧口径）；``None`` =
+            跟随配置 ``midterm.ocf_penalty_basis``（缺段/缺字段动态读模型默认 ``"ttm"``；
+            异常/非法回落 ``"sign"``）。解析一次后同时用于 ``compress_scores`` 与
+            ``_writeback_f_breakdown``，并把实际值写入 artifact ``ocf_penalty_basis``。
 
     Returns:
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
@@ -506,10 +577,13 @@ def evaluate(
     # 方向分的是 on 档）。``on`` 与 ``shadow`` 的逐值等价由
     # ``tests/midterm/test_f_marginal_scoring.py`` / ``test_decision_model.py`` 钉住。
     resolved_marginal_mode = resolve_f_marginal_mode(f_marginal_mode)
+    # OCF 惩罚口径（P1-2）：同样先 resolve 一次，评分与分解共用同一口径；
+    # artifact 记录解析后的实际值（旧帧回落 "" = 未记录）。生产默认 ttm，函数默认 sign。
+    resolved_ocf_basis = resolve_ocf_penalty_basis(ocf_penalty_basis)
     if resolved_marginal_mode == MARGINAL_MODE_ON:
-        scores = compress_scores(snapshot, marginal_mode=MARGINAL_MODE_ON)
+        scores = compress_scores(snapshot, marginal_mode=MARGINAL_MODE_ON, ocf_penalty_basis=resolved_ocf_basis)
     else:
-        scores = compress_scores(snapshot)
+        scores = compress_scores(snapshot, ocf_penalty_basis=resolved_ocf_basis)
     # TEF design §4.5 / V2 design §6.4：先各 resolve 一次拿确定值再路由
     # （dispatch 内部对合法值直接放行，无双重分叉）。
     resolved_order = resolve_classifier_order(classifier_order)
@@ -527,7 +601,7 @@ def evaluate(
     _writeback_directions(snapshot, scores)
     # L1（2026-11-01）：F 的可审计分解（原始三项 / 饱和项 / 修正项 / 饱和标志）随帧落盘，
     # 报告与任务记录只渲染不重算；与方向分同批回写，保证「分」与「为什么」来自同一次计算。
-    _writeback_f_breakdown(snapshot, marginal_mode=resolved_marginal_mode)
+    _writeback_f_breakdown(snapshot, marginal_mode=resolved_marginal_mode, ocf_penalty_basis=resolved_ocf_basis)
 
     has_evidence = bool(evidence)
     # 情景概率方向用「因子方向分」（score_engine 正确符号化），而非证据层的
@@ -599,6 +673,8 @@ def evaluate(
         factor_direction=factor_direction,
         # F 边际 provenance（F-Marginal §6.1）：本帧解析后的实际模式；off/旧帧语义为未启用。
         f_marginal_mode=resolved_marginal_mode,
+        # OCF 惩罚口径 provenance（P1-2 §3.3）：本帧解析后的实际值；旧帧回落 ""。
+        ocf_penalty_basis=resolved_ocf_basis,
     )
 
 
@@ -614,6 +690,7 @@ def get_decision(
     classifier_order: str | None = None,
     classifier_formula: str | None = None,
     f_marginal_mode: str | None = None,
+    ocf_penalty_basis: str | None = None,
 ) -> CompanyStateArtifact:
     """便捷入口：``get_factor_snapshot(symbol)`` 后再 ``evaluate``。
 
@@ -629,6 +706,8 @@ def get_decision(
             ``None`` = 跟随配置 ``midterm.formula_revision``（缺省 ``"v1"``，fail-open 到 ``"v1"``）。
         f_marginal_mode: F 边际模式（F-Marginal design §6.4），透传 ``evaluate``；
             ``None`` = 跟随配置 ``midterm.f_marginal_mode``（缺省 ``"shadow"``）。
+        ocf_penalty_basis: OCF 惩罚口径（P1-2 §8），透传 ``evaluate``；
+            ``None`` = 跟随配置 ``midterm.ocf_penalty_basis``（缺省 ``"ttm"``）。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -646,6 +725,7 @@ def get_decision(
         classifier_order=classifier_order,
         classifier_formula=classifier_formula,
         f_marginal_mode=f_marginal_mode,
+        ocf_penalty_basis=ocf_penalty_basis,
     )
 
 

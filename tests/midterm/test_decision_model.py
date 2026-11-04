@@ -845,3 +845,148 @@ def test_resolve_f_marginal_mode_falls_back_to_model_default(monkeypatch):
     monkeypatch.setattr(field, "default", "on")
     monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=None))
     assert resolve_f_marginal_mode() == "on"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OCF 惩罚口径（P1-2 design §8）：resolve 三态 / evaluate provenance / 透传
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _pin_ocf_config(monkeypatch, *, basis: str | None = "ttm", drop_field: bool = False) -> None:
+    """钉住配置：``drop_field=True`` 模拟「缺字段」（stub 无 ocf_penalty_basis）。"""
+    midterm = SimpleNamespace(classifier_order="etf", formula_revision="v1")
+    if not drop_field:
+        midterm.ocf_penalty_basis = basis
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=midterm))
+
+
+def _snapshot_with_ocf(*, ttm: float | None, is_financial: bool = False) -> FactorSnapshot:
+    """601668-like 帧：累计 OCF 为负、TTM 可正可负；金融股开关由 is_financial 控制。"""
+    return _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=10.0,
+            net_profit_yoy=20.0,
+            eps_growth_yoy=15.0,
+            operating_cashflow=-453.93e8,
+            operating_cashflow_ttm=ttm,
+            is_financial=is_financial,
+        )
+    )
+
+
+def test_resolve_ocf_penalty_basis_explicit_value_wins(monkeypatch):
+    """显式合法值优先于配置（大小写归一）。"""
+    from alphabee.midterm.decision_model import resolve_ocf_penalty_basis
+
+    _pin_ocf_config(monkeypatch, basis="sign")
+    assert resolve_ocf_penalty_basis("ttm") == "ttm"
+    assert resolve_ocf_penalty_basis("sign") == "sign"
+    assert resolve_ocf_penalty_basis("TTM") == "ttm"  # 大小写归一
+    assert resolve_ocf_penalty_basis() == "sign"  # 未显式传 ⇒ 跟随配置
+
+
+def test_resolve_ocf_penalty_basis_config_missing_field_defaults_to_ttm(monkeypatch):
+    """配置缺字段/缺整段 ⇒ 动态读模型默认值（当前 ttm，不硬编码）。"""
+    from alphabee.midterm.decision_model import resolve_ocf_penalty_basis
+
+    _pin_ocf_config(monkeypatch, drop_field=True)
+    assert resolve_ocf_penalty_basis() == "ttm"
+
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=None))
+    assert resolve_ocf_penalty_basis() == "ttm"
+
+
+def test_resolve_ocf_penalty_basis_config_exception_falls_back_to_sign(monkeypatch):
+    """读配置异常 ⇒ warn + sign（最保守，回滚旧口径）。"""
+    from alphabee.midterm.decision_model import resolve_ocf_penalty_basis
+
+    def _boom():
+        raise RuntimeError("config broken")
+
+    monkeypatch.setattr("alphabee.config.get_settings", _boom)
+    assert resolve_ocf_penalty_basis() == "sign"
+
+
+def test_resolve_ocf_penalty_basis_invalid_values_fall_back_to_sign(monkeypatch):
+    """配置值非法 / 显式值非法 ⇒ sign（不静默升级为新口径）。"""
+    from alphabee.midterm.decision_model import resolve_ocf_penalty_basis
+
+    _pin_ocf_config(monkeypatch, basis="bogus")
+    assert resolve_ocf_penalty_basis() == "sign"
+    _pin_ocf_config(monkeypatch, basis="ttm")
+    assert resolve_ocf_penalty_basis("bogus") == "sign"  # 显式值非法
+
+
+def test_resolve_ocf_penalty_basis_falls_back_to_model_default(monkeypatch):
+    """缺段/缺字段 ⇒ 回退到 ``MidtermClassifierSettings`` 的模型默认值（漂移测试）。"""
+    from alphabee.config import MidtermClassifierSettings
+    from alphabee.midterm.decision_model import resolve_ocf_penalty_basis
+
+    field = MidtermClassifierSettings.model_fields["ocf_penalty_basis"]
+    _pin_ocf_config(monkeypatch, drop_field=True)
+
+    monkeypatch.setattr(field, "default", "sign")
+    assert resolve_ocf_penalty_basis() == "sign"
+
+    monkeypatch.setattr(field, "default", "ttm")
+    assert resolve_ocf_penalty_basis() == "ttm"
+
+
+def test_evaluate_writes_ocf_penalty_basis_and_uses_ttm(monkeypatch):
+    """evaluate 解析一次：artifact provenance = ttm；TTM 正 ⇒ 无惩罚（sign 会 −0.5）。"""
+    _pin_ocf_config(monkeypatch, drop_field=True)
+
+    ttm_art = evaluate(_snapshot_with_ocf(ttm=446.23e8), [])
+    assert ttm_art.ocf_penalty_basis == "ttm"
+    ttm_bd = ttm_art.factor_snapshot.fundamental.score_breakdown
+    assert ttm_bd["ocf_penalty"] == 0.0
+    assert ttm_bd["ocf_penalty_basis"] == 1.0
+    assert ttm_bd["ocf_ttm"] == pytest.approx(446.23e8)
+
+    sign_art = evaluate(_snapshot_with_ocf(ttm=446.23e8), [], ocf_penalty_basis="sign")
+    assert sign_art.ocf_penalty_basis == "sign"
+    assert sign_art.factor_snapshot.fundamental.score_breakdown["ocf_penalty"] == pytest.approx(-0.5)
+    assert sign_art.variable_scores.f_fundamental_trend < ttm_art.variable_scores.f_fundamental_trend
+
+
+def test_evaluate_financial_stock_skips_ttm_ocf_penalty(monkeypatch):
+    """金融股 + TTM 负：生产路径（ttm）跳过惩罚，breakdown 写 financial_sector=1。"""
+    _pin_ocf_config(monkeypatch, drop_field=True)
+    art = evaluate(_snapshot_with_ocf(ttm=-400.0e8, is_financial=True), [])
+    bd = art.factor_snapshot.fundamental.score_breakdown
+
+    assert bd["ocf_penalty"] == 0.0
+    assert bd["financial_sector"] == 1.0
+    assert bd["ocf_penalty_basis"] == 1.0
+
+
+def test_evaluate_passes_ocf_basis_to_compress_scores(monkeypatch):
+    """evaluate 把解析后的 ocf_penalty_basis 显式传给 compress_scores（单一解析）。"""
+    import alphabee.midterm.decision_model as dm
+
+    calls: list[dict] = []
+
+    def _fake_compress(snapshot, **kwargs):
+        calls.append(kwargs)
+        return VariableScores()
+
+    monkeypatch.setattr(dm, "compress_scores", _fake_compress)
+    _pin_ocf_config(monkeypatch, drop_field=True)
+
+    art = evaluate(_snapshot(), [], ocf_penalty_basis="ttm")
+    assert calls
+    assert calls[-1]["ocf_penalty_basis"] == "ttm"
+    assert art.ocf_penalty_basis == "ttm"
+
+
+def test_get_decision_passes_ocf_penalty_basis(monkeypatch):
+    """get_decision 透传 ocf_penalty_basis（keyword-only）到 evaluate。"""
+    import alphabee.midterm.factors as factors_mod
+
+    _pin_ocf_config(monkeypatch, drop_field=True)
+    snap = _snapshot_with_ocf(ttm=446.23e8)
+    monkeypatch.setattr(factors_mod, "get_factor_snapshot", lambda symbol, include_market=True: snap)
+
+    art = get_decision("601668.SH", ocf_penalty_basis="sign")
+    assert art.ocf_penalty_basis == "sign"
+    assert art.factor_snapshot.fundamental.score_breakdown["ocf_penalty"] == pytest.approx(-0.5)

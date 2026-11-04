@@ -172,8 +172,9 @@ def test_build_fundamental_factor_maps_nested_tables():
     assert factor.free_cashflow == 1e8  # operating_cashflow - capex
     assert factor.debt_to_assets == 45.0
     assert factor.current_ratio == 1.8
-    # 未传 segments → segment 字段显式缺失（改造 E，不静默回退 0）
-    assert missing == ["segment_fastest_yoy", "segment_slowest_yoy"]
+    # 未传 segments → segment 字段显式缺失（改造 E，不静默回退 0）；
+    # 无 income ⇒ company_type 缺失（P1-5 fail-open 为 False 但显式登记）
+    assert missing == ["segment_fastest_yoy", "segment_slowest_yoy", "company_type"]
 
 
 def test_build_fundamental_factor_missing_is_none_not_zero():
@@ -181,7 +182,7 @@ def test_build_fundamental_factor_missing_is_none_not_zero():
     # 全部 None，绝不回退 0
     for name in ("revenue_yoy", "roe", "operating_cashflow", "goodwill", "debt_to_assets"):
         assert getattr(factor, name) is None
-    assert len(missing) == 13  # 11 个原有 + segment_fastest_yoy / segment_slowest_yoy（改造 E）
+    assert len(missing) == 14  # 11 个原有 + segment_fastest_yoy / segment_slowest_yoy + company_type
     assert "revenue_yoy" in missing and "operating_cashflow" in missing
 
 
@@ -276,6 +277,7 @@ def test_build_fundamental_factor_segments_missing_none():
     assert factor.segment_slowest_yoy is None
     assert "segment_fastest_yoy" in missing
     assert "segment_slowest_yoy" in missing
+    assert "company_type" in missing
 
 
 def test_build_fundamental_factor_segment_collection_uses_latest_period():
@@ -312,7 +314,7 @@ def test_build_fundamental_factor_passes_through_marginal_fields():
     # 单季口径与累计口径不同（本帧累计营收同比 −34.19%，单季 +35%）
     assert factor.q_revenue_yoy != factor.revenue_yoy
     # 派生字段不登记 missing_facts（非 canonical 字段）
-    assert missing == ["segment_fastest_yoy", "segment_slowest_yoy"]
+    assert missing == ["segment_fastest_yoy", "segment_slowest_yoy", "company_type"]
 
 
 def test_build_fundamental_factor_without_multi_period_keeps_f_identical():
@@ -347,6 +349,93 @@ def test_build_fundamental_factor_without_multi_period_keeps_f_identical():
 def test_q_marginal_fields_are_not_missing_registry_fields():
     """q_* 不是 canonical 数据字段 ⇒ 不进缺失登记表（设计 §3.3）。"""
     assert set(factors_mod._Q_MARGINAL_FIELDS).isdisjoint(factors_mod._FUNDAMENTAL_FIELDS)
+
+
+def test_build_fundamental_factor_computes_ttm_ocf():
+    """P1-2：TTM OCF = FY(prev) + cum(t) − cum(t−4)；年报 = 累计；缺期 ⇒ None。"""
+
+    def _cf(period: str, value: float) -> dict[str, Any]:
+        return {"period": period, "operating_cashflow": value}
+
+    # Q3（20250930）：FY2024 500 + cum(2025Q3) 550 − cum(2024Q3) 300 = 750
+    q3 = {
+        "fina": [{"period": "20250930", "revenue_yoy": 1.0}],
+        "cashflow": [
+            _cf("20250930", 550.0),
+            _cf("20250630", 200.0),
+            _cf("20250331", 100.0),
+            _cf("20241231", 500.0),
+            _cf("20240930", 300.0),
+        ],
+    }
+    q3_factor, _ = build_fundamental_factor(q3)
+    assert q3_factor.operating_cashflow_ttm == pytest.approx(750.0)
+    assert q3_factor.operating_cashflow == pytest.approx(550.0)  # 累计口径字段不变
+
+    # Q1（20250331）：FY2024 500 + cum(2025Q1) 100 − cum(2024Q1) 80 = 520
+    q1 = {
+        "fina": [{"period": "20250331", "revenue_yoy": 1.0}],
+        "cashflow": [
+            _cf("20250331", 100.0),
+            _cf("20241231", 500.0),
+            _cf("20240331", 80.0),
+        ],
+    }
+    assert build_fundamental_factor(q1)[0].operating_cashflow_ttm == pytest.approx(520.0)
+
+    # 年报（1231）：TTM = 累计
+    annual = {
+        "fina": [{"period": "20241231", "revenue_yoy": 1.0}],
+        "cashflow": [_cf("20241231", 500.0), _cf("20240930", 300.0)],
+    }
+    assert build_fundamental_factor(annual)[0].operating_cashflow_ttm == pytest.approx(500.0)
+
+    # 缺 FY(prev) 或 cum(t−4) ⇒ None（不插值、不回退）
+    missing_fy = {
+        "fina": [{"period": "20250930", "revenue_yoy": 1.0}],
+        "cashflow": [_cf("20250930", 550.0), _cf("20240930", 300.0)],
+    }
+    assert build_fundamental_factor(missing_fy)[0].operating_cashflow_ttm is None
+    missing_base = {
+        "fina": [{"period": "20250930", "revenue_yoy": 1.0}],
+        "cashflow": [_cf("20250930", 550.0), _cf("20241231", 500.0)],
+    }
+    assert build_fundamental_factor(missing_base)[0].operating_cashflow_ttm is None
+
+    # 无报告期/空 cashflow ⇒ None
+    assert build_fundamental_factor(_fin())[0].operating_cashflow_ttm is None
+
+
+@pytest.mark.parametrize(
+    ("company_type", "expected_financial", "expected_missing"),
+    [
+        ("2", True, False),  # 银行
+        ("3", True, False),  # 保险
+        ("4", True, False),  # 证券
+        (2.0, True, False),  # float 序列化形态（2.0 → 2）
+        ("1", False, False),  # 一般工业
+        ("", False, True),  # 空 ⇒ 缺失登记
+        (None, False, True),
+    ],
+)
+def test_build_fundamental_factor_is_financial_from_company_type(
+    company_type: Any, expected_financial: bool, expected_missing: bool
+):
+    """P1-5：company_type ∈ {2,3,4} ⇒ is_financial=True；缺失 ⇒ False + missing_facts 登记。"""
+    data = _fin_marginal()
+    data["income"][0]["company_type"] = company_type
+    factor, missing = build_fundamental_factor(data)
+
+    assert factor.is_financial is expected_financial
+    assert ("company_type" in missing) is expected_missing
+
+
+def test_build_fundamental_factor_missing_income_registers_company_type():
+    """P1-5：income 缺失 ⇒ is_financial=False（fail-open）且 company_type 出现在 missing_facts。"""
+    factor, missing = build_fundamental_factor(_fin())
+    assert factor.is_financial is False
+    assert "company_type" in missing
+    assert "is_financial" not in missing  # 派生字段不登记
 
 
 def test_build_expectation_factor_forecast_express_and_consensus():

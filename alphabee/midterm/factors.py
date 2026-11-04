@@ -91,6 +91,11 @@ _EXPECTATION_FIELDS: tuple[str, ...] = (
     "rating_downgrade_1m",
 )
 
+#: 金融股的公司类型（Tushare comp_type → canonical company_type；P1-5）：
+#: 2 银行 / 3 保险 / 4 证券 ⇒ ``is_financial=True``（OCF TTM 惩罚跳过、边际层不适用）。
+#: 缺失/其它值 ⇒ False（fail-open）并由 builder 在 missing_facts 登记 ``company_type``。
+_FINANCIAL_COMPANY_TYPES: frozenset[str] = frozenset({"2", "3", "4"})
+
 _TREND_FIELDS: tuple[str, ...] = (
     "rs_stock_market_20d",
     "rs_stock_market_60d",
@@ -207,6 +212,22 @@ def _first(records: Any) -> dict[str, Any]:
                 return r
         return {}
     return records if isinstance(records, dict) else {}
+
+
+def _company_type(income: Any) -> str | None:
+    """从 ``income`` 最新记录读公司类型（canonical ``company_type``）；缺失/非法 ⇒ ``None``。
+
+    Tushare ``comp_type`` 经 adapter 映射为 ``company_type``（P1-5），取值 1 一般工业 /
+    2 银行 / 3 保险 / 4 证券；某些序列化形态会给出 ``2.0``（浮点）或 ``"2"``（字符串），
+    这里统一归一为无小数点的字符串，供 :data:`_FINANCIAL_COMPANY_TYPES` 比较。
+    """
+    record = _first(income)
+    text = _text(record.get("company_type"))
+    if not text:
+        return None
+    if text.endswith(".0"):  # 2.0 → 2（float 序列化兜底）
+        text = text[:-2]
+    return text or None
 
 
 def _ann_key(rec: dict[str, Any]) -> str:
@@ -467,6 +488,38 @@ def _series(records: Any, field: str) -> dict[str, float]:
     return series
 
 
+def _operating_cashflow_ttm(cashflow: Any) -> float | None:
+    """滚动 12 个月经营现金流（P1-2）：``FY(prev) + cum(t) − cum(t−4)``。
+
+    ``t`` 取 ``cashflow`` 表内最新合法报告期：
+
+    - ``t = 1231``（年报）⇒ TTM = 累计值 ``cum(t)``；
+    - ``t = 0331/0630/0930`` ⇒ ``FY(prev) + cum(t) − cum(t−4)``，其中
+      ``FY(prev)`` = 上年 1231 累计、``cum(t−4)`` = 上年同季累计（消除 A 股季末
+      负现金流的季节性）；
+    - 缺 ``cum(t)`` / ``FY(prev)`` / ``cum(t−4)`` 任一 ⇒ ``None``（**不插值、不回退**到
+      旧期或累计符号；评分层据此回落 sign 并留痕 ``ocf_penalty_basis=0``）。
+    """
+    series = _series(cashflow, "operating_cashflow")
+    if not series:
+        return None
+    target = _latest_income_period(cashflow)
+    if not target:
+        return None
+    current = series.get(target)
+    if current is None:
+        return None
+    if target.endswith("1231"):
+        return current
+    prev_fy = f"{int(target[:4]) - 1:04d}1231"
+    prev_year_same_quarter = _prev_year(target)
+    prev_fy_value = series.get(prev_fy)
+    prev_year_value = series.get(prev_year_same_quarter)
+    if prev_fy_value is None or prev_year_value is None:
+        return None
+    return prev_fy_value + current - prev_year_value
+
+
 def _marginal_revenue_series(income: Any) -> tuple[Mapping[str, float], str]:
     """边际营收序列：优先 canonical ``operating_revenue``（营业收入），缺失回落 ``revenue``。
 
@@ -654,11 +707,17 @@ def build_fundamental_factor(
     边际营收口径（P1-4）：``marginal_revenue_basis`` 记录 ``q_revenue_yoy`` /
     ``q_gross_margin`` 实际使用的营收序列（``operating_revenue`` 优先、缺失回落
     ``total_revenue``；无有效营收序列 ⇒ ``""``）。非 canonical 字段，不登记 ``missing_facts``。
+
+    OCF / 金融股（P1-2/P1-5）：``operating_cashflow_ttm`` 由 :func:`_operating_cashflow_ttm`
+    从 ``cashflow`` 多期数据计算（缺期 ⇒ ``None``）；``is_financial`` 由 ``income`` 最新
+    记录的 canonical ``company_type`` ∈ {"2","3","4"} 判定。``company_type`` 缺失时
+    fail-open 为 ``False`` 并把 ``"company_type"`` 登记进 ``missing_facts``（不静默）。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
     balance = _first(data.get("balance"))
     cashflow = _first(data.get("cashflow"))
+    company_type = _company_type(data.get("income"))
     fastest, slowest = _segment_extremes(segments)
 
     op_cf = _opt(cashflow.get("operating_cashflow"))
@@ -680,10 +739,12 @@ def build_fundamental_factor(
         gross_margin=_opt(fina.get("gross_margin")),
         net_margin=_opt(fina.get("net_margin")),
         operating_cashflow=op_cf,
+        operating_cashflow_ttm=_operating_cashflow_ttm(data.get("cashflow")),
         free_cashflow=free_cf,
         debt_to_assets=_opt(fina.get("debt_to_assets")),
         current_ratio=_opt(fina.get("current_ratio")),
         goodwill=_opt(balance.get("goodwill")),
+        is_financial=company_type in _FINANCIAL_COMPANY_TYPES,
         segment_fastest_yoy=fastest,
         segment_slowest_yoy=slowest,
         **marginal_values,
@@ -691,7 +752,10 @@ def build_fundamental_factor(
         marginal_period=_latest_income_period(data.get("income")),
         marginal_revenue_basis=revenue_basis if revenue_series else "",
     )
-    return factor, _missing_fields(factor, _FUNDAMENTAL_FIELDS)
+    missing = _missing_fields(factor, _FUNDAMENTAL_FIELDS)
+    if company_type is None:
+        missing.append("company_type")  # fail-open=False，但缺失必须显式登记（P1-5）
+    return factor, missing
 
 
 def build_expectation_factor(

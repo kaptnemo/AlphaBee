@@ -157,11 +157,19 @@ class FundamentalFactor(BaseModel):
     roe: float | None = None  # PERCENT 净资产收益率
     gross_margin: float | None = None  # PERCENT 毛利率
     net_margin: float | None = None  # PERCENT 净利率
-    operating_cashflow: float | None = None  # CNY 经营现金流净额
+    operating_cashflow: float | None = None  # CNY 经营现金流净额（报告期累计）
+    # 滚动 12 个月经营现金流（P1-2，additive）：TTM_OCF(t)=FY(prev)+cum(t)−cum(t−4)
+    # （年报 = 累计）；缺 FY(prev)/cum(t−4) ⇒ None（不插值、不回退）。用于替代
+    # 「累计 OCF 符号」判定，消除 A 股季末负现金流的结构性误罚。非 canonical 派生字段。
+    operating_cashflow_ttm: float | None = None
     free_cashflow: float | None = None  # CNY 自由现金流
     debt_to_assets: float | None = None  # PERCENT 资产负债率
     current_ratio: float | None = None  # RATIO 流动比率
     goodwill: float | None = None  # CNY 商誉（财务风险来源）
+    # 金融股标识（P1-5，additive）：company_type ∈ {"2","3","4"}（银行/保险/证券）⇒ True。
+    # True 时 OCF TTM 惩罚跳过、边际层显式不适用（_marginal=None）；缺失 comp_type 时
+    # fail-open 为 False 并在 missing_facts 登记 company_type。非 canonical 派生字段。
+    is_financial: bool = False
     segment_fastest_yoy: float | None = None  # PERCENT 最快细分业务同比增速（改造 E，company_track.segments）
     # 最慢细分同比增速：改造 E 预留字段，当前不参与评分；P2 改造 D（EV 收益 materiality 化）
     # 将作为「最慢业务拖累项」消费，避免结构性亮点只反映最快而不反映最慢的失真。
@@ -639,6 +647,9 @@ class CompanyStateArtifact(BaseModel):
     # （off / shadow / on）；旧帧无该字段 → 回落 "off"（语义 = 未记录/未启用，正确）。
     # schema_version 不升（additive 默认值，沿用 V2 先例）。
     f_marginal_mode: str = "off"
+    # OCF 惩罚口径 provenance（P1-2，additive）：本帧解析后的实际口径（"ttm" / "sign"）；
+    # 旧帧无该字段 ⇒ ""（语义 = 未记录，回放时按帧内已存 F，不重算）。schema_version 不升。
+    ocf_penalty_basis: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

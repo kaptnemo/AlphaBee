@@ -63,6 +63,8 @@ _NEW_FIELDS = (
     "factor_direction",
     # F 边际模式 provenance（F-Marginal §6.1，PR-2）：additive 字段，golden 冻结时尚不存在。
     "f_marginal_mode",
+    # OCF 惩罚口径 provenance（P1-2）：additive 字段，golden 冻结时尚不存在。
+    "ocf_penalty_basis",
 )
 # F 边际改善（F-Marginal §3.3）新增的 4 个单季派生字段：与 score_breakdown 同属
 # additive 诊断字段（golden 冻结时尚不存在、不参与方向分/分布计算），同口径剔除。
@@ -75,7 +77,14 @@ _Q_MARGINAL_FIELDS = (
 # P0-1/P0-3/P1-4 新增的期间/口径 provenance 字段（additive）：golden 冻结时尚不存在，
 # 且不参与任何方向分/分布计算；与 score_breakdown / q_* 同口径从断言 A 的比较对象中
 # 剔除，其存在性与缺省值（空串）由断言 B 单独钉住。
-_FUNDAMENTAL_PERIOD_FIELDS = ("report_period", "marginal_period", "marginal_revenue_basis")
+_FUNDAMENTAL_PERIOD_FIELDS = (
+    "report_period",
+    "marginal_period",
+    "marginal_revenue_basis",
+    # P1-2/P1-5 新增的 OCF/金融股派生字段（additive、不参与其它因子计算）。
+    "operating_cashflow_ttm",
+    "is_financial",
+)
 _EXPECTATION_PERIOD_FIELDS = ("profit_forecast_period",)
 # score_breakdown 里的边际分解键（F-Marginal §6.1）：shadow/on 且单季数据可用时出现。
 _MARGINAL_KEYS = (
@@ -164,8 +173,8 @@ def _evidence() -> list[EvidenceEvent]:
 def _canonical(payload: dict) -> str:
     """剔除新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。
 
-    剔除三类：① 9 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
-    ``f_marginal_mode``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
+    剔除三类：① 10 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
+    ``f_marginal_mode`` + P1-2 的 ``ocf_penalty_basis``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
     （L1，2026-11-01 的 F 可审计分解）、4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，PR-1）
     与 ``report_period`` / ``marginal_period``（P0-1/P0-3 期间 provenance）、
     ``marginal_revenue_basis``（P1-4 口径 provenance）；③
@@ -364,6 +373,10 @@ def test_old_frame_without_new_fields_loads_with_defaults():
     assert fundamental.marginal_period == ""
     assert fundamental.marginal_revenue_basis == ""
     assert artifact.factor_snapshot.expectation.profit_forecast_period == ""
+    # P1-2/P1-5 OCF/金融股字段与 artifact 口径 provenance：旧帧回落 None/False/""
+    assert fundamental.operating_cashflow_ttm is None
+    assert fundamental.is_financial is False
+    assert artifact.ocf_penalty_basis == ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -388,6 +401,10 @@ def test_v1_artifact_new_fields_are_fixed(monkeypatch):
     assert artifact.factor_snapshot.fundamental.marginal_period == ""
     assert artifact.factor_snapshot.fundamental.marginal_revenue_basis == ""
     assert artifact.factor_snapshot.expectation.profit_forecast_period == ""
+    # P1-2/P1-5：golden 帧无 OCF/金融股输入 ⇒ 字段钉默认；配置 stub 缺 ocf 字段 ⇒ 模型默认 ttm
+    assert artifact.factor_snapshot.fundamental.operating_cashflow_ttm is None
+    assert artifact.factor_snapshot.fundamental.is_financial is False
+    assert artifact.ocf_penalty_basis == "ttm"
 
     # factor_direction = 改动前六因子均值：用 golden 里的方向分独立算一遍对比
     golden_scores = _golden_payload()["variable_scores"]

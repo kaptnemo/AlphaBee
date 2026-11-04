@@ -64,6 +64,13 @@ _GOODWILL_SCALE = 1_000_000_000.0  # CNY 商誉饱和点（10 亿 → -1）
 # derived facts 的 cashflow_quality（OCF/净利润）与 capex_intensity 承接，F 不再二次扣分。
 # 保留**经营现金流**惩罚（OCF < 0 = 当期利润没有现金支撑，是 profit_without_cash 的核心形态）。
 _OCF_NEGATIVE_PENALTY = 0.5  # 经营现金流为负对 F 的惩罚力度（自由现金流不再参与）
+# OCF 判定口径（P1-2 三档；**纯函数默认 sign** = 旧行为，生产默认 ttm 由
+# decision_model.resolve_ocf_penalty_basis 解析后显式传入）：
+#   sign = 报告期累计 OCF < 0 ⇒ −0.5（旧口径，回滚开关）
+#   ttm  = 滚动 12 个月 OCF < 0 ⇒ −0.5；金融股跳过；TTM 缺失回落 sign（并留痕 basis=0）
+OCF_PENALTY_BASIS_SIGN = "sign"
+OCF_PENALTY_BASIS_TTM = "ttm"
+KNOWN_OCF_PENALTY_BASES: tuple[str, ...] = (OCF_PENALTY_BASIS_TTM, OCF_PENALTY_BASIS_SIGN)
 _BEAT_BONUS = 0.2  # net_profit_yoy 超预告上限的 beat 加分
 
 # 预期差（P0-2）：预告 miss 惩罚——实际净利增速远低于预告下限 → 显著负向。
@@ -184,16 +191,49 @@ def _is_first_quarter(period: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _operating_cashflow_penalty(f: FundamentalFactor) -> float:
-    """经营现金流惩罚（profit_without_cash）：``OCF < 0`` → ``-_OCF_NEGATIVE_PENALTY``。
+def _normalize_ocf_penalty_basis(basis: str | None) -> str:
+    """OCF 口径归一：合法值原样返回；缺失/非法 → ``sign``（旧行为，最保守）。
+
+    resolve 层（``decision_model.resolve_ocf_penalty_basis``）已保证合法值；这里只是
+    直接调用 ``fundamental_breakdown`` 时的防御：非法值不得被静默升级为 TTM 口径。
+    """
+    value = str(basis or "").strip().lower()
+    return value if value in KNOWN_OCF_PENALTY_BASES else OCF_PENALTY_BASIS_SIGN
+
+
+def _operating_cashflow_penalty(f: FundamentalFactor, basis: str = OCF_PENALTY_BASIS_SIGN) -> float:
+    """经营现金流惩罚（profit_without_cash）：OCF 为负 → ``-_OCF_NEGATIVE_PENALTY``。
+
+    口径（P1-2）：``basis="sign"``（**函数缺省**，旧行为）用报告期累计 OCF 符号；
+    ``basis="ttm"``（生产默认，由 decision_model 显式传入）先用滚动 12 个月 OCF：
+
+    - 金融股（``is_financial``）在 TTM 口径下**跳过**（OCF 与利润质量不可比，P1-5）；
+    - TTM 可得 ⇒ ``ttm < 0`` 才罚；TTM 缺失（缺 FY(prev)/cum(t−4)）⇒ 回落累计符号
+      （不静默免罚，D1 决策），并由 ``score_breakdown.ocf_penalty_basis=0`` 留痕。
 
     **自由现金流不参与 F**（2026-11-01 移出，见常量区说明）：FCF 为负常来自资本开支/备货，
     与「利润没有现金支撑」不是同一件事，由 derived facts 的 ``capex_intensity`` 承接。
     缺失（``None``）不惩罚（不静默假设）。
     """
+    if basis == OCF_PENALTY_BASIS_TTM:
+        if f.is_financial:
+            return 0.0
+        if f.operating_cashflow_ttm is not None:
+            return -_OCF_NEGATIVE_PENALTY if f.operating_cashflow_ttm < 0.0 else 0.0
     if f.operating_cashflow is not None and f.operating_cashflow < 0.0:
         return -_OCF_NEGATIVE_PENALTY
     return 0.0
+
+
+def _ocf_penalty_basis_effective(f: FundamentalFactor, basis: str) -> bool:
+    """``score_breakdown.ocf_penalty_basis`` 的 1/0 口径（P1-2 §3.4）。
+
+    ``1`` = TTM 口径实际生效（含金融股跳过：金融股在 TTM 下显式不适用，不是「回落
+    sign」）；``0`` = sign 口径或 TTM 缺失回落 sign。
+    """
+    if basis != OCF_PENALTY_BASIS_TTM:
+        return False
+    return f.is_financial or f.operating_cashflow_ttm is not None
 
 
 def _beat_bonus(f: FundamentalFactor, e: ExpectationFactor) -> float:
@@ -309,7 +349,12 @@ def _marginal(f: FundamentalFactor) -> tuple[float, float, float] | None:
     （``q_gross_margin_pp``）缺失 ⇒ ``None``。理由：质量门是边际项成立的必要条件——
     没有质地的「加速」正是 §0 第三行要防的失败模式（一次低基数季度把「证伪」抹成
     「没信号」），所以不拿半边数据报满额信用。
+
+    金融股（P1-5）显式降级：``is_financial=True`` ⇒ ``None``（OCF/边际层对银行、保险、
+    证券不可比；不依赖「毛利率缺失」的偶然性来触发降级）。
     """
+    if f.is_financial:
+        return None
     deltas = _marginal_legs(f)
     if not deltas or f.q_gross_margin_pp is None:
         return None
@@ -328,6 +373,7 @@ def fundamental_breakdown(
     e: ExpectationFactor,
     *,
     marginal_mode: str = MARGINAL_MODE_OFF,
+    ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
 ) -> dict[str, float] | None:
     """F 方向分的**可审计分解**（L1）：返回逐项与饱和标志；全部 YoY 缺失 → ``None``。
 
@@ -343,6 +389,9 @@ def fundamental_breakdown(
     - ``q1_marginal_degraded``：Q1 边际降级留痕（仅 ``shadow`` 且 Q1 帧写 1.0，P0-3）；
     - ``report_period_mismatch``：``report_period`` 与 ``marginal_period`` 均可知且
       不同期（1.0；P2-1 诊断，缺失/同期不写）；
+    - ``ocf_ttm``：滚动 12 个月经营现金流（仅值可得时写）；``ocf_penalty_basis``：
+      1 = TTM 口径实际生效（含金融股跳过）/ 0 = sign 或 TTM 缺失回落（P1-2）；
+      ``financial_sector``：1 = 金融股（P1-5）；
     - ``raw``：修正后合计；``f``：最终方向分（clip 后）；
     - ``input_saturated``：至少一项 YoY 越过饱和点（原始幅度已丢失）；
     - ``output_saturated``：合计越过 ±1（越界部分被 clip）。
@@ -372,8 +421,12 @@ def fundamental_breakdown(
 
     本函数是 F 的**唯一计算入口**：:func:`_fundamental_trend` 只取 ``["f"]``，报告/记录消费
     ``breakdown``——避免"决策算一份、报告再算一份"的漂移（``alphabee-schema-steward`` 单一来源）。
+
+    ``ocf_penalty_basis``（P1-2）：keyword 缺省 ``"sign"``（旧行为，直接调用点零变化）；
+    生产路径由 ``decision_model.resolve_ocf_penalty_basis`` 解析配置后显式传入 ``"ttm"``。
     """
     mode = _normalize_marginal_mode(marginal_mode)
+    normalized_ocf_basis = _normalize_ocf_penalty_basis(ocf_penalty_basis)
     marginal = _marginal(f) if mode != MARGINAL_MODE_OFF else None
     # P0-3：Q1 单季=累计 ⇒ 边际项降级（marginal 已为 None）；shadow 写留痕，on 不写
     # （保证 on 与 off 的分解逐值相等，见 ``test_q1_marginal_degrades_to_none``）。
@@ -406,7 +459,7 @@ def fundamental_breakdown(
     if growth is None:  # 理论上不可达（present 非空 ⇒ term_values 非空），防御保留
         return None
 
-    ocf_penalty = _operating_cashflow_penalty(f)
+    ocf_penalty = _operating_cashflow_penalty(f, normalized_ocf_basis)
     # P0-1 期间守卫：财报期与预告期同期才产 beat/miss；不同期/任一为空 ⇒ 0（fail-closed）。
     forecast_period_matched = _periods_match(f.report_period, e.profit_forecast_period)
     beat_bonus = _beat_bonus(f, e)
@@ -437,6 +490,8 @@ def fundamental_breakdown(
         {
             "growth_mean": growth,
             "ocf_penalty": ocf_penalty,
+            "ocf_penalty_basis": 1.0 if _ocf_penalty_basis_effective(f, normalized_ocf_basis) else 0.0,
+            "financial_sector": 1.0 if f.is_financial else 0.0,
             "beat_bonus": beat_for_f,
             "miss_penalty": miss_penalty,
             "segment_bonus": segment_bonus,
@@ -464,6 +519,9 @@ def fundamental_breakdown(
         breakdown["q1_marginal_degraded"] = 1.0
     if report_period_mismatch:
         breakdown["report_period_mismatch"] = 1.0
+    # P1-2：TTM OCF 诊断值（缺失不写，避免把 None 伪装成数值）。
+    if f.operating_cashflow_ttm is not None:
+        breakdown["ocf_ttm"] = f.operating_cashflow_ttm
     return breakdown
 
 
@@ -472,6 +530,7 @@ def _fundamental_trend(
     e: ExpectationFactor,
     *,
     marginal_mode: str = MARGINAL_MODE_OFF,
+    ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
 ) -> float | None:
     """F 方向分：边际改善 + 经营现金流惩罚 + 超预期 beat + 结构性亮点（改造 E）。
 
@@ -481,6 +540,7 @@ def _fundamental_trend(
 
     - 经营现金流（profit_without_cash）：**OCF < 0** → 显著惩罚（避免 net_profit_yoy 高增长掩盖
       利润不兑现）。**自由现金流不再参与**（2026-11-01 移出，见常量区；由 derived facts 承接）；
+      ``ocf_penalty_basis="ttm"`` 时用滚动 12 个月 OCF，金融股跳过（P1-2/P1-5；缺省 sign 为旧行为）；
     - 超预期（beat）：net_profit_yoy 超预告上限才加分，in-line 不加分；
     - 预告 miss（P0-2 预期差）：net_profit_yoy 远低于预告下限 → 显著扣分
       （预告 +30~40% 但实际 +1.54% 的预期差是框架核心信号，不能只奖 beat 不罚 miss）；
@@ -494,7 +554,7 @@ def _fundamental_trend(
     全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。逐项口径见
     :func:`fundamental_breakdown`（本函数只取其中的 ``f``，单一来源）。
     """
-    breakdown = fundamental_breakdown(f, e, marginal_mode=marginal_mode)
+    breakdown = fundamental_breakdown(f, e, marginal_mode=marginal_mode, ocf_penalty_basis=ocf_penalty_basis)
     return breakdown["f"] if breakdown is not None else None
 
 
@@ -703,7 +763,12 @@ def _market_summary(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def compress_scores(snapshot: FactorSnapshot | None, *, marginal_mode: str = MARGINAL_MODE_OFF) -> VariableScores:
+def compress_scores(
+    snapshot: FactorSnapshot | None,
+    *,
+    marginal_mode: str = MARGINAL_MODE_OFF,
+    ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
+) -> VariableScores:
     """把七因子快照压缩为七方向分（``FactorSnapshot → VariableScores``）。
 
     七个方向分独立产出、不跨因子求和；任一因子方向分输入缺失时对应字段为 ``None``。
@@ -717,6 +782,9 @@ def compress_scores(snapshot: FactorSnapshot | None, *, marginal_mode: str = MAR
             ``shadow``（算但不进 F）/ ``on``（进 F）。缺省 ``off`` 保证所有既有直接调用点
             （含单测 ``compress_scores(snap)``）行为逐值不变；``decision_model.evaluate``
             会 resolve 配置后显式传入。
+        ocf_penalty_basis: OCF 惩罚口径（P1-2）：``sign``（**缺省**，旧行为：累计 OCF 符号）/
+            ``ttm``（滚动 12 个月；金融股跳过，TTM 缺失回落 sign）。缺省 ``sign`` 保证既有
+            直接调用点零变化；``decision_model.evaluate`` 会 resolve 配置后显式传入。
 
     Returns:
         ``VariableScores``：``m`` 为市场摘要（复用 ``market_score`` 0-100），
@@ -735,7 +803,12 @@ def compress_scores(snapshot: FactorSnapshot | None, *, marginal_mode: str = MAR
 
     return VariableScores(
         m=_market_summary(snapshot.market, e_revision=e_revision, segment_divergence=segment_divergence),
-        f_fundamental_trend=_fundamental_trend(snapshot.fundamental, snapshot.expectation, marginal_mode=marginal_mode),
+        f_fundamental_trend=_fundamental_trend(
+            snapshot.fundamental,
+            snapshot.expectation,
+            marginal_mode=marginal_mode,
+            ocf_penalty_basis=ocf_penalty_basis,
+        ),
         e_revision=e_revision,
         t_relative_strength=_relative_strength(snapshot.trend),
         v_valuation_percentile=_valuation_percentile(snapshot.valuation),
