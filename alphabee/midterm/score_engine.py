@@ -148,6 +148,26 @@ def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
+def _normalize_ymd(value: Any) -> str:
+    """报告期归一为 ``YYYYMMDD``（取数字串前 8 位）；不足 8 位数字 → ``""``。
+
+    ``"20260930"`` / ``"2026-09-30"`` 都可比较；空串/``None``/非日期文本 → ``""``
+    （视为「期间未知」，绝不猜测）。
+    """
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def _periods_match(a: str, b: str) -> bool:
+    """两个报告期是否为**同一** ``YYYYMMDD``；任一为空/非法 → ``False``。
+
+    P0-1 的期间守卫基础：``report_period`` 与 ``profit_forecast_period`` 必须同时
+    可知且相等，才允许 beat/miss；否则 fail-closed（无法证明同期 ⇒ 不产）。
+    """
+    aa, bb = _normalize_ymd(a), _normalize_ymd(b)
+    return bool(aa and bb and aa == bb)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 七个方向分（逐一独立产出）
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,26 +185,37 @@ def _operating_cashflow_penalty(f: FundamentalFactor) -> float:
     return 0.0
 
 
-def _beat_bonus(net_profit_yoy: float | None, max_change: float | None) -> float:
+def _beat_bonus(f: FundamentalFactor, e: ExpectationFactor) -> float:
     """超预期 beat（§11「S2 是 PositiveEvidenceChange 非 Growth」）。
 
-    ``net_profit_yoy`` 超预告上限 → ``+_BEAT_BONUS``；in-line（含落区间内）/
-    预告区间缺失 → 0（不额外加分）。
+    期间守卫（P0-1，fail-closed）：``f.report_period`` 与 ``e.profit_forecast_period``
+    任一为空或不同期 → 0（错期比较（如 H1 预告 vs Q3 财报）不产 beat，宁可不产也不
+    保留错期证据）。同期时语义逐字不变：``net_profit_yoy`` 超预告上限 →
+    ``+_BEAT_BONUS``；in-line（含落区间内）/ 预告区间缺失 → 0（不额外加分）。
     """
-    if net_profit_yoy is not None and max_change is not None and net_profit_yoy > max_change:
+    if not _periods_match(f.report_period, e.profit_forecast_period):
+        return 0.0
+    if (
+        f.net_profit_yoy is not None
+        and e.profit_forecast_max_change is not None
+        and f.net_profit_yoy > e.profit_forecast_max_change
+    ):
         return _BEAT_BONUS
     return 0.0
 
 
-def _miss_penalty(net_profit_yoy: float | None, min_change: float | None) -> float:
+def _miss_penalty(f: FundamentalFactor, e: ExpectationFactor) -> float:
     """预告 miss（P0-2 预期差）：实际净利增速远低于预告下限 → 显著负向。
 
-    ``min_change - net_profit_yoy`` 为「低于预告下限」的幅度（pp，正=miss）；
+    期间守卫（P0-1，fail-closed）：任一期间为空或不同期 → 0（同 :func:`_beat_bonus`）。
+    同期时：``min_change - net_profit_yoy`` 为「低于预告下限」的幅度（pp，正=miss）；
     超过 ``_MISS_GAP_THRESHOLD``（>20pp）判定为显著 miss，扣 ``-_MISS_PENALTY``。
     预告下限缺失 / 实际缺失 → 0（不编造预期差）。
     """
-    if net_profit_yoy is not None and min_change is not None:
-        gap = min_change - net_profit_yoy
+    if not _periods_match(f.report_period, e.profit_forecast_period):
+        return 0.0
+    if f.net_profit_yoy is not None and e.profit_forecast_min_change is not None:
+        gap = e.profit_forecast_min_change - f.net_profit_yoy
         if gap > _MISS_GAP_THRESHOLD:
             return -_MISS_PENALTY
     return 0.0
@@ -292,6 +323,8 @@ def fundamental_breakdown(
     - ``revenue_saturated`` / ...：该项是否越过 ±30 饱和点（1.0/0.0）；
     - ``growth_mean``：水平项 L = 三项均值；``ocf_penalty`` / ``beat_bonus`` / ``miss_penalty`` /
       ``segment_bonus``：修正项；
+    - ``forecast_period_matched``：财报期与预告期是否同期（1/0，P0-1）——0 时
+      ``beat_bonus`` / ``miss_penalty`` 恒为 0（fail-closed）；
     - ``raw``：修正后合计；``f``：最终方向分（clip 后）；
     - ``input_saturated``：至少一项 YoY 越过饱和点（原始幅度已丢失）；
     - ``output_saturated``：合计越过 ±1（越界部分被 clip）。
@@ -344,12 +377,14 @@ def fundamental_breakdown(
         return None
 
     ocf_penalty = _operating_cashflow_penalty(f)
-    beat_bonus = _beat_bonus(f.net_profit_yoy, e.profit_forecast_max_change)
+    # P0-1 期间守卫：财报期与预告期同期才产 beat/miss；不同期/任一为空 ⇒ 0（fail-closed）。
+    forecast_period_matched = _periods_match(f.report_period, e.profit_forecast_period)
+    beat_bonus = _beat_bonus(f, e)
     # §4.4 去重：仅 on + 有边际项 + 质量门未满（Q<1）时 beat 折半；shadow/off 不折半。
     beat_deduped = beat_bonus
     if marginal is not None and marginal[1] < 1.0:
         beat_deduped = beat_bonus * 0.5
-    miss_penalty = _miss_penalty(f.net_profit_yoy, e.profit_forecast_min_change)
+    miss_penalty = _miss_penalty(f, e)
     segment_bonus = _segment_bonus(f)
 
     # 边际项：M 代入后的增长项（on 口径）。shadow 只算不用，on 真正替换 L。
@@ -375,6 +410,7 @@ def fundamental_breakdown(
             "beat_bonus": beat_for_f,
             "miss_penalty": miss_penalty,
             "segment_bonus": segment_bonus,
+            "forecast_period_matched": 1.0 if forecast_period_matched else 0.0,
             "raw": raw,
             "f": final,
             "input_saturated": 1.0 if any(saturated.values()) else 0.0,
@@ -413,6 +449,8 @@ def _fundamental_trend(
     - 超预期（beat）：net_profit_yoy 超预告上限才加分，in-line 不加分；
     - 预告 miss（P0-2 预期差）：net_profit_yoy 远低于预告下限 → 显著扣分
       （预告 +30~40% 但实际 +1.54% 的预期差是框架核心信号，不能只奖 beat 不罚 miss）；
+    - beat/miss 均带 P0-1 期间守卫：财报期（``f.report_period``）与预告期
+      （``e.profit_forecast_period``）不同期/任一为空 ⇒ 不产（fail-closed）；
     - 结构性亮点（改造 E）：最快细分增速显著跑赢整体（segment divergence > 15pp）
       → 正向修正（整体 +17.94% 但高速通信线 +35.44% 的「结构性突变」）；
     - 边际改善（F-Marginal §4.3，``marginal_mode``）：``on`` 时把水平项 L 与边际项 M 混合；

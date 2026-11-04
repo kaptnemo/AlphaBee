@@ -70,13 +70,20 @@ def _600760_fund(**overrides) -> FundamentalFactor:
         "q_net_profit_yoy": 137.0,
         "q_gross_margin": 9.63,
         "q_gross_margin_pp": -3.4,
+        # P0-1 期间对齐：本文件聚焦边际层，故与 `_600760_exp` 取同期，保留既有
+        # beat 语义（真实帧的错期归属由 test_score_engine 的 600760 用例覆盖）。
+        "report_period": "20260930",
     }
     values.update(overrides)
     return FundamentalFactor(**values)
 
 
 def _600760_exp(**overrides) -> ExpectationFactor:
-    values: dict = {"profit_forecast_min_change": -58.23, "profit_forecast_max_change": -58.23}
+    values: dict = {
+        "profit_forecast_min_change": -58.23,
+        "profit_forecast_max_change": -58.23,
+        "profit_forecast_period": "20260930",  # P0-1：与 `_600760_fund` 同期
+    }
     values.update(overrides)
     return ExpectationFactor(**values)
 

@@ -603,6 +603,10 @@ def build_fundamental_factor(
     F 边际改善（设计 §3.4）：末尾用 :func:`derive_marginal` 统一赋值 4 个 ``q_*``
     单季派生字段（多期还原产物，默认 ``None``）。它们**不参与** F 方向分计算
     （PR-1 行为零变化），也不登记进 ``missing_facts``。
+
+    报告期 provenance（P0-1）：``report_period`` 取 ``fina`` 最新一期的 ``period``
+    经 :func:`_normalize_period` 归一（非法/缺失 ⇒ ``""``，供 score_engine 的
+    beat/miss 期间守卫 fail-closed）。非 canonical 字段，不登记 ``missing_facts``。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
@@ -635,6 +639,7 @@ def build_fundamental_factor(
         segment_fastest_yoy=fastest,
         segment_slowest_yoy=slowest,
         **marginal_values,
+        report_period=_normalize_period(fina.get("period")) or "",
     )
     return factor, _missing_fields(factor, _FUNDAMENTAL_FIELDS)
 
@@ -648,6 +653,9 @@ def build_expectation_factor(
     - 预告取**修正后末条口径**（同报告期按 ``ann_date`` 升序取末条，PR-A §3.2）的
       最新报告期记录；``forecast_revision_anchor`` 由相邻两个报告期（period 降序前两期）
       预告区间中点差计算（PERCENT，上修为正，P0 §9.2）。
+    - ``profit_forecast_period`` 取该最新预告期记录的报告期（``_normalize_period``
+      归一；无预告/非法 ⇒ ``""``），供 score_engine 的 beat/miss 期间守卫
+      fail-closed（P0-1）。非 canonical 字段，不登记 ``missing_facts``。
     - 快报取最新一条 record（``express[0]``）。
     - 一致预期字段来自 ``ConsensusOutput.values``（13 个 canonical 字段）。
     """
@@ -662,6 +670,7 @@ def build_expectation_factor(
     factor = ExpectationFactor(
         profit_forecast_min_change=_opt(forecast.get("profit_forecast_min_change")),
         profit_forecast_max_change=_opt(forecast.get("profit_forecast_max_change")),
+        profit_forecast_period=_normalize_period(forecast.get("period")) or "",
         forecast_revision_anchor=_forecast_revision_anchor(forecast_records),
         express_revenue_yoy=_opt(express.get("express_revenue_yoy")),
         express_net_profit_yoy=_opt(express.get("express_net_profit_yoy")),

@@ -42,7 +42,11 @@ def _s3_snapshot() -> FactorSnapshot:
 
 
 def _langchao_000977_snapshot() -> FactorSnapshot:
-    """000977 浪潮信息画像：净利高增 + 双负现金流 + 熊市 + 零证据（复现端到端实跑暴露的问题）。"""
+    """000977 浪潮信息画像：净利高增 + 双负现金流 + 熊市 + 零证据（复现端到端实跑暴露的问题）。
+
+    P0-1：财报期与预告期显式设同期（``20241231``），保留本用例「净利超预告上限 ⇒ beat」
+    的既有语义（期末口径下 F=0.589 依赖 +0.2 的 beat）。
+    """
     return FactorSnapshot(
         symbol="000977.SZ",
         as_of_date="2024-12-31",
@@ -54,11 +58,13 @@ def _langchao_000977_snapshot() -> FactorSnapshot:
             operating_cashflow=-7_490_000_000.0,
             free_cashflow=-8_650_000_000.0,
             debt_to_assets=77.2,
+            report_period="20241231",  # P0-1：与预告同期
         ),
         expectation=ExpectationFactor(
             eps_fy1_revision_1m=45.0,
             profit_forecast_min_change=100.0,
             profit_forecast_max_change=200.0,
+            profit_forecast_period="20241231",  # P0-1：与财报同期
             coverage_count=3,
         ),
         trend=TrendFactor(

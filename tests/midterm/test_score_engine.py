@@ -162,15 +162,25 @@ def test_fundamental_cashflow_missing_no_penalty():
 
 
 def test_fundamental_breakdown_decomposes_600760_case():
-    """L1：600760 实帧的 F 分解逐项可复核 —— F=−0.733（FCF 已移出、OCF 为正无惩罚）。"""
+    """L1：600760 实帧的 F 分解逐项可复核 —— F=−0.933（错期 beat 不产、FCF 已移出、OCF 为正无惩罚）。
+
+    该帧财报期 2026Q3（``report_period=20260930``）与最新预告期 2026H1
+    （``profit_forecast_period=20260630``）不同期 ⇒ P0-1 期间守卫 fail-closed：
+    ``beat_bonus=0``（旧口径错期 +0.2 的 F=−0.733 消失）。
+    """
     f = FundamentalFactor(
         revenue_yoy=-34.19,
         net_profit_yoy=-26.0,
         eps_growth_yoy=-28.0,
         operating_cashflow=1.026e09,
         free_cashflow=-1.671e08,  # 旧口径本会再扣 0.5，现已移出
+        report_period="20260930",
     )
-    e = ExpectationFactor(profit_forecast_min_change=-58.23, profit_forecast_max_change=-58.23)
+    e = ExpectationFactor(
+        profit_forecast_min_change=-58.23,
+        profit_forecast_max_change=-58.23,
+        profit_forecast_period="20260630",  # H1 预告 ≠ Q3 财报
+    )
     bd = fundamental_breakdown(f, e)
     assert bd is not None
     assert bd["revenue_term"] == pytest.approx(-1.0)  # −34.19 越过 ±30 饱和点
@@ -179,11 +189,12 @@ def test_fundamental_breakdown_decomposes_600760_case():
     assert bd["eps_term"] == pytest.approx(-28.0 / 30.0)
     assert bd["growth_mean"] == pytest.approx((-1.0 - 26.0 / 30.0 - 28.0 / 30.0) / 3.0)
     assert bd["ocf_penalty"] == 0.0  # OCF 为正
-    assert bd["beat_bonus"] == pytest.approx(0.2)  # −26 > 预告上限 −58.23
+    assert bd["forecast_period_matched"] == 0.0  # 20260930 vs 20260630
+    assert bd["beat_bonus"] == 0.0  # 错期 ⇒ 不产 beat（fail-closed）
     assert bd["miss_penalty"] == 0.0
     assert bd["segment_bonus"] == 0.0  # −26.33 − (−34.19) = 7.86pp < 15
-    assert bd["raw"] == pytest.approx(-0.933333 + 0.2, abs=1e-4)  # = −0.7333（FCF 已移出）
-    assert bd["f"] == pytest.approx(-0.733333, abs=1e-4)  # 未越过 ±1，不饱和
+    assert bd["raw"] == pytest.approx(-0.933333, abs=1e-4)  # 去掉错期 beat 的 0.2
+    assert bd["f"] == pytest.approx(-0.933333, abs=1e-4)  # 未越过 ±1，不饱和
     assert bd["input_saturated"] == 1.0  # 至少一项原始 YoY 越过饱和点
     assert bd["output_saturated"] == 0.0  # 合计未越过 ±1
     # 单一来源：方向分必须等于分解里的 f
@@ -191,13 +202,113 @@ def test_fundamental_breakdown_decomposes_600760_case():
     assert compress_scores(snap).f_fundamental_trend == pytest.approx(bd["f"])
 
 
+def test_fundamental_breakdown_600760_same_period_yields_beat():
+    """P0-1 同期夹具：2026Q3 财报 + 2026Q3 预告 ⇒ forecast_period_matched=1、beat=+0.2。
+
+    同期时 beat 语义逐字不变（+_BEAT_BONUS）：F 从 −0.933333 回到 −0.733333。
+    """
+    f = FundamentalFactor(
+        revenue_yoy=-34.19,
+        net_profit_yoy=-26.0,
+        eps_growth_yoy=-28.0,
+        operating_cashflow=1.026e09,
+        report_period="20260930",
+    )
+    e = ExpectationFactor(
+        profit_forecast_min_change=-58.23,
+        profit_forecast_max_change=-58.23,
+        profit_forecast_period="2026-09-30",  # 归一后同期（带分隔符也可比）
+    )
+    bd = fundamental_breakdown(f, e)
+    assert bd is not None
+    assert bd["forecast_period_matched"] == 1.0
+    assert bd["beat_bonus"] == pytest.approx(0.2)  # −26 > 预告上限 −58.23
+    assert bd["raw"] == pytest.approx(-0.933333 + 0.2, abs=1e-4)
+    assert bd["f"] == pytest.approx(-0.733333, abs=1e-4)
+
+
+@pytest.mark.parametrize(
+    ("report_period", "forecast_period"),
+    [
+        ("", ""),  # 手工构造快照：两处期间都缺
+        ("20260930", ""),  # 预告期缺失
+        ("", "20260930"),  # 财报期缺失
+        ("20260930", "20260630"),  # 错期（H1 预告 vs Q3 财报）
+    ],
+)
+@pytest.mark.parametrize(
+    ("min_change", "max_change"),
+    [
+        (-58.23, -58.23),  # 同期时本应 beat（−26 > −58.23）
+        (50.0, 100.0),  # 同期时本应 miss（50 − (−26) = 76pp > 20）
+    ],
+)
+def test_fundamental_beat_miss_fail_closed_without_matching_periods(
+    report_period: str,
+    forecast_period: str,
+    min_change: float,
+    max_change: float,
+):
+    """P0-1：任一期间为空或不同期 ⇒ beat/miss 均为 0（fail-closed），且 matched=0。
+
+    两个预告区间分别覆盖「同期会产 beat」与「同期会产 miss」两种方向，确保守卫对
+    beat/miss 都生效（而不是只挡住其中一侧）。
+    """
+    f = FundamentalFactor(
+        revenue_yoy=-34.19,
+        net_profit_yoy=-26.0,
+        eps_growth_yoy=-28.0,
+        report_period=report_period,
+    )
+    e = ExpectationFactor(
+        profit_forecast_min_change=min_change,
+        profit_forecast_max_change=max_change,
+        profit_forecast_period=forecast_period,
+    )
+    bd = fundamental_breakdown(f, e)
+    assert bd is not None
+    assert bd["forecast_period_matched"] == 0.0
+    assert bd["beat_bonus"] == 0.0
+    assert bd["miss_penalty"] == 0.0
+
+
+def test_fundamental_miss_penalty_same_period_keeps_semantics():
+    """P0-1：同期时 miss 语义逐字不变（实际低于预告下限 >20pp ⇒ −0.3）。"""
+    f = FundamentalFactor(
+        revenue_yoy=-10.0,
+        net_profit_yoy=-100.0,
+        eps_growth_yoy=-10.0,
+        report_period="20260930",
+    )
+    e = ExpectationFactor(
+        profit_forecast_min_change=-20.0,
+        profit_forecast_max_change=-10.0,
+        profit_forecast_period="20260930",
+    )
+    bd = fundamental_breakdown(f, e)
+    assert bd is not None
+    assert bd["forecast_period_matched"] == 1.0
+    assert bd["miss_penalty"] == pytest.approx(-0.3)  # −20 − (−100) = 80pp > 20
+    assert bd["beat_bonus"] == 0.0
+
+
 def test_fundamental_breakdown_output_saturation_flag():
     """输出饱和标志：合计越过 ±1 时为 1.0（越界部分被 clip 掉）。"""
-    f = FundamentalFactor(revenue_yoy=30.0, net_profit_yoy=200.0, eps_growth_yoy=30.0)
-    e = ExpectationFactor(profit_forecast_min_change=100.0, profit_forecast_max_change=150.0)
+    f = FundamentalFactor(
+        revenue_yoy=30.0,
+        net_profit_yoy=200.0,
+        eps_growth_yoy=30.0,
+        report_period="20241231",  # P0-1：与预告同期才保留下面的 beat 断言
+    )
+    e = ExpectationFactor(
+        profit_forecast_min_change=100.0,
+        profit_forecast_max_change=150.0,
+        profit_forecast_period="20241231",
+    )
     bd = fundamental_breakdown(f, e)
     assert bd is not None
     assert bd["growth_mean"] == pytest.approx(1.0)  # 三项均饱和到 +1
+    assert bd["forecast_period_matched"] == 1.0
     assert bd["beat_bonus"] == pytest.approx(0.2)  # 200 > 预告上限 150
     assert bd["raw"] == pytest.approx(1.2)
     assert bd["f"] == pytest.approx(1.0)  # clip
@@ -210,22 +321,47 @@ def test_fundamental_breakdown_all_missing_is_none():
 
 
 def test_fundamental_inline_no_beat():
-    """net_profit_yoy 落在预告区间内 → in-line，不额外加分。"""
+    """net_profit_yoy 落在预告区间内 → in-line，不额外加分（同期，P0-1）。"""
     snap = _snapshot(
-        fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=20.0, eps_growth_yoy=15.0),
-        expectation=ExpectationFactor(profit_forecast_min_change=10.0, profit_forecast_max_change=50.0),
+        fundamental=FundamentalFactor(
+            revenue_yoy=10.0,
+            net_profit_yoy=20.0,
+            eps_growth_yoy=15.0,
+            report_period="20241231",
+        ),
+        expectation=ExpectationFactor(
+            profit_forecast_min_change=10.0,
+            profit_forecast_max_change=50.0,
+            profit_forecast_period="20241231",
+        ),
     )
     # 纯增长分 = mean(saturate(10/30), saturate(20/30), saturate(15/30)) = 0.5
     assert compress_scores(snap).f_fundamental_trend == pytest.approx(0.5)
 
 
 def test_fundamental_beat_bonus():
-    """net_profit_yoy 超预告上限 → beat 加分（+_BEAT_BONUS）。"""
+    """net_profit_yoy 超预告上限 → beat 加分（+_BEAT_BONUS，同期，P0-1）。"""
     beat = _snapshot(
-        fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=80.0, eps_growth_yoy=15.0),
-        expectation=ExpectationFactor(profit_forecast_min_change=10.0, profit_forecast_max_change=50.0),
+        fundamental=FundamentalFactor(
+            revenue_yoy=10.0,
+            net_profit_yoy=80.0,
+            eps_growth_yoy=15.0,
+            report_period="20241231",
+        ),
+        expectation=ExpectationFactor(
+            profit_forecast_min_change=10.0,
+            profit_forecast_max_change=50.0,
+            profit_forecast_period="20241231",
+        ),
     )
-    base = _snapshot(fundamental=FundamentalFactor(revenue_yoy=10.0, net_profit_yoy=80.0, eps_growth_yoy=15.0))
+    base = _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=10.0,
+            net_profit_yoy=80.0,
+            eps_growth_yoy=15.0,
+            report_period="20241231",
+        )
+    )
     f_beat = compress_scores(beat).f_fundamental_trend
     f_base = compress_scores(base).f_fundamental_trend
     assert f_beat > f_base
@@ -635,13 +771,19 @@ def _marginal_fund(**overrides) -> FundamentalFactor:
         "q_net_profit_yoy": 137.0,
         "q_gross_margin": 9.63,
         "q_gross_margin_pp": -3.4,
+        # P0-1：与 `_marginal_exp` 同期，保留本组用例的 beat 语义（+0.2）。
+        "report_period": "20260930",
     }
     values.update(overrides)
     return FundamentalFactor(**values)
 
 
 def _marginal_exp() -> ExpectationFactor:
-    return ExpectationFactor(profit_forecast_min_change=-58.23, profit_forecast_max_change=-58.23)
+    return ExpectationFactor(
+        profit_forecast_min_change=-58.23,
+        profit_forecast_max_change=-58.23,
+        profit_forecast_period="20260930",  # P0-1：与 `_marginal_fund` 同期
+    )
 
 
 _MARGINAL_KEY_PREFIXES = ("marginal", "f_shadow", "f_marginal_source")

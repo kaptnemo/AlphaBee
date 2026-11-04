@@ -179,6 +179,10 @@ class FundamentalFactor(BaseModel):
     q_net_profit_yoy: float | None = None  # PERCENT 单季归母净利同比（多期还原派生）
     q_gross_margin: float | None = None  # PERCENT 单季毛利率（累计营收×累计毛利率差分还原）
     q_gross_margin_pp: float | None = None  # PERCENT 单季毛利率同比变化（pp，带符号）
+    # F 的 L 实际使用的报告期（``YYYYMMDD``，P0-1 期间对齐 / P2-1 provenance；additive）。
+    # 非 canonical 字段（不参与 missing_facts）：缺失/非法 ⇒ ""，beat/miss 期间守卫据此
+    # fail-closed（无法证明与预告同期时宁可不产，也不保留错期证据）。
+    report_period: str = ""
 
 
 class ExpectationFactor(BaseModel):
@@ -196,6 +200,10 @@ class ExpectationFactor(BaseModel):
     # P0 设计 §9.2（additive）：相邻两个报告期的预告区间中点差（PERCENT，上修为正），
     # 由 factors.build_expectation_factor 按修正后末条口径计算；None = 无相邻期。
     forecast_revision_anchor: float | None = None
+    # 最新预告期记录的报告期（``YYYYMMDD``，P0-1 期间对齐；additive、默认空串）。
+    # 非 canonical 字段：与 ``FundamentalFactor.report_period`` 同期才允许 beat/miss，
+    # 缺失 ⇒ ""（fail-closed）。
+    profit_forecast_period: str = ""
     # 新增 consensus 域（分析师一致预期，design §3.4）
     eps_fy1: float | None = None  # CNY_PER_SHARE FY1 一致 EPS
     eps_fy2: float | None = None  # CNY_PER_SHARE FY2 一致 EPS

@@ -72,6 +72,11 @@ _Q_MARGINAL_FIELDS = (
     "q_gross_margin",
     "q_gross_margin_pp",
 )
+# P0-1 新增的期间 provenance 字段（additive）：golden 冻结时尚不存在，且不参与任何
+# 方向分/分布计算；与 score_breakdown / q_* 同口径从断言 A 的比较对象中剔除，
+# 其存在性与缺省值（空串）由断言 B 单独钉住。
+_FUNDAMENTAL_PERIOD_FIELDS = ("report_period",)
+_EXPECTATION_PERIOD_FIELDS = ("profit_forecast_period",)
 # score_breakdown 里的边际分解键（F-Marginal §6.1）：shadow/on 且单季数据可用时出现。
 _MARGINAL_KEYS = (
     "marginal_raw",
@@ -159,26 +164,30 @@ def _evidence() -> list[EvidenceEvent]:
 def _canonical(payload: dict) -> str:
     """剔除新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。
 
-    剔除两类：① 9 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
+    剔除三类：① 9 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
     ``f_marginal_mode``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
-    （L1，2026-11-01 的 F 可审计分解）与 4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，PR-1）——
-    后两者在 golden 冻结时尚不存在，且是**诊断/派生字段**（不参与任何方向分/分布计算），
-    故与顶层字段同口径剔除；它们的存在性与确定性由
-    ``test_f_breakdown_written_and_deterministic`` /
+    （L1，2026-11-01 的 F 可审计分解）、4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，PR-1）
+    与 ``report_period``（P0-1 期间 provenance）；③ ``factor_snapshot.expectation`` 内的
+    ``profit_forecast_period``（P0-1 期间 provenance）——后几者在 golden 冻结时尚不存在，
+    且是**诊断/派生/provenance 字段**（不参与任何方向分/分布计算），故与顶层字段同口径
+    剔除；它们的存在性与确定性由 ``test_f_breakdown_written_and_deterministic`` /
     ``test_v1_artifact_q_marginal_fields_are_none_and_excluded`` /
-    ``test_v1_artifact_f_marginal_mode_default_and_keys`` 单独钉住。
+    ``test_v1_artifact_f_marginal_mode_default_and_keys`` 与断言 B 单独钉住。
     """
     trimmed = {key: value for key, value in payload.items() if key not in _NEW_FIELDS}
     factor_snapshot = trimmed.get("factor_snapshot")
     if isinstance(factor_snapshot, dict):
+        updated = dict(factor_snapshot)
         fundamental = factor_snapshot.get("fundamental")
         if isinstance(fundamental, dict):
-            dropped = {"score_breakdown", *_Q_MARGINAL_FIELDS}
-            if dropped & set(fundamental):
-                trimmed["factor_snapshot"] = {
-                    **factor_snapshot,
-                    "fundamental": {key: value for key, value in fundamental.items() if key not in dropped},
-                }
+            dropped = {"score_breakdown", *_Q_MARGINAL_FIELDS, *_FUNDAMENTAL_PERIOD_FIELDS}
+            updated["fundamental"] = {key: value for key, value in fundamental.items() if key not in dropped}
+        expectation = factor_snapshot.get("expectation")
+        if isinstance(expectation, dict):
+            updated["expectation"] = {
+                key: value for key, value in expectation.items() if key not in _EXPECTATION_PERIOD_FIELDS
+            }
+        trimmed["factor_snapshot"] = updated
     return json.dumps(trimmed, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
@@ -348,6 +357,9 @@ def test_old_frame_without_new_fields_loads_with_defaults():
     fundamental = artifact.factor_snapshot.fundamental
     assert all(getattr(fundamental, name) is None for name in _Q_MARGINAL_FIELDS)
     assert artifact.f_marginal_mode == "off"  # 旧帧语义 = 未记录/未启用
+    # P0-1 期间 provenance 是 additive 字段：旧帧无该键 ⇒ 回落空串（不猜测期间）
+    assert fundamental.report_period == ""
+    assert artifact.factor_snapshot.expectation.profit_forecast_period == ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -366,6 +378,9 @@ def test_v1_artifact_new_fields_are_fixed(monkeypatch):
     assert artifact.entropy_normalized is None
     assert artifact.adverse_divergence is None
     assert artifact.state_evidence == {}
+    # P0-1 期间 provenance（additive）：golden 帧无报告期/预告期输入 ⇒ 逐项钉默认空串
+    assert artifact.factor_snapshot.fundamental.report_period == ""
+    assert artifact.factor_snapshot.expectation.profit_forecast_period == ""
 
     # factor_direction = 改动前六因子均值：用 golden 里的方向分独立算一遍对比
     golden_scores = _golden_payload()["variable_scores"]

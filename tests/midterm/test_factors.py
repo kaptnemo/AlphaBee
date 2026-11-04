@@ -185,6 +185,22 @@ def test_build_fundamental_factor_missing_is_none_not_zero():
     assert "revenue_yoy" in missing and "operating_cashflow" in missing
 
 
+def test_build_fundamental_factor_writes_normalized_report_period():
+    """P0-1：``report_period`` = ``fina`` 最新一期 period 的归一值（缺失/非法 ⇒ ""）。"""
+    factor, missing = build_fundamental_factor(_fin_marginal())
+    assert factor.report_period == "20250930"  # fina[0] 的 period
+    assert "report_period" not in missing  # provenance 非 canonical，不登记缺失
+
+    # period 缺失/非法 ⇒ 空串（fail-closed：期间未知，不猜测）
+    assert build_fundamental_factor(_fin())[0].report_period == ""
+    dashed = _fin_marginal()
+    dashed["fina"] = [{"period": "2025-09-30", "revenue_yoy": -34.19}]
+    assert build_fundamental_factor(dashed)[0].report_period == "20250930"
+
+    # fina 缺失/空 ⇒ 空串
+    assert build_fundamental_factor({"fina": []})[0].report_period == ""
+
+
 def test_build_fundamental_factor_segment_extremes():
     """改造 E：从 segments 提取最快/最慢细分同比增速（list 形态）。"""
     segments = [
@@ -307,6 +323,7 @@ def test_build_expectation_factor_forecast_express_and_consensus():
     factor, missing = build_expectation_factor(exp, _consensus())
     assert factor.profit_forecast_min_change == 5.0
     assert factor.profit_forecast_max_change == 30.0
+    assert factor.profit_forecast_period == "20241231"  # P0-1：最新预告期的报告期
     assert factor.forecast_revision_anchor == pytest.approx(7.5)  # (17.5 − 10.0)
     assert factor.express_revenue_yoy == 12.0
     assert factor.express_net_profit_yoy == 15.0
@@ -361,6 +378,7 @@ def test_build_expectation_factor_anchor_uses_latest_record_per_period():
     }
     factor, _ = build_expectation_factor(exp, _consensus())
     assert factor.profit_forecast_min_change == 20.0  # 修正后末条
+    assert factor.profit_forecast_period == "20241231"  # 期间取最新报告期（值取该期 ann_date 末条）
     assert factor.forecast_revision_anchor == pytest.approx(20.0)  # (30 − 10)
 
 
@@ -368,6 +386,7 @@ def test_build_expectation_factor_consensus_none_registers_missing():
     exp = {"forecast": [], "express": []}
     factor, missing = build_expectation_factor(exp, None)
     assert factor.eps_fy1 is None
+    assert factor.profit_forecast_period == ""  # 无预告 ⇒ 空串（fail-closed，不猜测期间）
     assert "eps_fy1" in missing and "profit_forecast_min_change" in missing
 
 
