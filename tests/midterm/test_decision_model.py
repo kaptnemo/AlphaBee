@@ -1128,3 +1128,139 @@ def test_get_decision_passes_f_recurring_mode(monkeypatch):
     art = get_decision("002517.SZ", f_recurring_mode="on")
     assert art.f_recurring_mode == "on"
     assert art.variable_scores.f_fundamental_trend < 1.0  # 扣非锚压低 F
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 分部 bonus 口径（P1-6 design §12）：resolve 三态 / evaluate provenance / 透传
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _pin_segment_config(monkeypatch, *, mode: str | None = "period_aligned", drop_field: bool = False) -> None:
+    """钉住配置：``drop_field=True`` 模拟「缺字段」（stub 无 segment_bonus_mode）。"""
+    midterm = SimpleNamespace(classifier_order="etf", formula_revision="v1")
+    if not drop_field:
+        midterm.segment_bonus_mode = mode
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=midterm))
+
+
+def _snapshot_with_segment_mismatch() -> FactorSnapshot:
+    """002130-like：H1 分部（+42.34%）vs Q3 财报（+22.34%），divergence=20pp。"""
+    return _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=22.34,
+            net_profit_yoy=10.0,
+            eps_growth_yoy=10.0,
+            segment_fastest_yoy=42.34,
+            segment_period="20260630",
+            report_period="20260930",
+            segment_fastest_share=50.0,
+        )
+    )
+
+
+def test_resolve_segment_bonus_mode_explicit_value_wins(monkeypatch):
+    """显式合法值优先于配置（大小写归一）。"""
+    from alphabee.midterm.decision_model import resolve_segment_bonus_mode
+
+    _pin_segment_config(monkeypatch, mode="legacy")
+    assert resolve_segment_bonus_mode("period_aligned") == "period_aligned"
+    assert resolve_segment_bonus_mode("legacy") == "legacy"
+    assert resolve_segment_bonus_mode("PERIOD_ALIGNED") == "period_aligned"
+    assert resolve_segment_bonus_mode() == "legacy"  # 未显式传 ⇒ 跟随配置
+
+
+def test_resolve_segment_bonus_mode_config_missing_field_defaults_to_period_aligned(monkeypatch):
+    """配置缺字段/缺整段 ⇒ 动态读模型默认（当前 period_aligned，不硬编码）。"""
+    from alphabee.midterm.decision_model import resolve_segment_bonus_mode
+
+    _pin_segment_config(monkeypatch, drop_field=True)
+    assert resolve_segment_bonus_mode() == "period_aligned"
+
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=None))
+    assert resolve_segment_bonus_mode() == "period_aligned"
+
+
+def test_resolve_segment_bonus_mode_config_exception_falls_back_to_legacy(monkeypatch):
+    """读配置异常 ⇒ warn + legacy（最保守，回滚旧行为）。"""
+    from alphabee.midterm.decision_model import resolve_segment_bonus_mode
+
+    def _boom():
+        raise RuntimeError("config broken")
+
+    monkeypatch.setattr("alphabee.config.get_settings", _boom)
+    assert resolve_segment_bonus_mode() == "legacy"
+
+
+def test_resolve_segment_bonus_mode_invalid_values_fall_back_to_legacy(monkeypatch):
+    """配置值非法 / 显式值非法 ⇒ legacy（不静默启用新口径）。"""
+    from alphabee.midterm.decision_model import resolve_segment_bonus_mode
+
+    _pin_segment_config(monkeypatch, mode="bogus")
+    assert resolve_segment_bonus_mode() == "legacy"
+    _pin_segment_config(monkeypatch, mode="period_aligned")
+    assert resolve_segment_bonus_mode("bogus") == "legacy"
+
+
+def test_resolve_segment_bonus_mode_falls_back_to_model_default(monkeypatch):
+    """缺段/缺字段 ⇒ 回退到 ``MidtermClassifierSettings`` 的模型默认值（漂移测试）。"""
+    from alphabee.config import MidtermClassifierSettings
+    from alphabee.midterm.decision_model import resolve_segment_bonus_mode
+
+    field = MidtermClassifierSettings.model_fields["segment_bonus_mode"]
+    _pin_segment_config(monkeypatch, drop_field=True)
+
+    monkeypatch.setattr(field, "default", "legacy")
+    assert resolve_segment_bonus_mode() == "legacy"
+
+    monkeypatch.setattr(field, "default", "period_aligned")
+    assert resolve_segment_bonus_mode() == "period_aligned"
+
+
+def test_evaluate_writes_segment_bonus_mode_and_suppresses_mismatched_bonus(monkeypatch):
+    """缺省 period_aligned ⇒ artifact 记实际模式；错期帧 F 比 legacy 低 0.2。"""
+    _pin_segment_config(monkeypatch, drop_field=True)
+
+    default = evaluate(_snapshot_with_segment_mismatch(), [])
+    legacy = evaluate(_snapshot_with_segment_mismatch(), [], segment_bonus_mode="legacy")
+
+    assert default.segment_bonus_mode == "period_aligned"
+    assert legacy.segment_bonus_mode == "legacy"
+    assert legacy.variable_scores.f_fundamental_trend - default.variable_scores.f_fundamental_trend == pytest.approx(
+        0.2
+    )
+    default_bd = default.factor_snapshot.fundamental.score_breakdown
+    assert default_bd["segment_period_mismatch"] == 1.0
+    assert default_bd["segment_bonus"] == 0.0
+    assert default.variable_scores.f_fundamental_trend == pytest.approx(default_bd["f"])
+
+
+def test_evaluate_passes_segment_bonus_mode_to_compress_scores(monkeypatch):
+    """evaluate 把解析后的 segment_bonus_mode 显式传给 compress_scores（单一解析）。"""
+    import alphabee.midterm.decision_model as dm
+
+    calls: list[dict] = []
+
+    def _fake_compress(snapshot, **kwargs):
+        calls.append(kwargs)
+        return VariableScores()
+
+    monkeypatch.setattr(dm, "compress_scores", _fake_compress)
+    _pin_segment_config(monkeypatch, drop_field=True)
+
+    art = evaluate(_snapshot(), [], segment_bonus_mode="legacy")
+    assert calls
+    assert calls[-1]["segment_bonus_mode"] == "legacy"
+    assert art.segment_bonus_mode == "legacy"
+
+
+def test_get_decision_passes_segment_bonus_mode(monkeypatch):
+    """get_decision 透传 segment_bonus_mode（keyword-only）到 evaluate。"""
+    import alphabee.midterm.factors as factors_mod
+
+    _pin_segment_config(monkeypatch, drop_field=True)
+    snap = _snapshot_with_segment_mismatch()
+    monkeypatch.setattr(factors_mod, "get_factor_snapshot", lambda symbol, include_market=True: snap)
+
+    art = get_decision("002130.SZ", segment_bonus_mode="legacy")
+    assert art.segment_bonus_mode == "legacy"
+    assert art.factor_snapshot.fundamental.score_breakdown["segment_bonus"] == pytest.approx(0.2)

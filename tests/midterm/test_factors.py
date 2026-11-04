@@ -259,6 +259,10 @@ def test_build_fundamental_factor_segment_extremes():
     factor, missing = build_fundamental_factor(_fin(), segments=segments)
     assert factor.segment_fastest_yoy == 35.44
     assert factor.segment_slowest_yoy == -2.0
+    # P1-6：无 category/report_date/revenue_share 的裸列表 ⇒ 回落全部、期间未知、占比未知
+    assert factor.segment_period == ""
+    assert factor.segment_basis == "all"
+    assert factor.segment_fastest_share is None
     assert "segment_fastest_yoy" not in missing
     assert "segment_slowest_yoy" not in missing
 
@@ -269,12 +273,18 @@ def test_build_fundamental_factor_segment_collection_form():
     factor, _ = build_fundamental_factor(_fin(), segments=segments)
     assert factor.segment_fastest_yoy == 35.44
     assert factor.segment_slowest_yoy == 2.0
+    assert factor.segment_basis == "all"
+    assert factor.segment_period == ""
 
 
 def test_build_fundamental_factor_segments_missing_none():
     factor, missing = build_fundamental_factor(_fin(), segments=None)
     assert factor.segment_fastest_yoy is None
     assert factor.segment_slowest_yoy is None
+    # P1-6：segments 缺失不伪造：期间未知、无最快占比；basis 回落 all（空池的显式口径）
+    assert factor.segment_period == ""
+    assert factor.segment_fastest_share is None
+    assert factor.segment_basis == "all"
     assert "segment_fastest_yoy" in missing
     assert "segment_slowest_yoy" in missing
     assert "company_type" in missing
@@ -294,6 +304,9 @@ def test_build_fundamental_factor_segment_collection_uses_latest_period():
     factor, _ = build_fundamental_factor(_fin(), segments=col)
     assert factor.segment_fastest_yoy == 35.44  # 不是旧期的 99.0
     assert factor.segment_slowest_yoy == -2.0
+    assert factor.segment_period == "20240630"
+    assert factor.segment_basis == "all"
+    assert factor.segment_fastest_share is None  # revenue_share 未知 ⇒ fail-open
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -315,6 +328,58 @@ def test_build_fundamental_factor_passes_through_marginal_fields():
     assert factor.q_revenue_yoy != factor.revenue_yoy
     # 派生字段不登记 missing_facts（非 canonical 字段）
     assert missing == ["segment_fastest_yoy", "segment_slowest_yoy", "company_type"]
+
+
+def test_build_fundamental_factor_segment_v2_filters_product_and_share():
+    """P1-6：只取「按产品分类」池，剔除 share<10 的小分部；返回 period/basis/share。"""
+    segments = SimpleNamespace(
+        latest_period="20260630",
+        segments=[
+            {"category": "按产品分类", "report_date": "20260630", "revenue_yoy": 20.0, "revenue_share": 50.0},
+            {"category": "按产品分类", "report_date": "20260630", "revenue_yoy": 5.0, "revenue_share": 20.0},
+            {"category": "按产品分类", "report_date": "20260630", "revenue_yoy": 80.0, "revenue_share": 2.0},
+            {"category": "按地区分类", "report_date": "20260630", "revenue_yoy": 90.0, "revenue_share": 60.0},
+        ],
+    )
+    factor, _ = build_fundamental_factor(_fin(), segments=segments)
+
+    assert factor.segment_basis == "product"
+    assert factor.segment_period == "20260630"
+    assert factor.segment_fastest_yoy == 20.0  # 地区 90 与被剔除的 2% 分部（80）都不采用
+    assert factor.segment_slowest_yoy == 5.0
+    assert factor.segment_fastest_share == 50.0
+
+
+def test_build_fundamental_factor_segment_v2_falls_back_to_all():
+    """P1-6：无「按产品分类」分项 ⇒ 回落全部（basis=all），不静默丢分部信息。"""
+    segments = SimpleNamespace(
+        latest_period="20260630",
+        segments=[
+            {"category": "按地区分类", "report_date": "20260630", "revenue_yoy": 30.0, "revenue_share": 60.0},
+            {"category": "按地区分类", "report_date": "20260630", "revenue_yoy": 10.0, "revenue_share": 40.0},
+        ],
+    )
+    factor, _ = build_fundamental_factor(_fin(), segments=segments)
+
+    assert factor.segment_basis == "all"
+    assert factor.segment_period == "20260630"
+    assert factor.segment_fastest_yoy == 30.0
+    assert factor.segment_slowest_yoy == 10.0
+    assert factor.segment_fastest_share == 60.0
+
+
+def test_build_fundamental_factor_segment_v2_unknown_share_passes():
+    """P1-6：revenue_share 缺失视为未知放行（fail-open），已知且 <10 的才剔除。"""
+    segments = [
+        {"category": "按产品分类", "revenue_yoy": 50.0},  # share 未知 ⇒ 放行
+        {"category": "按产品分类", "revenue_yoy": 10.0, "revenue_share": 1.0},  # 1% ⇒ 剔除
+    ]
+    factor, _ = build_fundamental_factor(_fin(), segments=segments)
+
+    assert factor.segment_basis == "product"
+    assert factor.segment_fastest_yoy == 50.0
+    assert factor.segment_slowest_yoy == 50.0
+    assert factor.segment_fastest_share is None  # 最快项 share 未知
 
 
 def test_build_fundamental_factor_without_multi_period_keeps_f_identical():

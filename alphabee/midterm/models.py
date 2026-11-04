@@ -182,6 +182,13 @@ class FundamentalFactor(BaseModel):
     # 最慢细分同比增速：改造 E 预留字段，当前不参与评分；P2 改造 D（EV 收益 materiality 化）
     # 将作为「最慢业务拖累项」消费，避免结构性亮点只反映最快而不反映最慢的失真。
     segment_slowest_yoy: float | None = None  # PERCENT 最慢细分业务同比增速（预留：P2 materiality 拖累项）
+    # 分部报告期（P1-6，additive）：company_track.segments.latest_period（YYYYMMDD）。
+    # score_engine 的 period_aligned 模式用它对齐财报 report_period；缺失 ⇒ ""（fail-open 旧行为）。
+    segment_period: str = ""
+    # 最快分部的收入占比（PERCENT，P1-6）；<10% 的小分部不触发 bonus。缺失 ⇒ None（fail-open）。
+    segment_fastest_share: float | None = None
+    # 分部口径（product = 仅「按产品分类」分项；all = 无产品分项时回落全部）。缺失/旧帧 ⇒ ""。
+    segment_basis: str = ""
     direction: str = "stable"  # improving / stable / deteriorating
     score: float | None = None  # 0-100 方向分（score_engine 输出）
     # F 方向分的可审计分解（L1，2026-11-01）：`score_engine.fundamental_breakdown` 原样落盘，
@@ -661,6 +668,9 @@ class CompanyStateArtifact(BaseModel):
     # 扣非模式 provenance（P1-3，additive）：本帧解析后的实际模式（off / shadow / on）；
     # 旧帧无该字段 ⇒ ""（语义 = 未记录，回放时按帧内已存 F，不重算）。schema_version 不升。
     f_recurring_mode: str = ""
+    # 分部 bonus 模式 provenance（P1-6，additive）：本帧解析后的实际模式
+    # （period_aligned / legacy）；旧帧无该字段 ⇒ ""（语义 = 未记录）。schema_version 不升。
+    segment_bonus_mode: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

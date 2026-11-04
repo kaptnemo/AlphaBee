@@ -82,6 +82,21 @@ _MISS_GAP_THRESHOLD = 20.0  # PERCENT 实际低于预告下限的幅度阈值（
 # 改造 E（设计 MIDTERM_INSIGHT_INJECTION_DESIGN.md §4）结构性洞察 / 语境归一化参数：
 _SEGMENT_DIVERGENCE_THRESHOLD = 15.0  # PERCENT 最快细分增速跑赢整体阈值（>15pp = 结构性亮点）
 _SEGMENT_DIVERGENCE_BONUS = 0.2  # F 方向分正向修正幅度（结构性亮点）
+# P1-6 §12.2：最快分部收入占比门槛（PERCENT，与 factors._SEGMENT_MIN_SHARE 同源口径；
+# 两处各自定义避免 score_engine 依赖数据层）。share 缺失视为未知放行（fail-open）。
+_SEGMENT_MIN_SHARE = 10.0
+
+# 分部 bonus 口径三档（P1-6）：**纯函数默认 legacy**（旧行为，直接调用点零变化）；
+# 生产默认 period_aligned 由 decision_model.resolve_segment_bonus_mode 解析后显式传入。
+#   legacy        = 只看 divergence（旧行为，无期间/占比检查）
+#   period_aligned = 分部报告期与财报报告期均可知且不同 ⇒ 不产；最快分部 share <10% ⇒ 不产；
+#                    期间缺失 ⇒ fail-open（旧行为）
+SEGMENT_BONUS_MODE_LEGACY = "legacy"
+SEGMENT_BONUS_MODE_PERIOD_ALIGNED = "period_aligned"
+KNOWN_SEGMENT_BONUS_MODES: tuple[str, ...] = (
+    SEGMENT_BONUS_MODE_PERIOD_ALIGNED,
+    SEGMENT_BONUS_MODE_LEGACY,
+)
 _E_REVISION_EXEMPT = 0.3  # E 上修阈值（e_revision > 0.3 = 强催化）
 _CROWDING_EXEMPT_HALF = 0.5  # 启动期高换手豁免：拥挤度扣分减半
 _REGIME_LIFT = 0.1  # regime 软约束：E↑ + segment divergence 时市场暴露上下限上浮幅度
@@ -289,12 +304,40 @@ def _segment_divergence(f: FundamentalFactor) -> float | None:
     return f.segment_fastest_yoy - f.revenue_yoy
 
 
-def _segment_bonus(f: FundamentalFactor) -> float:
-    """结构性亮点（改造 E）：最快细分显著跑赢整体（divergence > 15pp）→ F 正向修正 +0.2。"""
+def _normalize_segment_bonus_mode(mode: str | None) -> str:
+    """分部 bonus 口径归一：合法值原样返回；缺失/非法 → ``legacy``（旧行为）。
+
+    resolve 层（``decision_model.resolve_segment_bonus_mode``）已保证合法值；这里只是
+    直接调用 ``fundamental_breakdown`` 时的防御（非法值不得静默启用新口径）。
+    """
+    value = str(mode or "").strip().lower()
+    return value if value in KNOWN_SEGMENT_BONUS_MODES else SEGMENT_BONUS_MODE_LEGACY
+
+
+def _segment_bonus(f: FundamentalFactor, mode: str = SEGMENT_BONUS_MODE_LEGACY) -> float:
+    """结构性亮点（改造 E / P1-6）：最快细分显著跑赢整体（divergence > 15pp）→ +0.2。
+
+    口径（``segment_bonus_mode``）：
+
+    - ``legacy``（**函数缺省**，旧行为）⇒ 只看 divergence；
+    - ``period_aligned``（生产默认）⇒ 追加两个门槛（设计 §12.2）：
+
+      * 分部报告期（``segment_period``）与财报报告期（``report_period``）**均可知且不同**
+        ⇒ 0（H1 分部对比 Q3 财报不是结构性突变）；任一缺失 ⇒ fail-open（按旧行为）；
+      * 最快分部收入占比已知且 <10% ⇒ 0（小分部不构成结构性亮点）；缺失 ⇒ fail-open。
+    """
     divergence = _segment_divergence(f)
-    if divergence is not None and divergence > _SEGMENT_DIVERGENCE_THRESHOLD:
+    if divergence is None or divergence <= _SEGMENT_DIVERGENCE_THRESHOLD:
+        return 0.0
+    if _normalize_segment_bonus_mode(mode) == SEGMENT_BONUS_MODE_LEGACY:
         return _SEGMENT_DIVERGENCE_BONUS
-    return 0.0
+    segment_period = _normalize_ymd(f.segment_period)
+    report_period = _normalize_ymd(f.report_period)
+    if segment_period and report_period and segment_period != report_period:
+        return 0.0
+    if f.segment_fastest_share is not None and f.segment_fastest_share < _SEGMENT_MIN_SHARE:
+        return 0.0
+    return _SEGMENT_DIVERGENCE_BONUS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -395,6 +438,7 @@ def fundamental_breakdown(
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
     f_recurring_mode: str = RECURRING_MODE_OFF,
+    segment_bonus_mode: str = SEGMENT_BONUS_MODE_LEGACY,
 ) -> dict[str, float] | None:
     """F 方向分的**可审计分解**（L1）：返回逐项与饱和标志；全部 YoY 缺失 → ``None``。
 
@@ -413,6 +457,8 @@ def fundamental_breakdown(
     - ``ocf_ttm``：滚动 12 个月经营现金流（仅值可得时写）；``ocf_penalty_basis``：
       1 = TTM 口径实际生效（含金融股跳过）/ 0 = sign 或 TTM 缺失回落（P1-2）；
       ``financial_sector``：1 = 金融股（P1-5）；
+    - ``segment_period_mismatch``：分部报告期与财报报告期均可知且不同（1/0，P1-6）；
+      ``segment_share_below_min``：最快分部 share 已知且 <10%（1/0，P1-6）；
     - ``raw``：修正后合计；``f``：最终方向分（clip 后）；
     - ``input_saturated``：至少一项 YoY 越过饱和点（原始幅度已丢失）；
     - ``output_saturated``：合计越过 ±1（越界部分被 clip）。
@@ -449,6 +495,10 @@ def fundamental_breakdown(
     ``ocf_penalty_basis``（P1-2）：keyword 缺省 ``"sign"``（旧行为，直接调用点零变化）；
     生产路径由 ``decision_model.resolve_ocf_penalty_basis`` 解析配置后显式传入 ``"ttm"``。
 
+    分部 bonus 口径（P1-6，``segment_bonus_mode``；缺省 ``legacy`` ⇒ 旧行为）：
+    ``period_aligned`` 时要求分部报告期与财报报告期一致（两期均可知且不同 ⇒ 不产）且
+    最快分部收入占比 ≥10%（已知且 <10 ⇒ 不产）；任一期间缺失 ⇒ fail-open 旧行为。
+
     扣非保守锚（P1-3，``f_recurring_mode`` 三档；缺省 ``off`` ⇒ 键与值逐项不变）：
 
     - ``off``：净利项 = ``saturate(归母 yoy)``，**不写任何 recurring 键**（现状逐值不变）；
@@ -469,6 +519,7 @@ def fundamental_breakdown(
     mode = _normalize_marginal_mode(marginal_mode)
     recurring_mode = _normalize_f_recurring_mode(f_recurring_mode)
     normalized_ocf_basis = _normalize_ocf_penalty_basis(ocf_penalty_basis)
+    normalized_segment_mode = _normalize_segment_bonus_mode(segment_bonus_mode)
     marginal = _marginal(f) if mode != MARGINAL_MODE_OFF else None
     # P0-3：Q1 单季=累计 ⇒ 边际项降级（marginal 已为 None）；shadow 写留痕，on 不写
     # （保证 on 与 off 的分解逐值相等，见 ``test_q1_marginal_degrades_to_none``）。
@@ -510,7 +561,12 @@ def fundamental_breakdown(
     if marginal is not None and marginal[1] < 1.0:
         beat_deduped = beat_bonus * 0.5
     miss_penalty = _miss_penalty(f, e)
-    segment_bonus = _segment_bonus(f)
+    segment_bonus = _segment_bonus(f, normalized_segment_mode)
+    # P1-6 诊断：分部期与财报期均可知且不同；最快分部 share 已知且 <10%。
+    segment_period = _normalize_ymd(f.segment_period)
+    segment_report_period = _normalize_ymd(f.report_period)
+    segment_period_mismatch = bool(segment_period and segment_report_period and segment_period != segment_report_period)
+    segment_share_below_min = bool(f.segment_fastest_share is not None and f.segment_fastest_share < _SEGMENT_MIN_SHARE)
 
     # 扣非保守锚（P1-3）：可用性 = 扣非同比可得 且 上年同期扣非 > 0；否则回落归母项。
     np_term_recurring: float | None = None
@@ -586,6 +642,8 @@ def fundamental_breakdown(
             "beat_bonus": beat_for_f,
             "miss_penalty": miss_penalty,
             "segment_bonus": segment_bonus,
+            "segment_period_mismatch": 1.0 if segment_period_mismatch else 0.0,
+            "segment_share_below_min": 1.0 if segment_share_below_min else 0.0,
             "forecast_period_matched": 1.0 if forecast_period_matched else 0.0,
             "raw": raw,
             "f": final,
@@ -633,6 +691,7 @@ def _fundamental_trend(
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
     f_recurring_mode: str = RECURRING_MODE_OFF,
+    segment_bonus_mode: str = SEGMENT_BONUS_MODE_LEGACY,
 ) -> float | None:
     """F 方向分：边际改善 + 经营现金流惩罚 + 超预期 beat + 结构性亮点（改造 E）。
 
@@ -653,7 +712,9 @@ def _fundamental_trend(
     - 边际改善（F-Marginal §4.3，``marginal_mode``）：``on`` 时把水平项 L 与边际项 M 混合；
       ``shadow`` 只落盘不生效；``off``/无单季数据 ⇒ 逐值等于改造前公式（G3 降级恒等）；
     - 扣非保守锚（P1-3，``f_recurring_mode``）：``on`` 时净利项改用 ``min(归母, 扣非)``
-      的饱和值（只压不抬）；``shadow`` 只落盘诊断键、F 仍用归母项；``off``（缺省）逐值不变。
+      的饱和值（只压不抬）；``shadow`` 只落盘诊断键、F 仍用归母项；``off``（缺省）逐值不变；
+    - 分部 bonus 口径（P1-6，``segment_bonus_mode``）：``period_aligned`` 追加期间对齐与
+      10% 收入占比门槛；``legacy``（缺省）只看 divergence（旧行为）。
 
     全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。逐项口径见
     :func:`fundamental_breakdown`（本函数只取其中的 ``f``，单一来源）。
@@ -664,6 +725,7 @@ def _fundamental_trend(
         marginal_mode=marginal_mode,
         ocf_penalty_basis=ocf_penalty_basis,
         f_recurring_mode=f_recurring_mode,
+        segment_bonus_mode=segment_bonus_mode,
     )
     return breakdown["f"] if breakdown is not None else None
 
@@ -879,6 +941,7 @@ def compress_scores(
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
     f_recurring_mode: str = RECURRING_MODE_OFF,
+    segment_bonus_mode: str = SEGMENT_BONUS_MODE_LEGACY,
 ) -> VariableScores:
     """把七因子快照压缩为七方向分（``FactorSnapshot → VariableScores``）。
 
@@ -899,6 +962,9 @@ def compress_scores(
         f_recurring_mode: 扣非保守锚（P1-3）：``off``（**缺省**，旧行为）/``shadow``（算但
             不进 F）/``on``（净利项用 ``min(归母, 扣非)``）。缺省 ``off`` 保证直接调用点零变化；
             ``decision_model.evaluate`` 会 resolve 配置（缺省 ``shadow``）后显式传入。
+        segment_bonus_mode: 分部 bonus 口径（P1-6）：``legacy``（**缺省**，旧行为）/
+            ``period_aligned``（期间对齐 + 10% 收入占比门槛）。缺省 ``legacy`` 保证直接调用点
+            零变化；``decision_model.evaluate`` 会 resolve 配置（缺省 ``period_aligned``）后显式传入。
 
     Returns:
         ``VariableScores``：``m`` 为市场摘要（复用 ``market_score`` 0-100），
@@ -923,6 +989,7 @@ def compress_scores(
             marginal_mode=marginal_mode,
             ocf_penalty_basis=ocf_penalty_basis,
             f_recurring_mode=f_recurring_mode,
+            segment_bonus_mode=segment_bonus_mode,
         ),
         e_revision=e_revision,
         t_relative_strength=_relative_strength(snapshot.trend),

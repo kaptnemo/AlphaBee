@@ -96,6 +96,14 @@ _EXPECTATION_FIELDS: tuple[str, ...] = (
 #: 缺失/其它值 ⇒ False（fail-open）并由 builder 在 missing_facts 登记 ``company_type``。
 _FINANCIAL_COMPANY_TYPES: frozenset[str] = frozenset({"2", "3", "4"})
 
+#: 最快分部的最小收入占比（PERCENT，P1-6 §12.2）：<10% 的小分部即使增速再快也不触发
+#: F 正向修正（避免「1% 分部 +100%」这种量级噪声）；revenue_share 缺失视为未知放行
+#: （fail-open，按旧行为处理）。
+_SEGMENT_MIN_SHARE = 10.0
+
+#: 分部口径：优先「按产品分类」分项（避免母子公司/地区分项混入）；无产品分项回落全部。
+_SEGMENT_PRODUCT_CATEGORY = "按产品分类"
+
 _TREND_FIELDS: tuple[str, ...] = (
     "rs_stock_market_20d",
     "rs_stock_market_60d",
@@ -334,38 +342,86 @@ def _to_pure_code(ts_code: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _segment_extremes(segments: Any) -> tuple[float | None, float | None]:
-    """从 company_track 的 segments 提取最快/最慢细分同比增速（改造 E）。
+def _seg_value(segment: Any, name: str) -> Any:
+    """兼容 ``dict`` / ``SegmentSnapshot`` 形态的分项字段读取（P1-6）。"""
+    return segment.get(name) if isinstance(segment, dict) else getattr(segment, name, None)
 
-    接受 ``SegmentCollection``（含 ``.segments`` / ``.latest_segments``）或
-    ``list[SegmentSnapshot]`` / ``list[dict]``；逐条取 canonical ``revenue_yoy``，
-    返回 ``(max, min)``；无有效数值时返回 ``(None, None)``（缺失显式 None，不静默回退 0）。
 
-    只取最新报告期（P1E-2）：``SegmentCollection`` 走 ``latest_segments()``（按
-    ``latest_period`` 过滤），避免跨期混算最快/最慢导致的结构性误判。
+def _latest_segment_items(segments: Any) -> tuple[list[Any], str]:
+    """取 segments 最新报告期的分项列表与报告期（``YYYYMMDD``，未知 ⇒ ``""``）。
+
+    - ``SegmentCollection``：优先 ``latest_segments()``（按 ``latest_period`` 过滤），
+      避免跨期混算；无该方法时按 ``latest_period`` 对 ``report_date`` 过滤；
+    - ``list[SegmentSnapshot]`` / ``list[dict]``：原样返回（无期信息 ⇒ 报告期 ``""``）。
     """
-    # 优先只取最新报告期（避免跨期混算 max/min）
+    if segments is None:
+        return [], ""
     if hasattr(segments, "latest_segments"):
-        items = segments.latest_segments()
-    else:
-        items = getattr(segments, "segments", None)
-        if items is None and isinstance(segments, (list, tuple)):
-            items = segments
-        # 带 latest_period 但无 latest_segments 方法 → 按 latest_period 过滤
-        elif items is not None and not isinstance(segments, (list, tuple)):
-            latest_period = getattr(segments, "latest_period", "") or ""
-            if latest_period:
-                items = [s for s in items if getattr(s, "report_date", None) == latest_period]
+        items = list(segments.latest_segments() or [])
+        period = _normalize_period(getattr(segments, "latest_period", None)) or ""
+        return items, period
 
-    yoys: list[float] = []
-    for s in items or []:
-        y = s.get("revenue_yoy") if isinstance(s, dict) else getattr(s, "revenue_yoy", None)
-        v = _opt(y)
-        if v is not None:
-            yoys.append(v)
-    if not yoys:
-        return None, None
-    return max(yoys), min(yoys)
+    raw_items = getattr(segments, "segments", None)
+    if raw_items is None and isinstance(segments, (list, tuple)):
+        return list(segments), ""
+    if raw_items is None:
+        return [], ""
+    items = list(raw_items)
+    latest_period = _normalize_period(getattr(segments, "latest_period", None)) or ""
+    if latest_period:
+        items = [segment for segment in items if _normalize_period(_seg_value(segment, "report_date")) == latest_period]
+    return items, latest_period
+
+
+def _segment_extremes_v2(
+    segments: Any,
+    *,
+    category: str = _SEGMENT_PRODUCT_CATEGORY,
+    min_share: float = _SEGMENT_MIN_SHARE,
+) -> tuple[float | None, float | None, str, str, float | None]:
+    """分部提取 v2（P1-6）：只取按产品分项 + 收入占比门槛 + 报告期。
+
+    规则（设计 §12.2）：
+
+    1. 只取最新报告期分项（:func:`_latest_segment_items`）；
+    2. 优先 ``category == "按产品分类"`` 的池；无产品分项 ⇒ 回落全部（``basis="all"``）；
+    3. 过滤 ``revenue_yoy`` 缺失项；``revenue_share`` 缺失视为未知**放行**（fail-open），
+       已知且 ``< min_share`` 的剔除（小分部不构成结构性亮点）；
+    4. 空结果 ⇒ ``(None, None, latest_period, "all", None)``。
+
+    Returns:
+        ``(fastest_yoy, slowest_yoy, period, basis, fastest_share)``；``basis`` ∈
+        ``{"product", "all"}``；``period`` 为最新分部报告期（未知 ⇒ ``""``）。
+    """
+    items, latest_period = _latest_segment_items(segments)
+    product_pool = [segment for segment in items if _seg_value(segment, "category") == category]
+    pool = product_pool or items
+    basis = "product" if product_pool else "all"
+
+    rows: list[tuple[float, float | None]] = []
+    for segment in pool:
+        yoy = _opt(_seg_value(segment, "revenue_yoy"))
+        if yoy is None:
+            continue
+        share = _opt(_seg_value(segment, "revenue_share"))
+        if share is not None and share < min_share:
+            continue
+        rows.append((yoy, share))
+    if not rows:
+        return None, None, latest_period, "all", None
+
+    fastest_yoy, fastest_share = max(rows, key=lambda row: row[0])
+    slowest_yoy, _ = min(rows, key=lambda row: row[0])
+    return fastest_yoy, slowest_yoy, latest_period, basis, fastest_share
+
+
+def _segment_extremes(segments: Any) -> tuple[float | None, float | None]:
+    """兼容包装（改造 E）：返回 :func:`_segment_extremes_v2` 的前两项（最快/最慢）。
+
+    旧调用/测试不破坏；新逻辑（category / share / period）由 builder 走 v2。
+    """
+    fastest, slowest, _period, _basis, _share = _segment_extremes_v2(segments)
+    return fastest, slowest
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -704,8 +760,10 @@ def build_fundamental_factor(
     cashflow[], fina[]}``，各 record 已是 canonical 字段名（adapter 层完成映射）。
     本 builder 只取 ``fina/balance/cashflow`` 最新一条（offset=0）。
 
-    改造 E：``segments`` 为 company_track 的业务线分项（``SegmentCollection`` 或
-    分项列表），从中提取 ``segment_fastest_yoy`` / ``segment_slowest_yoy``。
+    改造 E / P1-6：``segments`` 为 company_track 的业务线分项（``SegmentCollection`` 或
+    分项列表）；用 :func:`_segment_extremes_v2` 只取「按产品分类」分项（无产品分项回落全部）、
+    应用 10% 收入占比门槛，并写入 ``segment_fastest_yoy`` / ``segment_slowest_yoy`` /
+    ``segment_period`` / ``segment_basis`` / ``segment_fastest_share``（缺失不伪造）。
 
     F 边际改善（设计 §3.4）：末尾用 :func:`derive_marginal` 统一赋值 4 个 ``q_*``
     单季派生字段（多期还原产物，默认 ``None``）。它们**不参与** F 方向分计算
@@ -739,7 +797,7 @@ def build_fundamental_factor(
     cashflow = _first(data.get("cashflow"))
     company_type = _company_type(data.get("income"))
     report_period = _normalize_period(fina.get("period")) or ""
-    fastest, slowest = _segment_extremes(segments)
+    fastest, slowest, segment_period, segment_basis, segment_fastest_share = _segment_extremes_v2(segments)
 
     op_cf = _opt(cashflow.get("operating_cashflow"))
     capex = _opt(cashflow.get("capex"))
@@ -771,6 +829,9 @@ def build_fundamental_factor(
         is_financial=company_type in _FINANCIAL_COMPANY_TYPES,
         segment_fastest_yoy=fastest,
         segment_slowest_yoy=slowest,
+        segment_period=segment_period,
+        segment_fastest_share=segment_fastest_share,
+        segment_basis=segment_basis,
         **marginal_values,
         report_period=report_period,
         marginal_period=_latest_income_period(data.get("income")),

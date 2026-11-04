@@ -339,16 +339,19 @@ class DomainContextSettings(BaseModel):
 class MidtermClassifierSettings(BaseModel):
     """中期决策层：分类器顺序变体（TEF design §5.1）+ 状态证据公式版本（V2 design §7.1）
     + 一致预期数据源（E 生态设计 §5.3）+ F 边际模式（F-Marginal design §5.1）
-    + OCF 惩罚口径（F 数据治理 design §8）+ 扣非保守锚模式（F 数据治理 design §9）。
+    + OCF 惩罚口径（F 数据治理 design §8）+ 扣非保守锚模式（design §9）
+    + 分部 bonus 口径（F 数据治理 design §12）。
 
     缺段 ⇒ 取默认 ``classifier_order="etf"``（E→T→F 基准）、``formula_revision="v1"``
     （现有状态证据公式，数值行为与改造前逐值一致）、``consensus_source="report_list"``
     （东财研报聚合 = 现状）、``f_marginal_mode="shadow"``（算边际但不进 F，F 逐值不变）
     与 ``ocf_penalty_basis="ttm"``（滚动 12 个月经营现金流，A 股季节性中性）、
-    ``f_recurring_mode="shadow"``（扣非锚算但不进 F，F 逐值不变），旧 config 行为不变；读取方
+    ``f_recurring_mode="shadow"``（扣非锚算但不进 F，F 逐值不变）、
+    ``segment_bonus_mode="period_aligned"``（分部期间对齐 + 10% 占比门槛），
+    旧 config 行为不变；读取方
     ``classifier_dispatch.resolve_classifier_order`` / ``resolve_formula_revision`` /
     ``decision_model.resolve_f_marginal_mode`` / ``resolve_ocf_penalty_basis`` /
-    ``resolve_f_recurring_mode`` /
+    ``resolve_f_recurring_mode`` / ``resolve_segment_bonus_mode`` /
     ``collectors.consensus.eastmoney.resolve_consensus_source`` 运行时读取并 fail-open。
     """
 
@@ -379,6 +382,13 @@ class MidtermClassifierSettings(BaseModel):
     # 读取方 decision_model.resolve_f_recurring_mode 运行时读取并 fail-open：
     #   配置缺段/缺字段 → 本默认值 shadow；读配置异常/取值非法 → off（最保守，回滚旧行为）。
     f_recurring_mode: Literal["off", "shadow", "on"] = "shadow"
+    # 分部 bonus 口径（F 数据治理 design §12，P1-6）：
+    #   period_aligned = 分部报告期须与财报报告期一致（两期均可知且不同 ⇒ 不产 bonus），
+    #                    且最快分部收入占比须 ≥10%（**缺省**；小分部/错期不再误加 0.2）
+    #   legacy         = 只看 divergence（旧行为，**回滚开关**：midterm.segment_bonus_mode: legacy）
+    # 读取方 decision_model.resolve_segment_bonus_mode 运行时读取并 fail-open：
+    #   配置缺段/缺字段 → 本默认值 period_aligned；读配置异常/取值非法 → legacy（回滚旧行为）。
+    segment_bonus_mode: Literal["period_aligned", "legacy"] = "period_aligned"
     # 一致预期 provider 链（E 生态设计 §5.3），缺省 report_list = 与改造前逐字一致：
     #   report_list  = 东财研报列表聚合（现状）
     #   f10_forecast = 东财 F10 盈利预测快照 + 快照序列自算 revision（失败回落 report_list）

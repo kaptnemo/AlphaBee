@@ -67,6 +67,8 @@ _NEW_FIELDS = (
     "ocf_penalty_basis",
     # 扣非模式 provenance（P1-3）：additive 字段，golden 冻结时尚不存在。
     "f_recurring_mode",
+    # 分部 bonus 口径 provenance（P1-6）：additive 字段，golden 冻结时尚不存在。
+    "segment_bonus_mode",
 )
 # F 边际改善（F-Marginal §3.3）新增的 4 个单季派生字段：与 score_breakdown 同属
 # additive 诊断字段（golden 冻结时尚不存在、不参与方向分/分布计算），同口径剔除。
@@ -90,6 +92,10 @@ _FUNDAMENTAL_PERIOD_FIELDS = (
     "net_profit_dedt",
     "net_profit_dedt_yoy",
     "net_profit_dedt_base_positive",
+    # P1-6 新增的分部口径字段（golden 冻结时尚不存在；additive）。
+    "segment_period",
+    "segment_fastest_share",
+    "segment_basis",
 )
 _EXPECTATION_PERIOD_FIELDS = ("profit_forecast_period",)
 # score_breakdown 里的边际分解键（F-Marginal §6.1）：shadow/on 且单季数据可用时出现。
@@ -179,8 +185,9 @@ def _evidence() -> list[EvidenceEvent]:
 def _canonical(payload: dict) -> str:
     """剔除新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。
 
-    剔除三类：① 11 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
-    ``f_marginal_mode`` + P1-2 的 ``ocf_penalty_basis`` + P1-3 的 ``f_recurring_mode``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
+    剔除三类：① 12 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
+    ``f_marginal_mode`` + P1-2 的 ``ocf_penalty_basis`` + P1-3 的 ``f_recurring_mode``
+    + P1-6 的 ``segment_bonus_mode``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
     （L1，2026-11-01 的 F 可审计分解）、4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，PR-1）
     与 ``report_period`` / ``marginal_period``（P0-1/P0-3 期间 provenance）、
     ``marginal_revenue_basis``（P1-4 口径 provenance）；③
@@ -388,6 +395,11 @@ def test_old_frame_without_new_fields_loads_with_defaults():
     assert fundamental.net_profit_dedt_yoy is None
     assert fundamental.net_profit_dedt_base_positive is None
     assert artifact.f_recurring_mode == ""
+    # P1-6 分部口径字段与 bonus 模式 provenance：旧帧回落 ""/None/""
+    assert fundamental.segment_period == ""
+    assert fundamental.segment_fastest_share is None
+    assert fundamental.segment_basis == ""
+    assert artifact.segment_bonus_mode == ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -421,6 +433,11 @@ def test_v1_artifact_new_fields_are_fixed(monkeypatch):
     assert artifact.factor_snapshot.fundamental.net_profit_dedt_yoy is None
     assert artifact.factor_snapshot.fundamental.net_profit_dedt_base_positive is None
     assert artifact.f_recurring_mode == "shadow"
+    # P1-6：golden 帧无分部期/占比输入 ⇒ 字段钉默认；配置 stub 缺 segment_bonus_mode ⇒ period_aligned
+    assert artifact.factor_snapshot.fundamental.segment_period == ""
+    assert artifact.factor_snapshot.fundamental.segment_fastest_share is None
+    assert artifact.factor_snapshot.fundamental.segment_basis == ""
+    assert artifact.segment_bonus_mode == "period_aligned"
 
     # factor_direction = 改动前六因子均值：用 golden 里的方向分独立算一遍对比
     golden_scores = _golden_payload()["variable_scores"]

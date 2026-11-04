@@ -57,10 +57,12 @@ from alphabee.midterm.score_engine import (
     KNOWN_MARGINAL_MODES,
     KNOWN_OCF_PENALTY_BASES,
     KNOWN_RECURRING_MODES,
+    KNOWN_SEGMENT_BONUS_MODES,
     MARGINAL_MODE_OFF,
     MARGINAL_MODE_ON,
     OCF_PENALTY_BASIS_SIGN,
     RECURRING_MODE_OFF,
+    SEGMENT_BONUS_MODE_LEGACY,
     compress_scores,
     fundamental_breakdown,
 )
@@ -290,6 +292,61 @@ def resolve_f_recurring_mode(mode: str | None = None) -> str:
     return RECURRING_MODE_OFF
 
 
+def _settings_default_segment_bonus_mode() -> str:
+    """读 ``MidtermClassifierSettings`` 的**模型默认值**（不硬编码生产默认）。
+
+    与其它 resolve 同构：配置缺段/缺字段时回退到
+    ``MidtermClassifierSettings.model_fields["segment_bonus_mode"].default``（当前
+    ``"period_aligned"``）；读取失败（配置不可导入/字段缺失/默认值非法）⇒ ``"legacy"``
+    （最保守，旧行为）。
+    """
+    try:
+        from alphabee.config import MidtermClassifierSettings
+
+        default = MidtermClassifierSettings.model_fields["segment_bonus_mode"].default
+    except Exception:  # noqa: BLE001 - 读默认值失败绝不打断决策
+        return SEGMENT_BONUS_MODE_LEGACY
+    value = str(default or "").strip().lower()
+    return value if value in KNOWN_SEGMENT_BONUS_MODES else SEGMENT_BONUS_MODE_LEGACY
+
+
+def resolve_segment_bonus_mode(mode: str | None = None) -> str:
+    """解析分部 bonus 口径（P1-6 设计 §12.2）：显式合法值优先；``None`` → 读配置。
+
+    三态（与 ``resolve_f_marginal_mode`` 同构）：
+
+    - **配置缺段/缺字段** ⇒ 动态读 ``MidtermClassifierSettings`` 的模型默认（当前
+      ``"period_aligned"``：期间对齐 + 10% 收入占比门槛；不在本模块硬编码）；
+    - **读配置抛异常 / 取值非法** ⇒ warn + ``"legacy"``（最保守：回滚旧行为，绝不因配置
+      坏掉而启用会改变 F 的新口径）；
+    - **显式参数**（``evaluate(segment_bonus_mode=...)``）优先于配置；显式值非法同样
+      warn + ``"legacy"``（绝不抛）。
+    """
+    if mode is not None:
+        value = str(mode).strip().lower()
+        if value in KNOWN_SEGMENT_BONUS_MODES:
+            return value
+        logger.warning("segment_bonus_mode 非法值 %r，回落 legacy", mode)
+        return SEGMENT_BONUS_MODE_LEGACY
+
+    try:
+        from alphabee.config import get_settings
+
+        configured = getattr(getattr(get_settings(), "midterm", None), "segment_bonus_mode", None)
+    except Exception as exc:  # noqa: BLE001 - 配置不可用绝不打断决策
+        logger.warning("midterm.segment_bonus_mode 配置不可用（%s），回落 legacy", exc)
+        return SEGMENT_BONUS_MODE_LEGACY
+
+    if configured is None:
+        # 缺段/缺字段：视为「未配置」→ 回退到 settings 模型的默认值（动态读取，不硬编码）
+        return _settings_default_segment_bonus_mode()
+    value = str(configured).strip().lower()
+    if value in KNOWN_SEGMENT_BONUS_MODES:
+        return value
+    logger.warning("midterm.segment_bonus_mode 配置值非法 %r，回落 legacy", configured)
+    return SEGMENT_BONUS_MODE_LEGACY
+
+
 def _score_0_100(direction_score: float | None) -> float | None:
     """``[-1, 1]`` 方向分 → ``0-100`` 分数（50=中性，100=最有利，0=最不利）。
 
@@ -344,6 +401,7 @@ def _writeback_f_breakdown(
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
     f_recurring_mode: str = RECURRING_MODE_OFF,
+    segment_bonus_mode: str = SEGMENT_BONUS_MODE_LEGACY,
 ) -> None:
     """把 F 的可审计分解回写进 ``fundamental.score_breakdown``（L1，2026-11-01）。
 
@@ -363,6 +421,10 @@ def _writeback_f_breakdown(
     ``f_recurring_mode``（P1-3）：解析后的扣非模式（``off`` / ``shadow`` / ``on``），透传后
     由 ``fundamental_breakdown`` 写 ``np_term_recurring`` / ``recurring_gap`` /
     ``f_recurring_shadow``（``off`` 不写）；缺省 ``off`` 保持旧行为。
+
+    ``segment_bonus_mode``（P1-6）：解析后的分部口径（``period_aligned`` / ``legacy``），
+    透传后由 ``fundamental_breakdown`` 写 ``segment_period_mismatch`` /
+    ``segment_share_below_min`` 并决定 bonus；缺省 ``legacy`` 保持旧行为。
     """
     breakdown = fundamental_breakdown(
         snapshot.fundamental,
@@ -370,6 +432,7 @@ def _writeback_f_breakdown(
         marginal_mode=marginal_mode,
         ocf_penalty_basis=ocf_penalty_basis,
         f_recurring_mode=f_recurring_mode,
+        segment_bonus_mode=segment_bonus_mode,
     )
     if breakdown is not None:
         snapshot.fundamental.score_breakdown = breakdown
@@ -584,6 +647,7 @@ def evaluate(
     f_marginal_mode: str | None = None,
     ocf_penalty_basis: str | None = None,
     f_recurring_mode: str | None = None,
+    segment_bonus_mode: str | None = None,
 ) -> CompanyStateArtifact:
     """串起四引擎，把 FactorSnapshot 决策为 CompanyStateArtifact（§6 三轴 + §9）。
 
@@ -626,6 +690,11 @@ def evaluate(
             模型默认 ``"shadow"``；异常/非法回落 ``"off"``）。解析一次后同时用于
             ``compress_scores`` 与 ``_writeback_f_breakdown``，并把实际值写入 artifact
             ``f_recurring_mode``。
+        segment_bonus_mode: 分部 bonus 口径（P1-6 design §12.2）：``"period_aligned"`` /
+            ``"legacy"``；``None`` = 跟随配置 ``midterm.segment_bonus_mode``（缺段/缺字段动态读
+            模型默认 ``"period_aligned"``；异常/非法回落 ``"legacy"``）。解析一次后同时用于
+            ``compress_scores`` 与 ``_writeback_f_breakdown``，并把实际值写入 artifact
+            ``segment_bonus_mode``。
 
     Returns:
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
@@ -650,18 +719,22 @@ def evaluate(
     resolved_ocf_basis = resolve_ocf_penalty_basis(ocf_penalty_basis)
     # 扣非模式（P1-3）：同样先 resolve 一次，评分与分解共用同一模式；artifact 记录实际值。
     resolved_recurring_mode = resolve_f_recurring_mode(f_recurring_mode)
+    # 分部 bonus 口径（P1-6）：同样先 resolve 一次，评分与分解共用同一口径。
+    resolved_segment_mode = resolve_segment_bonus_mode(segment_bonus_mode)
     if resolved_marginal_mode == MARGINAL_MODE_ON:
         scores = compress_scores(
             snapshot,
             marginal_mode=MARGINAL_MODE_ON,
             ocf_penalty_basis=resolved_ocf_basis,
             f_recurring_mode=resolved_recurring_mode,
+            segment_bonus_mode=resolved_segment_mode,
         )
     else:
         scores = compress_scores(
             snapshot,
             ocf_penalty_basis=resolved_ocf_basis,
             f_recurring_mode=resolved_recurring_mode,
+            segment_bonus_mode=resolved_segment_mode,
         )
     # TEF design §4.5 / V2 design §6.4：先各 resolve 一次拿确定值再路由
     # （dispatch 内部对合法值直接放行，无双重分叉）。
@@ -685,6 +758,7 @@ def evaluate(
         marginal_mode=resolved_marginal_mode,
         ocf_penalty_basis=resolved_ocf_basis,
         f_recurring_mode=resolved_recurring_mode,
+        segment_bonus_mode=resolved_segment_mode,
     )
 
     has_evidence = bool(evidence)
@@ -761,6 +835,8 @@ def evaluate(
         ocf_penalty_basis=resolved_ocf_basis,
         # 扣非模式 provenance（P1-3 §9.3）：本帧解析后的实际值；旧帧回落 ""。
         f_recurring_mode=resolved_recurring_mode,
+        # 分部 bonus 口径 provenance（P1-6 §12.2）：本帧解析后的实际值；旧帧回落 ""。
+        segment_bonus_mode=resolved_segment_mode,
     )
 
 
@@ -778,6 +854,7 @@ def get_decision(
     f_marginal_mode: str | None = None,
     ocf_penalty_basis: str | None = None,
     f_recurring_mode: str | None = None,
+    segment_bonus_mode: str | None = None,
 ) -> CompanyStateArtifact:
     """便捷入口：``get_factor_snapshot(symbol)`` 后再 ``evaluate``。
 
@@ -797,6 +874,8 @@ def get_decision(
             ``None`` = 跟随配置 ``midterm.ocf_penalty_basis``（缺省 ``"ttm"``）。
         f_recurring_mode: 扣非保守锚模式（P1-3 §9.3），透传 ``evaluate``；
             ``None`` = 跟随配置 ``midterm.f_recurring_mode``（缺省 ``"shadow"``）。
+        segment_bonus_mode: 分部 bonus 口径（P1-6 §12.2），透传 ``evaluate``；
+            ``None`` = 跟随配置 ``midterm.segment_bonus_mode``（缺省 ``"period_aligned"``）。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -816,6 +895,7 @@ def get_decision(
         f_marginal_mode=f_marginal_mode,
         ocf_penalty_basis=ocf_penalty_basis,
         f_recurring_mode=f_recurring_mode,
+        segment_bonus_mode=segment_bonus_mode,
     )
 
 
