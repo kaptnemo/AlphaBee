@@ -120,6 +120,16 @@ MARGINAL_MODE_SHADOW = "shadow"
 MARGINAL_MODE_ON = "on"
 KNOWN_MARGINAL_MODES: tuple[str, ...] = (MARGINAL_MODE_OFF, MARGINAL_MODE_SHADOW, MARGINAL_MODE_ON)
 
+# 扣非保守锚三档（P1-3 design §9.3）：**纯函数默认 off**（旧行为，直接调用点零变化）；
+# 生产默认 shadow 由 ``decision_model.resolve_f_recurring_mode`` 解析后显式传入。
+#   off    = 净利项 = saturate(归母 yoy)，不写任何 recurring 键（现状逐值不变）
+#   shadow = 计算 np_term_recurring / recurring_gap / f_recurring_shadow，但 F 仍用归母项
+#   on     = 净利项改用 saturate(min(归母 yoy, 扣非 yoy))（只压不抬）；f == f_recurring_shadow
+RECURRING_MODE_OFF = "off"
+RECURRING_MODE_SHADOW = "shadow"
+RECURRING_MODE_ON = "on"
+KNOWN_RECURRING_MODES: tuple[str, ...] = (RECURRING_MODE_OFF, RECURRING_MODE_SHADOW, RECURRING_MODE_ON)
+
 # ``f_marginal_source`` 位掩码（§5.2 S4 加速度覆盖率统计口径）：按**可用腿**置位。
 # 1 = 营收腿（q_revenue_yoy 与 revenue_yoy 均在）、2 = 净利腿、4 = 质量腿（q_gross_margin_pp）。
 # 0 = 降级（两腿都缺或质量腿缺失）——降级帧不写边际键，等价于 source=0。
@@ -302,6 +312,16 @@ def _normalize_marginal_mode(marginal_mode: str | None) -> str:
     return value if value in KNOWN_MARGINAL_MODES else MARGINAL_MODE_OFF
 
 
+def _normalize_f_recurring_mode(recurring_mode: str | None) -> str:
+    """扣非模式归一：合法值原样返回；缺失/非法 → ``off``（旧行为，绝不静默升级）。
+
+    与 :func:`_normalize_marginal_mode` 同构：resolve 层已保证合法值，这里只是直接
+    调用 ``fundamental_breakdown`` 时的防御（非法模式串不得改变 F）。
+    """
+    value = str(recurring_mode or "").strip().lower()
+    return value if value in KNOWN_RECURRING_MODES else RECURRING_MODE_OFF
+
+
 def _marginal_legs(f: FundamentalFactor) -> list[float]:
     """两条加速度腿（pp）：``Δ_rev = q_revenue_yoy − revenue_yoy``、``Δ_np`` 同理。
 
@@ -374,6 +394,7 @@ def fundamental_breakdown(
     *,
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
+    f_recurring_mode: str = RECURRING_MODE_OFF,
 ) -> dict[str, float] | None:
     """F 方向分的**可审计分解**（L1）：返回逐项与饱和标志；全部 YoY 缺失 → ``None``。
 
@@ -407,12 +428,15 @@ def fundamental_breakdown(
       ``shadow`` 档写 ``q1_marginal_degraded=1.0`` 显式留痕（``on`` 不写该键，保证
       ``on`` 与 ``off`` 的分解逐值相等）；
     - 边际键：``marginal_raw``(M_raw) / ``marginal_quality``(Q) / ``marginal``(M) /
-      ``f_shadow``（**把 M 代入后的 F**，即 on 模式的 F）/ ``f_shadow_delta``(= f_shadow − f) /
+      ``f_shadow``（**在当前 ``f_recurring_mode`` 下把 M 打开的反事实 F**；净利项用
+      ``growth_for_f``，故 recurring=on 帧的 ``f_shadow_delta`` 是真实边际效应、不含
+      扣非替换差）/ ``f_shadow_delta``(= f_shadow − f) /
       ``f_marginal_source``（可用腿位掩码，见 :func:`_marginal_source`）。
       降级帧（``_marginal`` 为 ``None``）**不写边际键**：等价于 source=0，且保证
       ``on``/``shadow`` 的分解与 ``off`` 逐键相同（降级恒等）；
-    - ``f_shadow`` 在 ``on`` 模式恒等于 ``f``（delta=0）：两种模式共用同一"代入 M"口径，
-      shadow 因此是真正的**开权重预演**（S1 ``ΔF`` 直接可用）。
+    - ``f_shadow`` 在 ``marginal_mode=on`` 时恒等于 ``f``（delta=0），且在
+      ``f_recurring_mode=on`` 时使用扣非替换后的 ``growth_for_f``：shadow 因此是真正的
+      **开权重预演**（S1 ``ΔF`` 直接可用，且不把扣非替换差混入边际效应）。
 
     §4.4 去重：仅 ``on`` 且 ``marginal`` 非 ``None`` 且 ``Q < 1.0`` 时 ``beat *= 0.5``
     （避免「超预期」与「加速」对同一改善双重奖励）；``shadow``/``off`` 不折半
@@ -424,8 +448,26 @@ def fundamental_breakdown(
 
     ``ocf_penalty_basis``（P1-2）：keyword 缺省 ``"sign"``（旧行为，直接调用点零变化）；
     生产路径由 ``decision_model.resolve_ocf_penalty_basis`` 解析配置后显式传入 ``"ttm"``。
+
+    扣非保守锚（P1-3，``f_recurring_mode`` 三档；缺省 ``off`` ⇒ 键与值逐项不变）：
+
+    - ``off``：净利项 = ``saturate(归母 yoy)``，**不写任何 recurring 键**（现状逐值不变）；
+    - ``shadow``：算 ``np_term_recurring`` / ``recurring_gap`` / ``f_recurring_shadow`` 并落盘，
+      但 F 仍用归母项（**F 逐值不变**）；
+    - ``on``：净利项改用 ``np_term_recurring``（``min(归母, 扣非)`` 的饱和值），F 与
+      ``f_recurring_shadow`` 逐值相等；
+    - 可用性：``net_profit_dedt_yoy`` 非 None 且 ``net_profit_dedt_base_positive is True``
+      才用扣非锚；否则**回落归母项**并写 ``recurring_unavailable=1``（负基数不参与百分比
+      比较，缺失不猜测）；
+    - ``recurring_gap = net_profit_yoy − net_profit_dedt_yoy``（pp，两者都可算时写）；
+    - **min 只压不抬**（口径披露）：扣非高于归母时仍取归母（一次性收益被扣非压低）；
+      一次性损失（扣非低于归母）会压低 F——这是保守取向，不是错误；
+    - 边际项 M 不因扣非替换改变（同一 ``marginal_mode`` 下 M 相同），但 ``f_shadow``
+      的净利项使用 ``growth_for_f``（含扣非替换）——recurring=on 帧的 ``f_shadow_delta``
+      是真实边际效应；P0-1 期间守卫仍优先（beat/miss 口径不受扣非影响）。
     """
     mode = _normalize_marginal_mode(marginal_mode)
+    recurring_mode = _normalize_f_recurring_mode(f_recurring_mode)
     normalized_ocf_basis = _normalize_ocf_penalty_basis(ocf_penalty_basis)
     marginal = _marginal(f) if mode != MARGINAL_MODE_OFF else None
     # P0-3：Q1 单季=累计 ⇒ 边际项降级（marginal 已为 None）；shadow 写留痕，on 不写
@@ -470,19 +512,68 @@ def fundamental_breakdown(
     miss_penalty = _miss_penalty(f, e)
     segment_bonus = _segment_bonus(f)
 
-    # 边际项：M 代入后的增长项（on 口径）。shadow 只算不用，on 真正替换 L。
+    # 扣非保守锚（P1-3）：可用性 = 扣非同比可得 且 上年同期扣非 > 0；否则回落归母项。
+    np_term_recurring: float | None = None
+    recurring_gap: float | None = None
+    recurring_unavailable = False
+    if recurring_mode != RECURRING_MODE_OFF:
+        if f.net_profit_yoy is not None and f.net_profit_dedt_yoy is not None:
+            recurring_gap = f.net_profit_yoy - f.net_profit_dedt_yoy
+        if (
+            f.net_profit_yoy is not None
+            and f.net_profit_dedt_yoy is not None
+            and f.net_profit_dedt_base_positive is True
+        ):
+            # min 只压不抬：扣非高于归母时仍取归母（一次性收益被压低；一次性损失会压低 F）
+            np_term_recurring = _saturate(min(f.net_profit_yoy, f.net_profit_dedt_yoy), _FUNDAMENTAL_YOY_SCALE)
+        else:
+            recurring_unavailable = True
+
+    # 净利项：on 档且扣非可用 ⇒ 用扣非锚；否则归母项（off/shadow/不可用）。
+    use_recurring = recurring_mode == RECURRING_MODE_ON and np_term_recurring is not None
+    net_term_for_f = np_term_recurring if use_recurring else term_values.get("net_profit_term")
+    term_values_for_f = dict(term_values)
+    if net_term_for_f is not None:
+        term_values_for_f["net_profit_term"] = net_term_for_f
+    elif "net_profit_term" in term_values_for_f:
+        del term_values_for_f["net_profit_term"]
+    growth_for_f = _mean(list(term_values_for_f.values())) if term_values_for_f else growth
+    if growth_for_f is None:  # 理论上不可达（term_values 非空 ⇒ mean 非 None），防御保留
+        growth_for_f = growth
+
+    # 边际影子：在当前 ``f_recurring_mode`` 下把边际项 M 打开的反事实 F（t12 repair）。
+    # 净利项必须用 ``growth_for_f``（recurring=on 且可用时已替换为扣非锚），否则
+    # recurring=on 帧的 f_shadow_delta 会把「扣非替换差」误算成边际效应。
+    # recurring=off/shadow 时 growth_for_f == growth ⇒ 既有口径逐值不变；
+    # marginal_mode=on 时本式与最终 F 同源，f_shadow == f（delta=0）。
     f_shadow: float | None = None
     if marginal is not None:
         m = marginal[2]
-        growth_mixed = (1.0 - F_MARGINAL_WEIGHT) * growth + F_MARGINAL_WEIGHT * m
+        growth_mixed = (1.0 - F_MARGINAL_WEIGHT) * growth_for_f + F_MARGINAL_WEIGHT * m
         f_shadow = _saturate(growth_mixed + ocf_penalty + beat_deduped + miss_penalty + segment_bonus, 1.0)
-        f_growth = growth_mixed if mode == MARGINAL_MODE_ON else growth
-    else:
-        f_growth = growth
 
     beat_for_f = beat_deduped if mode == MARGINAL_MODE_ON else beat_bonus
+    f_growth = growth_for_f
+    if marginal is not None and mode == MARGINAL_MODE_ON:
+        f_growth = (1.0 - F_MARGINAL_WEIGHT) * growth_for_f + F_MARGINAL_WEIGHT * marginal[2]
     raw = f_growth + ocf_penalty + beat_for_f + miss_penalty + segment_bonus
     final = _saturate(raw, 1.0)
+
+    # 把「扣非项代入后的 F」按**当前模式**计算（与非扣非 F 同一组修正项/同一边际模式）：
+    # shadow 档 F 不含 M、beat 不折半；on 档与最终 F 完全一致（f == f_recurring_shadow）。
+    f_recurring_shadow: float | None = None
+    if recurring_mode != RECURRING_MODE_OFF and np_term_recurring is not None:
+        recurring_terms = dict(term_values)
+        recurring_terms["net_profit_term"] = np_term_recurring
+        growth_recurring = _mean(list(recurring_terms.values()))
+        if growth_recurring is None:  # 理论上不可达（净利项存在 ⇒ 非空），防御保留
+            growth_recurring = growth
+        recurring_growth_for_f = growth_recurring
+        if marginal is not None and mode == MARGINAL_MODE_ON:
+            recurring_growth_for_f = (1.0 - F_MARGINAL_WEIGHT) * growth_recurring + F_MARGINAL_WEIGHT * marginal[2]
+        f_recurring_shadow = _saturate(
+            recurring_growth_for_f + ocf_penalty + beat_for_f + miss_penalty + segment_bonus, 1.0
+        )
 
     breakdown: dict[str, float] = {**present, **term_values}
     breakdown.update({key: 1.0 if flag else 0.0 for key, flag in saturated.items()})
@@ -514,6 +605,16 @@ def fundamental_breakdown(
                 "f_marginal_source": float(_marginal_source(f)),
             }
         )
+    # P1-3 扣非诊断键（仅 shadow/on 写；off 逐键不变）：可用性、缺口、扣非代入后的 F。
+    if recurring_mode != RECURRING_MODE_OFF:
+        if np_term_recurring is not None:
+            breakdown["np_term_recurring"] = np_term_recurring
+        if recurring_gap is not None:
+            breakdown["recurring_gap"] = recurring_gap
+        if f_recurring_shadow is not None:
+            breakdown["f_recurring_shadow"] = f_recurring_shadow
+        if recurring_unavailable:
+            breakdown["recurring_unavailable"] = 1.0
     # P0-3 留痕：仅 shadow 写（on 不写，保证 on==off 逐值相等）；Q1 降级没有边际键。
     if q1_marginal_degraded and mode == MARGINAL_MODE_SHADOW:
         breakdown["q1_marginal_degraded"] = 1.0
@@ -531,6 +632,7 @@ def _fundamental_trend(
     *,
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
+    f_recurring_mode: str = RECURRING_MODE_OFF,
 ) -> float | None:
     """F 方向分：边际改善 + 经营现金流惩罚 + 超预期 beat + 结构性亮点（改造 E）。
 
@@ -549,12 +651,20 @@ def _fundamental_trend(
     - 结构性亮点（改造 E）：最快细分增速显著跑赢整体（segment divergence > 15pp）
       → 正向修正（整体 +17.94% 但高速通信线 +35.44% 的「结构性突变」）；
     - 边际改善（F-Marginal §4.3，``marginal_mode``）：``on`` 时把水平项 L 与边际项 M 混合；
-      ``shadow`` 只落盘不生效；``off``/无单季数据 ⇒ 逐值等于改造前公式（G3 降级恒等）。
+      ``shadow`` 只落盘不生效；``off``/无单季数据 ⇒ 逐值等于改造前公式（G3 降级恒等）；
+    - 扣非保守锚（P1-3，``f_recurring_mode``）：``on`` 时净利项改用 ``min(归母, 扣非)``
+      的饱和值（只压不抬）；``shadow`` 只落盘诊断键、F 仍用归母项；``off``（缺省）逐值不变。
 
     全部 YoY 缺失 → ``None``；最终结果 clip 到 ``[-1, 1]``。逐项口径见
     :func:`fundamental_breakdown`（本函数只取其中的 ``f``，单一来源）。
     """
-    breakdown = fundamental_breakdown(f, e, marginal_mode=marginal_mode, ocf_penalty_basis=ocf_penalty_basis)
+    breakdown = fundamental_breakdown(
+        f,
+        e,
+        marginal_mode=marginal_mode,
+        ocf_penalty_basis=ocf_penalty_basis,
+        f_recurring_mode=f_recurring_mode,
+    )
     return breakdown["f"] if breakdown is not None else None
 
 
@@ -768,6 +878,7 @@ def compress_scores(
     *,
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
+    f_recurring_mode: str = RECURRING_MODE_OFF,
 ) -> VariableScores:
     """把七因子快照压缩为七方向分（``FactorSnapshot → VariableScores``）。
 
@@ -785,6 +896,9 @@ def compress_scores(
         ocf_penalty_basis: OCF 惩罚口径（P1-2）：``sign``（**缺省**，旧行为：累计 OCF 符号）/
             ``ttm``（滚动 12 个月；金融股跳过，TTM 缺失回落 sign）。缺省 ``sign`` 保证既有
             直接调用点零变化；``decision_model.evaluate`` 会 resolve 配置后显式传入。
+        f_recurring_mode: 扣非保守锚（P1-3）：``off``（**缺省**，旧行为）/``shadow``（算但
+            不进 F）/``on``（净利项用 ``min(归母, 扣非)``）。缺省 ``off`` 保证直接调用点零变化；
+            ``decision_model.evaluate`` 会 resolve 配置（缺省 ``shadow``）后显式传入。
 
     Returns:
         ``VariableScores``：``m`` 为市场摘要（复用 ``market_score`` 0-100），
@@ -808,6 +922,7 @@ def compress_scores(
             snapshot.expectation,
             marginal_mode=marginal_mode,
             ocf_penalty_basis=ocf_penalty_basis,
+            f_recurring_mode=f_recurring_mode,
         ),
         e_revision=e_revision,
         t_relative_strength=_relative_strength(snapshot.trend),

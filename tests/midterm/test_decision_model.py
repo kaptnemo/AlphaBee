@@ -990,3 +990,141 @@ def test_get_decision_passes_ocf_penalty_basis(monkeypatch):
     art = get_decision("601668.SH", ocf_penalty_basis="sign")
     assert art.ocf_penalty_basis == "sign"
     assert art.factor_snapshot.fundamental.score_breakdown["ocf_penalty"] == pytest.approx(-0.5)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 扣非保守锚模式（P1-3 design §9）：resolve 三态 / evaluate provenance / 透传
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _pin_recurring_config(monkeypatch, *, mode: str | None = "shadow", drop_field: bool = False) -> None:
+    """钉住配置：``drop_field=True`` 模拟「缺字段」（stub 无 f_recurring_mode）。"""
+    midterm = SimpleNamespace(classifier_order="etf", formula_revision="v1")
+    if not drop_field:
+        midterm.f_recurring_mode = mode
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=midterm))
+
+
+def _snapshot_with_recurring(*, mode_on_f: bool = False) -> FactorSnapshot:
+    """002517-like 帧：归母 50.65% / 扣非 5.75%（正基数），其余项饱和。
+
+    ``mode_on_f`` 只用于注释语义（F 是否预计下降由 evaluate 的 f_recurring_mode 决定）。
+    """
+    return _snapshot(
+        fundamental=FundamentalFactor(
+            revenue_yoy=30.0,
+            net_profit_yoy=50.65,
+            eps_growth_yoy=30.0,
+            net_profit_dedt=5.75e8,
+            net_profit_dedt_yoy=5.75,
+            net_profit_dedt_base_positive=True,
+        )
+    )
+
+
+def test_resolve_f_recurring_mode_explicit_value_wins(monkeypatch):
+    """显式合法值优先于配置（大小写归一）。"""
+    from alphabee.midterm.decision_model import resolve_f_recurring_mode
+
+    _pin_recurring_config(monkeypatch, mode="off")
+    assert resolve_f_recurring_mode("shadow") == "shadow"
+    assert resolve_f_recurring_mode("on") == "on"
+    assert resolve_f_recurring_mode("OFF") == "off"
+    assert resolve_f_recurring_mode() == "off"  # 未显式传 ⇒ 跟随配置
+
+
+def test_resolve_f_recurring_mode_config_missing_field_defaults_to_shadow(monkeypatch):
+    """配置缺字段/缺整段 ⇒ 动态读模型默认值（当前 shadow，不硬编码）。"""
+    from alphabee.midterm.decision_model import resolve_f_recurring_mode
+
+    _pin_recurring_config(monkeypatch, drop_field=True)
+    assert resolve_f_recurring_mode() == "shadow"
+
+    monkeypatch.setattr("alphabee.config.get_settings", lambda: SimpleNamespace(midterm=None))
+    assert resolve_f_recurring_mode() == "shadow"
+
+
+def test_resolve_f_recurring_mode_config_exception_falls_back_to_off(monkeypatch):
+    """读配置异常 ⇒ warn + off（最保守，回滚旧行为）。"""
+    from alphabee.midterm.decision_model import resolve_f_recurring_mode
+
+    def _boom():
+        raise RuntimeError("config broken")
+
+    monkeypatch.setattr("alphabee.config.get_settings", _boom)
+    assert resolve_f_recurring_mode() == "off"
+
+
+def test_resolve_f_recurring_mode_invalid_values_fall_back_to_off(monkeypatch):
+    """配置值非法 / 显式值非法 ⇒ off（不静默升级为会改变 F 的模式）。"""
+    from alphabee.midterm.decision_model import resolve_f_recurring_mode
+
+    _pin_recurring_config(monkeypatch, mode="bogus")
+    assert resolve_f_recurring_mode() == "off"
+    _pin_recurring_config(monkeypatch, mode="shadow")
+    assert resolve_f_recurring_mode("bogus") == "off"
+
+
+def test_resolve_f_recurring_mode_falls_back_to_model_default(monkeypatch):
+    """缺段/缺字段 ⇒ 回退到 ``MidtermClassifierSettings`` 的模型默认值（漂移测试）。"""
+    from alphabee.config import MidtermClassifierSettings
+    from alphabee.midterm.decision_model import resolve_f_recurring_mode
+
+    field = MidtermClassifierSettings.model_fields["f_recurring_mode"]
+    _pin_recurring_config(monkeypatch, drop_field=True)
+
+    monkeypatch.setattr(field, "default", "off")
+    assert resolve_f_recurring_mode() == "off"
+
+    monkeypatch.setattr(field, "default", "on")
+    assert resolve_f_recurring_mode() == "on"
+
+
+def test_evaluate_writes_f_recurring_mode_provenance_and_shadow_keeps_f(monkeypatch):
+    """缺省 shadow ⇒ artifact 记 shadow、F 与显式 off 逐值相同；on 用扣非锚后 F 下降。"""
+    _pin_recurring_config(monkeypatch, drop_field=True)
+
+    default = evaluate(_snapshot_with_recurring(), [])
+    off = evaluate(_snapshot_with_recurring(), [], f_recurring_mode="off")
+    on = evaluate(_snapshot_with_recurring(), [], f_recurring_mode="on")
+
+    assert default.f_recurring_mode == "shadow"
+    assert default.variable_scores.f_fundamental_trend == pytest.approx(off.variable_scores.f_fundamental_trend)
+    assert on.f_recurring_mode == "on"
+    assert on.variable_scores.f_fundamental_trend < off.variable_scores.f_fundamental_trend
+    on_bd = on.factor_snapshot.fundamental.score_breakdown
+    assert on_bd["np_term_recurring"] == pytest.approx(5.75 / 30.0, abs=1e-9)
+    assert on.variable_scores.f_fundamental_trend == pytest.approx(on_bd["f"])
+    assert on_bd["f"] == pytest.approx(on_bd["f_recurring_shadow"])
+
+
+def test_evaluate_passes_f_recurring_mode_to_compress_scores(monkeypatch):
+    """evaluate 把解析后的 f_recurring_mode 显式传给 compress_scores（单一解析）。"""
+    import alphabee.midterm.decision_model as dm
+
+    calls: list[dict] = []
+
+    def _fake_compress(snapshot, **kwargs):
+        calls.append(kwargs)
+        return VariableScores()
+
+    monkeypatch.setattr(dm, "compress_scores", _fake_compress)
+    _pin_recurring_config(monkeypatch, drop_field=True)
+
+    art = evaluate(_snapshot(), [], f_recurring_mode="on")
+    assert calls
+    assert calls[-1]["f_recurring_mode"] == "on"
+    assert art.f_recurring_mode == "on"
+
+
+def test_get_decision_passes_f_recurring_mode(monkeypatch):
+    """get_decision 透传 f_recurring_mode（keyword-only）到 evaluate。"""
+    import alphabee.midterm.factors as factors_mod
+
+    _pin_recurring_config(monkeypatch, drop_field=True)
+    snap = _snapshot_with_recurring()
+    monkeypatch.setattr(factors_mod, "get_factor_snapshot", lambda symbol, include_market=True: snap)
+
+    art = get_decision("002517.SZ", f_recurring_mode="on")
+    assert art.f_recurring_mode == "on"
+    assert art.variable_scores.f_fundamental_trend < 1.0  # 扣非锚压低 F

@@ -520,6 +520,21 @@ def _operating_cashflow_ttm(cashflow: Any) -> float | None:
     return prev_fy_value + current - prev_year_value
 
 
+def _net_profit_dedt_base_positive(fina: Any, report_period: str) -> bool | None:
+    """上年同期（t−4）扣非归母净利是否 > 0（P1-3 扣非锚的基数保护）。
+
+    - 用 ``_series(fina, "net_profit_dedt")``（同报告期已在工具层去重）取
+      ``report_period`` 的上年同期值：``> 0`` ⇒ ``True``、``<= 0`` ⇒ ``False``；
+    - ``report_period`` 缺失/非法，或序列缺 t−4 ⇒ ``None``（不猜测：评分层据此
+      回落归母项并写 ``recurring_unavailable=1``）。
+    """
+    normalized = _normalize_period(report_period)
+    if normalized is None:
+        return None
+    value = _series(fina, "net_profit_dedt").get(_prev_year(normalized))
+    return None if value is None else value > 0.0
+
+
 def _marginal_revenue_series(income: Any) -> tuple[Mapping[str, float], str]:
     """边际营收序列：优先 canonical ``operating_revenue``（营业收入），缺失回落 ``revenue``。
 
@@ -712,12 +727,18 @@ def build_fundamental_factor(
     从 ``cashflow`` 多期数据计算（缺期 ⇒ ``None``）；``is_financial`` 由 ``income`` 最新
     记录的 canonical ``company_type`` ∈ {"2","3","4"} 判定。``company_type`` 缺失时
     fail-open 为 ``False`` 并把 ``"company_type"`` 登记进 ``missing_facts``（不静默）。
+
+    扣非锚（P1-3）：从 ``fina`` 最新记录取 canonical ``net_profit_dedt`` /
+    ``net_profit_dedt_yoy``；``net_profit_dedt_base_positive`` 由
+    :func:`_net_profit_dedt_base_positive` 用上年同期（``report_period`` 的 t−4）扣非值
+    判定（缺失 ⇒ ``None``，评分层据此回落归母项）。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
     balance = _first(data.get("balance"))
     cashflow = _first(data.get("cashflow"))
     company_type = _company_type(data.get("income"))
+    report_period = _normalize_period(fina.get("period")) or ""
     fastest, slowest = _segment_extremes(segments)
 
     op_cf = _opt(cashflow.get("operating_cashflow"))
@@ -734,6 +755,9 @@ def build_fundamental_factor(
     factor = FundamentalFactor(
         revenue_yoy=_opt(fina.get("revenue_yoy")),
         net_profit_yoy=_opt(fina.get("net_profit_yoy")),
+        net_profit_dedt=_opt(fina.get("net_profit_dedt")),
+        net_profit_dedt_yoy=_opt(fina.get("net_profit_dedt_yoy")),
+        net_profit_dedt_base_positive=_net_profit_dedt_base_positive(data.get("fina"), report_period),
         eps_growth_yoy=_opt(fina.get("eps_growth_yoy")),
         roe=_opt(fina.get("roe")),
         gross_margin=_opt(fina.get("gross_margin")),
@@ -748,7 +772,7 @@ def build_fundamental_factor(
         segment_fastest_yoy=fastest,
         segment_slowest_yoy=slowest,
         **marginal_values,
-        report_period=_normalize_period(fina.get("period")) or "",
+        report_period=report_period,
         marginal_period=_latest_income_period(data.get("income")),
         marginal_revenue_basis=revenue_basis if revenue_series else "",
     )

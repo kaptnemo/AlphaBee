@@ -65,6 +65,8 @@ _NEW_FIELDS = (
     "f_marginal_mode",
     # OCF 惩罚口径 provenance（P1-2）：additive 字段，golden 冻结时尚不存在。
     "ocf_penalty_basis",
+    # 扣非模式 provenance（P1-3）：additive 字段，golden 冻结时尚不存在。
+    "f_recurring_mode",
 )
 # F 边际改善（F-Marginal §3.3）新增的 4 个单季派生字段：与 score_breakdown 同属
 # additive 诊断字段（golden 冻结时尚不存在、不参与方向分/分布计算），同口径剔除。
@@ -84,6 +86,10 @@ _FUNDAMENTAL_PERIOD_FIELDS = (
     # P1-2/P1-5 新增的 OCF/金融股派生字段（additive、不参与其它因子计算）。
     "operating_cashflow_ttm",
     "is_financial",
+    # P1-3 新增的扣非字段（golden 冻结时尚不存在；additive、默认 None）。
+    "net_profit_dedt",
+    "net_profit_dedt_yoy",
+    "net_profit_dedt_base_positive",
 )
 _EXPECTATION_PERIOD_FIELDS = ("profit_forecast_period",)
 # score_breakdown 里的边际分解键（F-Marginal §6.1）：shadow/on 且单季数据可用时出现。
@@ -173,8 +179,8 @@ def _evidence() -> list[EvidenceEvent]:
 def _canonical(payload: dict) -> str:
     """剔除新增字段后的规范化 JSON（断言 A 的逐字节比较口径，与 golden 生成时一致）。
 
-    剔除三类：① 10 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
-    ``f_marginal_mode`` + P1-2 的 ``ocf_penalty_basis``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
+    剔除三类：① 11 个 artifact 顶层字段（V2 design §6.1 的 8 个 + F-Marginal §6.1 的
+    ``f_marginal_mode`` + P1-2 的 ``ocf_penalty_basis`` + P1-3 的 ``f_recurring_mode``）；② ``factor_snapshot.fundamental`` 内的 ``score_breakdown``
     （L1，2026-11-01 的 F 可审计分解）、4 个 ``q_*`` 单季派生字段（F-Marginal §3.3，PR-1）
     与 ``report_period`` / ``marginal_period``（P0-1/P0-3 期间 provenance）、
     ``marginal_revenue_basis``（P1-4 口径 provenance）；③
@@ -377,6 +383,11 @@ def test_old_frame_without_new_fields_loads_with_defaults():
     assert fundamental.operating_cashflow_ttm is None
     assert fundamental.is_financial is False
     assert artifact.ocf_penalty_basis == ""
+    # P1-3 扣非字段与扣非模式 provenance：旧帧回落 None/""
+    assert fundamental.net_profit_dedt is None
+    assert fundamental.net_profit_dedt_yoy is None
+    assert fundamental.net_profit_dedt_base_positive is None
+    assert artifact.f_recurring_mode == ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -405,6 +416,11 @@ def test_v1_artifact_new_fields_are_fixed(monkeypatch):
     assert artifact.factor_snapshot.fundamental.operating_cashflow_ttm is None
     assert artifact.factor_snapshot.fundamental.is_financial is False
     assert artifact.ocf_penalty_basis == "ttm"
+    # P1-3：golden 帧无扣非输入 ⇒ 字段钉默认；配置 stub 缺 f_recurring_mode ⇒ 模型默认 shadow
+    assert artifact.factor_snapshot.fundamental.net_profit_dedt is None
+    assert artifact.factor_snapshot.fundamental.net_profit_dedt_yoy is None
+    assert artifact.factor_snapshot.fundamental.net_profit_dedt_base_positive is None
+    assert artifact.f_recurring_mode == "shadow"
 
     # factor_direction = 改动前六因子均值：用 golden 里的方向分独立算一遍对比
     golden_scores = _golden_payload()["variable_scores"]

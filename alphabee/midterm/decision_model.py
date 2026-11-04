@@ -56,9 +56,11 @@ from alphabee.midterm.position import build_position
 from alphabee.midterm.score_engine import (
     KNOWN_MARGINAL_MODES,
     KNOWN_OCF_PENALTY_BASES,
+    KNOWN_RECURRING_MODES,
     MARGINAL_MODE_OFF,
     MARGINAL_MODE_ON,
     OCF_PENALTY_BASIS_SIGN,
+    RECURRING_MODE_OFF,
     compress_scores,
     fundamental_breakdown,
 )
@@ -234,6 +236,60 @@ def resolve_ocf_penalty_basis(basis: str | None = None) -> str:
     return OCF_PENALTY_BASIS_SIGN
 
 
+def _settings_default_f_recurring_mode() -> str:
+    """读 ``MidtermClassifierSettings`` 的**模型默认值**（不硬编码生产默认）。
+
+    与 ``_settings_default_marginal_mode`` / ``_settings_default_ocf_penalty_basis`` 同构：
+    配置缺段/缺字段时回退到 ``MidtermClassifierSettings.model_fields["f_recurring_mode"]``
+    的默认值（当前 ``"shadow"``）；读取失败 ⇒ ``"off"``（最保守，旧行为）。
+    """
+    try:
+        from alphabee.config import MidtermClassifierSettings
+
+        default = MidtermClassifierSettings.model_fields["f_recurring_mode"].default
+    except Exception:  # noqa: BLE001 - 读默认值失败绝不打断决策
+        return RECURRING_MODE_OFF
+    value = str(default or "").strip().lower()
+    return value if value in KNOWN_RECURRING_MODES else RECURRING_MODE_OFF
+
+
+def resolve_f_recurring_mode(mode: str | None = None) -> str:
+    """解析扣非保守锚模式（P1-3 设计 §9.3）：显式合法值优先；``None`` → 读配置。
+
+    三态（与 ``resolve_f_marginal_mode`` 同构）：
+
+    - **配置缺段/缺字段** ⇒ 动态读 ``MidtermClassifierSettings`` 的模型默认（当前
+      ``"shadow"``：算但不进 F；不在本模块硬编码，避免默认值漂移）；
+    - **读配置抛异常 / 取值非法** ⇒ warn + ``"off"``（最保守：回滚旧行为，绝不因配置
+      坏掉而启用会改变 F 的口径）；
+    - **显式参数**（``evaluate(f_recurring_mode=...)``）优先于配置；显式值非法同样
+      warn + ``"off"``（绝不抛）。
+    """
+    if mode is not None:
+        value = str(mode).strip().lower()
+        if value in KNOWN_RECURRING_MODES:
+            return value
+        logger.warning("f_recurring_mode 非法值 %r，回落 off", mode)
+        return RECURRING_MODE_OFF
+
+    try:
+        from alphabee.config import get_settings
+
+        configured = getattr(getattr(get_settings(), "midterm", None), "f_recurring_mode", None)
+    except Exception as exc:  # noqa: BLE001 - 配置不可用绝不打断决策
+        logger.warning("midterm.f_recurring_mode 配置不可用（%s），回落 off", exc)
+        return RECURRING_MODE_OFF
+
+    if configured is None:
+        # 缺段/缺字段：视为「未配置」→ 回退到 settings 模型的默认值（动态读取，不硬编码）
+        return _settings_default_f_recurring_mode()
+    value = str(configured).strip().lower()
+    if value in KNOWN_RECURRING_MODES:
+        return value
+    logger.warning("midterm.f_recurring_mode 配置值非法 %r，回落 off", configured)
+    return RECURRING_MODE_OFF
+
+
 def _score_0_100(direction_score: float | None) -> float | None:
     """``[-1, 1]`` 方向分 → ``0-100`` 分数（50=中性，100=最有利，0=最不利）。
 
@@ -287,6 +343,7 @@ def _writeback_f_breakdown(
     *,
     marginal_mode: str = MARGINAL_MODE_OFF,
     ocf_penalty_basis: str = OCF_PENALTY_BASIS_SIGN,
+    f_recurring_mode: str = RECURRING_MODE_OFF,
 ) -> None:
     """把 F 的可审计分解回写进 ``fundamental.score_breakdown``（L1，2026-11-01）。
 
@@ -302,12 +359,17 @@ def _writeback_f_breakdown(
 
     ``ocf_penalty_basis``（P1-2/P1-5）：解析后的实际口径（``ttm`` / ``sign``），透传后写入
     ``ocf_ttm`` / ``ocf_penalty_basis`` / ``financial_sector`` 诊断键；缺省 ``sign`` 保持旧行为。
+
+    ``f_recurring_mode``（P1-3）：解析后的扣非模式（``off`` / ``shadow`` / ``on``），透传后
+    由 ``fundamental_breakdown`` 写 ``np_term_recurring`` / ``recurring_gap`` /
+    ``f_recurring_shadow``（``off`` 不写）；缺省 ``off`` 保持旧行为。
     """
     breakdown = fundamental_breakdown(
         snapshot.fundamental,
         snapshot.expectation,
         marginal_mode=marginal_mode,
         ocf_penalty_basis=ocf_penalty_basis,
+        f_recurring_mode=f_recurring_mode,
     )
     if breakdown is not None:
         snapshot.fundamental.score_breakdown = breakdown
@@ -521,6 +583,7 @@ def evaluate(
     classifier_formula: str | None = None,
     f_marginal_mode: str | None = None,
     ocf_penalty_basis: str | None = None,
+    f_recurring_mode: str | None = None,
 ) -> CompanyStateArtifact:
     """串起四引擎，把 FactorSnapshot 决策为 CompanyStateArtifact（§6 三轴 + §9）。
 
@@ -558,6 +621,11 @@ def evaluate(
             跟随配置 ``midterm.ocf_penalty_basis``（缺段/缺字段动态读模型默认 ``"ttm"``；
             异常/非法回落 ``"sign"``）。解析一次后同时用于 ``compress_scores`` 与
             ``_writeback_f_breakdown``，并把实际值写入 artifact ``ocf_penalty_basis``。
+        f_recurring_mode: 扣非保守锚模式（P1-3 design §9.3）：``"off"`` / ``"shadow"`` /
+            ``"on"``；``None`` = 跟随配置 ``midterm.f_recurring_mode``（缺段/缺字段动态读
+            模型默认 ``"shadow"``；异常/非法回落 ``"off"``）。解析一次后同时用于
+            ``compress_scores`` 与 ``_writeback_f_breakdown``，并把实际值写入 artifact
+            ``f_recurring_mode``。
 
     Returns:
         :class:`CompanyStateArtifact`：state=StateBelief、thesis_confidence、
@@ -580,10 +648,21 @@ def evaluate(
     # OCF 惩罚口径（P1-2）：同样先 resolve 一次，评分与分解共用同一口径；
     # artifact 记录解析后的实际值（旧帧回落 "" = 未记录）。生产默认 ttm，函数默认 sign。
     resolved_ocf_basis = resolve_ocf_penalty_basis(ocf_penalty_basis)
+    # 扣非模式（P1-3）：同样先 resolve 一次，评分与分解共用同一模式；artifact 记录实际值。
+    resolved_recurring_mode = resolve_f_recurring_mode(f_recurring_mode)
     if resolved_marginal_mode == MARGINAL_MODE_ON:
-        scores = compress_scores(snapshot, marginal_mode=MARGINAL_MODE_ON, ocf_penalty_basis=resolved_ocf_basis)
+        scores = compress_scores(
+            snapshot,
+            marginal_mode=MARGINAL_MODE_ON,
+            ocf_penalty_basis=resolved_ocf_basis,
+            f_recurring_mode=resolved_recurring_mode,
+        )
     else:
-        scores = compress_scores(snapshot, ocf_penalty_basis=resolved_ocf_basis)
+        scores = compress_scores(
+            snapshot,
+            ocf_penalty_basis=resolved_ocf_basis,
+            f_recurring_mode=resolved_recurring_mode,
+        )
     # TEF design §4.5 / V2 design §6.4：先各 resolve 一次拿确定值再路由
     # （dispatch 内部对合法值直接放行，无双重分叉）。
     resolved_order = resolve_classifier_order(classifier_order)
@@ -601,7 +680,12 @@ def evaluate(
     _writeback_directions(snapshot, scores)
     # L1（2026-11-01）：F 的可审计分解（原始三项 / 饱和项 / 修正项 / 饱和标志）随帧落盘，
     # 报告与任务记录只渲染不重算；与方向分同批回写，保证「分」与「为什么」来自同一次计算。
-    _writeback_f_breakdown(snapshot, marginal_mode=resolved_marginal_mode, ocf_penalty_basis=resolved_ocf_basis)
+    _writeback_f_breakdown(
+        snapshot,
+        marginal_mode=resolved_marginal_mode,
+        ocf_penalty_basis=resolved_ocf_basis,
+        f_recurring_mode=resolved_recurring_mode,
+    )
 
     has_evidence = bool(evidence)
     # 情景概率方向用「因子方向分」（score_engine 正确符号化），而非证据层的
@@ -675,6 +759,8 @@ def evaluate(
         f_marginal_mode=resolved_marginal_mode,
         # OCF 惩罚口径 provenance（P1-2 §3.3）：本帧解析后的实际值；旧帧回落 ""。
         ocf_penalty_basis=resolved_ocf_basis,
+        # 扣非模式 provenance（P1-3 §9.3）：本帧解析后的实际值；旧帧回落 ""。
+        f_recurring_mode=resolved_recurring_mode,
     )
 
 
@@ -691,6 +777,7 @@ def get_decision(
     classifier_formula: str | None = None,
     f_marginal_mode: str | None = None,
     ocf_penalty_basis: str | None = None,
+    f_recurring_mode: str | None = None,
 ) -> CompanyStateArtifact:
     """便捷入口：``get_factor_snapshot(symbol)`` 后再 ``evaluate``。
 
@@ -708,6 +795,8 @@ def get_decision(
             ``None`` = 跟随配置 ``midterm.f_marginal_mode``（缺省 ``"shadow"``）。
         ocf_penalty_basis: OCF 惩罚口径（P1-2 §8），透传 ``evaluate``；
             ``None`` = 跟随配置 ``midterm.ocf_penalty_basis``（缺省 ``"ttm"``）。
+        f_recurring_mode: 扣非保守锚模式（P1-3 §9.3），透传 ``evaluate``；
+            ``None`` = 跟随配置 ``midterm.f_recurring_mode``（缺省 ``"shadow"``）。
 
     Returns:
         :class:`CompanyStateArtifact`。
@@ -726,6 +815,7 @@ def get_decision(
         classifier_formula=classifier_formula,
         f_marginal_mode=f_marginal_mode,
         ocf_penalty_basis=ocf_penalty_basis,
+        f_recurring_mode=f_recurring_mode,
     )
 
 

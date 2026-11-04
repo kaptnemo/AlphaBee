@@ -438,6 +438,45 @@ def test_build_fundamental_factor_missing_income_registers_company_type():
     assert "is_financial" not in missing  # 派生字段不登记
 
 
+def test_build_fundamental_factor_recurring_fields():
+    """P1-3：扣非值/扣非同比透传 + 上年同期扣非正值判定（True/False/None）。"""
+    data = _fin_marginal()
+    data["fina"][0].update({"net_profit_dedt": -2.153752e10, "net_profit_dedt_yoy": 18.68})
+    for record in data["fina"]:
+        if record["period"] == "20240930":  # t−4（20250930 的上年同期）
+            record["net_profit_dedt"] = 1.2e10
+    factor, _ = build_fundamental_factor(data)
+    assert factor.net_profit_dedt == pytest.approx(-2.153752e10)
+    assert factor.net_profit_dedt_yoy == pytest.approx(18.68)
+    assert factor.net_profit_dedt_base_positive is True
+
+    # 上年同期扣非 ≤ 0 ⇒ False（负基数不参与百分比比较）
+    negative = _fin_marginal()
+    negative["fina"][0].update({"net_profit_dedt": 1.0, "net_profit_dedt_yoy": 5.0})
+    for record in negative["fina"]:
+        if record["period"] == "20240930":
+            record["net_profit_dedt"] = -1.0
+    assert build_fundamental_factor(negative)[0].net_profit_dedt_base_positive is False
+
+    # 序列缺 t−4 ⇒ None（不猜测）
+    missing_base = _fin_marginal()
+    missing_base["fina"][0].update({"net_profit_dedt": 1.0, "net_profit_dedt_yoy": 5.0})
+    assert build_fundamental_factor(missing_base)[0].net_profit_dedt_base_positive is None
+
+    # report_period 缺失 ⇒ None
+    no_period = _fin_marginal()
+    for record in no_period["fina"]:
+        record.pop("period", None)
+    no_period["fina"][0].update({"net_profit_dedt": 1.0, "net_profit_dedt_yoy": 5.0})
+    assert build_fundamental_factor(no_period)[0].net_profit_dedt_base_positive is None
+
+    # 扣非数据全缺 ⇒ 三个字段均 None（additive 默认）
+    plain = build_fundamental_factor(_fin_marginal())[0]
+    assert plain.net_profit_dedt is None
+    assert plain.net_profit_dedt_yoy is None
+    assert plain.net_profit_dedt_base_positive is None
+
+
 def test_build_expectation_factor_forecast_express_and_consensus():
     exp = {
         "forecast": [

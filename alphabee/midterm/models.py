@@ -153,6 +153,14 @@ class FundamentalFactor(BaseModel):
 
     revenue_yoy: float | None = None  # PERCENT 营收同比
     net_profit_yoy: float | None = None  # PERCENT 净利润同比
+    # 扣非归母净利（P1-3，additive；canonical ``net_profit_dedt``，报告期累计 CNY）。
+    # 缺失 ⇒ None（不静默回退为 0）；评分层按 f_recurring_mode 决定是否进入 F。
+    net_profit_dedt: float | None = None
+    # 扣非归母净利累计同比（PERCENT，canonical ``net_profit_dedt_yoy``）；负基数时不可比。
+    net_profit_dedt_yoy: float | None = None
+    # 上年同期（t−4）扣非归母净利是否 > 0（P1-3）：True/False；缺失/序列缺 t−4 ⇒ None
+    # （不猜测）。评分层的扣非锚仅在 True 时可用（负基数不参与百分比比较）。
+    net_profit_dedt_base_positive: bool | None = None
     eps_growth_yoy: float | None = None  # PERCENT EPS 同比
     roe: float | None = None  # PERCENT 净资产收益率
     gross_margin: float | None = None  # PERCENT 毛利率
@@ -650,6 +658,9 @@ class CompanyStateArtifact(BaseModel):
     # OCF 惩罚口径 provenance（P1-2，additive）：本帧解析后的实际口径（"ttm" / "sign"）；
     # 旧帧无该字段 ⇒ ""（语义 = 未记录，回放时按帧内已存 F，不重算）。schema_version 不升。
     ocf_penalty_basis: str = ""
+    # 扣非模式 provenance（P1-3，additive）：本帧解析后的实际模式（off / shadow / on）；
+    # 旧帧无该字段 ⇒ ""（语义 = 未记录，回放时按帧内已存 F，不重算）。schema_version 不升。
+    f_recurring_mode: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
