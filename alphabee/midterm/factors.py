@@ -391,6 +391,25 @@ def _normalize_period(value: Any) -> str | None:
     return text
 
 
+def _latest_income_period(income: Any) -> str:
+    """``income`` 多期记录中最新合法报告期（``YYYYMMDD``）；无合法期 ⇒ ``""``。
+
+    报告期只认 :func:`_normalize_period` 认可的 8 位 ``YYYYMMDD``；非 dict 记录/非法期
+    一律跳过（缺失不猜测，不插值）。该值是「单季还原目标期」（``marginal_period``），
+    由 ``income`` 最新一期决定，与 ``fina`` 最新期（``report_period``）可能不同
+    （A+H 披露节奏 / 报表先后到达），两者不等时由评分层写 ``report_period_mismatch``。
+    """
+    if isinstance(income, dict):
+        records: list[Any] = [income]
+    elif isinstance(income, (list, tuple)):
+        records = list(income)
+    else:
+        return ""
+    periods = [_normalize_period(record.get("period")) for record in records if isinstance(record, dict)]
+    valid = [period for period in periods if period is not None]
+    return max(valid) if valid else ""
+
+
 def _prev_year(period: str) -> str:
     """去年同一报告期：``'20260930'`` → ``'20250930'``（入参须为已归一的 8 位报告期）。"""
     if len(period) != 8 or not period.isdigit():
@@ -411,11 +430,13 @@ def _prev_quarter(period: str) -> str | None:
 
 
 def _series(records: Any, field: str) -> dict[str, float]:
-    """``[{period, field}]`` → ``{period: value}``；按 period **降序**排序后去重（首条生效）。
+    """``[{period, field}]`` → ``{period: value}``；按 period **降序**排序（同 period 首条生效）。
 
-    Tushare 数组顺序不可依赖（§3.2），故先按报告期降序排序；同报告期的重复记录
-    （重述/修订）保留排序后的首条——稳定排序 ⇒ 原顺序首条，与 ``_dedup`` 的「保首条」
-    口径一致（§4.5 数据重述：以最新 ``ann_date`` 为准，不回溯历史期）。
+    **去重口径（P0-2）**：同报告期的重述/修订行已由 ``get_financial_fact`` 在工具层按
+    ``ann_date`` + ``update_flag`` 去重（合并报表优先、取最新公告与最新修订），本函数
+    **不再承担去重语义**，只按 ``period`` 降序排序；同 period 若仍出现多条（防御性），
+    保留排序后的首条（稳定排序 ⇒ 原顺序首条），不覆盖、不回溯历史期。
+    Tushare 数组顺序不可依赖（§3.2），故不能直接相信返回行序。
 
     非 dict 记录、非法/缺失报告期、非数值字段值（``_opt`` 语义）一律跳过：
     缺失即缺失，不插值。
@@ -541,13 +562,9 @@ def derive_marginal(fin_data: dict[str, Any] | None) -> dict[str, float | None]:
     net_profit = _series(income, "net_profit_attr_p")
     gross_margin = _series(fina, "gross_margin")
 
-    income_records = income if isinstance(income, (list, tuple)) else []
-    income_periods = [_normalize_period(record.get("period")) for record in income_records if isinstance(record, dict)]
-    valid_periods = [period for period in income_periods if period is not None]
-    if not valid_periods:
+    target = _latest_income_period(income)  # 最新报告期（由报告期字符串决定，不看数组顺序）
+    if not target:
         return result
-
-    target = max(valid_periods)  # 最新报告期（由排序后的报告期字符串决定）
     base_period = _prev_year(target)  # 去年同季 t−4
     current_revenue = revenue.get(target)  # 当期累计营收（基数不稳门槛的尺度）
 
@@ -607,6 +624,10 @@ def build_fundamental_factor(
     报告期 provenance（P0-1）：``report_period`` 取 ``fina`` 最新一期的 ``period``
     经 :func:`_normalize_period` 归一（非法/缺失 ⇒ ``""``，供 score_engine 的
     beat/miss 期间守卫 fail-closed）。非 canonical 字段，不登记 ``missing_facts``。
+
+    单季还原目标期（P0-3）：``marginal_period`` 取 ``income`` 最新合法报告期
+    （:func:`_latest_income_period`；缺失 ⇒ ``""``），供评分层判定 Q1 降级与
+    ``report_period_mismatch`` 诊断。非 canonical 字段，不登记 ``missing_facts``。
     """
     data = fin_data or {}
     fina = _first(data.get("fina"))
@@ -640,6 +661,7 @@ def build_fundamental_factor(
         segment_slowest_yoy=slowest,
         **marginal_values,
         report_period=_normalize_period(fina.get("period")) or "",
+        marginal_period=_latest_income_period(data.get("income")),
     )
     return factor, _missing_fields(factor, _FUNDAMENTAL_FIELDS)
 

@@ -168,6 +168,17 @@ def _periods_match(a: str, b: str) -> bool:
     return bool(aa and bb and aa == bb)
 
 
+def _is_first_quarter(period: str) -> bool:
+    """报告期是否为 Q1（归一 ``YYYYMMDD`` 后以 ``0331`` 结尾；缺失/非法 → ``False``）。
+
+    P0-3 的降级判据：Q1 的单季值 = 累计值，``Δ = q_yoy − 累计 yoy ≡ 0``，加速度
+    不可识别——不能把 ``M=0`` 当成「没加速」参与加权（否则 ``on`` 把 F 系统性压低 30%，
+    ``shadow`` 的 ``ΔF`` 污染 S1）。
+    """
+    normalized = _normalize_ymd(period)
+    return len(normalized) == 8 and normalized.endswith("0331")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 七个方向分（逐一独立产出）
 # ─────────────────────────────────────────────────────────────────────────────
@@ -254,8 +265,12 @@ def _normalize_marginal_mode(marginal_mode: str | None) -> str:
 def _marginal_legs(f: FundamentalFactor) -> list[float]:
     """两条加速度腿（pp）：``Δ_rev = q_revenue_yoy − revenue_yoy``、``Δ_np`` 同理。
 
+    Q1 降级（P0-3）：``marginal_period`` 为 Q1（``0331``）⇒ 单季=累计、Δ 结构性为 0，
+    加速度不可识别，返回空列表（``_marginal`` 随之 ``None``，不写任何边际键）。
     可单腿（另一腿缺失只用可用腿，**不补 0**）；两腿都缺 ⇒ 空列表。
     """
+    if _is_first_quarter(f.marginal_period):
+        return []  # Q1：单季=累计，加速度不可识别（不能把 M=0 当「没加速」加权）
     deltas: list[float] = []
     if f.q_revenue_yoy is not None and f.revenue_yoy is not None:
         deltas.append(f.q_revenue_yoy - f.revenue_yoy)
@@ -325,6 +340,9 @@ def fundamental_breakdown(
       ``segment_bonus``：修正项；
     - ``forecast_period_matched``：财报期与预告期是否同期（1/0，P0-1）——0 时
       ``beat_bonus`` / ``miss_penalty`` 恒为 0（fail-closed）；
+    - ``q1_marginal_degraded``：Q1 边际降级留痕（仅 ``shadow`` 且 Q1 帧写 1.0，P0-3）；
+    - ``report_period_mismatch``：``report_period`` 与 ``marginal_period`` 均可知且
+      不同期（1.0；P2-1 诊断，缺失/同期不写）；
     - ``raw``：修正后合计；``f``：最终方向分（clip 后）；
     - ``input_saturated``：至少一项 YoY 越过饱和点（原始幅度已丢失）；
     - ``output_saturated``：合计越过 ±1（越界部分被 clip）。
@@ -334,6 +352,11 @@ def fundamental_breakdown(
     - ``off``：不算边际项，**输出与改造前逐值相同**（所有既有调用点零变化）；
     - ``shadow``：算 ``M`` 并写 6 个边际键，但 F 仍只用水平项（``f_growth = L``）；
     - ``on``：``f_growth = (1 − F_MARGINAL_WEIGHT)·L + F_MARGINAL_WEIGHT·M``；
+    - **Q1 降级（P0-3）**：``marginal_period`` 为 Q1（``0331``）⇒ 单季=累计、加速度
+      不可识别，``marginal=None``，``on``/``shadow`` 都**不写任何边际键**；``on`` 档
+      ``f_growth=L``（F 与 ``off`` 逐值相同，不把 ``M=0`` 当「没加速」压低 30%），
+      ``shadow`` 档写 ``q1_marginal_degraded=1.0`` 显式留痕（``on`` 不写该键，保证
+      ``on`` 与 ``off`` 的分解逐值相等）；
     - 边际键：``marginal_raw``(M_raw) / ``marginal_quality``(Q) / ``marginal``(M) /
       ``f_shadow``（**把 M 代入后的 F**，即 on 模式的 F）/ ``f_shadow_delta``(= f_shadow − f) /
       ``f_marginal_source``（可用腿位掩码，见 :func:`_marginal_source`）。
@@ -352,6 +375,13 @@ def fundamental_breakdown(
     """
     mode = _normalize_marginal_mode(marginal_mode)
     marginal = _marginal(f) if mode != MARGINAL_MODE_OFF else None
+    # P0-3：Q1 单季=累计 ⇒ 边际项降级（marginal 已为 None）；shadow 写留痕，on 不写
+    # （保证 on 与 off 的分解逐值相等，见 ``test_q1_marginal_degrades_to_none``）。
+    q1_marginal_degraded = mode != MARGINAL_MODE_OFF and _is_first_quarter(f.marginal_period)
+    # P2-1 诊断：单季还原目标期与 L 的报告期不同（两者都可知且不同才写，缺失不猜）。
+    report_period = _normalize_ymd(f.report_period)
+    marginal_period = _normalize_ymd(f.marginal_period)
+    report_period_mismatch = bool(report_period and marginal_period and report_period != marginal_period)
 
     yoys = {
         "revenue_yoy": f.revenue_yoy,
@@ -429,6 +459,11 @@ def fundamental_breakdown(
                 "f_marginal_source": float(_marginal_source(f)),
             }
         )
+    # P0-3 留痕：仅 shadow 写（on 不写，保证 on==off 逐值相等）；Q1 降级没有边际键。
+    if q1_marginal_degraded and mode == MARGINAL_MODE_SHADOW:
+        breakdown["q1_marginal_degraded"] = 1.0
+    if report_period_mismatch:
+        breakdown["report_period_mismatch"] = 1.0
     return breakdown
 
 

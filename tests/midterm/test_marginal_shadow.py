@@ -65,6 +65,8 @@ def _frame(
     order: str = "etf",
     argmax: str | None = None,
     scores: dict[str, Any] | None = None,
+    report_period: str | None = None,
+    marginal_period: str | None = None,
 ) -> dict[str, Any]:
     """构造一帧 artifact dict（``state.argmax_state`` 缺省按帧内 scores 真算）。"""
     payload_scores = scores if scores is not None else _scores(f)
@@ -82,6 +84,10 @@ def _frame(
         payload: dict[str, Any] = {}
         if breakdown:
             payload["score_breakdown"] = {"f": f, "f_shadow": f_shadow, "f_marginal_source": source}
+        if report_period is not None:
+            payload["report_period"] = report_period
+        if marginal_period is not None:
+            payload["marginal_period"] = marginal_period
         frame["factor_snapshot"] = {"fundamental": payload}
     return frame
 
@@ -150,6 +156,28 @@ def test_frame_stats_frame_without_fundamental():
     assert stats["has_fundamental"] is False
     assert stats["f"] is None and stats["f_shadow"] is None
     assert stats["shadow_state"] is None and stats["flipped"] is None
+
+
+def test_frame_stats_report_period_and_is_q1():
+    """P0-3：report_period 随帧可读；is_q1 由 marginal_period 判定、缺失回落 report_period。"""
+    q1 = _frame(f=-0.8, report_period="20260331", marginal_period="20260331")
+    q1_stats = frame_stats(q1)
+    assert q1_stats["report_period"] == "20260331"
+    assert q1_stats["is_q1"] is True
+
+    annual = _frame(f=-0.8, report_period="20261231", marginal_period="20261231")
+    annual_stats = frame_stats(annual)
+    assert annual_stats["report_period"] == "20261231"
+    assert annual_stats["is_q1"] is False
+
+    # marginal_period 缺失 ⇒ 回落 report_period（带分隔符也可判定）
+    fallback = _frame(f=-0.8, report_period="2026-03-31")
+    assert frame_stats(fallback)["is_q1"] is True
+
+    # 旧帧无期间字段 ⇒ 明确 None（无法判定，不获得 Q1 豁免）
+    old_stats = frame_stats(_frame(f=-0.8))
+    assert old_stats["report_period"] is None
+    assert old_stats["is_q1"] is None
 
 
 def test_frame_stats_uses_recorded_formula():
@@ -261,12 +289,63 @@ def test_shadow_report_empty_corpus_is_not_pass():
     report = shadow_report([])
     assert report["n_frames"] == 0
     assert report["coverage"] is None
+    assert report["coverage_ex_q1"] is None
     assert report["abs_delta_f_median"] is None
     assert report["abs_delta_f_p90"] is None
+    assert report["median_abs_delta_ex_q1"] is None
     assert report["flip_rate"] is None
     assert report["dangerous_flip_rate"] is None
     assert report["n_frames_ok"] is False
     assert report["g8_pass"] is False  # 空语料绝不放行
+
+
+def test_shadow_report_ex_q1_coverage_denominator():
+    """P0-3 S4：Q1 帧（结构性无边际键）不计入 ex-Q1 覆盖率分母；旧 coverage 保留对照。"""
+    frames = [_frame(f=-0.8, f_shadow=-0.79, source=7) for _ in range(40)]
+    frames += [_frame(f=-0.8, source=None, marginal_period="20260331") for _ in range(10)]
+
+    report = shadow_report(frames)
+
+    assert report["n_q1_frames"] == 10
+    assert report["n_fundamental_frames"] == 50
+    assert report["n_fundamental_frames_ex_q1"] == 40
+    assert report["n_with_marginal_ex_q1"] == 40
+    assert report["coverage"] == pytest.approx(40 / 50)  # 旧口径：被 Q1 稀释
+    assert report["coverage_ex_q1"] == pytest.approx(1.0)  # ex-Q1：分母排除 Q1
+    assert report["coverage"] < G8_MIN_COVERAGE
+    assert report["coverage_ok"] is True  # 门禁用 ex-Q1 口径
+
+
+def test_shadow_report_ex_q1_median_excludes_q1_delta():
+    """P0-3 S1：Q1 帧的 ΔF（结构性/污染值）不进入 ex-Q1 中位数；旧中位数保留对照。"""
+    # 40 帧 Q1 带「修复前污染」的 ΔF=0.3 + 20 帧非 Q1 ΔF=0.01
+    frames = [_frame(f=-0.8, f_shadow=-0.5, source=7, marginal_period="20260331") for _ in range(40)]
+    frames += [_frame(f=-0.8, f_shadow=-0.79, source=7) for _ in range(20)]
+
+    report = shadow_report(frames)
+
+    assert report["n_delta_frames"] == 60
+    assert report["n_delta_frames_ex_q1"] == 20
+    assert report["abs_delta_f_median"] == pytest.approx(0.3)  # 旧口径：Q1 污染主导
+    assert report["median_abs_delta_ex_q1"] == pytest.approx(0.01)  # ex-Q1：只看非 Q1
+    assert report["median_ok"] is True
+
+
+def test_shadow_report_g8_uses_ex_q1_metrics():
+    """P0-3 G-8：Q1 帧拉低旧 coverage/中位数，但门禁用 ex-Q1 口径 ⇒ 仍可 pass。"""
+    frames = _clean_frames(G8_MIN_FRAMES)  # 50 帧非 Q1、ΔF=0.01、source=7
+    frames += [_frame(f=-0.8, source=None, marginal_period="20260331") for _ in range(10)]
+
+    report = shadow_report(frames)
+
+    assert report["n_frames"] == 60
+    assert report["n_q1_frames"] == 10
+    assert report["coverage"] == pytest.approx(50 / 60)  # 旧口径 < 85%
+    assert report["median_abs_delta_ex_q1"] == pytest.approx(0.01)
+    assert report["coverage_ex_q1"] == pytest.approx(1.0)
+    assert report["median_ok"] is True
+    assert report["coverage_ok"] is True
+    assert report["g8_pass"] is True
 
 
 def _clean_frames(n: int, *, flips: int = 0, dangerous: int = 0) -> list[dict[str, Any]]:

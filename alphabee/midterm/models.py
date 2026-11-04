@@ -183,6 +183,10 @@ class FundamentalFactor(BaseModel):
     # 非 canonical 字段（不参与 missing_facts）：缺失/非法 ⇒ ""，beat/miss 期间守卫据此
     # fail-closed（无法证明与预告同期时宁可不产，也不保留错期证据）。
     report_period: str = ""
+    # 单季还原的目标报告期（``income`` 最新合法期，``YYYYMMDD``；P0-3，additive、默认空串）。
+    # Q1（0331）单季 = 累计 ⇒ 加速度不可识别，score_engine 据此把边际项降级为 None
+    # （不写任何边际键）；缺失/旧帧 ⇒ ""（非 Q1，行为与改造前一致）。非 canonical 字段。
+    marginal_period: str = ""
 
 
 class ExpectationFactor(BaseModel):

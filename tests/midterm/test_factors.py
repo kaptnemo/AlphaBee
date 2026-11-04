@@ -201,6 +201,33 @@ def test_build_fundamental_factor_writes_normalized_report_period():
     assert build_fundamental_factor({"fina": []})[0].report_period == ""
 
 
+def test_build_fundamental_factor_writes_marginal_period_and_mismatch_diagnostic():
+    """P0-3：``marginal_period`` = income 最新合法报告期；与 report_period 不同 ⇒ mismatch=1。"""
+    factor, missing = build_fundamental_factor(_fin_marginal())
+    assert factor.marginal_period == "20250930"  # income 最新合法 period
+    assert factor.report_period == "20250930"  # fina 最新 period（同期）
+    assert "marginal_period" not in missing  # provenance 非 canonical，不登记缺失
+    same_bd = fundamental_breakdown(factor, ExpectationFactor())
+    assert same_bd is not None
+    assert "report_period_mismatch" not in same_bd  # 同期不写诊断键
+
+    # income 最新期（20250630）早于 fina 最新期（20250930）⇒ 期间不一致诊断
+    data = _fin_marginal()
+    data["income"] = [record for record in data["income"] if record["period"] != "20250930"]
+    mismatch_factor, _ = build_fundamental_factor(data)
+    assert mismatch_factor.marginal_period == "20250630"
+    assert mismatch_factor.report_period == "20250930"
+    mismatch_bd = fundamental_breakdown(mismatch_factor, ExpectationFactor())
+    assert mismatch_bd is not None
+    assert mismatch_bd["report_period_mismatch"] == 1.0
+
+    # income 缺失/非法期 ⇒ 空串（不猜测；不写 mismatch）
+    assert build_fundamental_factor(_fin())[0].marginal_period == ""
+    invalid = _fin_marginal()
+    invalid["income"] = [{"period": "2025-9-3", "revenue": 1.0}]
+    assert build_fundamental_factor(invalid)[0].marginal_period == ""
+
+
 def test_build_fundamental_factor_segment_extremes():
     """改造 E：从 segments 提取最快/最慢细分同比增速（list 形态）。"""
     segments = [

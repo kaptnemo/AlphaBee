@@ -230,6 +230,40 @@ def test_s2_partial_single_quarter_data_still_degrades(updates: dict):
     assert _marginal(f) is None
 
 
+def test_q1_marginal_degrades_to_none():
+    """P0-3：Q1 单季=累计 ⇒ 加速度不可识别；shadow/on 均无边际键，on 与 off 逐值相等。"""
+    f = FundamentalFactor(
+        revenue_yoy=25.0,
+        net_profit_yoy=20.0,
+        eps_growth_yoy=10.0,
+        q_revenue_yoy=25.0,  # == revenue_yoy（Q1 的「单季」就是累计）
+        q_net_profit_yoy=20.0,  # == net_profit_yoy
+        q_gross_margin=30.0,
+        q_gross_margin_pp=1.0,  # 质量腿本身有值，仍不得抵消「加速度不可识别」
+        report_period="20240331",
+        marginal_period="20240331",  # Q1
+    )
+    e = ExpectationFactor()
+
+    off = fundamental_breakdown(f, e)
+    shadow = fundamental_breakdown(f, e, marginal_mode="shadow")
+    on = fundamental_breakdown(f, e, marginal_mode="on")
+    assert off is not None and shadow is not None and on is not None
+
+    assert _marginal(f) is None  # Q1：Δ 结构性为 0 ⇒ 降级而非「M=0」
+    marginal_prefixes = ("marginal", "f_shadow", "f_marginal_source")
+    for breakdown in (shadow, on):
+        assert not any(key.startswith(marginal_prefixes) for key in breakdown), "Q1 帧不得写任何边际键"
+    # shadow 显式留痕；on 不写该键（保证 on 与 off 逐值相等，F 回落水平项 L）
+    assert shadow["q1_marginal_degraded"] == 1.0
+    assert "q1_marginal_degraded" not in off
+    assert "q1_marginal_degraded" not in on
+    assert on == off
+    assert shadow["f"] == pytest.approx(off["f"])
+    assert shadow["raw"] == pytest.approx(off["raw"])
+    assert compress_scores(_snapshot(f, e), marginal_mode="on").f_fundamental_trend == pytest.approx(off["f"])
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # S3 影子不生效 / G-7
 # ─────────────────────────────────────────────────────────────────────────────
@@ -338,7 +372,7 @@ def test_s5_single_leg_can_be_net_profit_only():
 
 
 def test_s5_q1_and_annual_data_bridge_into_scoring():
-    """S5：Q1 / 年报帧由 PR-1 数据层产出 q_*，评分层按同一口径消费（跨层桥接）。"""
+    """S5：数据层仍产出 Q1/年报的 4 个 q_*；评分层 Q1 降级、年报照常消费（source=7）。"""
     q1 = derive_marginal(
         {
             "income": [
@@ -364,18 +398,37 @@ def test_s5_q1_and_annual_data_bridge_into_scoring():
             ],
         }
     )
+    # 数据层不变：Q1 / 年报都产出完整 4 个 q_*（降级只发生在评分层）
     for q in (q1, annual):
         assert all(value is not None for value in q.values())
-        f = FundamentalFactor(
-            revenue_yoy=10.0,
-            net_profit_yoy=10.0,
-            eps_growth_yoy=10.0,
-            **{name: q[name] for name in ("q_revenue_yoy", "q_net_profit_yoy", "q_gross_margin", "q_gross_margin_pp")},
-        )
-        bd = fundamental_breakdown(f, ExpectationFactor(), marginal_mode="shadow")
-        assert bd is not None
-        assert bd["f_marginal_source"] == 7.0  # 两条加速度腿 + 质量腿齐备
-        assert "marginal" in bd and "f_shadow" in bd
+
+    q_keys = ("q_revenue_yoy", "q_net_profit_yoy", "q_gross_margin", "q_gross_margin_pp")
+    # Q1 帧：q_rev==rev、q_np==np、q_gm_pp 有值 ⇒ 评分层仍降级（不写边际键、on==off）
+    q1_factor = FundamentalFactor(
+        revenue_yoy=q1["q_revenue_yoy"],
+        net_profit_yoy=q1["q_net_profit_yoy"],
+        eps_growth_yoy=10.0,
+        **{name: q1[name] for name in q_keys},
+        marginal_period="20240331",
+    )
+    off = fundamental_breakdown(q1_factor, ExpectationFactor())
+    on = fundamental_breakdown(q1_factor, ExpectationFactor(), marginal_mode="on")
+    assert _marginal(q1_factor) is None
+    assert on == off
+    assert off is not None and not any(key.startswith(("marginal", "f_shadow", "f_marginal_source")) for key in off)
+
+    # 年报帧：边际项正常参与（两条加速度腿 + 质量腿齐备 ⇒ source=7）
+    annual_factor = FundamentalFactor(
+        revenue_yoy=10.0,
+        net_profit_yoy=10.0,
+        eps_growth_yoy=10.0,
+        **{name: annual[name] for name in q_keys},
+        marginal_period="20241231",
+    )
+    bd = fundamental_breakdown(annual_factor, ExpectationFactor(), marginal_mode="shadow")
+    assert bd is not None
+    assert bd["f_marginal_source"] == 7.0  # 两条加速度腿 + 质量腿齐备
+    assert "marginal" in bd and "f_shadow" in bd
 
 
 # ─────────────────────────────────────────────────────────────────────────────

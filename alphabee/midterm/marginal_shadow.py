@@ -14,17 +14,25 @@ G-8 门禁判读，供"是否可以把 ``f_marginal_mode`` 从 ``shadow`` 改为
 - **缺失显式 None**：无 ``factor_snapshot.fundamental`` / 无 ``score_breakdown`` / 无
   ``f_shadow`` ⇒ 对应指标 ``None``，并在报告里同时给出分母（``n_*``），绝不静默回退 0。
 
-指标口径（§5.2）：
+指标口径（§5.2 / P0-3 Q1 降级）：
 
 - **S1 ΔF 分布**：``delta_f = f_shadow − f``；报告取 ``|ΔF|`` 的中位数与 P90。
   分位用**线性插值**（与 ``numpy.percentile`` 默认口径一致；n=1 直接返回该值），
-  分母 = 同时具备 ``f`` 与 ``f_shadow`` 的帧。
+  分母 = 同时具备 ``f`` 与 ``f_shadow`` 的帧。**G-8 判读用 ex-Q1 中位数**
+  （``median_abs_delta_ex_q1``）：Q1 的 ``Δ`` 结构性为 0（修复前还会是 ``−0.3L``），
+  不应把结构性/污染值计入 S1；旧字段 ``abs_delta_f_median`` 保留作对照。
 - **S2 状态翻转率**：``argmax(F_shadow) ≠ argmax(F)`` 的帧占比；
   分母 = 翻转**可判定**的帧（既有帧内 argmax，又能算出影子 argmax）。
 - **S3 危险翻转率**：兜底口径 ``现判 S5 而影子判到 {S1,S2,S3}`` 的帧占比；
   分母与 S2 相同（口径并列可比），而非"现判 S5 的帧"——这样 S2/S3 的分母一致。
 - **S4 加速度覆盖率**：``f_marginal_source > 0`` 的帧占比；
   分母 = **有 ``factor_snapshot.fundamental``** 的帧（数据可用性的现实检验）。
+  **G-8 判读用 ex-Q1 覆盖率**（``coverage_ex_q1``）：Q1 帧由设计降级为无边际键，
+  不应计入「加速度覆盖率」分母；旧字段 ``coverage`` 保留作对照。
+
+帧的 Q1 判定（P0-3）：``factor_snapshot.fundamental.marginal_period`` 优先，
+缺失回落 ``report_period``；两者都缺失（旧帧/手工帧）⇒ ``is_q1=None``（无法判定，
+保守计入 ex-Q1 分母，不获得 Q1 豁免）。
 
 G-8 门槛（§7.1，全部满足才允许 PR-4 开 ``on``）：真实帧 ≥ 50、``median|ΔF|`` ≤ 0.10、
 翻转率 ≤ 10%、危险翻转率 ≤ 3%、覆盖率 ≥ 85%。空语料/无影子键 ⇒ 各 ``*_ok`` 均为
@@ -88,6 +96,19 @@ def _as_int(value: Any) -> int | None:
     """同 :func:`_as_float`，整数化（用于 ``f_marginal_source`` 位掩码）。"""
     number = _as_float(value)
     return int(number) if number is not None else None
+
+
+def _as_period(value: Any) -> str | None:
+    """报告期归一为 ``YYYYMMDD``（只取数字前 8 位）；缺失/非法 → ``None``。
+
+    与 ``score_engine._normalize_ymd`` / ``factors._normalize_period`` 同口径的轻量版
+    （本模块保持只依赖 models，不反向导入评分层/数据层）：``"20260331"`` /
+    ``"2026-03-31"`` 都可判定；``None`` / 空串 / 非 8 位数字 → ``None``（无法判定）。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else None
 
 
 def _quantile(values: list[float], q: float) -> float | None:
@@ -322,6 +343,10 @@ def frame_stats(frame: Mapping[str, Any], *, classify: ClassifyFn | None = None)
         dict（缺失显式 ``None``）：
 
         - ``has_fundamental``：帧内是否有 ``factor_snapshot.fundamental``。
+        - ``report_period``：``fundamental.report_period`` 归一后的 ``YYYYMMDD``
+          （旧帧/缺失 → ``None``；P0-3 起随帧落盘）。
+        - ``is_q1``：是否 Q1 帧（``marginal_period`` 优先、缺失回落 ``report_period``；
+          两者都缺失 → ``None``，不猜测、不获得 Q1 豁免）。
         - ``f`` / ``f_shadow`` / ``delta_f``：分解里的 ``f`` / ``f_shadow`` 及其差。
         - ``f_marginal_source``：可用腿位掩码（0 = 降级；旧帧无键 → ``None``）。
         - ``current_state``：帧内 ``state.argmax_state``。
@@ -331,6 +356,8 @@ def frame_stats(frame: Mapping[str, Any], *, classify: ClassifyFn | None = None)
     """
     stats: dict[str, Any] = {
         "has_fundamental": False,
+        "report_period": None,
+        "is_q1": None,
         "f": None,
         "f_shadow": None,
         "delta_f": None,
@@ -349,6 +376,12 @@ def frame_stats(frame: Mapping[str, Any], *, classify: ClassifyFn | None = None)
     f_shadow = _as_float(breakdown.get("f_shadow"))
 
     stats["has_fundamental"] = fundamental is not None
+    if fundamental is not None:
+        report_period = _as_period(fundamental.get("report_period"))
+        # P0-3：单季还原目标期优先（marginal_period），缺失回落 report_period；都缺 ⇒ 无法判定。
+        marginal_period = _as_period(fundamental.get("marginal_period")) or report_period
+        stats["report_period"] = report_period
+        stats["is_q1"] = marginal_period.endswith("0331") if marginal_period else None
     stats["f"] = f
     stats["f_shadow"] = f_shadow
     stats["delta_f"] = (f_shadow - f) if (f is not None and f_shadow is not None) else None
@@ -366,45 +399,66 @@ def frame_stats(frame: Mapping[str, Any], *, classify: ClassifyFn | None = None)
 def shadow_report(frames: Iterable[Mapping[str, Any]], *, classify: ClassifyFn | None = None) -> dict[str, Any]:
     """聚合影子期指标 + G-8 判读（纯函数；空输入返回全 0/None，``g8_pass=False``）。
 
+    ``ex-Q1`` 口径（P0-3）：Q1 帧的加速度结构性为 0（修复前还有 ``−0.3L`` 污染），
+    因此 G-8 的 S1（``median_ok``）与 S4（``coverage_ok``）使用排除 Q1 后的指标；
+    旧口径字段（``coverage`` / ``abs_delta_f_median`` / ``abs_delta_f_p90`` 等）保留作对照。
+
     Returns:
         dict：``n_frames`` / ``n_fundamental_frames`` / ``n_with_marginal`` / ``coverage`` /
         ``abs_delta_f_median`` / ``abs_delta_f_p90`` / ``flip_rate`` / ``dangerous_flip_rate`` /
-        各分母计数，以及 G-8 判读（``n_frames_ok`` / ``median_ok`` / ``flip_ok`` /
-        ``dangerous_ok`` / ``coverage_ok`` / ``g8_pass``）。
+        各分母计数；P0-3 追加 ``n_q1_frames`` / ``n_fundamental_frames_ex_q1`` /
+        ``n_with_marginal_ex_q1`` / ``n_delta_frames_ex_q1`` / ``coverage_ex_q1`` /
+        ``median_abs_delta_ex_q1``；以及 G-8 判读（``n_frames_ok`` / ``median_ok`` /
+        ``flip_ok`` / ``dangerous_ok`` / ``coverage_ok`` / ``g8_pass``）。
     """
     stats = [frame_stats(frame, classify=classify) for frame in frames]
 
     n_frames = len(stats)
     n_fundamental_frames = sum(1 for item in stats if item["has_fundamental"])
+    n_q1_frames = sum(1 for item in stats if item["is_q1"] is True)
+    fundamental_ex_q1 = [item for item in stats if item["has_fundamental"] and item["is_q1"] is not True]
     n_with_marginal = sum(1 for item in stats if (item["f_marginal_source"] or 0) > 0)
+    n_with_marginal_ex_q1 = sum(1 for item in fundamental_ex_q1 if (item["f_marginal_source"] or 0) > 0)
     abs_deltas = [abs(item["delta_f"]) for item in stats if item["delta_f"] is not None]
+    abs_deltas_ex_q1 = [
+        abs(item["delta_f"]) for item in stats if item["delta_f"] is not None and item["is_q1"] is not True
+    ]
     flip_frames = [item for item in stats if item["flipped"] is not None]
     n_flips = sum(1 for item in flip_frames if item["flipped"])
     n_dangerous_flips = sum(1 for item in flip_frames if item["dangerous_flip"])
 
     coverage = (n_with_marginal / n_fundamental_frames) if n_fundamental_frames else None
+    coverage_ex_q1 = (n_with_marginal_ex_q1 / len(fundamental_ex_q1)) if fundamental_ex_q1 else None
     flip_rate = (n_flips / len(flip_frames)) if flip_frames else None
     dangerous_flip_rate = (n_dangerous_flips / len(flip_frames)) if flip_frames else None
     abs_delta_f_median = _quantile(abs_deltas, 0.5)
     abs_delta_f_p90 = _quantile(abs_deltas, 0.9)
+    median_abs_delta_ex_q1 = _quantile(abs_deltas_ex_q1, 0.5)
 
     n_frames_ok = n_frames >= G8_MIN_FRAMES
-    median_ok = abs_delta_f_median is not None and abs_delta_f_median <= G8_MAX_ABS_DELTA_F_MEDIAN
+    # G-8 的 S1/S4 用 ex-Q1 口径（Q1 的 Δ 结构性为 0，不参与加速度质量门）。
+    median_ok = median_abs_delta_ex_q1 is not None and median_abs_delta_ex_q1 <= G8_MAX_ABS_DELTA_F_MEDIAN
     flip_ok = flip_rate is not None and flip_rate <= G8_MAX_FLIP_RATE
     dangerous_ok = dangerous_flip_rate is not None and dangerous_flip_rate <= G8_MAX_DANGEROUS_FLIP_RATE
-    coverage_ok = coverage is not None and coverage >= G8_MIN_COVERAGE
+    coverage_ok = coverage_ex_q1 is not None and coverage_ex_q1 >= G8_MIN_COVERAGE
 
     return {
         "n_frames": n_frames,
         "n_fundamental_frames": n_fundamental_frames,
+        "n_q1_frames": n_q1_frames,
+        "n_fundamental_frames_ex_q1": len(fundamental_ex_q1),
         "n_with_marginal": n_with_marginal,
+        "n_with_marginal_ex_q1": n_with_marginal_ex_q1,
         "n_delta_frames": len(abs_deltas),
+        "n_delta_frames_ex_q1": len(abs_deltas_ex_q1),
         "n_flip_frames": len(flip_frames),
         "n_flips": n_flips,
         "n_dangerous_flips": n_dangerous_flips,
         "coverage": coverage,
+        "coverage_ex_q1": coverage_ex_q1,
         "abs_delta_f_median": abs_delta_f_median,
         "abs_delta_f_p90": abs_delta_f_p90,
+        "median_abs_delta_ex_q1": median_abs_delta_ex_q1,
         "flip_rate": flip_rate,
         "dangerous_flip_rate": dangerous_flip_rate,
         "n_frames_ok": n_frames_ok,
