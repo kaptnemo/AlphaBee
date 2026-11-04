@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import math
 from collections.abc import Mapping
 from typing import Any
@@ -49,6 +50,8 @@ from alphabee.midterm.models import (
     TrendFactor,
     ValuationFactor,
 )
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 各维度承载的 canonical 数据字段（用于缺失登记；不含 direction/score/percentile
@@ -257,6 +260,28 @@ def _report_age_days(ann_date: str, as_of: str) -> int | None:
     if announced is None or reference is None:
         return None
     return (reference - announced).days
+
+
+def _maybe_persist_financial_inputs(fin_data: dict[str, Any] | None, as_of_date: str) -> None:
+    """P2-2：``persist_financial_inputs=true`` 时落盘 F 输入序列 PIT 快照（fail-open）。
+
+    只在 ``get_factor_snapshot`` 调用（``build_fundamental_factor`` 保持纯函数、不写盘）；
+    任何异常只 warning、不打断快照构建。惰性导入避免模块级循环依赖。
+    """
+    if not fin_data:
+        return
+    try:
+        from alphabee.midterm.financial_inputs import (
+            append_financial_inputs,
+            build_financial_inputs,
+            resolve_persist_financial_inputs,
+        )
+
+        if not resolve_persist_financial_inputs():
+            return
+        append_financial_inputs(build_financial_inputs(fin_data, as_of_date=as_of_date))
+    except Exception as exc:  # noqa: BLE001 - 可选旁路：写盘失败绝不打断决策
+        logger.warning("F 输入序列快照落盘失败（忽略）：%s", exc)
 
 
 def _company_type(income: Any) -> str | None:
@@ -1196,6 +1221,8 @@ def get_factor_snapshot(symbol: str, *, include_market: bool = True) -> FactorSn
     fundamental.report_age_days = _report_age_days(fundamental.report_ann_date, snapshot.as_of_date)
     snapshot.fundamental = fundamental
     missing.extend(f_missing)
+    # P2-2：仅在显式配置开启时追加 F 输入序列 PIT 快照（缺省 false ⇒ 零 I/O）。
+    _maybe_persist_financial_inputs(fin_data, snapshot.as_of_date)
 
     # E —— 公告类预期 + 分析师一致预期（collector 入参为 6 位代码）
     exp_data = _safe_call(_get_expectation_fact, [ts_code], degraded, "expectation")
