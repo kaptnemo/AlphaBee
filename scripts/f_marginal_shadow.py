@@ -75,10 +75,13 @@ def _render_text(
         f"  语料: {', '.join(sources) if sources else '—'}",
         f"  帧数: n_frames={n_frames}  skipped={skipped}{dedupe_suffix}"
         f"  fundamental={report['n_fundamental_frames']}  含边际键={report['n_with_marginal']}",
+        # G-8 判读用 ex-Q1 口径（P0-3）；旧口径保留作对照，避免打印值与门禁自相矛盾。
         "S1 ΔF 分布:"
-        f"  |ΔF| 中位数={_fmt(report['abs_delta_f_median'])}"
+        f"  |ΔF| 中位数(ex-Q1)={_fmt(report['median_abs_delta_ex_q1'])}"
         f"  P90={_fmt(report['abs_delta_f_p90'])}"
-        f"  （分母 n_delta_frames={report['n_delta_frames']}）",
+        f"  （G-8 口径；全帧中位数={_fmt(report['abs_delta_f_median'])}）"
+        f"  （分母 n_delta_frames_ex_q1={report['n_delta_frames_ex_q1']}"
+        f" / n_delta_frames={report['n_delta_frames']}）",
         "S2 状态翻转率:"
         f"  {_fmt(report['flip_rate'])}"
         f"  （n_flips={report['n_flips']} / n_flip_frames={report['n_flip_frames']}）",
@@ -86,16 +89,18 @@ def _render_text(
         f"  {_fmt(report['dangerous_flip_rate'])}"
         f"  （n_dangerous_flips={report['n_dangerous_flips']}，S5→{{S1,S2,S3}}）",
         "S4 加速度覆盖率:"
-        f"  {_fmt(report['coverage'])}"
-        f"  （{report['n_with_marginal']} / {report['n_fundamental_frames']}）",
+        f"  (ex-Q1)={_fmt(report['coverage_ex_q1'])}"
+        f"  （G-8 口径；全帧覆盖率={_fmt(report['coverage'])}）"
+        f"  （{report['n_with_marginal_ex_q1']} / {report['n_fundamental_frames_ex_q1']}）",
         "G-8 门槛判读:",
         f"  n_frames >= {G8_MIN_FRAMES}: {_fmt(report['n_frames_ok'])}（{n_frames}）",
-        f"  median|ΔF| <= {G8_MAX_ABS_DELTA_F_MEDIAN}: {_fmt(report['median_ok'])}"
-        f"（{_fmt(report['abs_delta_f_median'])}）",
+        f"  median|ΔF|(ex-Q1) <= {G8_MAX_ABS_DELTA_F_MEDIAN}: {_fmt(report['median_ok'])}"
+        f"（{_fmt(report['median_abs_delta_ex_q1'])}；全帧={_fmt(report['abs_delta_f_median'])}）",
         f"  flip_rate <= {G8_MAX_FLIP_RATE}: {_fmt(report['flip_ok'])}（{_fmt(report['flip_rate'])}）",
         f"  dangerous_flip_rate <= {G8_MAX_DANGEROUS_FLIP_RATE}: {_fmt(report['dangerous_ok'])}"
         f"（{_fmt(report['dangerous_flip_rate'])}）",
-        f"  coverage >= {G8_MIN_COVERAGE}: {_fmt(report['coverage_ok'])}（{_fmt(report['coverage'])}）",
+        f"  coverage(ex-Q1) >= {G8_MIN_COVERAGE}: {_fmt(report['coverage_ok'])}"
+        f"（{_fmt(report['coverage_ex_q1'])}；全帧={_fmt(report['coverage'])}）",
         f"  ⇒ G-8 {'通过（可评审 PR-4 开权重）' if report['g8_pass'] else '不通过（PR-4 开权重不得执行）'}",
     ]
     return "\n".join(lines)
@@ -148,7 +153,7 @@ def _collect_frames(
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="F 边际改善影子期观测（S1–S4 + G-8 判读）")
+    parser = argparse.ArgumentParser(description="F 边际改善影子期观测（S1–S8 + G-8 判读）")
     parser.add_argument(
         "--source",
         choices=_SOURCES,

@@ -29,6 +29,11 @@ G-8 门禁判读，供"是否可以把 ``f_marginal_mode`` 从 ``shadow`` 改为
   分母 = **有 ``factor_snapshot.fundamental``** 的帧（数据可用性的现实检验）。
   **G-8 判读用 ex-Q1 覆盖率**（``coverage_ex_q1``）：Q1 帧由设计降级为无边际键，
   不应计入「加速度覆盖率」分母；旧字段 ``coverage`` 保留作对照。
+- **S5–S8（P2-3 扩展，设计 §15.1）**：S5 OCF 命中率（按 ``ocf_penalty_basis`` /
+  报告季度分组；行业字段不可得 ⇒ 显式不分组）、S6 beat/miss 同期率（分母 = 可判定帧）、
+  S7 扣非差异分布（``np_term_recurring`` vs ``net_profit_term`` 的 n/median/P90/缺失）、
+  S8 分部分布（bonus 触发率 / 期间错配率 / 占比门槛率）。均为 additived 新键，缺失/旧帧
+  显式 ``None``，不改变 S1–S4 既有键与口径。
 
 帧的 Q1 判定（P0-3）：``factor_snapshot.fundamental.marginal_period`` 优先，
 缺失回落 ``report_period``；两者都缺失（旧帧/手工帧）⇒ ``is_q1=None``（无法判定，
@@ -396,6 +401,201 @@ def frame_stats(frame: Mapping[str, Any], *, classify: ClassifyFn | None = None)
     return stats
 
 
+def _ratio(numerator: int, denominator: int) -> float | None:
+    """比例（分母 0 → ``None``，不制造 0/0 假象）。"""
+    return (numerator / denominator) if denominator else None
+
+
+def _quarter_label(period: str | None) -> str | None:
+    """报告期后缀 → ``YYYYQn``；缺失/未知后缀 → ``None``（不猜测季度）。"""
+    if period is None or len(period) < 8:
+        return None
+    suffix = period[4:8]
+    quarter = {"0331": 1, "0630": 2, "0930": 3, "1231": 4}.get(suffix)
+    return f"{period[:4]}Q{quarter}" if quarter else None
+
+
+def s5_ocf_hit_rate(frames: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """S5 OCF 惩罚命中率（设计 §15.1）：分母 = 可判定帧（分解含 ``ocf_penalty``）。
+
+    - ``overall``：全部可判定帧的命中率；命中 = ``|ocf_penalty| > 0``；
+    - ``by_basis``：按 ``ocf_penalty_basis`` 分组（1 = ``ttm`` / 0 = ``sign``·回退）；
+    - ``by_quarter``：按 ``report_period`` 后缀分季度（Q1–Q4）；
+    - ``by_industry``：**artifact 无行业字段 ⇒ 恒 ``None``**（不编造分组）。
+    """
+    n_frames = 0
+    with_ocf = 0
+    hits = 0
+    basis_counts: dict[str, list[int]] = {"ttm": [0, 0], "sign": [0, 0]}
+    basis_missing = 0
+    quarter_counts: dict[str, list[int]] = {}
+    for frame in frames:
+        n_frames += 1
+        fundamental = _fundamental_of(frame)
+        breakdown = _breakdown_of(fundamental)
+        penalty = _as_float(breakdown.get("ocf_penalty"))
+        if penalty is None:
+            continue
+        with_ocf += 1
+        hit = abs(penalty) > 1e-12
+        hits += 1 if hit else 0
+        basis = _as_int(breakdown.get("ocf_penalty_basis"))
+        if basis == 1:
+            basis_counts["ttm"][0] += 1
+            basis_counts["ttm"][1] += 1 if hit else 0
+        elif basis == 0:
+            basis_counts["sign"][0] += 1
+            basis_counts["sign"][1] += 1 if hit else 0
+        else:
+            basis_missing += 1
+        if fundamental is not None:
+            quarter = _quarter_label(_as_period(fundamental.get("report_period")))
+            if quarter:
+                bucket = quarter_counts.setdefault(quarter, [0, 0])
+                bucket[0] += 1
+                bucket[1] += 1 if hit else 0
+    by_basis = {
+        key: {"n": counts[0], "hits": counts[1], "rate": _ratio(counts[1], counts[0])}
+        for key, counts in basis_counts.items()
+    }
+    by_quarter = {
+        key: {"n": counts[0], "hits": counts[1], "rate": _ratio(counts[1], counts[0])}
+        for key, counts in sorted(quarter_counts.items())
+    }
+    return {
+        "n_frames": n_frames,
+        "n_judgeable": with_ocf,
+        "n_hits": hits,
+        "rate": _ratio(hits, with_ocf),
+        "by_basis": by_basis,
+        "n_basis_missing": basis_missing,
+        "by_quarter": by_quarter,
+        "by_industry": None,  # artifact 无行业字段：显式不分组（不得编造）
+        "industry_note": "artifact 无行业字段，未做行业分组",
+    }
+
+
+def s6_beat_miss_match(frames: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """S6 beat/miss 同期率（设计 §15.1）：
+
+    - 分母 ``n_judgeable`` = 分解含 ``forecast_period_matched`` 的帧（可判定）；
+    - 分子 ``n_matched`` = 其中 ``forecast_period_matched == 1`` 的帧；
+    - ``n_missing`` = 有分解但缺该键的帧（旧帧，显式缺失、不进分母）。
+    """
+    n_judgeable = 0
+    n_matched = 0
+    n_missing = 0
+    for frame in frames:
+        breakdown = _breakdown_of(_fundamental_of(frame))
+        if not breakdown:
+            continue
+        value = _as_int(breakdown.get("forecast_period_matched"))
+        if value is None:
+            n_missing += 1
+            continue
+        n_judgeable += 1
+        n_matched += 1 if value == 1 else 0
+    return {
+        "n_judgeable": n_judgeable,
+        "n_matched": n_matched,
+        "n_missing": n_missing,
+        "rate": _ratio(n_matched, n_judgeable),
+    }
+
+
+def _distribution(values: list[float], missing: int) -> dict[str, Any]:
+    """分布摘要：n / median / P90 / 缺失计数（空值 ⇒ median/p90 为 None）。"""
+    return {
+        "n": len(values),
+        "median": _quantile(values, 0.5),
+        "p90": _quantile(values, 0.9),
+        "missing": missing,
+    }
+
+
+def s7_recurring_gap(frames: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """S7 扣非差异（设计 §15.1）：``np_term_recurring`` / 归母净利项 / 两者差的分布。
+
+    分母 = 有 ``score_breakdown`` 的帧；各自缺失计数单列（旧帧无 recurring 键 ⇒
+    ``np_term_recurring.missing == n_frames``，不把它当 0）。``f_recurring_mode=on``
+    的前置是 S7 可解释（设计 §15.2），故同时给出两者之差 ``diff``。
+    """
+    frame_list = list(frames)
+    np_terms: list[float] = []
+    parent_terms: list[float] = []
+    diffs: list[float] = []
+    n_breakdown = 0
+    for frame in frame_list:
+        breakdown = _breakdown_of(_fundamental_of(frame))
+        if not breakdown:
+            continue
+        n_breakdown += 1
+        np_term = _as_float(breakdown.get("np_term_recurring"))
+        parent_term = _as_float(breakdown.get("net_profit_term"))
+        if np_term is not None:
+            np_terms.append(np_term)
+        if parent_term is not None:
+            parent_terms.append(parent_term)
+        if np_term is not None and parent_term is not None:
+            diffs.append(np_term - parent_term)
+    return {
+        "n_frames": len(frame_list),
+        "n_with_breakdown": n_breakdown,
+        "np_term_recurring": _distribution(np_terms, n_breakdown - len(np_terms)),
+        "net_profit_term": _distribution(parent_terms, n_breakdown - len(parent_terms)),
+        "diff": _distribution(diffs, n_breakdown - len(diffs)),
+    }
+
+
+def s8_segment(frames: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """S8 分部分布（设计 §15.1）：触发率 / 期间错配率 / 占比门槛率。
+
+    每个比率的分母 = 分解含对应键的帧（可判定）；缺失计数单列。命中定义：
+    ``segment_bonus > 0``（触发）、``segment_period_mismatch == 1``、``segment_share_below_min == 1``。
+    """
+    frame_list = list(frames)
+    bonus_n = bonus_hits = 0
+    mismatch_n = mismatch_hits = 0
+    share_n = share_hits = 0
+    for frame in frame_list:
+        breakdown = _breakdown_of(_fundamental_of(frame))
+        if not breakdown:
+            continue
+        bonus = _as_float(breakdown.get("segment_bonus"))
+        if bonus is not None:
+            bonus_n += 1
+            bonus_hits += 1 if bonus > 0 else 0
+        mismatch = _as_int(breakdown.get("segment_period_mismatch"))
+        if mismatch is not None:
+            mismatch_n += 1
+            mismatch_hits += 1 if mismatch == 1 else 0
+        share = _as_int(breakdown.get("segment_share_below_min"))
+        if share is not None:
+            share_n += 1
+            share_hits += 1 if share == 1 else 0
+    return {
+        "n_frames": len(frame_list),
+        "segment_bonus": {
+            "n_judgeable": bonus_n,
+            "n_triggered": bonus_hits,
+            "rate": _ratio(bonus_hits, bonus_n),
+            "missing": len(frame_list) - bonus_n,
+        },
+        "segment_period_mismatch": {
+            "n_judgeable": mismatch_n,
+            "n_mismatched": mismatch_hits,
+            "rate": _ratio(mismatch_hits, mismatch_n),
+            "missing": len(frame_list) - mismatch_n,
+        },
+        "segment_share_below_min": {
+            "n_judgeable": share_n,
+            "n_below_min": share_hits,
+            "rate": _ratio(share_hits, share_n),
+            "missing": len(frame_list) - share_n,
+        },
+    }
+
+
 def shadow_report(frames: Iterable[Mapping[str, Any]], *, classify: ClassifyFn | None = None) -> dict[str, Any]:
     """聚合影子期指标 + G-8 判读（纯函数；空输入返回全 0/None，``g8_pass=False``）。
 
@@ -411,7 +611,8 @@ def shadow_report(frames: Iterable[Mapping[str, Any]], *, classify: ClassifyFn |
         ``median_abs_delta_ex_q1``；以及 G-8 判读（``n_frames_ok`` / ``median_ok`` /
         ``flip_ok`` / ``dangerous_ok`` / ``coverage_ok`` / ``g8_pass``）。
     """
-    stats = [frame_stats(frame, classify=classify) for frame in frames]
+    frame_list = list(frames)
+    stats = [frame_stats(frame, classify=classify) for frame in frame_list]
 
     n_frames = len(stats)
     n_fundamental_frames = sum(1 for item in stats if item["has_fundamental"])
@@ -467,4 +668,9 @@ def shadow_report(frames: Iterable[Mapping[str, Any]], *, classify: ClassifyFn |
         "dangerous_ok": dangerous_ok,
         "coverage_ok": coverage_ok,
         "g8_pass": bool(n_frames_ok and median_ok and flip_ok and dangerous_ok and coverage_ok),
+        # P2-3（设计 §15.1）：S5–S8 扩展观测（additive 新键；缺失/旧帧显式 None）。
+        "s5_ocf_hit_rate": s5_ocf_hit_rate(frame_list),
+        "s6_beat_miss_match": s6_beat_miss_match(frame_list),
+        "s7_recurring_gap": s7_recurring_gap(frame_list),
+        "s8_segment": s8_segment(frame_list),
     }

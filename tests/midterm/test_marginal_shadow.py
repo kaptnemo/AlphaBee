@@ -531,3 +531,173 @@ def test_dedupe_frames_scope_none_and_invalid():
 
     with pytest.raises(ValueError):
         dedupe_frames([a], scope="week")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S5–S8（P2-3 / 设计 §15.1）：合成帧的分组、分母、缺失显式 None
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _breakdown_frame(**breakdown: Any) -> dict[str, Any]:
+    """构造带自定义 score_breakdown 的帧（用于 S5–S8 口径测试）。"""
+    frame = _frame(f=-0.8, f_shadow=-0.79, source=7)
+    frame["factor_snapshot"]["fundamental"]["score_breakdown"] = dict(breakdown)
+    return frame
+
+
+def test_s5_ocf_hit_rate_groups_by_basis_and_quarter():
+    """S5：分母=含 ocf_penalty 的帧；按 basis（1=ttm/0=sign）与报告季度分组。"""
+    from alphabee.midterm.marginal_shadow import s5_ocf_hit_rate
+
+    frames = [
+        _breakdown_frame(f=-0.8, ocf_penalty=-0.5, ocf_penalty_basis=1),  # ttm 命中
+        _breakdown_frame(f=-0.8, ocf_penalty=0.0, ocf_penalty_basis=1),  # ttm 未命中
+        _breakdown_frame(f=-0.8, ocf_penalty=-0.5, ocf_penalty_basis=0),  # sign 命中
+        _breakdown_frame(f=-0.8),  # 旧帧/缺 penalty ⇒ 不进分母
+    ]
+    frames[0]["factor_snapshot"]["fundamental"]["report_period"] = "20250930"
+    frames[1]["factor_snapshot"]["fundamental"]["report_period"] = "20250930"
+    frames[2]["factor_snapshot"]["fundamental"]["report_period"] = "20250630"
+
+    metrics = s5_ocf_hit_rate(frames)
+    assert metrics["n_frames"] == 4
+    assert metrics["n_judgeable"] == 3
+    assert metrics["n_hits"] == 2
+    assert metrics["rate"] == pytest.approx(2 / 3)
+    assert metrics["by_basis"]["ttm"] == {"n": 2, "hits": 1, "rate": pytest.approx(0.5)}
+    assert metrics["by_basis"]["sign"] == {"n": 1, "hits": 1, "rate": pytest.approx(1.0)}
+    assert metrics["n_basis_missing"] == 0
+    assert metrics["by_quarter"]["2025Q3"] == {"n": 2, "hits": 1, "rate": pytest.approx(0.5)}
+    assert metrics["by_quarter"]["2025Q2"] == {"n": 1, "hits": 1, "rate": pytest.approx(1.0)}
+    # 行业字段不可得 ⇒ 显式 None（不编造分组）
+    assert metrics["by_industry"] is None
+    assert "行业" in metrics["industry_note"]
+
+
+def test_s5_ocf_hit_rate_missing_basis_and_empty():
+    """S5：basis 缺失的帧计入总体但不进分组；空输入不抛、比率为 None。"""
+    from alphabee.midterm.marginal_shadow import s5_ocf_hit_rate
+
+    metrics = s5_ocf_hit_rate([_breakdown_frame(ocf_penalty=-0.5)])
+    assert metrics["n_judgeable"] == 1 and metrics["n_hits"] == 1
+    assert metrics["n_basis_missing"] == 1
+    assert metrics["by_basis"]["ttm"]["rate"] is None
+    assert metrics["by_basis"]["sign"]["rate"] is None
+
+    empty = s5_ocf_hit_rate([])
+    assert empty["n_judgeable"] == 0
+    assert empty["rate"] is None
+    assert empty["by_quarter"] == {}
+
+
+def test_s6_beat_miss_match_denominator_is_judgeable_frames():
+    """S6：分母=含 forecast_period_matched 的帧；1 为命中；缺键/无分解帧不进分母。"""
+    from alphabee.midterm.marginal_shadow import s6_beat_miss_match
+
+    frames = [
+        _breakdown_frame(forecast_period_matched=1),  # 入围 + 命中
+        _breakdown_frame(forecast_period_matched=0),  # 入围
+        _breakdown_frame(forecast_period_matched=1.0),  # 入围 + 命中
+        _breakdown_frame(ocf_penalty=0.0),  # 有分解但缺 forecast 键 ⇒ n_missing
+        {"symbol": "600760.SH"},  # 无 fundamental / 无分解 ⇒ 完全忽略
+    ]
+    metrics = s6_beat_miss_match(frames)
+    assert metrics["n_judgeable"] == 3
+    assert metrics["n_matched"] == 2
+    assert metrics["n_missing"] == 1
+    assert metrics["rate"] == pytest.approx(2 / 3)
+    assert s6_beat_miss_match([])["rate"] is None
+
+
+def test_s7_recurring_gap_distribution_and_missing():
+    """S7：np_term_recurring / 归母项 / 差值的 n、median、P90、missing 计数。"""
+    from alphabee.midterm.marginal_shadow import s7_recurring_gap
+
+    frames = [
+        _breakdown_frame(np_term_recurring=0.5, net_profit_term=1.0),
+        _breakdown_frame(np_term_recurring=0.3, net_profit_term=1.0),
+        _breakdown_frame(net_profit_term=1.0),  # 仅归母项（旧口径 fallback）
+        {"symbol": "600760.SH"},  # 无分解 ⇒ 不计入 n_with_breakdown
+    ]
+    metrics = s7_recurring_gap(frames)
+    assert metrics["n_frames"] == 4
+    assert metrics["n_with_breakdown"] == 3
+    assert metrics["np_term_recurring"]["n"] == 2
+    assert metrics["np_term_recurring"]["median"] == pytest.approx(0.4)
+    assert metrics["np_term_recurring"]["p90"] == pytest.approx(0.48)
+    assert metrics["np_term_recurring"]["missing"] == 1
+    assert metrics["net_profit_term"]["n"] == 3
+    assert metrics["net_profit_term"]["median"] == pytest.approx(1.0)
+    assert metrics["net_profit_term"]["missing"] == 0
+    assert metrics["diff"]["n"] == 2
+    assert metrics["diff"]["median"] == pytest.approx(-0.6)
+    assert metrics["diff"]["p90"] == pytest.approx(-0.52)
+
+
+def test_s8_segment_rates_and_missing():
+    """S8：bonus 触发率 / 期间错配率 / 占比门槛率；分母=含对应键的帧。"""
+    from alphabee.midterm.marginal_shadow import s8_segment
+
+    frames = [
+        _breakdown_frame(segment_bonus=0.2, segment_period_mismatch=0, segment_share_below_min=0),
+        _breakdown_frame(segment_bonus=0.0, segment_period_mismatch=1, segment_share_below_min=1),
+        _breakdown_frame(),  # 三个键全缺
+    ]
+    metrics = s8_segment(frames)
+    assert metrics["n_frames"] == 3
+    assert metrics["segment_bonus"] == {
+        "n_judgeable": 2,
+        "n_triggered": 1,
+        "rate": pytest.approx(0.5),
+        "missing": 1,
+    }
+    assert metrics["segment_period_mismatch"]["rate"] == pytest.approx(0.5)
+    assert metrics["segment_period_mismatch"]["n_mismatched"] == 1
+    assert metrics["segment_share_below_min"]["rate"] == pytest.approx(0.5)
+    assert metrics["segment_share_below_min"]["n_below_min"] == 1
+
+    empty = s8_segment([])
+    assert empty["segment_bonus"]["rate"] is None
+    assert empty["segment_period_mismatch"]["missing"] == 0
+
+
+def test_shadow_report_aggregates_s5_s8_and_keeps_existing_keys():
+    """S5–S8 聚合进 shadow_report；既有 S1–S4 键与口径保持（值不变）。"""
+    from alphabee.midterm.marginal_shadow import shadow_report
+
+    frames = [
+        _breakdown_frame(
+            f=-0.8,
+            f_shadow=-0.79,
+            f_marginal_source=7,
+            ocf_penalty=-0.5,
+            ocf_penalty_basis=1,
+            forecast_period_matched=1,
+            np_term_recurring=0.5,
+            net_profit_term=1.0,
+            segment_bonus=0.2,
+            segment_period_mismatch=0,
+            segment_share_below_min=0,
+        )
+    ]
+    report = shadow_report(frames)
+    # 既有键仍在、值口径不变
+    assert report["n_frames"] == 1
+    assert report["median_abs_delta_ex_q1"] == pytest.approx(0.01)
+    assert report["g8_pass"] is False  # 帧数不足
+    # 新键
+    assert report["s5_ocf_hit_rate"]["rate"] == pytest.approx(1.0)
+    assert report["s6_beat_miss_match"]["rate"] == pytest.approx(1.0)
+    assert report["s7_recurring_gap"]["diff"]["median"] == pytest.approx(-0.5)
+    assert report["s8_segment"]["segment_bonus"]["rate"] == pytest.approx(1.0)
+
+
+def test_shadow_report_empty_input_includes_safe_s5_s8():
+    """空输入/旧帧安全：S5–S8 键存在且比率为 None，不抛异常。"""
+    from alphabee.midterm.marginal_shadow import shadow_report
+
+    report = shadow_report([])
+    assert report["s5_ocf_hit_rate"]["rate"] is None
+    assert report["s6_beat_miss_match"]["rate"] is None
+    assert report["s7_recurring_gap"]["np_term_recurring"]["missing"] == 0
+    assert report["s8_segment"]["segment_bonus"]["rate"] is None
