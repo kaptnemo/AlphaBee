@@ -47,15 +47,21 @@ S2 的 `RevenueInflection / MarginInflection / Margin↑ / IndustryData↑`，S3
 
 | 层 | 接口/字段 | 频率 | 说明 |
 |----|----------|------|------|
-| 利润表 | Tushare `income` → `total_revenue/operate_profit/n_income/ebitda/basic_eps/interest_expense` | 季/年 | `get_financial_fact` |
-| 资产负债表 | Tushare `balancesheet` → `total_assets/total_liab/total_hldr_eqy_exc_min_int/money_cap/total_cur_assets/total_cur_liab/accounts_receiv/inventories/goodwill` | 季/年 | 同上 |
-| 现金流量表 | Tushare `cashflow` → `n_cashflow_act/n_cashflow_inv_act/n_cash_flows_fnc_act/c_pay_acq_const_fiolta/c_pay_dist_dpcp_int_pvd` | 季/年 | 同上 |
-| 财务比率 | Tushare `fina_indicator` → `roe/roa/grossprofit_margin/netprofit_margin/current_ratio/quick_ratio/debt_to_assets/or_yoy/netprofit_yoy/basic_eps_yoy/fcff/...` | 季/年 | 同上 |
+| 利润表 | Tushare `income` → `total_revenue/operate_profit/n_income/ebitda/basic_eps/interest_expense`，另取 `revenue`（营业收入 → `operating_revenue`）、`comp_type`（公司类型 → `company_type`）与 `ann_date/report_type/update_flag`（公告日/报表类型/修订标记） | 季/年 | `get_financial_fact`；四表统一按 `ann_date/update_flag` 去重（P0-2） |
+| 资产负债表 | Tushare `balancesheet` → `total_assets/total_liab/total_hldr_eqy_exc_min_int/money_cap/total_cur_assets/total_cur_liab/accounts_receiv/inventories/goodwill`，另取 `ann_date/report_type/update_flag` | 季/年 | 同上；`ann_date` 作为 provenance 保留 |
+| 现金流量表 | Tushare `cashflow` → `n_cashflow_act/n_cashflow_inv_act/n_cash_flows_fnc_act/c_pay_acq_const_fiolta/c_pay_dist_dpcp_int_pvd`，另取 `ann_date/report_type/update_flag` | 季/年 | 同上；TTM OCF 由多期 `operating_cashflow` 还原（P1-2） |
+| 财务比率 | Tushare `fina_indicator` → `roe/roa/grossprofit_margin/netprofit_margin/current_ratio/quick_ratio/debt_to_assets/or_yoy/netprofit_yoy/basic_eps_yoy/fcff/...`，另取 `ann_date/update_flag` 与 `dt_netprofit_yoy`（扣非同比 → `net_profit_dedt_yoy`） | 季/年 | 同上；`profit_dedt` 既有、`dt_netprofit_yoy` P1-3 新增 |
 | 主营构成 | Tushare `fina_mainbz` / AkShare `stock_zygc_em` → `biz_segment_*` | 半年/年 | `get_operation_fact` |
 | 同行对比 | 本地 `get_industry_peers` + Tushare `daily_basic`/`fina_indicator` → peer ROE/毛利率/估值 | 季 | `get_competition_fact` |
 
 ### 2.3 canonical 字段（已有）
-`financial.yaml` 30 字段 + `operation.yaml` 5 字段，见 `alphabee/schemas/financial.yaml` / `operation.yaml`。
+`financial.yaml` 45 字段 + `operation.yaml` 8 字段，见 `alphabee/schemas/financial.yaml` / `operation.yaml`。F 数据契约与口径治理新增 3 个 canonical（P1-3/P1-4/P1-5）：
+
+| 字段 | 类型/单位 | 来源映射 | 语义与消费者 |
+|---|---|---|---|
+| `operating_revenue` | float / CNY | tushare `income.revenue` | **营业收入**（与 `revenue`=营业总收入区分）；`derive_marginal` 的 `q_revenue_yoy` / `q_gross_margin` |
+| `net_profit_dedt_yoy` | float / PERCENT | tushare `fina_indicator.dt_netprofit_yoy` | 扣非归母净利累计同比；`f_recurring_mode` 的扣非锚（负基数不参与百分比比较） |
+| `company_type` | str / TEXT | tushare `income.comp_type` | 公司类型（1 一般工业 / 2 银行 / 3 保险 / 4 证券）；`FundamentalFactor.is_financial`（金融股跳过 OCF/边际） |
 
 ### 2.4 派生因子 / 信号（已有）
 派生（`alphabee/agents/derived_facts/rules/`，21 条）：

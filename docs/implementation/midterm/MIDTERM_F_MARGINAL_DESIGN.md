@@ -128,7 +128,8 @@ F   = saturate(raw, 1)
 }
 ```
 
-只用两列：`income[].revenue`（营业总收入，累计）与 `income[].net_profit_attr_p`（归母净利，累计），
+主要用：`income[].operating_revenue`（营业收入，累计；缺失回落 `income[].revenue`=营业总收入，
+并记 `marginal_revenue_basis`）、`income[].net_profit_attr_p`（归母净利，累计），
 以及 `fina[].gross_margin`（累计毛利率，PERCENT）。
 
 **期数要求**：目标期 `t`、同年前一期 `t_prev`、去年同季 `t-4`、去年同季的前一期 `t_prev-4`。
@@ -147,13 +148,13 @@ F   = saturate(raw, 1)
 
 | 边界 | 处理 |
 |---|---|
-| **Q1** | 单季 = 累计（`t_prev` 不存在，年份边界） |
+| **Q1** | 单季 = 累计（`t_prev` 不存在，年份边界）；**数据层仍产出 q_\***，但评分层判定「加速度不可识别」⇒ `marginal=None`、`on` 与 `off` 逐值相同（见 §4.3 与 `MIDTERM_F_DATA_GOVERNANCE_DESIGN.md` §6） |
 | **年报（1231）** | `t_prev` = 同年 0930（不是 t−1 期） |
 | **跨年** | `t_prev` 必须由**报告期字符串**算（0630→0331、0930→0630、1231→0930），不能取数组下标 |
 | **数组顺序** | 一律先按 `period` 降序排序再去重（Tushare 顺序不可依赖） |
 | **期数不足** | 任一必需期缺失 ⇒ 对应派生字段 `None`（不插值、不用 TTM 顶替） |
 | **上年同期 ≤ 0**（亏损/转盈） | 单季净利同比 `None`（百分比无意义）；改用**营收腿**；两条腿都无 ⇒ 整体降级 |
-| **分母过小** | `|单季值(t-4)| < 1% × 当期累计营收` ⇒ 视为基数不稳，该腿 `None` |
+| **分母过小** | `|单季值(t-4)| < 1% × 当期**单季营收**`（P1-1 起；旧口径用累计营收）⇒ 视为基数不稳，该腿 `None` |
 | **数据异常** | 单季毛利率 ∉ [−50, 100] ⇒ `None`（不静默夹取） |
 
 ### 3.3 产出字段（`FundamentalFactor` 新增 4 个，additive）
@@ -201,14 +202,18 @@ marginal = derive_marginal(data)
 factor = FundamentalFactor(..., **{k: marginal[k] for k in _Q_MARGINAL_FIELDS})
 ```
 
-### 3.5 口径近似（必须披露）
+### 3.5 营收口径与近似（P1-4 后必须披露）
 
-- 单季毛利用 `revenue × gross_margin`（累计毛利率）差分，等价于假定 Tushare 的
-  `grossprofit_margin` 与 `total_revenue` 同分母。两者实际分别为「营业总收入」与
-  「毛利/营业收入」，**对营业外收入占比大的公司有偏差**（沈飞、茅台这类主业公司可忽略）。
-- 精确解法（P1.5，可选）：在 [financial_fact.py:47](alphabee/agents/facts/tools/financial_fact.py#L47) 的
+- **口径统一**：`derive_marginal` 优先用 canonical `operating_revenue`（Tushare `income.revenue`，
+  营业收入）还原单季营收；`q_revenue_yoy` 与 `q_gross_margin` 都用这一条序列，与 L 的
+  `revenue_yoy`（`or_yoy`，营业收入同比）及 `grossprofit_margin` 的分母同口径。实际口径写入
+  `FundamentalFactor.marginal_revenue_basis`（`operating_revenue` / `total_revenue`）。
+- **缺失回落**：无 `operating_revenue` 时才回落 canonical `revenue`（营业总收入），此时单季毛利的
+  分子（毛利）与分母（营业总收入）不同源，**对营业外收入占比大的公司有偏差**（主业公司可忽略）；
+  该近似（风险项 R2）**仅在回落路径存在**，并不是默认路径的固有近似。
+- **精确解法（P1.5，仍为可选、不默认做）**：在 [financial_fact.py:47](alphabee/agents/facts/tools/financial_fact.py#L47) 的
   `fields` 追加 `oper_cost`，新增 canonical `operating_cost` 与 mapping，单季毛利率改为
-  `(单季营收 − 单季营业成本)/单季营收`。本设计**不默认**做（多一次数据面改动，先影子复核偏差）。
+  `(单季营业收入 − 单季营业成本)/单季营业收入`。本设计**不默认**做（多一次数据面改动，先影子复核偏差）。
 
 ---
 
@@ -275,9 +280,9 @@ F = _saturate(score, 1.0)
 | 情形 | 行为 |
 |---|---|
 | 亏损转盈（上年同期净利 ≤ 0） | `q_net_profit_yoy=None`；只用营收腿；两腿都无 ⇒ 降级 |
-| 单季营收为负/为 0 | 该腿 `None`（分母无意义） |
+| 单季营收缺失/≤ 0 | **营收腿与净利腿均 `None`**（仅 `q_gross_margin` 可能已写入；分母无意义，两腿都不可算） |
 | 年报期 | `t_prev` = 同年 0930；与 Q1 的"单季=累计"规则互斥，不得混用 |
-| 数据重述 | 以最新 `ann_date` 为准（`_dedup` 保首条）；重述后的历史期不回溯（本帧一次性） |
+| 数据重述 | 以最新 `ann_date` / `update_flag` 为准（`_dedup` 排序后取首条，见治理设计 §5）；重述后的历史期不回溯（本帧一次性） |
 | 停牌/无新报告期 | 沿用快照 `as_of_date` 的最新报告期；不向前找更早的（避免跨期拼接） |
 
 ### 4.6 数学性质（测试钉住）
@@ -311,11 +316,14 @@ midterm:
 
 | 指标 | 口径 | 判读 |
 |---|---|---|
-| S1 `ΔF` 分布 | `F_shadow − F` 的中位数 / P90 | 中位 \|ΔF\| ≤ 0.10 |
+| S1 `ΔF` 分布 | `\|F_shadow − F\|` 的**中位数用 ex-Q1**（`median_abs_delta_ex_q1`）；P90 仍为全帧（`abs_delta_f_p90`，无 ex-Q1 版本） | 中位 \|ΔF\|（ex-Q1）≤ 0.10 |
 | S2 状态翻转率 | `argmax(F_shadow) ≠ argmax(F)` 的帧占比 | ≤ 10% |
 | S3 危险翻转 | 现行判 `S5` 而 `F_shadow` 判到 `{S1,S2,S3}` 的帧 | ≤ 3%（尤其盯顶背离消失） |
-| S4 加速度覆盖率 | `f_marginal_source > 0` 的帧占比 | ≥ 85%（数据可用性的现实检验） |
-| S5 人工抽检 | 每个翻转帧对照财报原文 | 翻转必须有原文依据 |
+| S4 加速度覆盖率 | **ex-Q1** 的 `f_marginal_source > 0` 帧占比（`coverage_ex_q1`） | ≥ 85%（数据可用性的现实检验） |
+| S5–S8 | OCF 命中率 / beat-miss 同期率 / 扣非差异 / 分部分布（治理设计 §15.1，additive 观测键） | 只观测，不单独构成开权门 |
+| 人工抽检 | 每个翻转帧对照财报原文 | 翻转必须有原文依据 |
+
+- **ex-Q1 口径（P0-3）**：Q1 帧的单季=累计、`Δ` 结构性为 0，不参与加速度质量门；`n_q1_frames` 单独计数，`coverage` / `abs_delta_f_median` / `abs_delta_f_p90` 等全帧字段保留作对照，`g8_pass` 判读用 `coverage_ex_q1` 与 `median_abs_delta_ex_q1`。实现与 CLI 文本同步（`scripts/f_marginal_shadow.py` 以 ex-Q1 为主、全帧值并列打印）。
 
 **语料来源（两条链路，读取侧合并、写入侧不合并）**：
 
@@ -429,7 +437,7 @@ def compress_scores(snapshot: FactorSnapshot, *, marginal_mode: str = "off") -> 
 | **G-5 亏损转盈** | 上年同期净利 ≤ 0 的帧：`marginal` 只用营收腿或降级，`|M|` 不得由净利百分比产生 | 直接算百分比 ⇒ 红 |
 | **G-6 单调/有界** | §4.6 的 1/2/3/4 条 | — |
 | **G-7 影子不生效** | `shadow` 模式下对全测试帧 `F_shadow` 有值但 `F` 与 `off` **逐值相等** | — |
-| **G-8 语料门槛** | 真实帧 ≥ 50 帧，`median|ΔF| ≤ 0.10`、翻转率 ≤ 10%、S5→多头 ≤ 3% | 未达标不得开 `on` |
+| **G-8 语料门槛** | 真实帧 ≥ 50 帧；`median|ΔF|`（**ex-Q1**，`median_abs_delta_ex_q1`）≤ 0.10；翻转率 ≤ 10%；危险翻转（`S5`→多头）≤ 3%；覆盖率（**ex-Q1**，`coverage_ex_q1`）≥ 85% | 未达标不得开 `on`；Q1 帧不计入 S1/S4 分母（P0-3） |
 
 ### 7.2 参数冻结
 
@@ -498,7 +506,7 @@ def compress_scores(snapshot: FactorSnapshot, *, marginal_mode: str = "off") -> 
 | 编号 | 风险 | 缓解 |
 |---|---|---|
 | **R1** | 低基数伪拐点（去年 Q3 极小） | D7 分母门槛 + 亏损转盈走绝对额/降权 + 门 G-5 |
-| **R2** | 「营业总收入 vs 营业收入」口径近似导致毛利率失真 | §3.5 披露；影子期抽检毛利率偏差；必要时补 `oper_cost`（P1.5） |
+| **R2** | 「营业总收入 vs 营业收入」口径近似导致毛利率失真 | **P1-4 后收敛**：仅在 `operating_revenue` 缺失、回落总营收时存在（§3.5）；影子期抽检回落路径偏差；必要时补 `oper_cost`（P1.5） |
 | **R3** | 单季数据噪声推高翻转率 | 权重 0.3 上限 + 25pp 饱和 + 影子期 S2/S3 门槛 |
 | **R4** | 与 beat 双重奖励 | §4.4 折半规则 |
 | **R5** | 历史帧口径断裂（on 后与旧帧不可比） | `f_marginal_mode` provenance + 跟踪帧 `mismatch` 口径可复用 |

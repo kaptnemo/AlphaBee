@@ -178,26 +178,49 @@ class VariableScores(BaseModel):
 
 ### 3.4 F 因子口径：水平 + 加速度 + 质量门（F-Marginal）
 
-> 设计依据：`docs/implementation/midterm/MIDTERM_F_MARGINAL_DESIGN.md`（§3 数据层、§4 评分层、§5 影子→开权重、§7.1 校准门）。
-> 代码落点：`alphabee/midterm/factors.py::derive_marginal`（数据层）、`alphabee/midterm/score_engine.py::fundamental_breakdown`（F 的唯一评分入口）、`alphabee/midterm/decision_model.py::resolve_f_marginal_mode`（模式解析）。
-> **当前状态：配置缺省 `shadow`（算但不生效）** —— F 与改造前逐值相同；**`on`（边际项参与评分）未开启**（G-8 语料门槛未达，见 3.4.4）。
+> 设计依据：`docs/implementation/midterm/MIDTERM_F_MARGINAL_DESIGN.md`（§3 数据层、§4 评分层、§5 影子→开权重、§7.1 校准门）与 `docs/implementation/midterm/MIDTERM_F_DATA_GOVERNANCE_DESIGN.md`（§4–§14 的 P0–P2 口径治理）。
+> 代码落点：`alphabee/midterm/factors.py::derive_marginal` / `build_fundamental_factor`（数据层与 provenance）、`alphabee/midterm/score_engine.py::fundamental_breakdown`（F 的唯一评分入口）、`alphabee/midterm/decision_model.py::resolve_f_marginal_mode` 等 resolve（模式解析）。
+> **当前状态：F 边际配置缺省 `shadow`（算但不生效）** —— 边际项不影响 F；**`on`（边际项参与评分）未开启**（G-8 语料门槛未达，见 3.4.4）。**F 的修正项已按治理后口径生效**：beat/miss 同期守卫（P0-1）、OCF TTM（P1-2）、扣非默认 `shadow` 不进 F（P1-3）、分部期间对齐/占比/按产品（P1-6）。
 
 #### 3.4.1 计算口径
 
-**水平项 L 不变**：仍是三个**累计同比**的饱和均值（入口 ±30pp 饱和；缺项按可用子集求均值，不补 0）。
+**水平项 L**：三个**累计同比**的饱和均值（入口 ±30pp 饱和；缺项按可用子集求均值，不补 0）。净利项默认用归母同比；`f_recurring_mode=on` 且扣非可用时替换为 `min(归母, 扣非)`（见下文修正项）。
 
 ```text
-L      = mean( saturate(revenue_yoy, 30), saturate(net_profit_yoy, 30), saturate(eps_growth_yoy, 30) )
+# 水平项（净利项可按扣非模式替换）
+np_term_yoy = net_profit_yoy                              # off/shadow 或扣非不可用
+np_term_yoy = min(net_profit_yoy, net_profit_dedt_yoy)    # on 且扣非可用、上年同期扣非 > 0
+L      = mean( saturate(revenue_yoy, 30), saturate(np_term_yoy, 30), saturate(eps_growth_yoy, 30) )
+
+# 边际项（营收口径统一为营业收入，见 §3.4.5）
 Δ_rev  = q_revenue_yoy    − revenue_yoy                  # 单季同比 − 累计同比（pp）
 Δ_np   = q_net_profit_yoy − net_profit_yoy
 M_raw  = mean( saturate(Δ_rev, 25), saturate(Δ_np, 25) ) # 加速度；可单腿，缺失腿不补 0
 Q      = clip(1 + q_gross_margin_pp / 4, 0.20, 1.0)      # 质量门：单季毛利率同比变化 pp
 M      = M_raw × Q
 
-F_growth = 0.70·L + 0.30·M        # 有单季数据（marginal 非 None）
-F_growth = L                      # 无单季数据（降级路径，与改造前逐值相同）
-F        = saturate(F_growth + OCF惩罚 + beat + miss + 细分, 1)
+F_growth = 0.70·L + 0.30·M        # on 且 M 非 None（有单季数据）
+F_growth = L                      # off/shadow、无单季数据或 Q1 降级（见 §3.4.6）
+
+# 修正项（P0-1 / P1-2 / P1-6）
+beat  = (report_period == profit_forecast_period 且 net_profit_yoy > 预告上限) ? +0.2 : 0
+miss  = (report_period == profit_forecast_period 且 预告下限 − net_profit_yoy > 20pp) ? −0.3 : 0
+OCF   = is_financial ? 0 : (TTM_OCF < 0 ? −0.5 : 0)   # ttm 口径；TTM 缺失回落累计符号
+bonus = period_aligned 且 分部期 == 财报期 且 share ≥ 10% 且 divergence > 15pp ? +0.2 : 0
+
+F        = saturate(F_growth + OCF + beat + miss + bonus, 1)
 ```
+
+**修正项口径（P0-1 / P1-2 / P1-3 / P1-6；全部由 `fundamental_breakdown` 显式留痕）**：
+
+| 修正项 | 生效口径 | 说明 |
+|---|---|---|
+| `beat` | 仅当 `report_period` 与 `profit_forecast_period` **同期**才产：`net_profit_yoy > 预告上限 ⇒ +0.2`；任一期间为空/不同期 ⇒ 0（fail-closed） | P0-1；`score_breakdown.forecast_period_matched` 记 1/0。`on` + 边际项存在 + `Q<1` 时 beat 折半（§3.4.3） |
+| `miss` | 同期才产：`预告下限 − net_profit_yoy > 20pp ⇒ −0.3` | 同上期间守卫 |
+| `OCF惩罚` | 生产口径 `ttm`：`TTM_OCF = FY(prev) + cum(t) − cum(t−4)`（年报取 `cum(t)`）；金融股（`company_type ∈ {2,3,4}`）跳过；TTM 缺失回落累计符号并记 `ocf_penalty_basis=0`；`TTM_OCF < 0 ⇒ −0.5` | P1-2/P1-5；`score_engine` 函数缺省 `sign`（旧行为），由 `decision_model` 传 `ttm`；`score_breakdown` 记 `ocf_ttm` / `ocf_penalty_basis` / `financial_sector` |
+| `扣非锚` | `f_recurring_mode=shadow`（生产默认）：算 `np_term_recurring` / `recurring_gap` / `f_recurring_shadow` 但**不改 F**；`on`：净利项改用 `sat(min(归母, 扣非), 30)`；扣非同比缺失或上年同期扣非 ≤0 ⇒ 回落归母并记 `recurring_unavailable=1` | P1-3；`min` **只压不抬**（一次性收益被压低；一次性损失也会压低 F，属保守取向）；`off` 为旧行为 |
+| `分部bonus` | 生产口径 `period_aligned`（**评分层**）：`segment_period` 与 `report_period` 均可知且不同 ⇒ 0；最快分部收入占比已知且 <10% ⇒ 0；任一期间缺失 ⇒ fail-open 按旧行为。**数据层**：`_segment_extremes_v2` 只取「按产品分类」分项（无则回落全部，`segment_basis=all`）并过滤已知 share <10% 的分部，`divergence = 最快分部 yoy − revenue_yoy > 15pp ⇒ +0.2` | P1-6；`score_engine` 函数缺省 `legacy`（只回滚评分层两个门槛，数据层提取不变）；`score_breakdown` 记 `segment_period_mismatch` / `segment_share_below_min` |
+| `provenance` | `report_period` / `report_ann_date` / `report_age_days`；`report_age_days > 120` 在报告标「陈旧」；`report_period` 与 `marginal_period` 不同期记 `report_period_mismatch=1` | P2-1；builder 不读系统时间，age 由 `get_factor_snapshot` 按 `as_of_date` 计算；只展示，不影响 F |
 
 **参数（`score_engine.py` 常量，不入 config；当前按设计值冻结待复核——影子期语料补齐后按设计 §7.2 的 ±0.05 聚合门正式复核）**：
 
@@ -226,7 +249,7 @@ F        = saturate(F_growth + OCF惩罚 + beat + miss + 细分, 1)
 - 两条加速度腿**都**缺（`q_revenue_yoy` / `q_net_profit_yoy` 与其累计同比的组合均不可用）；或
 - 质量腿 `q_gross_margin_pp` 缺失 —— 质量门是边际项成立的必要条件，不拿半边数据报满额信用。
 
-数据层逐腿边界：单季营收 ≤ 0 ⇒ 营收腿缺失；上年同期单季净利 ≤ 0（亏损/转盈）⇒ 净利腿缺失（百分比无意义，改用营收腿）；`|单季值(t−4)| < 1% × 当期累计营收` ⇒ 该腿缺失（基数不稳）；缺期**不插值**、不用 TTM 顶替；Q1 单季 = 累计，年报 `t_prev` = 同年 9M（跨年按报告期字符串判定，不取数组下标）。
+数据层逐腿边界：单季营收缺失/≤ 0 ⇒ **营收腿与净利腿均 None**（仅 `q_gross_margin` 可能已写入；分母无意义，两腿都不可算）；上年同期单季净利 ≤ 0（亏损/转盈）⇒ 净利腿缺失（百分比无意义，改用营收腿）；`|单季值(t−4)| < 1% × 当期**单季营收**` ⇒ 该腿缺失（P1-1 起两腿同用单季营收做分母；旧口径用累计营收，会误杀低毛利公司的正常净利腿）；缺期**不插值**、不用 TTM 顶替；Q1 单季 = 累计，年报 `t_prev` = 同年 9M（跨年按报告期字符串判定，不取数组下标）。Q1 的**评分层**处理见 §3.4.6（`derive_marginal` 仍产出 q_*，但边际项降级为 `None`）。
 
 #### 3.4.3 质量门为什么必须有（不允许 Q=1 兜底）
 
@@ -245,6 +268,7 @@ F        = saturate(F_growth + OCF惩罚 + beat + miss + 细分, 1)
 - **纯函数纪律**：`score_engine` 不读配置；`decision_model.resolve_f_marginal_mode` 每次决策解析一次（显式参数优先；配置缺段/缺字段 ⇒ 模型默认值，当前 `shadow`；读配置异常/取值非法 ⇒ warning + 回落 `off`），解析结果写入 `CompanyStateArtifact.f_marginal_mode`（provenance；旧帧回落 `"off"`）。
 - **报告口径**：`shadow`/`on` 帧出现「F 边际（影子）」行（单季原始值、M_raw、Q、M、F_shadow、ΔF）与「边际模式」元信息行；`off` 帧与旧帧不出现（渲染逐字不变）。
 - **回滚**：`f_marginal_mode: off`（一行配置，无需改代码）。
+- **与其它开关的关系**：F 的 `ocf_penalty_basis` / `f_recurring_mode` / `segment_bonus_mode` 是独立开关，与 `f_marginal_mode` 互不替代；四者的语义、默认值与回滚见 `docs/guide/CONFIGURATION.md`「F 口径治理四键」。纯函数默认与生产默认分离：`score_engine` 函数缺省 `sign` / `off` / `legacy`，生产（`decision_model`）为 `ttm` / `shadow` / `period_aligned`。
 
 **影子观测指标**（`alphabee/midterm/marginal_shadow.py`；离线脚本 `scripts/f_marginal_shadow.py`）：
 
@@ -254,19 +278,28 @@ F        = saturate(F_growth + OCF惩罚 + beat + miss + 细分, 1)
 
 | 指标 | 口径 | G-8 门槛 |
 |---|---|---|
-| S1 `ΔF` 分布 | `f_shadow − f` 的 \|ΔF\| 中位数 / P90 | 中位 ≤ 0.10 |
+| S1 `ΔF` 分布 | `f_shadow − f` 的 \|ΔF\| 中位数（**ex-Q1**，`median_abs_delta_ex_q1`）/ P90（全帧 `abs_delta_f_p90`） | 中位（ex-Q1）≤ 0.10 |
 | S2 状态翻转率 | `argmax(F_shadow) ≠ argmax(F)` 的帧占比 | ≤ 10% |
 | S3 危险翻转率 | 现判 `S5` 而影子判到 `{S1,S2,S3}` 的帧占比 | ≤ 3% |
-| S4 加速度覆盖率 | `f_marginal_source > 0` 的帧占比 | ≥ 85% |
+| S4 加速度覆盖率 | **ex-Q1** 的 `f_marginal_source > 0` 帧占比（`coverage_ex_q1`；`n_q1_frames` 单列） | ≥ 85% |
 | 语料规模 | 真实帧数 | ≥ 50 |
 
-**开权门槛与当前结论**：G-8 全绿 + 影子期 ≥ 50 帧 + 单独登记，才允许把缺省改为 `on`（设计 §9「未达标不得开 `on`」）。本机 `data/midterm/state` 实测仅 **2 帧**（影子层上线前的旧帧，无边际键）⇒ 覆盖率 0、S1–S3 不可算、G-8 五项均不达标 ⇒ **PR-4 开权重未执行，缺省保持 `shadow`**。
+**开权门槛与当前结论**：G-8 全绿 + 影子期 ≥ 50 帧 + 单独登记，才允许把缺省改为 `on`（设计 §9「未达标不得开 `on`」）。本机真实语料不足（见 `docs/implementation/midterm/F_CALIBRATION_REPORT.md` 的「样本不足，不校准」判读；影子层上线前的旧帧无边际键）⇒ 覆盖率 0、S1–S3 不可算、G-8 五项均不达标 ⇒ **PR-4 开权重未执行，缺省保持 `shadow`**。
 
 #### 3.4.5 口径近似（设计 §3.5，必须披露）
 
-- **单季毛利差分**：单季毛利 = 累计营收(t) × 累计毛利率(t) − 累计营收(t−1 期) × 累计毛利率(t−1 期)；单季毛利率 = 单季毛利 / 单季营收。
-- **等价假定**：上式假定 Tushare 的 `grossprofit_margin` 与 `total_revenue` **同分母**；两者实际分别是「毛利 / 营业收入」与「营业总收入」，**对营业外收入占比大的公司有偏差**（主业公司可忽略）。
-- **精确解法（设计 §3.5 的 P1.5，本轮不默认做）**：在财务取数 fields 补 `oper_cost`，并把单季毛利率改为（单季营收 − 单季营业成本）/ 单季营收；先由影子期观测复核上述近似偏差，再决定是否切换。
+- **单季毛利差分**：单季毛利 = 累计营业收入(t) × 累计毛利率(t) − 累计营业收入(t−1 期) × 累计毛利率(t−1 期)；单季毛利率 = 单季毛利 / 单季营业收入。
+- **营收口径（P1-4）**：单季还原优先使用 canonical `operating_revenue`（Tushare `income.revenue`，营业收入），与 L 的 `revenue_yoy`（`or_yoy`，营业收入同比）和 `grossprofit_margin` 的分母同口径；缺失时才回落 canonical `revenue`（营业总收入），并记 `marginal_revenue_basis="total_revenue"`。
+- **R2 收敛（设计 §3.5 的风险项）**：「营业总收入 vs 营业收入」的近似**仅在 `operating_revenue` 缺失、回落总营收时存在**；回落时单季毛利率的分子（毛利）与分母（营业总收入）不同源，对营业外收入占比大的公司有偏差（主业公司可忽略）。
+- **精确解法（设计 §3.5 的 P1.5，本轮不默认做）**：在财务取数 fields 补 `oper_cost`，把单季毛利率改为（单季营业收入 − 单季营业成本）/ 单季营业收入；先由影子期观测复核回落路径的偏差，再决定是否切换。
+
+#### 3.4.6 Q1 边际降级（P0-3）
+
+- **为什么降级**：Q1 没有同年上一报告期，`derive_marginal` 取「单季 = 累计」，于是 `q_revenue_yoy ≡ revenue_yoy`、`q_net_profit_yoy ≡ net_profit_yoy` ⇒ `Δ_rev = Δ_np ≡ 0`。这不是「没有加速」，而是**加速度在该口径下不可识别**；若把 `M=0` 代入，`on` 的 `F_growth = 0.70·L` 会系统性压低 30%，`shadow` 的 `f_shadow_delta = −0.3L` 也会污染 S1。
+- **实现口径**：评分层用 `marginal_period` 的后缀判定 Q1（`0331`）；Q1 帧 `_marginal_legs` 返回空 ⇒ `marginal=None` ⇒ **不写任何边际键**，`on` 与 `off` 的 F 逐值相同（`F_growth=L`）。`shadow` 档额外写 `q1_marginal_degraded=1` 留痕；`on` 不写该键（保证 `on` 与 `off` 的分解逐值相等）。
+- **数据层不变**：`derive_marginal` 仍产出 4 个 `q_*` 字段（数据层契约与既有测试不变），只是评分层不消费 Q1 的加速度。
+- **影子观测同步**：`marginal_shadow` 增加 `report_period` / `is_q1` 与 `n_q1_frames`；覆盖率与 `|ΔF|` 中位数另给 `coverage_ex_q1` / `median_abs_delta_ex_q1`，G-8 的 S1/S4 判读改用 **ex-Q1**（旧字段保留作对照）。
+- **回滚**：无 config；回滚 = revert Q1 分支。若未来要支持 Q1 的加速度语义（如「Q1 同比 vs 上年 Q4 单季同比」），属另立设计，需先做季节性校准。
 
 ---
 

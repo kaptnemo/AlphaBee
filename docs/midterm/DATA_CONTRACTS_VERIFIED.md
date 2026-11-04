@@ -307,3 +307,92 @@ verified_at: 2026-10-19
 
 > **本设计无新 canonical 字段**：13 个 consensus 字段（`alphabee/schemas/consensus.yaml`：`eps_fy1`/`eps_fy2`/`eps_fy3`/`target_price`/`rating_mean`/`coverage_count`/`eps_fy1_revision_1m`/`eps_fy1_revision_3m`/`eps_fy2_revision_1m`/`revision_breadth`/`revision_acceleration`/`rating_upgrade_1m`/`rating_downgrade_1m`）全部**复用既有定义**，本接口只做「东财字段 → 既有 canonical」的映射（上表），**不需要注册任何新字段**；`schemas/INDEX.yaml` / `schemas/consensus.yaml` 均未改动。
 > 数据源字段名的消费面被限制在 `alphabee/collectors/consensus/emforecast.py`（source-specific collector，输出一律 canonical），下游按 canonical 名读取，不感知东财键名。
+
+---
+
+## 6. Tushare 财务四表：重复行 / 修订标记 / 公司类型 / 营收口径（2026-11-02 实测）
+
+> 设计依据：`docs/implementation/midterm/MIDTERM_F_DATA_GOVERNANCE_DESIGN.md` §1.3（实测证据）/ §5.2（去重算法）/ §11.2（公司类型）；
+> 采集侧落点：`alphabee/agents/facts/tools/financial_fact.py`；映射：`alphabee/adapters/tushare/financial_mapping.yaml`。
+> **2026-11-04 复测**：使用本机 `.env` 的 `TUSHARE_TOKEN` 逐项复跑，下列事实与 2026-11-02 实测一致（复测记录见本节末尾）。本接口契约只增加既有接口的返回列，**不新增外部数据源**。
+
+### 接口与字段（实测确认）
+
+| 接口 | 本次新增读取的列 | 实测说明 |
+|---|---|---|
+| `income` | `ann_date` / `report_type` / `update_flag` / `comp_type` / `revenue` | 同报告期可多行（初始/修订/更正）；`comp_type` 只在 `income` 返回 |
+| `fina_indicator` | `ann_date` / `update_flag` / `dt_netprofit_yoy` | 同报告期可多行；`update_flag=0` 行常为 NaN（扣非列整列丢失风险） |
+| `cashflow` | `ann_date` / `report_type` / `update_flag` | 列可用；`ann_date` 作为 provenance 保留 |
+| `balancesheet` | `ann_date` / `report_type` / `update_flag` | 列可用；`ann_date` 作为 provenance 保留 |
+
+- 四表均有 `ann_date`（公告日，`YYYYMMDD`）；`income` / `balancesheet` / `cashflow` 另有 `report_type`（实测样本均为 `1`=合并报表）与 `update_flag`（`0`/`1`）。
+- 同报告期重复行是**常态**（修订、更正公告、快报），不能按返回行序取首条（旧 `drop_duplicates(keep="first")` 的问题）。
+
+### 实测样本一：688981.SH 2024 年报（`income`，同 `end_date=20241231` 三行）
+
+| `ann_date` | `update_flag` | `report_type` | `comp_type` | `total_revenue`（元） |
+|---|---|---|---|---|
+| 20250212 | 0 | 1 | 1 | 57,745,538,740.4 |
+| 20250212 | 1 | 1 | 1 | 57,795,570,000.0 |
+| 20250328 | 1 | 1 | 1 | 57,795,570,000.0 |
+
+- **去重预期**：合并报表优先 → 同报告期按 `ann_date`、`update_flag` 降序 → 取 20250328 / flag 1 的 **57,795,570,000.0**（最终修订值）；旧行序实现会取到 20250212 / flag 0 的 **57,745,538,740.4**（初值）。
+- 该样本的 `total_revenue` 与 `revenue` 数值相同（一般工业公司两口径可相等）。
+
+### 实测样本二：000002.SZ 2026Q3（`fina_indicator`，同 `end_date=20260930` 两行）
+
+| `ann_date` | `update_flag` | `profit_dedt`（元） | `dt_netprofit_yoy`（%） | `grossprofit_margin`（%） |
+|---|---|---|---|---|
+| 20261030 | 1 | −21,537,520,000 | 18.68 | 6.6382 |
+| 20261030 | 0 | NaN | NaN | 6.6382 |
+
+- **去重预期**：`update_flag=1` 行有扣非值、`0` 行 NaN；按 `update_flag` 降序后取到非空扣非行。若行序反转且不加 `prefer_nonnull` 稳定排序键，`profit_dedt` / `dt_netprofit_yoy` 会整列丢失。
+- `dt_netprofit_yoy` 与 `profit_dedt` 同源：扣非归母净利累计同比，映射为 canonical `net_profit_dedt_yoy`。
+
+### 实测样本三：金融股 `comp_type`（`income`）
+
+| 标的 | 公司 | `comp_type`（实测集合） | canonical `company_type` / 判定 |
+|---|---|---|---|
+| 601318.SH | 中国平安 | 3 | 保险 ⇒ `is_financial=True` |
+| 600036.SH | 招商银行 | 2 | 银行 ⇒ `is_financial=True` |
+| 600030.SH | 中信证券 | 4 | 证券 ⇒ `is_financial=True` |
+
+- 一般工业样本（688981 / 600519 等）实测 `comp_type=1`。`comp_type` 缺失 ⇒ `is_financial=False`（fail-open）并登记 `missing_facts=company_type`。
+
+### 实测样本四：`income.total_revenue` vs `income.revenue`（600519.SH，2026 年）
+
+| `end_date` | `total_revenue`（营业总收入，元） | `revenue`（营业收入，元） | 差额 |
+|---|---|---|---|
+| 20260331 | 54,702,912,385.23 | 53,909,252,220.51 | 793,660,164.72 |
+| 20260630 | 92,278,072,083.21 | 90,703,260,964.48 | 1,574,811,118.73 |
+| 20260930 | 133,283,652,508.95 | 130,970,743,649.04 | 2,312,908,859.91 |
+
+- 两列**不是同一口径**：`total_revenue` = 营业总收入（既有 canonical `revenue`，语义不变），`revenue` = 营业收入（新增 canonical `operating_revenue`）。同一接口必须映射为两个不同 canonical 列，不能重名。
+- 边际层 `q_revenue_yoy` / `q_gross_margin` 用 `operating_revenue`（与 `or_yoy`、`grossprofit_margin` 的分母同口径）；`operating_revenue` 缺失时才回落 `total_revenue` 并记 `marginal_revenue_basis="total_revenue"`。
+
+### 实测样本五：600760.SH 最新预告（`forecast`）
+
+| `ann_date` | `end_date` | `type` | `p_change_min` | `p_change_max` | `update_flag` |
+|---|---|---|---|---|---|
+| 20260715 | 20260630 | 预减 | −58.23 | −58.23 | 0 |
+
+- 最新预告的报告期是 **20260630（H1）**，而 2026-11-01 帧的最新财报期是 **20260930（Q3）** ⇒ 旧逻辑会把 H1 预告与 Q3 财报相比并误产 beat（P0-1 的实测动因）。同报告期才允许比较。
+
+### 去重算法边界（实现口径，P0-2）
+
+1. `report_type` 有 `1` ⇒ 只保留合并报表；没有 `1` ⇒ 保留全部（fail-open，不因过滤丢数据）。
+2. 同报告期按 `ann_date`（归一 `YYYYMMDD`，缺失/非法回落 `period`）与 `update_flag` 降序；`ann_date` 缺失/非法时回落 `period` 排序，避免 `"nan"` 字符串排到数字前。
+3. `fina_indicator` 追加「非空字段计数降序」稳定排序键（`net_profit_dedt` / `gross_margin`），同 `period/ann_date/update_flag` 并列时优先有值行。
+4. 同报告期取首条（= 最新公告 + 最新修订）；`report_type` / `update_flag` 去重后丢弃，`ann_date` 与 `company_type` 保留（provenance）。
+5. `ref_dates` 仍为报告期降序（最新一期在前）；空 DataFrame 原样返回（不制造列）。
+
+### 2026-11-04 复测记录（本机 `.env` token）
+
+- `688981.SH` 2024 年报仍为三行（20250212 flag 0 / 20250212 flag 1 / 20250328 flag 1），数值与 2026-11-02 一致。
+- `000002.SZ` 2026Q3 `fina_indicator` 仍为两行（`ann_date=20261030`）：flag 1 行有 `profit_dedt=-21,537,520,000`、`dt_netprofit_yoy=18.68`；flag 0 行两列 NaN。
+- `comp_type` 仍为 601318=3 / 600036=2 / 600030=4；一般工业样本为 1。
+- `cashflow` / `balancesheet` 的 `ann_date` / `report_type` / `update_flag` 三列可用（600519 2026Q3 实测）。
+- `600519.SH` 的 `total_revenue` 仍不等于 `revenue`（2026Q3：133,283,652,508.95 vs 130,970,743,649.04）。
+- `600760.SH` 最新预告 `end_date=20260630`（`ann_date=20260715`，`p_change_min/max=-58.23`），与设计 §1.3 一致。
+
+> **结论**：设计 §1.3 的四项契约事实（`update_flag` 重复行、`comp_type` 取值、`dt_netprofit_yoy`、`income.revenue` vs `total_revenue`）在 2026-11-02 与 2026-11-04 两次实测中一致；实现侧按上述算法消费，不新增外部接口。

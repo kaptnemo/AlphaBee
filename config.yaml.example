@@ -110,7 +110,8 @@ domain_context:
 # 中期决策层（docs/implementation/midterm/MIDTERM_CLASSIFIER_TEF_DESIGN.md §5.1；
 # 状态证据公式 V2 见 docs/implementation/midterm/MIDTERM_STATE_EVIDENCE_V2_DESIGN.md §7.1）
 # 缺段 ⇒ 全默认值（旧 config 行为不变）；classifier_order 默认 etf（E→T→F 基准）、
-# formula_revision 默认 v1（现状证据公式）。
+# formula_revision 默认 v1（现状证据公式）、F 口径治理四键默认 ttm / shadow /
+# period_aligned / false（见 docs/guide/CONFIGURATION.md「F 口径治理四键」）。
 # 切换为 tef（T→E→F，A 股价格先行变体）属行为变更，登记见 docs/roadmap/ROADMAP.md 变更登记表 PR-1 行。
 midterm:
   classifier_order: etf       # etf = E→T→F（基准）；tef = T→E→F（价格先行变体）
@@ -127,6 +128,35 @@ midterm:
   # 缺段 / 缺字段 ⇒ 取模型默认值（当前 shadow）；读配置异常 / 非法值 ⇒ warning + 回落 off。
   # 回滚 = 本行改 off（一行配置，F 恢复严格旧口径）。
   f_marginal_mode: shadow
+  # OCF 惩罚口径（F 数据治理 design §8，P1-2）：
+  #   ttm  = 滚动 12 个月经营现金流（**缺省**：A 股季节性中性；金融股跳过；
+  #          TTM 缺失回落累计符号并记 score_breakdown.ocf_penalty_basis=0）
+  #   sign = 报告期累计 OCF 符号（旧口径，**回滚开关**）
+  # 缺段 / 缺字段 ⇒ 模型默认 ttm；读配置异常 / 非法值 ⇒ warning + 回落 sign。
+  # 回滚 = 本行改 sign（一行配置，F 恢复旧口径）。
+  ocf_penalty_basis: ttm
+  # 扣非保守锚模式（F 数据治理 design §9，P1-3）：
+  #   off    = 只用归母净利同比（旧行为）
+  #   shadow = 算扣非锚（np_term_recurring / recurring_gap / f_recurring_shadow）
+  #            但不进 F（**缺省**：F 与改造前逐值相同，只多诊断键）
+  #   on     = 净利项改用 min(归母, 扣非)（只压不抬；门禁通过后显式开启）
+  # 缺段 / 缺字段 ⇒ 模型默认 shadow；读配置异常 / 非法值 ⇒ warning + 回落 off。
+  # 回滚 = 本行改 off（一行配置，F 恢复旧口径）。
+  f_recurring_mode: shadow
+  # 分部 bonus 口径（F 数据治理 design §12，P1-6）：
+  #   period_aligned = 分部报告期须与财报报告期一致，且最快分部收入占比 ≥10%
+  #                    （**缺省**：错期/小分部/非产品分项不再误加 0.2）
+  #   legacy         = 只看最快分部与整体的 divergence（旧行为，**回滚开关**）
+  # 缺段 / 缺字段 ⇒ 模型默认 period_aligned；读配置异常 / 非法值 ⇒ warning + 回落 legacy。
+  # 回滚 = 本行改 legacy（一行配置，F 恢复旧口径）。
+  segment_bonus_mode: period_aligned
+  # F 输入序列 PIT 快照（F 数据治理 design §14，P2-2）：
+  #   false = 不落盘（**缺省**：普通 run 零 I/O，F 与改造前逐值一致）
+  #   true  = get_factor_snapshot 在 F 构建后把 6 条输入序列（每条 ≤8 期）追加到
+  #           data/midterm/financial_inputs/<symbol>.jsonl（幂等、可回放；写盘失败 fail-open）
+  # 缺段 / 缺字段 ⇒ 模型默认 false；读配置异常 / 非 bool ⇒ false（绝不误写盘）。
+  # 回滚 = 本行改 false（或删除本键；快照文件可保留作审计资产）。
+  persist_financial_inputs: false
   # 一致预期 provider 链（docs/implementation/midterm/E_ECOSYSTEM_FIX_DESIGN.md §5.3）：
   #   report_list  = 东财研报列表聚合（默认，行为与改造前逐字一致）
   #   f10_forecast = 东财 F10 盈利预测（coverage_count 变"机构家数"口径；revision 由

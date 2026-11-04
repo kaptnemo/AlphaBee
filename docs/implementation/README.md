@@ -11,6 +11,7 @@
 | `framework/` | 跨模块（midterm + tracking + market_regime + domain_context） | `P0_A_SHARE_FIX_IMPLEMENTATION_DESIGN.md`（框架评审 P0 六项修复） | ✅ 已实施（PR-A/B/C） |
 | `midterm/` | `alphabee/midterm/`（+ `collectors/consensus`） | `MIDTERM_CLASSIFIER_TEF_DESIGN.md`（T→E→F 分类器变体） | ✅ 已实施（PR-1/2），A/B 实验待执行 |
 | | | `E_ECOSYSTEM_FIX_DESIGN.md`（E 数据生态：预告类型加权 + 保守锚 + 东财盈利预测） | ⬜ 未实施 |
+| | | `MIDTERM_F_DATA_GOVERNANCE_DESIGN.md`（F 数据契约与口径治理：P0–P2） | ✅ 已实施（PR-1..PR-10） |
 | `thesis/` | `alphabee/agents/thesis/` | `THESIS_CONTEXT_MISMATCH_FIX_PLAN.md`（论点语境不适配修复） | ✅ 已实施 |
 | `company_track/` | `alphabee/company_track/` | `TRACK_LABEL_COARSE_BUCKET_FIX_PLAN.md`（赛道标签粗口径单桶退化修复） | ✅ 已实施 |
 | `domain_context/` | `alphabee/domain_context/`（驱动画像 DRIVER_PROFILE） | `DRIVER_PROFILE_D0_CODING_DESIGN.md` / `DRIVER_PROFILE_D1_D2_CODING_DESIGN.md`（编码设计） | ✅ 已实施 |
