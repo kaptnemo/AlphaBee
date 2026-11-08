@@ -1,0 +1,260 @@
+# 策略参数注册表 v0（P0；docs/implementation/framework/REPORT_CLAIM_FIRST_AND_PARAMS_GOVERNANCE_DESIGN.md §4.3/§4.4/附录 B）
+#
+# 用途：15 个决策关键常量（10 个 F/E 方向分 + 1 个 coverage + 4 个证据层）的**唯一登记面**。
+# 本文件当前只做"盘点 + 可解析"：生产决策代码仍读模块常量，默认值来源仍是
+# alphabee/params/models.py 的 frozen dataclass；registry 值/默认值/模块常量三方逐项一致
+# 由 tests/params/test_registry.py 钉住（任何漂移立即报错）。
+#
+# 字段语义（缺省即非法 → 加载期明确报错）：
+#   id                 domain.area.name，小写点分、全局唯一
+#   value              数值（int/float）；必须落在 bounds 内
+#   unit               score | pp | ratio | count | nats
+#   domain             midterm | report | data
+#   kind               policy | technical（结构常量一律留在代码，不得写入本文件）
+#   status             active | shadow | placeholder | frozen | deprecated（见设计 §4.3 状态机）
+#   source             backtest | expert | literature | design | placeholder（design = 未校准初值）
+#   version            条目自身版本；改值 +1
+#   owner              变更责任人
+#   review_condition   何时必须复核（样本量/指标）
+#   wired_in           绑定的 typed params 字段（"Class.field"，可附加说明文字）；未接线留空并在 notes 说明
+#   overridable        是否允许覆盖（frozen 条目只允许 experiment/显式 overrides）
+#   bounds             [min, max]；越界配置/覆盖一律 fail-open
+#   group / constraint 组约束（anchor_weight + research_weight: group=e_blend, sum=1.0）
+#
+# 解析优先级（高 → 低；设计 §4.5）：函数显式 overrides（experiment/回放）>
+# config.yaml parameters.overrides > registry 本文件 value > dataclass 内置默认。
+# 失败语义一律 fail-open（warn + 回退低优先级值），绝不抛给生产调用方。
+# 变更纪律：改默认值 = 行为变更 → 必须同步 params/CHANGELOG.md 与 ROADMAP「行为变更登记」。
+
+schema_version: 1
+registry_version: 1
+
+entries:
+  - id: midterm.score.fundamental_yoy_scale
+    value: 30.0
+    unit: pp
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且饱和率统计完成"
+    wired_in: ScoreParams.fundamental_yoy_scale
+    overridable: true
+    bounds: [10.0, 60.0]
+    notes: "营收/净利/EPS YoY 饱和点；30% -> ±1"
+
+  - id: midterm.score.ocf_negative_penalty
+    value: 0.5
+    unit: score
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且 OCF 分组收益统计完成"
+    wired_in: ScoreParams.ocf_negative_penalty
+    overridable: true
+    bounds: [0.0, 1.0]
+    notes: "仅 OCF<0 扣分；FCF 不再参与（2026-11-01 变更）"
+
+  - id: midterm.score.beat_bonus
+    value: 0.2
+    unit: score
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且 beat/miss 可结算"
+    wired_in: ScoreParams.beat_bonus
+    overridable: true
+    bounds: [0.0, 0.5]
+    notes: "net_profit_yoy 超预告上限加分"
+
+  - id: midterm.score.miss_penalty
+    value: 0.3
+    unit: score
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且 beat/miss 可结算"
+    wired_in: ScoreParams.miss_penalty
+    overridable: true
+    bounds: [0.0, 0.5]
+    notes: "miss 信息量更大，故 0.3 > beat 0.2"
+
+  - id: midterm.score.miss_gap_threshold
+    value: 20.0
+    unit: pp
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且 gap 分布统计完成"
+    wired_in: ScoreParams.miss_gap_threshold
+    overridable: true
+    bounds: [5.0, 50.0]
+    notes: "实际低于预告下限 >20pp 判显著 miss"
+
+  - id: midterm.score.segment_divergence_threshold
+    value: 15.0
+    unit: pp
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且分部样本足够"
+    wired_in: ScoreParams.segment_divergence_threshold
+    overridable: true
+    bounds: [5.0, 50.0]
+    notes: "最快分部增速跑赢整体 >15pp 视为结构性亮点"
+
+  - id: midterm.score.segment_divergence_bonus
+    value: 0.2
+    unit: score
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且分部样本足够"
+    wired_in: ScoreParams.segment_divergence_bonus
+    overridable: true
+    bounds: [0.0, 0.5]
+    notes: "F 方向分正向修正"
+
+  - id: midterm.score.f_marginal_weight
+    value: 0.30
+    unit: ratio
+    domain: midterm
+    kind: policy
+    status: frozen
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "F 边际开权 G-8 全绿（真实帧 >= 50 + 四项翻转门槛）"
+    wired_in: ScoreParams.f_marginal_weight
+    overridable: true
+    bounds: [0.0, 0.4]
+    notes: "结构性示意；默认冻结，只允许 --param-override 实验并标注 experiment=true"
+
+  - id: midterm.score.anchor_weight
+    value: 0.6
+    unit: ratio
+    domain: midterm
+    kind: policy
+    status: active
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "与 research_weight 组约束复核"
+    wired_in: ScoreParams.anchor_weight
+    overridable: true
+    bounds: [0.0, 1.0]
+    group: e_blend
+    constraint: {sum: 1.0}
+    notes: "预告锚权重（P0-6 重平衡后）"
+
+  - id: midterm.score.research_weight
+    value: 0.4
+    unit: ratio
+    domain: midterm
+    kind: policy
+    status: active
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "与 anchor_weight 组约束复核"
+    wired_in: ScoreParams.research_weight
+    overridable: true
+    bounds: [0.0, 1.0]
+    group: e_blend
+    constraint: {sum: 1.0}
+    notes: "研报修正权重"
+
+  - id: midterm.data.min_consensus_coverage
+    value: 3
+    unit: count
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 且 coverage 分布统计完成"
+    wired_in: "ScoreParams.min_consensus_coverage + build_numeric_evidence(min_consensus_coverage=)"
+    overridable: true
+    bounds: [1, 10]
+    notes: "修复两处重复定义（score_engine.py:51 / evidence_rules.py:90），P1 统一透传"
+
+  - id: midterm.evidence.temperature
+    value: 0.22
+    unit: nats
+    domain: midterm
+    kind: policy
+    status: active
+    source: backtest
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 后复核语料分位数门"
+    wired_in: EvidenceParams.temperature
+    overridable: true
+    bounds: [0.05, 1.0]
+    notes: "形状约束 (a)(b) 确认；语料分位数门待复核"
+
+  - id: midterm.evidence.uncertain_p_top
+    value: 0.55
+    unit: ratio
+    domain: midterm
+    kind: policy
+    status: placeholder
+    source: design
+    version: 1
+    owner: captain
+    review_condition: "真实帧 >= 50 后复核"
+    wired_in: EvidenceParams.uncertain_p_top
+    overridable: true
+    bounds: [0.3, 0.9]
+    notes: "P_top < 阈值 => uncertain"
+
+  - id: midterm.evidence.break_lambda
+    value: 2.0
+    unit: score
+    domain: midterm
+    kind: policy
+    status: active
+    source: backtest
+    version: 1
+    owner: captain
+    review_condition: "关键格比例复核（两序均 >= 90%）"
+    wired_in: EvidenceParams.break_lambda
+    overridable: true
+    bounds: [1.0, 3.0]
+    notes: "F×E 双击证伪通路权重；S5 cap 必须同步 max(1.5, lambda)"
+
+  - id: midterm.evidence.s0_floor
+    value: 0.10
+    unit: score
+    domain: midterm
+    kind: policy
+    status: active
+    source: backtest
+    version: 1
+    owner: captain
+    review_condition: "偏多帧 S0 占比与无信号帧 P(S0) 复核"
+    wired_in: EvidenceParams.s0_floor
+    overridable: true
+    bounds: [0.0, 0.3]
+    notes: "2026-11-01 由 0.30 下调；解决 S0 恒定比较优势"

@@ -420,6 +420,27 @@ class ReportSettings(BaseModel):
     capture_payload: bool = Field(default=False, description="是否归档报告生成 payload（下一步消费）")
 
 
+class ParametersSettings(BaseModel):
+    """策略参数治理（P0；docs/implementation/framework/REPORT_CLAIM_FIRST_AND_PARAMS_GOVERNANCE_DESIGN.md §4.5）。
+
+    解析优先级（高 → 低）：函数显式 overrides（experiment/离线回放）> 本段 ``overrides`` >
+    ``params/registry.yaml`` 的 value > ``alphabee/params/models.py`` 的内置默认。
+
+    - ``profile``：v0 只支持 ``default``；未知 profile 由 resolver warn 后回 default；
+    - ``overrides``：``<参数 id> -> 数值``，如 ``midterm.score.beat_bonus: 0.1``。
+      **frozen 条目禁止在此持久化覆盖**（只允许 experiment/显式 overrides）；未知 id、
+      越界、非法类型一律由 resolver 忽略并 warning，绝不抛异常（fail-open）。
+
+    整段省略 ⇒ 全默认，旧 config 行为不变；清空 ``overrides`` 即回滚到 registry 默认值。
+    """
+
+    profile: str = Field(default="default", description="参数 profile（v0 只有 default）")
+    overrides: dict[str, float] = Field(
+        default_factory=dict,
+        description="参数 id -> 覆盖值；frozen 条目拒绝（只允许 experiment）",
+    )
+
+
 class Settings(BaseModel):
     llm: LLMConfig
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
@@ -433,6 +454,8 @@ class Settings(BaseModel):
     report_window: ReportWindowSettings = Field(default_factory=ReportWindowSettings)
     # Q1-lite：报告输出模式（缺段 ⇒ legacy，旧 config 行为不变）
     report: ReportSettings = Field(default_factory=ReportSettings)
+    # 参数治理 P0：profile + overrides（缺段 ⇒ default + 空覆盖，旧 config 行为不变）
+    parameters: ParametersSettings = Field(default_factory=ParametersSettings)
     # 公司赛道：对标组候选判定（判定 C；缺段 ⇒ 全默认值，旧 config 行为不变）
     company_track: CompanyTrackSettings = Field(default_factory=CompanyTrackSettings)
     # 驱动画像 Tier B 模型研究层（缺段 ⇒ 全默认值：enabled=false，即 D0 行为）

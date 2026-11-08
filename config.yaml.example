@@ -56,6 +56,21 @@ report:
   mode: legacy              # legacy | memo_lite
   capture_payload: false    # 预留：后续步骤消费（归档报告生成 payload 供离线 A/B），本步不读取
 
+# 策略参数治理（P0；docs/implementation/framework/REPORT_CLAIM_FIRST_AND_PARAMS_GOVERNANCE_DESIGN.md §4.5）
+# 默认值来源 = alphabee/params/models.py 的 frozen dataclass；params/registry.yaml 是 15 个
+# 决策关键常量的登记面（值/单位/bounds/状态/复核条件/owner）。
+# 解析优先级（高 → 低）：
+#   1) 函数显式 overrides（experiment / 离线回放；允许覆盖 frozen 条目）
+#   2) 本段 overrides（持久化覆盖；**frozen 条目拒绝**，只允许 experiment）
+#   3) params/registry.yaml 的 value
+#   4) dataclass 内置默认
+# fail-open：未知 id / 越界 / 非法类型 / frozen+config 覆盖 / 组约束不满足 / registry 缺失或损坏
+#           一律 warning + 回退低优先级值，绝不抛异常。整段省略 ⇒ default + 空覆盖（旧 config 行为不变）。
+# 回滚 = 清空 overrides（或删除整段）；改默认值属行为变更，必须同步 params/CHANGELOG.md 与 ROADMAP。
+parameters:
+  profile: default          # v0 只支持 default；未知 profile ⇒ warn + 回 default
+  overrides: {}             # 例：midterm.score.beat_bonus: 0.1（frozen 参数不可写在这里）
+
 # 偏离控制框架（docs/design/DEVIATION_CONTROL_FRAMEWORK.md §14.6）
 # 五段全部带默认值 ⇒ 本段可以整段省略（缺段时各读取点 fail-open 取内置默认，import 期不读配置）。
 # 此处显式列出便于运维调整与回滚；数值与 alphabee.config.DeviationSettings() 的默认值逐项一致
