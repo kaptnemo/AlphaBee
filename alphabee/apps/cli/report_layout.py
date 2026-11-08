@@ -4,11 +4,13 @@
 ``renderer.render_final_report`` 终端）共用的**标题、顺序、占位符与字符口径**：
 
 - ``legacy``：现状 13 节（归档报告 / 旧记录），顺序与标题必须与 Q0 基线逐字节一致；
-- ``memo``：Q1-lite 投资备忘录，主文六节 → 附录 A–F → 免责声明。
+- ``memo``：Q1-lite 投资备忘录，主文六节 → 审查与数据问题（摘要）→ 附录 A–F →
+  附录 G（系统问题全量）/ 附录 H（中期决策明细）→ 免责声明。其中 G/H 由
+  :func:`render_issue_digest` 与渲染面负责折叠，不属于 13 个 section key。
 
 同时提供后续 G4 门禁与 A/B 指标共用的 :func:`report_shape`：从**渲染后的 markdown**
-计算 ``main_chars`` / ``appendix_chars`` / ``issue_chars`` / ``total_chars``。三个消费者
-（渲染、门禁、A/B）只认这一份口径，避免"门禁算主文、渲染算 13 节"的漂移。
+计算 ``main_chars`` / ``appendix_chars`` / ``issue_chars`` / ``total_chars`` / ``section_count``。
+三个消费者（渲染、门禁、A/B）只认这一份口径，避免"门禁算主文、渲染算 13 节"的漂移。
 
 口径说明：
 
@@ -114,8 +116,19 @@ PLACEHOLDER_VALUES: dict[str, str] = {
     "falsification_conditions": "无可证伪条件。",
 }
 
-#: memo 终端对附录的截断字符数（标题之外最多打印的正文长度）。
-APPENDIX_CLIP_CHARS = 800
+#: memo 终端对附录的预览字符数（标题之外最多打印的正文长度；函数参数可覆盖）。
+APPENDIX_PREVIEW_CHARS = 800
+#: 兼容旧名（Q1-lite A 已对外暴露 ``APPENDIX_CLIP_CHARS``）。
+APPENDIX_CLIP_CHARS = APPENDIX_PREVIEW_CHARS
+
+#: memo 折叠块的标题（系统问题摘要 / 附录 G / 附录 H）。
+ISSUE_DIGEST_TITLE = "审查与数据问题（摘要）"
+APPENDIX_G_TITLE = "附录 G 系统问题清单"
+APPENDIX_H_TITLE = "附录 H 中期决策明细"
+#: 附录 G 每条 issue 的最大字符数（设计 §3.2.3：全量但单条 ≤600 字）。
+ISSUE_APPENDIX_MAX_CHARS = 600
+#: 主文系统问题摘要的总预算（设计 §2.2/§3.1：摘要 ≤800 字，优先于单条 160）。
+ISSUE_DIGEST_MAX_CHARS = 800
 
 #: 系统问题区标题（从该行起到文件尾；中期决策块单独拆出）。
 SYSTEM_SECTION_TITLE = "系统问题"
@@ -259,6 +272,80 @@ def ordered_blocks(sections: Mapping[str, Any] | None, layout: str = "legacy") -
     return blocks
 
 
+def _issue_field(issue: Any, name: str) -> str:
+    """读 issue 字段：兼容 ``IssueRecord`` / ``Issue`` 模型与 ``issues`` JSON dict。"""
+    if isinstance(issue, Mapping):
+        return str(issue.get(name) or "")
+    return str(getattr(issue, name, "") or "")
+
+
+def _clip_text(text: str, limit: int) -> str:
+    """按字符数截断（不追加省略号，保证结果 ≤ limit）。"""
+    return text if len(text) <= limit else text[:limit]
+
+
+def render_issue_digest(
+    issues: Any,
+    *,
+    max_items: int = 5,
+    max_chars: int = 160,
+) -> tuple[str, str]:
+    """把系统问题拆成「主文摘要 + 附录 G 全量」两份文本（纯函数、确定性、无 LLM）。
+
+    Args:
+        issues: ``IssueRecord`` / ``Issue`` 模型列表，或 issues JSON dict 列表。
+        max_items: 主文摘要保留的 critical/high 条数上限（保持原顺序）。
+        max_chars: 主文摘要每条 message 的最大字符数。
+
+    Returns:
+        ``(digest, appendix)``：digest = critical/high 前 N 条 + 严重度计数行，
+        总长 ≤ ``ISSUE_DIGEST_MAX_CHARS``（800；超出时逐步缩短单条 message，仍 ≤ ``max_chars``）；
+        appendix = 全量 issue（每条 message ≤ ``ISSUE_APPENDIX_MAX_CHARS``，不丢条）。
+        无 issue 时返回 ``("", "")``。
+    """
+    items = list(issues or [])
+    if not items:
+        return "", ""
+
+    def _line(issue: Any, message_limit: int) -> str:
+        severity = _issue_field(issue, "severity") or "?"
+        category = _issue_field(issue, "category") or "?"
+        message = _clip_text(_issue_field(issue, "message"), message_limit)
+        return f"- [{severity}] {category}: {message}"
+
+    critical_high = [issue for issue in items if _issue_field(issue, "severity") in ("critical", "high")]
+    head = critical_high[:max_items]
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    other = 0
+    for issue in items:
+        severity = _issue_field(issue, "severity")
+        if severity in counts:
+            counts[severity] += 1
+        else:
+            other += 1
+    other_part = f" / 其它 {other}" if other else ""
+    count_line = (
+        f"共 {len(items)} 条问题（critical {counts['critical']} / high {counts['high']} / "
+        f"medium {counts['medium']} / low {counts['low']}{other_part}），完整清单见附录 G。"
+    )
+
+    def _compose(message_limit: int) -> str:
+        lines = [_line(issue, message_limit) for issue in head]
+        return "\n\n".join(part for part in ("\n".join(lines), count_line) if part)
+
+    # 摘要总预算 800 字（设计 §2.2/§3.1）：超出时逐步缩短单条 message（仍 ≤ max_chars），
+    # 计数行保持完整；保证 digest 恒 ≤ ISSUE_DIGEST_MAX_CHARS（构造样例与真实 34 条均成立）。
+    message_limit = max_chars
+    digest = _compose(message_limit)
+    while len(digest) > ISSUE_DIGEST_MAX_CHARS and message_limit > 0:
+        message_limit -= 1
+        digest = _compose(message_limit)
+
+    appendix = "\n".join(_line(issue, ISSUE_APPENDIX_MAX_CHARS) for issue in items)
+    return digest, appendix
+
+
 def _markdown_section_bodies(markdown: str) -> dict[str, str]:
     """按 ``## `` 标题行切分渲染后的 markdown，返回 ``{section_key: 正文}``（正文已 strip）。"""
     bodies: dict[str, list[str]] = {}
@@ -298,7 +385,7 @@ def _issue_chars(markdown: str) -> int:
 
 
 def report_shape(markdown: str, layout: str = "legacy") -> dict[str, int]:
-    """从渲染后的 markdown 计算主文/附录/系统问题/总字符数（G4 门禁与 A/B 共用口径）。
+    """从渲染后的 markdown 计算主文/附录/系统问题/总字符数与章节数（G4/A-B 共用口径）。
 
     Args:
         markdown: 渲染后的报告全文。
@@ -306,7 +393,8 @@ def report_shape(markdown: str, layout: str = "legacy") -> dict[str, int]:
             ``main_chars`` = 主文六节之和、``appendix_chars`` = 附录 A–F 六节之和。
 
     Returns:
-        ``{"main_chars", "appendix_chars", "issue_chars", "total_chars"}``。
+        ``{"main_chars", "appendix_chars", "issue_chars", "total_chars", "section_count"}``。
+        ``section_count`` = 渲染文本中可识别的章节标题数（用于 report_ab 的指标输出）。
     """
     normalized = normalize_layout(layout)
     sections = _markdown_section_bodies(markdown)
@@ -321,4 +409,5 @@ def report_shape(markdown: str, layout: str = "legacy") -> dict[str, int]:
         "appendix_chars": sum(len(sections.get(key, "")) for key in appendix_keys),
         "issue_chars": _issue_chars(markdown),
         "total_chars": len(markdown),
+        "section_count": len(sections),
     }

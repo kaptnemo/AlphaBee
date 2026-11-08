@@ -21,6 +21,7 @@ from alphabee.apps.cli.report_layout import (
     PLACEHOLDER_VALUES,
     normalize_layout,
     ordered_blocks,
+    render_issue_digest,
     report_shape,
     section_title,
     title_to_key,
@@ -338,3 +339,71 @@ def test_legacy_record_without_layout_field_renders_identical() -> None:
         update={"report_raw": {key: value for key, value in record.report_raw.items() if key != "layout"}}
     )
     assert build_report_markdown(without_layout) == build_report_markdown(record)
+
+
+# ── Q1-lite B：系统问题折叠（render_issue_digest）────────────────────────────
+
+
+def _digest_issues() -> list[dict[str, str]]:
+    """34 条 issue 样例：2 critical / 8 high / 23 medium / 1 low（message 100 字）。"""
+    issues = [{"severity": "critical", "category": f"critical_{i}", "message": "C" * 100} for i in range(2)]
+    issues += [{"severity": "high", "category": f"high_{i}", "message": "H" * 100} for i in range(8)]
+    issues += [{"severity": "medium", "category": f"medium_{i}", "message": "M" * 100} for i in range(23)]
+    issues += [{"severity": "low", "category": "low_0", "message": "L" * 100}]
+    return issues
+
+
+def test_render_issue_digest_34_issues() -> None:
+    issues = _digest_issues()
+    digest, appendix = render_issue_digest(issues)
+    # 主文摘要 ≤800 字、只含 critical/high 前 5 条 + 计数行
+    assert len(digest) <= 800
+    assert digest.count("- [critical]") == 2
+    assert digest.count("- [high]") == 3
+    assert "[medium]" not in digest and "[low]" not in digest
+    assert "共 34 条问题（critical 2 / high 8 / medium 23 / low 1），完整清单见附录 G。" in digest
+    # 附录全量 34 条、不丢条；每条 message ≤600 字
+    appendix_lines = appendix.splitlines()
+    assert len(appendix_lines) == 34
+    long_issues = [{"severity": "high", "category": "long", "message": "X" * 1000}]
+    _, long_appendix = render_issue_digest(long_issues)
+    assert len(long_appendix.split(": ", 1)[1]) == 600
+
+
+def test_render_issue_digest_unknown_severity_and_empty() -> None:
+    assert render_issue_digest([]) == ("", "")
+    issues = [
+        {"severity": "critical", "category": "c", "message": "m1"},
+        {"severity": "weird", "category": "w", "message": "m2"},
+    ]
+    digest, appendix = render_issue_digest(issues)
+    assert "其它 1" in digest
+    assert "共 2 条问题（critical 1 / high 0 / medium 0 / low 0 / 其它 1）" in digest
+    assert len(appendix.splitlines()) == 2
+
+
+def test_render_issue_digest_respects_max_items_and_max_chars() -> None:
+    issues = [{"severity": "high", "category": f"h{i}", "message": "Y" * 50} for i in range(7)]
+    digest, _appendix = render_issue_digest(issues, max_items=3, max_chars=10)
+    detail_lines = [line for line in digest.splitlines() if line.startswith("- [")]
+    assert len(detail_lines) == 3
+    assert all(len(line.split(": ", 1)[1]) == 10 for line in detail_lines)
+    assert "共 7 条问题" in digest
+
+
+def test_report_shape_reports_section_count() -> None:
+    markdown, _bodies = _markdown_with_all_sections()
+    shape = report_shape(markdown, "legacy")
+    assert shape["section_count"] == len(LEGACY_ORDER)
+    assert shape["section_count"] == 13
+
+
+def test_render_issue_digest_total_budget_800_with_long_messages() -> None:
+    """摘要总预算 800 优先于单条 160：5 条 200 字 message 也必须 ≤800，计数行完整。"""
+    issues = [{"severity": "critical", "category": f"c{i}", "message": "Z" * 200} for i in range(5)]
+    digest, _appendix = render_issue_digest(issues)
+    assert len(digest) <= 800
+    assert "共 5 条问题（critical 5 / high 0 / medium 0 / low 0），完整清单见附录 G。" in digest
+    detail_lines = [line for line in digest.splitlines() if line.startswith("- [")]
+    assert len(detail_lines) == 5
+    assert all(len(line.split(": ", 1)[1]) <= 160 for line in detail_lines)

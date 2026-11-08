@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -310,11 +311,46 @@ def test_terminal_legacy_keeps_current_titles_and_skips_company_track(
     assert "公司赛道与对标组" not in out
 
 
-def test_terminal_memo_keeps_issues_after_sections(capsys: pytest.CaptureFixture[str]) -> None:
-    """本步不做折叠：memo 下系统问题仍在章节之后（折叠由下一步负责）。"""
+def _fold_issue_dicts() -> list[dict[str, Any]]:
+    """34 条 issue 样例（2 critical / 8 high / 23 medium / 1 low；末条带唯一尾标）。"""
+    issues = [{"severity": "critical", "category": f"critical_{i}", "message": "C" * 100} for i in range(2)]
+    issues += [{"severity": "high", "category": f"high_{i}", "message": "H" * 100} for i in range(8)]
+    issues += [{"severity": "medium", "category": f"medium_{i}", "message": "M" * 100} for i in range(23)]
+    issues += [{"severity": "low", "category": "low_0", "message": "TAILMARK"}]
+    return issues
+
+
+def test_terminal_memo_folds_issues_and_midterm(capsys: pytest.CaptureFixture[str]) -> None:
+    """memo 终端：主文 → 审查摘要 → 附录 A–F → 附录 G/H → 免责声明（附录预览 800 字）。"""
     report = _report_json(layout="memo")
-    out = _render(capsys, {"final_report": report, "issues": [{"severity": "high", "category": "x", "message": "m"}]})
-    assert out.index("一页结论") < out.index("附录 F 审查发现") < out.index("系统问题")
+    issues = _fold_issue_dicts()
+    midterm_decision = {"state": "S5", "confidence": 0.61, "position_band": "观察", "evidence_count": 16}
+    out = _render(
+        capsys,
+        {"final_report": report, "issues": issues, "midterm_decision": midterm_decision},
+    )
+
+    order = [
+        "一页结论",
+        "审查与数据问题（摘要）",
+        "附录 A 风险信号明细",
+        "附录 F 审查发现",
+        "附录 G 系统问题清单",
+        "附录 H 中期决策明细",
+        "免责声明",
+    ]
+    positions = [out.index(title) for title in order]
+    assert positions == sorted(positions)
+
+    assert "共 34 条问题（critical 2 / high 8 / medium 23 / low 1），完整清单见附录 G。" in out
+    # 附录 G 预览 ≤800 字：末条独有尾标不得出现在终端输出
+    assert "TAILMARK" not in out
+    # 附录 H 有内容（终端只展示决策摘要 + 完整块指引）
+    assert "中期决策总结 状态 S5" in out
+    assert "完整控制台块见 markdown 报告" in out
+    # memo 不再输出 legacy 的全量系统问题块
+    assert "🐞 系统问题" not in out
+    assert "共 34 个问题" not in out
 
 
 # ── t5 review F1：legacy 终端按 HEAD 原值语义（不 strip / 不额外跳过）────────
@@ -344,3 +380,209 @@ def test_terminal_legacy_head_semantics_for_padded_and_whitespace(
     # max_chars 按原值截断：raw = 2 空格 + 3000 A → 截到 3000 = 2 空格 + 2998 A
     assert "  " + "A" * 2998 in out
     assert "A" * 3000 not in out
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Q1-lite B：payload 捕获（report.capture_payload）
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _make_state(run_id: str | None = "run-test-1") -> dict[str, Any]:
+    state: dict[str, Any] = {"artifacts": [], "issues": []}
+    if run_id is not None:
+        state["run"] = SimpleNamespace(id=run_id)
+    return state
+
+
+def _patch_report_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    mode: str = "legacy",
+    capture_payload: bool = False,
+) -> None:
+    settings = SimpleNamespace(report=ReportSettings(mode=mode, capture_payload=capture_payload))
+    monkeypatch.setattr(config_mod, "get_settings", lambda: settings)
+
+
+async def _generate_with_state(
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict[str, Any],
+    content: str,
+    *,
+    mode: str = "legacy",
+    capture_payload: bool = False,
+) -> tuple[dict[str, Any], _FakeModel]:
+    fake = _FakeModel(content)
+    monkeypatch.setattr(reporter, "create_structured_model", lambda *args, **kwargs: fake)
+    _patch_report_settings(monkeypatch, mode=mode, capture_payload=capture_payload)
+    result = await reporter.generate_report(state, {})
+    return result, fake
+
+
+async def test_capture_payload_on_writes_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    import alphabee.utils.storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "get_data_root", lambda: tmp_path)
+    result, _fake = await _generate_with_state(
+        monkeypatch,
+        _make_state("run-capture-1"),
+        json.dumps(_report_json()),
+        capture_payload=True,
+    )
+    target = tmp_path / "report_payloads" / "run-capture-1.json"
+    assert target.is_file()
+    payload_json = json.loads(target.read_text(encoding="utf-8"))
+    assert "company" in payload_json
+    assert "required_issue_disclosures" in payload_json
+    # 捕获不改变报告结果
+    assert _artifact_value(result)["sections"]["executive_summary"] == "executive_summary正文"
+
+
+async def test_capture_payload_off_writes_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    import alphabee.utils.storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "get_data_root", lambda: tmp_path)
+    await _generate_with_state(monkeypatch, _make_state("run-off"), json.dumps(_report_json()))
+    assert not (tmp_path / "report_payloads").exists()
+
+
+async def test_capture_payload_write_failure_is_fail_open(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import alphabee.utils.storage as storage_mod
+
+    def _broken_data_root() -> Any:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(storage_mod, "get_data_root", _broken_data_root)
+    with caplog.at_level(logging.WARNING, logger="alphabee.orchestrator.reporter"):
+        result, _fake = await _generate_with_state(
+            monkeypatch,
+            _make_state("run-fail"),
+            json.dumps(_report_json()),
+            capture_payload=True,
+        )
+    assert "capture_report_payload failed" in caplog.text
+    assert _artifact_value(result)["title"] == "测试报告"
+    assert result["issues"] == []
+
+
+async def test_capture_payload_missing_run_id_skips(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import alphabee.utils.storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "get_data_root", lambda: tmp_path)
+    with caplog.at_level(logging.WARNING, logger="alphabee.orchestrator.reporter"):
+        await _generate_with_state(
+            monkeypatch,
+            _make_state(None),
+            json.dumps(_report_json()),
+            capture_payload=True,
+        )
+    assert "run id missing" in caplog.text
+    assert not (tmp_path / "report_payloads").exists()
+
+
+async def test_capture_payload_config_failure_falls_back_off(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    import alphabee.utils.storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "get_data_root", lambda: tmp_path)
+
+    def _broken_settings() -> Any:
+        raise RuntimeError("config unavailable")
+
+    fake = _FakeModel(json.dumps(_report_json()))
+    monkeypatch.setattr(reporter, "create_structured_model", lambda *args, **kwargs: fake)
+    monkeypatch.setattr(config_mod, "get_settings", _broken_settings)
+    result = await reporter.generate_report(_make_state("run-config-fail"), {})
+    assert _artifact_value(result)["title"] == "测试报告"
+    assert not (tmp_path / "report_payloads").exists()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Q1-lite B：_generate_report_value 与 generate_report 行为契约
+# ═══════════════════════════════════════════════════════════════════
+
+
+class _CountingRaisingModel:
+    def __init__(self) -> None:
+        self.calls: list[list[Any]] = []
+
+    def invoke(self, messages: list[Any]) -> SimpleNamespace:
+        self.calls.append(messages)
+        raise RuntimeError("boom")
+
+
+def test_generate_report_value_retry_and_model_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    factory_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def _factory(*args: Any, **kwargs: Any) -> _FakeModel:
+        factory_calls.append((args, kwargs))
+        return _FakeModel(json.dumps(_report_json()))
+
+    monkeypatch.setattr(reporter, "create_structured_model", _factory)
+    value = reporter._generate_report_value(ReportGenerationPayload(), "legacy")
+    assert "layout" not in value
+    assert factory_calls == [(("agent.report",), {"max_tokens": 8192})]  # 同一模型参数
+
+    # 空输出：重试一次（共 2 次）后抛解析异常
+    fake = _FakeModel("")
+    monkeypatch.setattr(reporter, "create_structured_model", lambda *args, **kwargs: fake)
+    with pytest.raises(reporter._ReportValueParseError):
+        reporter._generate_report_value(ReportGenerationPayload(), "legacy")
+    assert len(fake.calls) == 2
+
+    # 非法 JSON：同样重试一次
+    fake = _FakeModel("not json")
+    monkeypatch.setattr(reporter, "create_structured_model", lambda *args, **kwargs: fake)
+    with pytest.raises(reporter._ReportValueParseError):
+        reporter._generate_report_value(ReportGenerationPayload(), "memo_lite")
+    assert len(fake.calls) == 2
+
+    # 模型调用异常：原样上抛（由 generate_report 记 subagent_failure）
+    raising = _CountingRaisingModel()
+    monkeypatch.setattr(reporter, "create_structured_model", lambda *args, **kwargs: raising)
+    with pytest.raises(RuntimeError):
+        reporter._generate_report_value(ReportGenerationPayload(), "legacy")
+    assert len(raising.calls) == 1
+
+
+async def test_generate_report_issue_contract_four_cases(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 1) 成功：无 issue、layout 按 mode
+    result, _fake = await _generate_with_state(monkeypatch, _make_state(), json.dumps(_report_json()))
+    assert result["issues"] == []
+    assert "layout" not in _artifact_value(result)
+
+    # 2) 空输出：parse_error（MEDIUM）+ 确定性降级产物
+    result, fake = await _generate_with_state(monkeypatch, _make_state(), "")
+    issue = result["issues"][0]
+    assert (issue.category, issue.severity) == ("parse_error", "medium")
+    assert issue.message.startswith("ReportOutput parse failed after retry:")
+    assert "确定性降级版" in _artifact_value(result)["title"]
+    assert len(fake.calls) == 2
+
+    # 3) 非法 JSON：与空输出同口径
+    result, fake = await _generate_with_state(monkeypatch, _make_state(), '{"title": 1}')
+    issue = result["issues"][0]
+    assert (issue.category, issue.severity) == ("parse_error", "medium")
+    assert len(fake.calls) == 2
+
+    # 4) 模型异常：subagent_failure（HIGH）+ 确定性降级产物
+    raising = _CountingRaisingModel()
+    monkeypatch.setattr(reporter, "create_structured_model", lambda *args, **kwargs: raising)
+    _patch_report_settings(monkeypatch)
+    result = await reporter.generate_report(_make_state(), {})
+    issue = result["issues"][0]
+    assert (issue.category, issue.severity) == ("subagent_failure", "high")
+    assert "Report generation failed: boom" == issue.message
+    assert "确定性降级版" in _artifact_value(result)["title"]

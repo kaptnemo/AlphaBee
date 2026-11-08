@@ -353,23 +353,79 @@ def test_legacy_layout_headings_follow_legacy_order() -> None:
 
 
 def test_memo_layout_headings_follow_memo_order() -> None:
-    record = _record()
+    record = _record()  # _record 有 2 条 issue、无 midterm
     report_raw = dict(record.report_raw)
     report_raw["layout"] = "memo"
     markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
     headings = _headings(markdown)
     expected = (
         [f"## {MAIN_TITLES[key]}" for key in MAIN_SECTIONS]
+        + ["## 审查与数据问题（摘要）"]
         + [f"## {APPENDIX_TITLES[key]}" for key in APPENDIX_SECTIONS]
-        + ["## 免责声明"]
+        + ["## 附录 G 系统问题清单", "## 免责声明"]
     )
-    assert headings[: len(expected)] == expected
-    # 本步不做系统问题折叠：仍保持现状位置（章节之后）。
-    assert headings[len(expected)] == "## 系统问题"
+    assert headings == expected
     # memo 布局不复用 legacy 标题
     for legacy_title in LEGACY_TITLES.values():
         if legacy_title != "免责声明":
             assert f"## {legacy_title}" not in headings
+
+
+def _fold_issues() -> list[IssueRecord]:
+    """34 条 issue 样例：2 critical / 8 high / 23 medium / 1 low。"""
+    issues = [IssueRecord(severity="critical", category=f"critical_{i}", message="C" * 100) for i in range(2)]
+    issues += [IssueRecord(severity="high", category=f"high_{i}", message="H" * 100) for i in range(8)]
+    issues += [IssueRecord(severity="medium", category=f"medium_{i}", message="M" * 100) for i in range(23)]
+    issues += [IssueRecord(severity="low", category="low_0", message="L" * 100)]
+    return issues
+
+
+def test_memo_markdown_folding_order_with_issues_and_midterm() -> None:
+    issues = _fold_issues()
+    record = _record(issues=issues, midterm=_midterm_artifact())
+    report_raw = dict(record.report_raw)
+    report_raw["layout"] = "memo"
+    markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
+    headings = _headings(markdown)
+    expected_tail = [
+        "## 审查与数据问题（摘要）",
+        *[f"## {APPENDIX_TITLES[key]}" for key in APPENDIX_SECTIONS],
+        "## 附录 G 系统问题清单",
+        "## 附录 H 中期决策明细",
+        "## 免责声明",
+    ]
+    assert headings[6:] == expected_tail
+    assert headings[:6] == [f"## {MAIN_TITLES[key]}" for key in MAIN_SECTIONS]
+
+    # 主文摘要：计数行 + critical/high 各不超过 5 条；34 条中 medium/low 不进摘要
+    digest_start = markdown.index("## 审查与数据问题（摘要）")
+    digest_end = markdown.index("## 附录 A 风险信号明细")
+    digest = markdown[digest_start:digest_end]
+    assert "共 34 条问题（critical 2 / high 8 / medium 23 / low 1），完整清单见附录 G。" in digest
+    assert digest.count("- [critical]") == 2
+    assert digest.count("- [high]") == 3  # 前 5 条 = 2 critical + 3 high
+    assert "[medium]" not in digest and "[low]" not in digest
+
+    # 附录 G：全量 34 条，不丢条
+    g_start = markdown.index("## 附录 G 系统问题清单")
+    g_end = markdown.index("## 附录 H 中期决策明细")
+    g_lines = [line for line in markdown[g_start:g_end].splitlines() if line.startswith("- [")]
+    assert len(g_lines) == 34
+
+    # 附录 H：完整控制台块；主文元信息行仍保持一行
+    assert "中期决策总结" in markdown[g_end:]
+    assert "**中期决策**: 状态 S3 置信度 0.85 证据 12 条" in markdown
+
+
+def test_memo_markdown_without_issues_omits_digest_and_appendix_g() -> None:
+    record = _record(issues=[])
+    report_raw = dict(record.report_raw)
+    report_raw["layout"] = "memo"
+    markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
+    headings = _headings(markdown)
+    assert "## 审查与数据问题（摘要）" not in headings
+    assert "## 附录 G 系统问题清单" not in headings
+    assert headings[-1] == "## 免责声明"
 
 
 def test_memo_layout_placeholder_sections_skipped() -> None:

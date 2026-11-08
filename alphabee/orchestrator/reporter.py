@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -24,6 +25,8 @@ from alphabee.utils.pipeline import extract_text, make_id, parse_json
 
 #: report.mode → 报告布局。legacy 保持现状；memo_lite 产 memo 布局（Q1-lite）。
 _LAYOUT_BY_REPORT_MODE: dict[str, str] = {"legacy": "legacy", "memo_lite": "memo"}
+
+_logger = logging.getLogger(__name__)
 
 
 def _make_id(prefix: str) -> str:
@@ -270,6 +273,154 @@ def _fallback_report(summary: str) -> dict[str, Any]:
     return _apply_layout(report.model_dump(mode="json"), "legacy")
 
 
+class _ReportValueParseError(RuntimeError):
+    """两次尝试后仍无法解析出合法报告 JSON（由 generate_report 转成 parse_error issue）。"""
+
+    def __init__(self, parse_error: Exception | None, raw_text: str) -> None:
+        super().__init__(f"ReportOutput parse failed after retry: {parse_error}")
+        self.parse_error = parse_error
+        self.raw_text = raw_text
+
+
+def _capture_payload_enabled() -> bool:
+    """读取 ``report.capture_payload``；延迟 import + fail-open 默认 False。"""
+    try:
+        from alphabee.config import get_settings
+
+        return bool(get_settings().report.capture_payload)
+    except Exception:  # noqa: BLE001 - 配置不可用时不得阻断报告生成
+        return False
+
+
+def _state_run_id(state: OrchestratorState) -> str | None:
+    """取 ``state["run"].id``（兼容 model / dict 两种 state 形态）。"""
+    run = state.get("run")
+    if run is None:
+        return None
+    run_id = getattr(run, "id", None)
+    if run_id is None and isinstance(run, dict):
+        run_id = run.get("id")
+    return str(run_id) if run_id else None
+
+
+def _capture_report_payload(state: OrchestratorState, payload: ReportGenerationPayload) -> None:
+    """``report.capture_payload=true`` 时把输入 payload 落到 ``<data_root>/report_payloads/<run_id>.json``。
+
+    fail-open：配置缺失 / run id 缺失 / 写盘失败都只 warning，不影响报告生成。
+    """
+    if not _capture_payload_enabled():
+        return
+    run_id = _state_run_id(state)
+    if not run_id:
+        _logger.warning("capture_payload enabled but run id missing; skip payload capture")
+        return
+    safe_run_id = run_id.replace("/", "_").replace("\\", "_")
+    try:
+        from alphabee.utils.storage import get_data_root
+
+        target = get_data_root() / "report_payloads" / f"{safe_run_id}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(payload.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001 - 捕获落盘失败，绝不影响报告生成
+        _logger.warning("capture_report_payload failed: %s", exc)
+
+
+def _track_hint(payload: ReportGenerationPayload) -> str:
+    """公司赛道语境指令（COMPANY_TRACK Phase F5）：有 track 时要求报告含对标组对比。"""
+    track_hint = ""
+    if payload.company_track is not None:
+        track_hint = (
+            "\n报告必须包含「公司赛道/对标组」章节：公司真实赛道为"
+            f"「{payload.company_track.track_label or '未识别'}」，结合对标组基准"
+            "（company_track.peer_benchmarks）说明公司相对真对手（而非申万行业）的位置。"
+            + (
+                f"对标组置信度为「{payload.company_track.peer_confidence}」"
+                f"（{payload.company_track.peer_confidence_basis}）：**必须在报告中显式提示同业基准参考性弱**，"
+                "不得据其下强结论。"
+                if payload.company_track.peer_confidence_low
+                else ""
+            )
+        )
+        if payload.company_track.stale:
+            track_hint += "公司赛道数据已过期，必须显式写出「行业/赛道上下文可能过期」。"
+    return track_hint
+
+
+def _generate_report_value(
+    payload: ReportGenerationPayload,
+    mode: str,
+    rewrite_reason: str | None = None,
+    prior_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """单次报告生成：模型调用 + 重试一次 + 解析校验 + 按 mode 写/剔 ``layout``。
+
+    失败语义与 Q1-lite B 改造前一致：
+
+    - 两次尝试（首次 + 解析/空输出重试一次）后仍无法解析 ⇒ 抛 :class:`_ReportValueParseError`；
+    - 模型调用异常原样上抛。
+
+    调用方（``generate_report`` / ``scripts/report_ab.py``）负责记录 issue 与确定性降级。
+    """
+    layout = _LAYOUT_BY_REPORT_MODE.get(mode, "legacy")
+    system_prompt = REPORT_GENERATOR_PROMPT_MEMO if mode == "memo_lite" else REPORT_GENERATOR_PROMPT
+    prompt_text = payload.model_dump_json(indent=2)
+    track_hint = _track_hint(payload)
+    # max_tokens 放宽，避免推理型模型把输出预算耗在思考过程、正文被截成空。
+    # create_structured_model 绑定 json_object 容器约束：API 层保证输出是合法 JSON
+    # （无散文/栅栏），字段结构仍由 json_instruction + parse_json + Pydantic 校验兜底。
+    model = create_structured_model("agent.report", max_tokens=8192)
+    raw_text = ""
+    parse_error: Exception | None = None
+    for attempt in range(2):
+        # 首次空输出或解析失败时重试一次，并追加“纯 JSON 输出”的强硬提示。
+        # 推理型模型偶发只输出推理过程、不输出最终正文，重试可显著提高成功率。
+        retry_hint = (
+            ""
+            if attempt == 0
+            else (
+                "\n\n## 重要：上一次输出为空或无法解析为 JSON。\n"
+                "请只输出一个完整的、合法的纯 JSON 对象，不要输出任何分析文字、"
+                "Markdown 代码块标记或前后缀说明。"
+            )
+        )
+        response = model.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(
+                    content=(
+                        json_instruction(ReportOutput)
+                        + "\n\n"
+                        + track_hint
+                        + (
+                            "请基于以下结构化数据生成财报质量体检报告。\n\n"
+                            if not rewrite_reason
+                            else "这是一次基于质量 gate 的重写，请优先修复以下问题后再生成新报告：\n"
+                            f"- {rewrite_reason}\n\n"
+                            "请保持所有判断忠实于输入 JSON，不要新增分析，只修复结构覆盖、风险披露和冲突呈现。\n\n"
+                        )
+                        + (
+                            f"上一版报告：\n```json\n{json.dumps(prior_report, ensure_ascii=False, indent=2)}\n```\n\n"
+                            if rewrite_reason and prior_report
+                            else ""
+                        )
+                        + f"输入数据：\n```json\n{prompt_text}\n```"
+                        + retry_hint
+                    )
+                ),
+            ]
+        )
+        raw_text = extract_text(response.content)
+        try:
+            parsed_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")
+            return _apply_layout(parsed_value, layout)
+        except Exception as exc:
+            parse_error = exc
+    raise _ReportValueParseError(parse_error, raw_text)
+
+
 async def generate_report(
     state: OrchestratorState,
     config: RunnableConfig,
@@ -290,29 +441,12 @@ async def generate_report(
     )
 
     payload = build_report_generation_payload(state)
-    prompt_text = payload.model_dump_json(indent=2)
     # Q1-lite：按 report.mode 选 prompt 与布局（配置读取失败 ⇒ legacy，旧路径不变）。
-    mode, layout = resolve_report_mode()
-    system_prompt = REPORT_GENERATOR_PROMPT_MEMO if mode == "memo_lite" else REPORT_GENERATOR_PROMPT
-    # 公司赛道语境指令（COMPANY_TRACK Phase F5）：有 track 时要求报告含对标组对比
-    track_hint = ""
-    if payload.company_track is not None:
-        track_hint = (
-            "\n报告必须包含「公司赛道/对标组」章节：公司真实赛道为"
-            f"「{payload.company_track.track_label or '未识别'}」，结合对标组基准"
-            "（company_track.peer_benchmarks）说明公司相对真对手（而非申万行业）的位置。"
-            + (
-                f"对标组置信度为「{payload.company_track.peer_confidence}」"
-                f"（{payload.company_track.peer_confidence_basis}）：**必须在报告中显式提示同业基准参考性弱**，"
-                "不得据其下强结论。"
-                if payload.company_track.peer_confidence_low
-                else ""
-            )
-        )
-        if payload.company_track.stale:
-            track_hint += "公司赛道数据已过期，必须显式写出「行业/赛道上下文可能过期」。"
-    rewrite_reason = state.get("report_rewrite_reason")
+    mode, _layout = resolve_report_mode()
+    # Q1-lite B：payload 捕获（开关关闭 ⇒ 零 IO；失败 fail-open）。
+    _capture_report_payload(state, payload)
     new_issues: list[Issue] = []
+    rewrite_reason = state.get("report_rewrite_reason")
     prior_report = None
     if rewrite_reason:
         # 质量 gate 触发重写时，会把上一版报告一并交给模型。
@@ -323,75 +457,24 @@ async def generate_report(
                 break
 
     try:
-        # max_tokens 放宽，避免推理型模型把输出预算耗在思考过程、正文被截成空。
-        # create_structured_model 绑定 json_object 容器约束：API 层保证输出是合法 JSON
-        # （无散文/栅栏），字段结构仍由 json_instruction + parse_json + Pydantic 校验兜底。
-        model = create_structured_model("agent.report", max_tokens=8192)
-        raw_text = ""
-        parse_error: Exception | None = None
-        for attempt in range(2):
-            # 首次空输出或解析失败时重试一次，并追加“纯 JSON 输出”的强硬提示。
-            # 推理型模型偶发只输出推理过程、不输出最终正文，重试可显著提高成功率。
-            retry_hint = (
-                ""
-                if attempt == 0
-                else (
-                    "\n\n## 重要：上一次输出为空或无法解析为 JSON。\n"
-                    "请只输出一个完整的、合法的纯 JSON 对象，不要输出任何分析文字、"
-                    "Markdown 代码块标记或前后缀说明。"
-                )
+        report_value = _generate_report_value(payload, mode, rewrite_reason, prior_report)
+    except _ReportValueParseError as exc:
+        new_issues.append(
+            Issue(
+                id=_make_id("issue"),
+                severity=IssueSeverity.MEDIUM,
+                category="parse_error",
+                message=f"ReportOutput parse failed after retry: {exc.parse_error}",
+                related_step=step.id,
             )
-            response = model.invoke(
-                [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(
-                        content=(
-                            json_instruction(ReportOutput)
-                            + "\n\n"
-                            + track_hint
-                            + (
-                                "请基于以下结构化数据生成财报质量体检报告。\n\n"
-                                if not rewrite_reason
-                                else "这是一次基于质量 gate 的重写，请优先修复以下问题后再生成新报告：\n"
-                                f"- {rewrite_reason}\n\n"
-                                "请保持所有判断忠实于输入 JSON，不要新增分析，只修复结构覆盖、风险披露和冲突呈现。\n\n"
-                            )
-                            + (
-                                f"上一版报告：\n```json\n{json.dumps(prior_report, ensure_ascii=False, indent=2)}\n```\n\n"
-                                if rewrite_reason and prior_report
-                                else ""
-                            )
-                            + f"输入数据：\n```json\n{prompt_text}\n```"
-                            + retry_hint
-                        )
-                    ),
-                ]
-            )
-            raw_text = extract_text(response.content)
-            try:
-                parsed_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")
-                report_value = _apply_layout(parsed_value, layout)
-                break
-            except Exception as exc:
-                parse_error = exc
-                report_value = None
-        if report_value is None:
-            new_issues.append(
-                Issue(
-                    id=_make_id("issue"),
-                    severity=IssueSeverity.MEDIUM,
-                    category="parse_error",
-                    message=f"ReportOutput parse failed after retry: {parse_error}",
-                    related_step=step.id,
-                )
-            )
-            # LLM 连续空输出时，用结构化 payload 拼一份可消费的确定性报告，
-            # 保证最终交付仍有实质内容（信号/异常/冲突/论点/审查问题）。
-            report_value = build_deterministic_report(
-                payload,
-                failure_reason=f"LLM 返回空文本或无法解析。原始输出：{raw_text[:200]}",
-                mode=mode,
-            )
+        )
+        # LLM 连续空输出时，用结构化 payload 拼一份可消费的确定性报告，
+        # 保证最终交付仍有实质内容（信号/异常/冲突/论点/审查问题）。
+        report_value = build_deterministic_report(
+            payload,
+            failure_reason=f"LLM 返回空文本或无法解析。原始输出：{exc.raw_text[:200]}",
+            mode=mode,
+        )
     except Exception as exc:
         new_issues.append(
             Issue(

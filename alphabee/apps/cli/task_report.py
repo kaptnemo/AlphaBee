@@ -26,11 +26,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from alphabee.apps.cli.report_layout import PLACEHOLDER_VALUES, normalize_layout, ordered_blocks
+from alphabee.apps.cli.report_layout import (
+    APPENDIX_G_TITLE,
+    APPENDIX_H_TITLE,
+    APPENDIX_SECTIONS,
+    ISSUE_DIGEST_TITLE,
+    MAIN_SECTIONS,
+    PLACEHOLDER_VALUES,
+    normalize_layout,
+    ordered_blocks,
+    render_issue_digest,
+)
 from alphabee.task_records.models import TaskRecord
 
 _MISSING_REPORT_NOTE = "（该记录未包含最终报告：report_raw 为空）"
@@ -82,21 +93,154 @@ def _meta_lines(record: TaskRecord, raw: dict[str, Any]) -> list[str]:
     return lines
 
 
-def build_report_markdown(record: TaskRecord) -> str:
-    """把单条 :class:`TaskRecord` 渲染为纯 markdown 报告（确定性、无 ANSI、禁 LLM）。
+def _issue_field(issue: Any, name: str, default: str = "") -> str:
+    """读 issue 字段：兼容 ``IssueRecord`` / ``Issue`` 模型与 issues JSON dict。"""
+    if isinstance(issue, Mapping):
+        return str(issue.get(name) or default)
+    return str(getattr(issue, name, None) or default)
+
+
+def _append_section(parts: list[str], title: str, text: str) -> None:
+    parts.append(f"## {title}")
+    parts.append("")
+    parts.append(text)
+    parts.append("")
+
+
+def _append_legacy_sections(
+    parts: list[str],
+    sections: Any,
+    *,
+    issues: Any,
+    midterm: Any,
+    midterm_time_points: Any,
+) -> None:
+    """legacy 渲染（与 Q1-lite 前逐字节一致）：13 节 → 系统问题全量 → 中期块。"""
+    for block in ordered_blocks(sections, "legacy"):
+        # markdown 面按 strip 后文本判空/比占位符（HEAD 语义；过滤职责在消费者）。
+        if not block.text:
+            continue
+        if block.text == PLACEHOLDER_VALUES.get(block.key):
+            continue
+        _append_section(parts, block.title, block.text)
+
+    issue_list = list(issues or [])
+    if issue_list:
+        parts.append("## 系统问题")
+        parts.append("")
+        for issue in issue_list:
+            parts.append(
+                f"- [{_issue_field(issue, 'severity', '?')}] "
+                f"{_issue_field(issue, 'category', '?')}: {_issue_field(issue, 'message', '')}"
+            )
+        parts.append("")
+        parts.append(f"共 {len(issue_list)} 个问题")
+        parts.append("")
+
+    if midterm:
+        from alphabee.orchestrator.nodes.midterm_reporter import (
+            ReportTimePoints,
+            render_midterm_decision_summary,
+        )
+
+        time_points = midterm_time_points if midterm_time_points is not None else ReportTimePoints()
+        parts.append(render_midterm_decision_summary(midterm, time_points=time_points))
+
+
+def _append_memo_sections(
+    parts: list[str],
+    sections: Any,
+    *,
+    issues: Any,
+    midterm: Any,
+    midterm_time_points: Any,
+) -> None:
+    """memo 渲染：主文六节 → 审查摘要 → 附录 A–F → **附录 G/H** → 免责声明。
+
+    折叠顺序（设计 §3.2.3/§3.2.4）：系统问题主文只留 critical/high 前 5 条摘要 + 计数行，
+    全量进附录 G；中期决策完整控制台块进附录 H；免责声明始终最后。未知 section key
+    保持原位（附录 A–F 之后、附录 G 之前）透传，fail-open 不丢内容。
+    """
+    blocks = ordered_blocks(sections, "memo")
+    main_blocks = [block for block in blocks if block.key in MAIN_SECTIONS]
+    appendix_blocks = [block for block in blocks if block.key in APPENDIX_SECTIONS]
+    unknown_blocks = [
+        block
+        for block in blocks
+        if block.key not in MAIN_SECTIONS and block.key not in APPENDIX_SECTIONS and block.key != "disclaimer"
+    ]
+    disclaimer_block = next((block for block in blocks if block.key == "disclaimer"), None)
+
+    def _iter_renderable(candidates: list[Any]) -> list[Any]:
+        renderable = []
+        for block in candidates:
+            if not block.text:
+                continue
+            if block.text == PLACEHOLDER_VALUES.get(block.key):
+                continue
+            renderable.append(block)
+        return renderable
+
+    for block in _iter_renderable(main_blocks):
+        _append_section(parts, block.title, block.text)
+
+    issue_list = list(issues or [])
+    digest, appendix_issues = render_issue_digest(issue_list)
+    if digest:
+        _append_section(parts, ISSUE_DIGEST_TITLE, digest)
+
+    for block in _iter_renderable(appendix_blocks):
+        _append_section(parts, block.title, block.text)
+    for block in _iter_renderable(unknown_blocks):
+        _append_section(parts, block.title, block.text)
+
+    if appendix_issues:
+        _append_section(parts, APPENDIX_G_TITLE, appendix_issues)
+
+    if midterm:
+        from alphabee.orchestrator.nodes.midterm_reporter import (
+            ReportTimePoints,
+            render_midterm_decision_summary,
+        )
+
+        time_points = midterm_time_points if midterm_time_points is not None else ReportTimePoints()
+        _append_section(
+            parts,
+            APPENDIX_H_TITLE,
+            render_midterm_decision_summary(midterm, time_points=time_points),
+        )
+
+    if disclaimer_block is not None and disclaimer_block.text:
+        _append_section(parts, disclaimer_block.title, disclaimer_block.text)
+
+
+def render_report_dict(
+    report_raw: dict[str, Any] | None,
+    *,
+    issues: Any = None,
+    midterm: Any = None,
+    meta_lines: Any = (),
+    midterm_time_points: Any = None,
+    fallback_title: str = "投资分析报告",
+) -> str:
+    """按报告 dict 渲染纯 markdown（纯函数、确定性、禁 LLM/网络）。
+
+    ``build_report_markdown`` 与 A/B 脚本共用该入口，避免复制标题/顺序/占位符逻辑：
+    ``layout`` 从 ``report_raw["layout"]`` 读取；legacy 输出与 Q1-lite 前逐字节一致；
+    memo 按「主文六节 → 审查摘要 → 附录 A–F → 附录 G/H → 免责声明」输出折叠块。
 
     Args:
-        record: ``TaskStore.load(task_id)`` 载入的记录。
-
-    Returns:
-        markdown 字符串（末尾恰好一个换行）；``report_raw`` 缺失/空时返回
-        最小骨架 + 显式占位说明（fail-open，不抛）。
+        report_raw: 报告 JSON（含 title/summary/sections/layout）。
+        issues: issue 模型/dict 列表（memo 走 :func:`render_issue_digest`；legacy 全量输出）。
+        midterm: 中期决策 artifact（``CompanyStateArtifact``，可为 None）。
+        meta_lines: 头部元信息行（``build_report_markdown`` 传入记录级元信息；A/B 脚本为空）。
+        midterm_time_points: 中期块头部时点（缺省 ``ReportTimePoints()``）。
+        fallback_title: ``report_raw`` 无 title 时的标题兜底。
     """
-    raw = record.report_raw or {}
-    title = str(raw.get("title") or record.query or "投资分析报告")
-
+    raw = dict(report_raw or {})
+    title = str(raw.get("title") or fallback_title)
     parts: list[str] = [f"# {title}", ""]
-    parts.extend(_meta_lines(record, raw))
+    parts.extend(meta_lines)
     parts.append("")
 
     summary = str(raw.get("summary") or "").strip()
@@ -109,33 +253,39 @@ def build_report_markdown(record: TaskRecord) -> str:
     if not raw:
         parts.append(f"_{_MISSING_REPORT_NOTE}_")
         parts.append("")
-    for block in ordered_blocks(sections, layout):
-        # markdown 面按 strip 后文本判空/比占位符（HEAD 语义；过滤职责在消费者）。
-        if not block.text:
-            continue
-        if block.text == PLACEHOLDER_VALUES.get(block.key):
-            continue
-        parts.append(f"## {block.title}")
-        parts.append("")
-        parts.append(block.text)
-        parts.append("")
-
-    issues = list(record.issues or [])
-    if issues:
-        parts.append("## 系统问题")
-        parts.append("")
-        for issue in issues:
-            parts.append(f"- [{issue.severity}] {issue.category}: {issue.message}")
-        parts.append("")
-        parts.append(f"共 {len(issues)} 个问题")
-        parts.append("")
-
-    midterm = record.midterm
-    if midterm:
-        from alphabee.orchestrator.nodes.midterm_reporter import (
-            ReportTimePoints,
-            render_midterm_decision_summary,
+    if layout == "memo":
+        _append_memo_sections(
+            parts,
+            sections,
+            issues=issues,
+            midterm=midterm,
+            midterm_time_points=midterm_time_points,
         )
+    else:
+        _append_legacy_sections(
+            parts,
+            sections,
+            issues=issues,
+            midterm=midterm,
+            midterm_time_points=midterm_time_points,
+        )
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def build_report_markdown(record: TaskRecord) -> str:
+    """把单条 :class:`TaskRecord` 渲染为纯 markdown 报告（确定性、无 ANSI、禁 LLM）。
+
+    Args:
+        record: ``TaskStore.load(task_id)`` 载入的记录。
+
+    Returns:
+        markdown 字符串（末尾恰好一个换行）；``report_raw`` 缺失/空时返回
+        最小骨架 + 显式占位说明（fail-open，不抛）。
+    """
+    raw = record.report_raw or {}
+    time_points = None
+    if record.midterm:
+        from alphabee.orchestrator.nodes.midterm_reporter import ReportTimePoints
 
         # P2-6：两个口径的时点随记录落库，这里与运行期渲染复用同一结构；旧记录为空 ⇒
         # 渲染「（未提供）」，不做决策日 / 采集日兜底。
@@ -146,9 +296,14 @@ def build_report_markdown(record: TaskRecord) -> str:
             valuation_pe_ttm=record.valuation_pe_ttm,
             valuation_pb=record.valuation_pb,
         )
-        parts.append(render_midterm_decision_summary(midterm, time_points=time_points))
-
-    return "\n".join(parts).rstrip() + "\n"
+    return render_report_dict(
+        raw,
+        issues=record.issues or [],
+        midterm=record.midterm,
+        meta_lines=_meta_lines(record, raw),
+        midterm_time_points=time_points,
+        fallback_title=str(record.query or "投资分析报告"),
+    )
 
 
 def default_report_output(record: TaskRecord) -> Path:

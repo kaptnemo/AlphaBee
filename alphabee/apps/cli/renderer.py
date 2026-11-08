@@ -14,11 +14,16 @@ from typing import Any, NamedTuple
 from alphabee.apps.cli.colors import Color, color, hr
 from alphabee.apps.cli.parsing import classify_call, truncate_json
 from alphabee.apps.cli.report_layout import (
-    APPENDIX_CLIP_CHARS,
+    APPENDIX_G_TITLE,
+    APPENDIX_H_TITLE,
+    APPENDIX_PREVIEW_CHARS,
     APPENDIX_SECTIONS,
+    ISSUE_DIGEST_TITLE,
+    MAIN_SECTIONS,
     PLACEHOLDER_VALUES,
     normalize_layout,
     ordered_blocks,
+    render_issue_digest,
 )
 from alphabee.apps.cli.report_layout import (
     SectionBlock as ReportSectionBlock,
@@ -805,12 +810,119 @@ def _print_section_block(
     print()
 
 
-def render_final_report(final_payload: dict[str, Any], *, appendix_clip_chars: int = APPENDIX_CLIP_CHARS) -> None:
+def _preview_text(text: str, limit: int) -> str:
+    """附录预览：超过 ``limit`` 字符时截断并标注（完整内容见最终 JSON）。"""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n\n  ...(已截断，完整内容见最终 JSON)"
+
+
+def _print_plain_block(
+    title: str,
+    text: str,
+    *,
+    emoji: str,
+    title_color: str = Color.YELLOW,
+    hr_color: str = Color.CYAN,
+    preview_chars: int | None = None,
+) -> None:
+    """打印折叠块（审查摘要 / 附录 G / 附录 H）：标题 + 正文（可选预览截断）。"""
+    print(hr("─", 60, hr_color))
+    print(color(f"  {emoji} {title}", Color.BOLD, title_color))
+    print(hr("─", 60, hr_color))
+    print(_preview_text(text, preview_chars) if preview_chars is not None else text)
+    print()
+
+
+def _midterm_decision_text(midterm: dict[str, Any]) -> str:
+    """把 finalize payload 的 ``midterm_decision`` 摘要渲染为附录 H 的终端文本。"""
+    state = midterm.get("state") or "—"
+    confidence = midterm.get("confidence")
+    confidence_str = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "—"
+    band = midterm.get("position_band") or "—"
+    evidence = midterm.get("evidence_count", 0)
+    return (
+        f"中期决策总结 状态 {state}  置信度 {confidence_str}  仓位 {band}  证据 {evidence} 条\n\n"
+        "（终端仅展示决策摘要；完整控制台块见 markdown 报告的附录 H。）"
+    )
+
+
+def _render_memo_body(
+    sections: dict[str, Any],
+    *,
+    issues: list[dict[str, Any]],
+    midterm: dict[str, Any] | None,
+    appendix_clip_chars: int,
+) -> None:
+    """memo 终端：主文六节 → 审查摘要 → 附录 A–F → 附录 G/H → 免责声明。"""
+    blocks = ordered_blocks(sections, "memo")
+    disclaimer = ""
+    for block in blocks:
+        if block.key == "disclaimer":
+            disclaimer = block.text
+            continue
+        if block.key not in MAIN_SECTIONS:
+            continue
+        if not block.text or block.text == PLACEHOLDER_VALUES.get(block.key):
+            continue
+        spec = _TERMINAL_SECTION_SPECS.get(block.key)
+        if spec is not None:
+            _print_section_block(
+                block,
+                spec,
+                display_text=block.text,
+                layout="memo",
+                appendix_clip_chars=appendix_clip_chars,
+            )
+
+    digest, appendix_issues = render_issue_digest(issues)
+    if digest:
+        _print_plain_block(ISSUE_DIGEST_TITLE, digest, emoji="🧾")
+
+    for block in blocks:
+        if block.key not in APPENDIX_SECTIONS:
+            continue
+        if not block.text or block.text == PLACEHOLDER_VALUES.get(block.key):
+            continue
+        spec = _TERMINAL_SECTION_SPECS.get(block.key)
+        if spec is not None:
+            _print_section_block(
+                block,
+                spec,
+                display_text=block.text,
+                layout="memo",
+                appendix_clip_chars=appendix_clip_chars,
+            )
+
+    if appendix_issues:
+        _print_plain_block(APPENDIX_G_TITLE, appendix_issues, emoji="🐞", preview_chars=appendix_clip_chars)
+    if isinstance(midterm, dict):
+        _print_plain_block(
+            APPENDIX_H_TITLE,
+            _midterm_decision_text(midterm),
+            emoji="🗒️",
+            preview_chars=appendix_clip_chars,
+        )
+
+    if disclaimer:
+        print(hr("─", 60, Color.GRAY))
+        print(color("  免责声明", Color.BOLD, Color.GRAY))
+        print(hr("─", 60, Color.GRAY))
+        print(color(disclaimer, Color.DIM))
+        print(hr("─", 60, Color.GRAY))
+        print()
+
+
+def render_final_report(
+    final_payload: dict[str, Any],
+    *,
+    appendix_clip_chars: int = APPENDIX_PREVIEW_CHARS,
+) -> None:
     """Parse and render the final JSON report payload in a readable format.
 
     布局从 ``report["layout"]`` 读取（缺省 legacy，不读当前配置）：legacy 保持旧的
-    13 节终端打印流程；memo 打印主文六节 + 附录 A–F（附录只打印标题 + 前
-    ``appendix_clip_chars`` 字）。系统问题/中期块本步不做折叠，仍在原位置输出。
+    13 节终端打印流程（逐字节不变）；memo 打印主文六节 + 审查摘要 + 附录 A–H
+    （附录只打印标题 + 前 ``appendix_clip_chars`` 字）+ 免责声明。
     """
     report = final_payload.get("final_report", {})
     if not report or not isinstance(report, dict):
@@ -871,16 +983,22 @@ def render_final_report(final_payload: dict[str, Any], *, appendix_clip_chars: i
         print(f"  {summary}")
         print()
 
-    # 章节顺序/标题由 report_layout 提供；过滤与展示文本由本函数按 HEAD 语义执行：
-    # - legacy 终端按**原值**判断（if value / value != placeholder），原值带空白时照旧打印；
-    # - memo 终端是新布局，按 strip 后文本判断（与 markdown 面一致）。
-    # 免责声明仍按旧位置（issues 之后）打印，Q1-lite B 的折叠步骤再调整。
+    issues = list(final_payload.get("issues", []) or [])
+    if layout == "memo":
+        _render_memo_body(
+            sections,
+            issues=issues,
+            midterm=midterm if isinstance(midterm, dict) else None,
+            appendix_clip_chars=appendix_clip_chars,
+        )
+        return
+
+    # ── legacy：保持 Q1-lite 前的终端打印流程（逐字节不变）──
+    # 章节顺序/标题由 report_layout 提供；过滤与展示文本按 HEAD 语义执行：按**原值**
+    # 判断（if value / value != placeholder），原值带空白时照旧打印。
     disclaimer = ""
-    for block in ordered_blocks(sections, layout):
-        if layout == "legacy":
-            display_text = block.raw_text
-        else:
-            display_text = block.text
+    for block in ordered_blocks(sections, "legacy"):
+        display_text = block.raw_text
         if block.key == "disclaimer":
             disclaimer = display_text
             continue
@@ -891,17 +1009,16 @@ def render_final_report(final_payload: dict[str, Any], *, appendix_clip_chars: i
             continue
         if display_text == PLACEHOLDER_VALUES.get(block.key):
             continue
-        if layout == "legacy" and spec.legacy_only:
+        if spec.legacy_only:
             continue
         _print_section_block(
             block,
             spec,
             display_text=display_text,
-            layout=layout,
+            layout="legacy",
             appendix_clip_chars=appendix_clip_chars,
         )
 
-    issues = final_payload.get("issues", [])
     if issues:
         print(hr("─", 60, Color.CYAN))
         print(color("  🐞 系统问题", Color.BOLD, Color.YELLOW))
