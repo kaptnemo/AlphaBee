@@ -9,10 +9,20 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from alphabee.apps.cli.colors import Color, color, hr
 from alphabee.apps.cli.parsing import classify_call, truncate_json
+from alphabee.apps.cli.report_layout import (
+    APPENDIX_CLIP_CHARS,
+    APPENDIX_SECTIONS,
+    PLACEHOLDER_VALUES,
+    normalize_layout,
+    ordered_blocks,
+)
+from alphabee.apps.cli.report_layout import (
+    SectionBlock as ReportSectionBlock,
+)
 
 # ---------------------------------------------------------------------------
 # Stage definitions (for progress tracking)
@@ -740,8 +750,68 @@ def print_node_update_summary(node_name: str, node_update: dict[str, Any], elaps
         print()
 
 
-def render_final_report(final_payload: dict[str, Any]) -> None:
-    """Parse and render the final JSON report payload in a readable format."""
+class _TerminalSectionSpec(NamedTuple):
+    """终端章节展示规格：标题文案来自 ``report_layout``，此处只保留展示属性。"""
+
+    emoji: str
+    title_color: str
+    hr_color: str
+    max_chars: int | None = None
+    indent: bool = False
+    legacy_only: bool = False
+
+
+#: 终端展示规格（key 与 ``report_layout`` 的 section key 一一对应；未知 key 不打印，
+#: 与旧终端行为一致）。``company_track`` 在旧终端未渲染，legacy 继续跳过、memo 作为附录 E 打印。
+_TERMINAL_SECTION_SPECS: dict[str, _TerminalSectionSpec] = {
+    "executive_summary": _TerminalSectionSpec("📌", Color.CYAN, Color.CYAN, indent=True),
+    "investment_viewpoint": _TerminalSectionSpec("🎯", Color.MAGENTA, Color.MAGENTA, max_chars=3000),
+    "scenario_analysis": _TerminalSectionSpec("🔮", Color.MAGENTA, Color.MAGENTA),
+    "key_metrics": _TerminalSectionSpec("📈", Color.CYAN, Color.CYAN),
+    "signal_analysis": _TerminalSectionSpec("🚨", Color.CYAN, Color.CYAN),
+    "anomaly_detection": _TerminalSectionSpec("🔍", Color.CYAN, Color.CYAN),
+    "conflict_analysis": _TerminalSectionSpec("🔬", Color.MAGENTA, Color.MAGENTA),
+    "dimension_analysis": _TerminalSectionSpec("🏛", Color.CYAN, Color.CYAN, max_chars=2000),
+    "company_track": _TerminalSectionSpec("🏷", Color.CYAN, Color.CYAN, legacy_only=True),
+    "review_findings": _TerminalSectionSpec("🔎", Color.CYAN, Color.CYAN),
+    "falsification_conditions": _TerminalSectionSpec("⚖️", Color.YELLOW, Color.YELLOW),
+    "risks": _TerminalSectionSpec("⚠️", Color.RED, Color.CYAN),
+}
+
+
+def _print_section_block(
+    block: ReportSectionBlock,
+    spec: _TerminalSectionSpec,
+    *,
+    display_text: str,
+    layout: str,
+    appendix_clip_chars: int,
+) -> None:
+    """打印一个章节块；legacy 保留旧截断阈值（按原值），memo 附录只打印标题 + 前 N 字。"""
+    text = display_text
+    if layout == "memo" and block.key in APPENDIX_SECTIONS:
+        if len(text) > appendix_clip_chars:
+            text = text[:appendix_clip_chars] + "\n\n  ...(已截断，完整内容见最终 JSON)"
+    elif layout == "legacy" and spec.max_chars is not None and len(text) > spec.max_chars:
+        text = text[: spec.max_chars] + "\n\n  ...(已截断，完整内容见最终 JSON)"
+
+    print(hr("─", 60, spec.hr_color))
+    print(color(f"  {spec.emoji} {block.title}", Color.BOLD, spec.title_color))
+    print(hr("─", 60, spec.hr_color))
+    if layout == "legacy" and spec.indent:
+        print(f"  {text}")
+    else:
+        print(text)
+    print()
+
+
+def render_final_report(final_payload: dict[str, Any], *, appendix_clip_chars: int = APPENDIX_CLIP_CHARS) -> None:
+    """Parse and render the final JSON report payload in a readable format.
+
+    布局从 ``report["layout"]`` 读取（缺省 legacy，不读当前配置）：legacy 保持旧的
+    13 节终端打印流程；memo 打印主文六节 + 附录 A–F（附录只打印标题 + 前
+    ``appendix_clip_chars`` 字）。系统问题/中期块本步不做折叠，仍在原位置输出。
+    """
     report = final_payload.get("final_report", {})
     if not report or not isinstance(report, dict):
         return
@@ -751,6 +821,7 @@ def render_final_report(final_payload: dict[str, Any]) -> None:
     confidence = report.get("overall_confidence", "unknown")
     risk_count = report.get("risk_count", {})
     sections = report.get("sections", {})
+    layout = normalize_layout(report.get("layout"))
 
     print()
     print(hr("═", 70, Color.GREEN))
@@ -800,99 +871,35 @@ def render_final_report(final_payload: dict[str, Any]) -> None:
         print(f"  {summary}")
         print()
 
-    exec_summary = sections.get("executive_summary", "")
-    if exec_summary:
-        print(hr("─", 60, Color.CYAN))
-        print(color("  📌 核心观点摘要", Color.BOLD, Color.CYAN))
-        print(hr("─", 60, Color.CYAN))
-        print(f"  {exec_summary}")
-        print()
-
-    investment_viewpoint = sections.get("investment_viewpoint", "")
-    if investment_viewpoint and investment_viewpoint != "未生成独立投资观点，以下为结构化数据分析。":
-        print(hr("─", 60, Color.MAGENTA))
-        print(color("  🎯 投资观点展开", Color.BOLD, Color.MAGENTA))
-        print(hr("─", 60, Color.MAGENTA))
-        vp_display = investment_viewpoint
-        if len(vp_display) > 3000:
-            vp_display = vp_display[:3000] + "\n\n  ...(已截断，完整内容见最终 JSON)"
-        print(vp_display)
-        print()
-
-    scenario_analysis = sections.get("scenario_analysis", "")
-    if scenario_analysis and scenario_analysis != "未生成情景分析。":
-        print(hr("─", 60, Color.MAGENTA))
-        print(color("  🔮 情景分析", Color.BOLD, Color.MAGENTA))
-        print(hr("─", 60, Color.MAGENTA))
-        print(scenario_analysis)
-        print()
-
-    key_metrics = sections.get("key_metrics", "")
-    if key_metrics:
-        print(hr("─", 60, Color.CYAN))
-        print(color("  📈 核心指标", Color.BOLD, Color.CYAN))
-        print(hr("─", 60, Color.CYAN))
-        print(key_metrics)
-        print()
-
-    signal_analysis = sections.get("signal_analysis", "")
-    if signal_analysis:
-        print(hr("─", 60, Color.CYAN))
-        print(color("  🚨 风险信号", Color.BOLD, Color.CYAN))
-        print(hr("─", 60, Color.CYAN))
-        print(signal_analysis)
-        print()
-
-    anomaly_detection = sections.get("anomaly_detection", "")
-    if anomaly_detection:
-        print(hr("─", 60, Color.CYAN))
-        print(color("  🔍 勾稽关系异常", Color.BOLD, Color.CYAN))
-        print(hr("─", 60, Color.CYAN))
-        print(anomaly_detection)
-        print()
-
-    conflict_analysis = sections.get("conflict_analysis", "")
-    if conflict_analysis and conflict_analysis != "未检测到显著数据矛盾，多维度指标之间逻辑自洽。":
-        print(hr("─", 60, Color.MAGENTA))
-        print(color("  🔬 数据矛盾", Color.BOLD, Color.MAGENTA))
-        print(hr("─", 60, Color.MAGENTA))
-        print(conflict_analysis)
-        print()
-
-    dimension_analysis = sections.get("dimension_analysis", "")
-    if dimension_analysis:
-        dim_display = dimension_analysis
-        if len(dim_display) > 2000:
-            dim_display = dim_display[:2000] + "\n\n  ...(已截断，完整内容见最终 JSON)"
-        print(hr("─", 60, Color.CYAN))
-        print(color("  🏛 维度分析", Color.BOLD, Color.CYAN))
-        print(hr("─", 60, Color.CYAN))
-        print(dim_display)
-        print()
-
-    review_findings = sections.get("review_findings", "")
-    if review_findings and review_findings != "未执行审查":
-        print(hr("─", 60, Color.CYAN))
-        print(color("  🔎 审查发现", Color.BOLD, Color.CYAN))
-        print(hr("─", 60, Color.CYAN))
-        print(review_findings)
-        print()
-
-    falsification_conditions = sections.get("falsification_conditions", "")
-    if falsification_conditions and falsification_conditions != "无可证伪条件。":
-        print(hr("─", 60, Color.YELLOW))
-        print(color("  ⚖️ 可证伪条件", Color.BOLD, Color.YELLOW))
-        print(hr("─", 60, Color.YELLOW))
-        print(falsification_conditions)
-        print()
-
-    risks = sections.get("risks", "")
-    if risks:
-        print(hr("─", 60, Color.CYAN))
-        print(color("  ⚠️ 主要风险", Color.BOLD, Color.RED))
-        print(hr("─", 60, Color.CYAN))
-        print(risks)
-        print()
+    # 章节顺序/标题由 report_layout 提供；过滤与展示文本由本函数按 HEAD 语义执行：
+    # - legacy 终端按**原值**判断（if value / value != placeholder），原值带空白时照旧打印；
+    # - memo 终端是新布局，按 strip 后文本判断（与 markdown 面一致）。
+    # 免责声明仍按旧位置（issues 之后）打印，Q1-lite B 的折叠步骤再调整。
+    disclaimer = ""
+    for block in ordered_blocks(sections, layout):
+        if layout == "legacy":
+            display_text = block.raw_text
+        else:
+            display_text = block.text
+        if block.key == "disclaimer":
+            disclaimer = display_text
+            continue
+        spec = _TERMINAL_SECTION_SPECS.get(block.key)
+        if spec is None:
+            continue  # 未知章节：终端保持旧行为（不打印）
+        if not display_text:
+            continue
+        if display_text == PLACEHOLDER_VALUES.get(block.key):
+            continue
+        if layout == "legacy" and spec.legacy_only:
+            continue
+        _print_section_block(
+            block,
+            spec,
+            display_text=display_text,
+            layout=layout,
+            appendix_clip_chars=appendix_clip_chars,
+        )
 
     issues = final_payload.get("issues", [])
     if issues:
@@ -908,7 +915,6 @@ def render_final_report(final_payload: dict[str, Any]) -> None:
         print(color(f"  共 {len(issues)} 个问题", Color.DIM))
         print()
 
-    disclaimer = sections.get("disclaimer", "")
     if disclaimer:
         print(hr("─", 60, Color.GRAY))
         print(color(disclaimer, Color.DIM))

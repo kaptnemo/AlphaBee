@@ -297,3 +297,6 @@ class ReportOutput(BaseModel):
     risk_count: dict[str, int] = Field(default_factory=dict)
     overall_confidence: Literal["high", "medium", "low", "unknown"]
     disclosed_issue_ids: list[str]
+    # Q1-lite（additive）：报告布局。默认 legacy ⇒ 旧 JSON 可反序列化、旧路径渲染不变；
+    # memo 报告显式写 "memo"。渲染器只读该字段，不读当前配置（A/B 证据可回溯）。
+    layout: Literal["legacy", "memo"] = "legacy"

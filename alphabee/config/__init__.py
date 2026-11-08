@@ -405,6 +405,21 @@ class MidtermClassifierSettings(BaseModel):
     consensus_source: Literal["report_list", "f10_forecast", "auto"] = "report_list"
 
 
+class ReportSettings(BaseModel):
+    """报告输出模式（Q1-lite；缺段/缺键 ⇒ legacy，行为与改造前逐字一致）。
+
+    - ``mode="legacy"``：现状 13 节报告（默认；渲染与 JSON 形状不变）；
+    - ``mode="memo_lite"``：投资备忘录（主文六节 + 附录 A–F + memo prompt；schema 仅
+      additive ``ReportOutput.layout``，无 claims 字段）。
+    回滚方式：整段省略或 ``mode: legacy``。
+
+    ``capture_payload`` 本步只定义不消费（下一步用于归档报告生成 payload 供离线 A/B）。
+    """
+
+    mode: Literal["legacy", "memo_lite"] = Field(default="legacy", description="报告模式：legacy / memo_lite")
+    capture_payload: bool = Field(default=False, description="是否归档报告生成 payload（下一步消费）")
+
+
 class Settings(BaseModel):
     llm: LLMConfig
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
@@ -416,6 +431,8 @@ class Settings(BaseModel):
     deviation: DeviationSettings = Field(default_factory=DeviationSettings)
     # 研究连续体 P1（W3）：财报原文窗口（缺段 ⇒ 取上列默认值）
     report_window: ReportWindowSettings = Field(default_factory=ReportWindowSettings)
+    # Q1-lite：报告输出模式（缺段 ⇒ legacy，旧 config 行为不变）
+    report: ReportSettings = Field(default_factory=ReportSettings)
     # 公司赛道：对标组候选判定（判定 C；缺段 ⇒ 全默认值，旧 config 行为不变）
     company_track: CompanyTrackSettings = Field(default_factory=CompanyTrackSettings)
     # 驱动画像 Tier B 模型研究层（缺段 ⇒ 全默认值：enabled=false，即 D0 行为）

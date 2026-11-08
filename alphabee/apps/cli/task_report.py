@@ -11,10 +11,11 @@
   （父目录自动创建）。
 
 与 :func:`alphabee.apps.cli.renderer.render_final_report`（运行时流式终端渲染）的关系：
-本模块是**独立的 markdown 渲染面**，服务"事后重读 / 归档 / 导出"场景。章节标题映射（含 ``company_track``）与占位符跳过口径
-**对齐** ``render_final_report``（13 节），但输出为纯文本 markdown；两处口径的漂移由
-``tests/apps/test_task_report.py::test_build_report_markdown_full``（13 标题齐全钉）与
-``test_placeholder_sections_skipped``（占位符跳过钉）共同钉住。
+本模块是**独立的 markdown 渲染面**，服务"事后重读 / 归档 / 导出"场景。章节标题/顺序/
+占位符口径**统一由** :mod:`alphabee.apps.cli.report_layout` 提供（legacy 13 节 / memo
+主文六节 + 附录 A–F），两个渲染面不再各自维护映射；两处口径由
+``tests/apps/test_task_report.py``（13 标题齐全 / 占位符跳过 / legacy 字节不变）与
+``tests/apps/test_report_layout.py``（布局顺序与冻结哈希）共同钉住。
 
 纪律：
 
@@ -29,35 +30,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from alphabee.apps.cli.report_layout import PLACEHOLDER_VALUES, normalize_layout, ordered_blocks
 from alphabee.task_records.models import TaskRecord
-
-# 章节 key → 展示标题（与 renderer.render_final_report 的 13 节口径对齐；
-# 未知 key 按原样显示，新增章节不会被静默吞掉）。
-_SECTION_TITLES: dict[str, str] = {
-    "executive_summary": "核心观点摘要",
-    "investment_viewpoint": "投资观点展开",
-    "scenario_analysis": "情景分析",
-    "key_metrics": "核心指标",
-    "signal_analysis": "风险信号",
-    "anomaly_detection": "勾稽关系异常",
-    "conflict_analysis": "数据矛盾",
-    "dimension_analysis": "维度分析",
-    "company_track": "公司赛道与对标组",
-    "review_findings": "审查发现",
-    "falsification_conditions": "可证伪条件",
-    "risks": "主要风险",
-    "disclaimer": "免责声明",
-}
-
-# 占位符章节（值与 render_final_report 的跳过条件逐字对齐）：值是占位文案时
-# 跳过渲染（终端与 markdown 两渲染面同口径，避免把"未生成"当正文输出）。
-_PLACEHOLDER_VALUES: dict[str, str] = {
-    "investment_viewpoint": "未生成独立投资观点，以下为结构化数据分析。",
-    "scenario_analysis": "未生成情景分析。",
-    "conflict_analysis": "未检测到显著数据矛盾，多维度指标之间逻辑自洽。",
-    "review_findings": "未执行审查",
-    "falsification_conditions": "无可证伪条件。",
-}
 
 _MISSING_REPORT_NOTE = "（该记录未包含最终报告：report_raw 为空）"
 
@@ -131,20 +105,19 @@ def build_report_markdown(record: TaskRecord) -> str:
         parts.append("")
 
     sections = raw.get("sections") or {}
+    layout = normalize_layout(raw.get("layout"))
     if not raw:
         parts.append(f"_{_MISSING_REPORT_NOTE}_")
         parts.append("")
-    for key, value in sections.items():
-        if value is None:
+    for block in ordered_blocks(sections, layout):
+        # markdown 面按 strip 后文本判空/比占位符（HEAD 语义；过滤职责在消费者）。
+        if not block.text:
             continue
-        text = value.strip() if isinstance(value, str) else str(value)
-        if not text:
+        if block.text == PLACEHOLDER_VALUES.get(block.key):
             continue
-        if text == _PLACEHOLDER_VALUES.get(key):
-            continue  # 占位文案不渲染（与终端渲染同口径）
-        parts.append(f"## {_SECTION_TITLES.get(key, key)}")
+        parts.append(f"## {block.title}")
         parts.append("")
-        parts.append(text)
+        parts.append(block.text)
         parts.append("")
 
     issues = list(record.issues or [])

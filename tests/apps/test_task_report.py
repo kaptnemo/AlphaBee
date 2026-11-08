@@ -1,15 +1,23 @@
 """--task-report 渲染测试：从 TaskRecord 直接重建最终报告（markdown）。
 
 覆盖：全章节渲染 / 占位符跳过 / 空记录 fail-open / 文件落盘字节一致 /
-未知章节透传 / CLI 接线。渲染为纯函数（禁 LLM、无网络），全部离线可跑。
+未知章节透传 / legacy vs memo 布局 / 旧 JSON（无 layout）兼容 / CLI 接线。
+渲染为纯函数（禁 LLM、无网络），全部离线可跑。
 """
 
 from __future__ import annotations
 
 import argparse
 
+from alphabee.apps.cli.report_layout import (
+    APPENDIX_SECTIONS,
+    APPENDIX_TITLES,
+    LEGACY_ORDER,
+    LEGACY_TITLES,
+    MAIN_SECTIONS,
+    MAIN_TITLES,
+)
 from alphabee.apps.cli.task_report import (
-    _SECTION_TITLES,
     build_report_markdown,
     default_report_output,
     render_task_record_report,
@@ -71,7 +79,7 @@ def test_build_report_markdown_full() -> None:
     assert "**中期决策**: 状态 S3 置信度 0.85 证据 12 条" in md
     assert "> 一句话摘要。" in md
     # 13 个章节标题全部出现（钉住标题映射完整，含 company_track）
-    for display in _SECTION_TITLES.values():
+    for display in LEGACY_TITLES.values():
         assert f"## {display}" in md
     assert "## 系统问题" in md
     assert "- [medium] missing_data: 缺少北向数据" in md
@@ -328,3 +336,88 @@ def test_cli_midterm_branch_old_payload_keeps_current_rendering(capsys) -> None:
     assert "公式" not in out
     assert "不确定" not in out
     assert "顶背离" not in out
+
+
+# ── Q1-lite：共享布局模块驱动的 legacy / memo 双布局 ─────────────────────────
+
+
+def _headings(markdown: str) -> list[str]:
+    return [line for line in markdown.splitlines() if line.startswith("## ")]
+
+
+def test_legacy_layout_headings_follow_legacy_order() -> None:
+    headings = _headings(build_report_markdown(_record()))
+    expected = [f"## {LEGACY_TITLES[key]}" for key in LEGACY_ORDER]
+    assert headings[: len(expected)] == expected
+    assert headings[len(expected)] == "## 系统问题"  # issues 仍在 13 节之后（现状位置）
+
+
+def test_memo_layout_headings_follow_memo_order() -> None:
+    record = _record()
+    report_raw = dict(record.report_raw)
+    report_raw["layout"] = "memo"
+    markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
+    headings = _headings(markdown)
+    expected = (
+        [f"## {MAIN_TITLES[key]}" for key in MAIN_SECTIONS]
+        + [f"## {APPENDIX_TITLES[key]}" for key in APPENDIX_SECTIONS]
+        + ["## 免责声明"]
+    )
+    assert headings[: len(expected)] == expected
+    # 本步不做系统问题折叠：仍保持现状位置（章节之后）。
+    assert headings[len(expected)] == "## 系统问题"
+    # memo 布局不复用 legacy 标题
+    for legacy_title in LEGACY_TITLES.values():
+        if legacy_title != "免责声明":
+            assert f"## {legacy_title}" not in headings
+
+
+def test_memo_layout_placeholder_sections_skipped() -> None:
+    record = _record()
+    report_raw = dict(record.report_raw)
+    report_raw["layout"] = "memo"
+    report_raw["sections"] = {
+        **record.report_raw["sections"],
+        "investment_viewpoint": "未生成独立投资观点，以下为结构化数据分析。",
+        "review_findings": "未执行审查",
+    }
+    markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
+    assert "## 核心主张" not in markdown
+    assert "## 附录 F 审查发现" not in markdown
+    assert "## 附录 A 风险信号明细" in markdown  # 正常章节不受影响
+
+
+def test_old_report_without_layout_renders_legacy() -> None:
+    record = _record()
+    report_raw = {key: value for key, value in record.report_raw.items() if key != "layout"}
+    assert "layout" not in report_raw
+    markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
+    assert markdown == build_report_markdown(_record())
+    assert _headings(markdown)[0] == "## 核心观点摘要"
+    assert "## 一页结论" not in markdown
+
+
+def test_unknown_layout_value_falls_back_to_legacy() -> None:
+    record = _record()
+    report_raw = dict(record.report_raw)
+    report_raw["layout"] = "memo_claims"  # 尚未实现的布局值
+    markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
+    assert markdown == build_report_markdown(_record())
+    assert "## 一页结论" not in markdown
+
+
+# ── t5 review F1：markdown 面保持 HEAD 的 strip 语义（legacy 终端才用原值）──────
+
+
+def test_markdown_head_strip_semantics_for_padded_whitespace_and_placeholder() -> None:
+    sections = dict(ALL_SECTIONS)
+    sections["risks"] = "\n\n  风险正文  \n"
+    sections["scenario_analysis"] = "   "  # HEAD：strip 后为空 ⇒ 跳过
+    sections["investment_viewpoint"] = " 未生成独立投资观点，以下为结构化数据分析。 "
+    sections["disclaimer"] = "\n免责声明。\n"
+    markdown = build_report_markdown(_record(report_raw={"title": "T", "sections": sections}))
+    assert "## 主要风险\n\n风险正文\n" in markdown  # 已 strip
+    assert "## 情景分析" not in markdown  # 纯空白跳过
+    assert "## 投资观点展开" not in markdown  # 带空白占位符跳过
+    assert "## 免责声明\n\n免责声明。\n" in markdown  # padded disclaimer strip 后打印
+    assert "## 核心观点摘要" in markdown  # 正常章节不受影响

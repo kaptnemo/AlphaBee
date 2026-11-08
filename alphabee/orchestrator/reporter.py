@@ -14,7 +14,7 @@ from alphabee.orchestrator.contracts import (
     ReportArtifact,
     ReportGenerationPayload,
 )
-from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT
+from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT, REPORT_GENERATOR_PROMPT_MEMO
 from alphabee.orchestrator.services.payload_builders import (
     build_report_generation_payload,
 )
@@ -22,9 +22,39 @@ from alphabee.orchestrator.state import OrchestratorState
 from alphabee.utils import create_structured_model, json_instruction
 from alphabee.utils.pipeline import extract_text, make_id, parse_json
 
+#: report.mode → 报告布局。legacy 保持现状；memo_lite 产 memo 布局（Q1-lite）。
+_LAYOUT_BY_REPORT_MODE: dict[str, str] = {"legacy": "legacy", "memo_lite": "memo"}
+
 
 def _make_id(prefix: str) -> str:
     return make_id(prefix)
+
+
+def resolve_report_mode() -> tuple[str, str]:
+    """读取 ``report.mode`` 并返回 ``(mode, layout)``；延迟 import + fail-open 默认 legacy。
+
+    配置缺失 / 读取失败 / 非法值都不得阻断报告生成：一律回落 ``legacy``（旧路径）。
+    """
+    try:
+        from alphabee.config import get_settings
+
+        mode = get_settings().report.mode
+    except Exception:  # noqa: BLE001 - 配置读取失败必须 fail-open，不阻断报告生成
+        return "legacy", "legacy"
+    layout = _LAYOUT_BY_REPORT_MODE.get(mode)
+    if layout is None:
+        return "legacy", "legacy"
+    return mode, layout
+
+
+def _apply_layout(report_value: dict[str, Any], layout: str) -> dict[str, Any]:
+    """按布局收口报告 JSON 的 ``layout`` 键：legacy 剔除（形状与现状一致），memo 显式写入。"""
+    value = dict(report_value)
+    if layout == "memo":
+        value["layout"] = "memo"
+    else:
+        value.pop("layout", None)
+    return value
 
 
 def _markdown_list(items: list[str], limit: int = 6) -> str:
@@ -68,13 +98,22 @@ def _falsification_markdown(conditions: list[FalsificationCondition], limit: int
     return "\n".join(lines) or "无"
 
 
-def build_deterministic_report(payload: ReportGenerationPayload, failure_reason: str = "") -> dict[str, Any]:
+def build_deterministic_report(
+    payload: ReportGenerationPayload,
+    failure_reason: str = "",
+    *,
+    mode: str = "legacy",
+) -> dict[str, Any]:
     """LLM 报告生成失败时，用结构化 payload 拼装一份可消费的确定性报告。
 
     与 ``_fallback_report`` 的区别：这里把信号/异常/冲突/论点/审查问题等真实分析
     结果渲染进各章节，而不是只剩一句错误信息。这样即使模型侧连续空输出，
     最终交付的报告也包含实质内容，可被 review gate 与 CLI 正常展示。
+
+    ``mode`` 与 :func:`generate_report` 同口径：legacy 不写 ``layout`` 键；
+    ``memo_lite`` 写入 ``layout="memo"``（确定性降级与 LLM 路径布局一致）。
     """
+    layout = _LAYOUT_BY_REPORT_MODE.get(mode, "legacy")
     company = payload.company
     symbol = company.symbol or "标的"
 
@@ -181,7 +220,7 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
     if failure_reason:
         review_findings += f"\n\n（LLM 报告生成失败，已降级为确定性报告：{failure_reason}）"
 
-    return ReportArtifact(
+    report = ReportArtifact(
         title=f"{symbol} 财报质量体检报告（确定性降级版）",
         sections=ReportSections(
             executive_summary=exec_summary[:800],
@@ -202,11 +241,12 @@ def build_deterministic_report(payload: ReportGenerationPayload, failure_reason:
         risk_count={"high": len(high_msgs), "medium": len(medium_msgs), "low": 0},
         overall_confidence="unknown" if failure_reason else "medium",
         disclosed_issue_ids=[i.id for i in payload.issues if i.severity in ("high", "critical")],
-    ).model_dump(mode="json")
+    )
+    return _apply_layout(report.model_dump(mode="json"), layout)
 
 
 def _fallback_report(summary: str) -> dict[str, Any]:
-    return ReportArtifact(
+    report = ReportArtifact(
         title="财报质量体检报告",
         sections=ReportSections(
             executive_summary=summary,
@@ -226,7 +266,8 @@ def _fallback_report(summary: str) -> dict[str, Any]:
         risk_count={},
         overall_confidence="unknown",
         disclosed_issue_ids=[],
-    ).model_dump(mode="json")
+    )
+    return _apply_layout(report.model_dump(mode="json"), "legacy")
 
 
 async def generate_report(
@@ -250,6 +291,9 @@ async def generate_report(
 
     payload = build_report_generation_payload(state)
     prompt_text = payload.model_dump_json(indent=2)
+    # Q1-lite：按 report.mode 选 prompt 与布局（配置读取失败 ⇒ legacy，旧路径不变）。
+    mode, layout = resolve_report_mode()
+    system_prompt = REPORT_GENERATOR_PROMPT_MEMO if mode == "memo_lite" else REPORT_GENERATOR_PROMPT
     # 公司赛道语境指令（COMPANY_TRACK Phase F5）：有 track 时要求报告含对标组对比
     track_hint = ""
     if payload.company_track is not None:
@@ -299,7 +343,7 @@ async def generate_report(
             )
             response = model.invoke(
                 [
-                    SystemMessage(content=REPORT_GENERATOR_PROMPT),
+                    SystemMessage(content=system_prompt),
                     HumanMessage(
                         content=(
                             json_instruction(ReportOutput)
@@ -325,7 +369,8 @@ async def generate_report(
             )
             raw_text = extract_text(response.content)
             try:
-                report_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")
+                parsed_value = ReportArtifact.model_validate(parse_json(raw_text)).model_dump(mode="json")
+                report_value = _apply_layout(parsed_value, layout)
                 break
             except Exception as exc:
                 parse_error = exc
@@ -345,6 +390,7 @@ async def generate_report(
             report_value = build_deterministic_report(
                 payload,
                 failure_reason=f"LLM 返回空文本或无法解析。原始输出：{raw_text[:200]}",
+                mode=mode,
             )
     except Exception as exc:
         new_issues.append(
@@ -356,7 +402,7 @@ async def generate_report(
                 related_step=step.id,
             )
         )
-        report_value = build_deterministic_report(payload, failure_reason=str(exc))
+        report_value = build_deterministic_report(payload, failure_reason=str(exc), mode=mode)
 
     report_artifact = Artifact(
         id=_make_id("artifact"),
