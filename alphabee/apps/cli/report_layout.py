@@ -127,6 +127,8 @@ APPENDIX_G_TITLE = "附录 G 系统问题清单"
 APPENDIX_H_TITLE = "附录 H 中期决策明细"
 #: 附录 G 每条 issue 的最大字符数（设计 §3.2.3：全量但单条 ≤600 字）。
 ISSUE_APPENDIX_MAX_CHARS = 600
+#: 附录 G 首行固定标注（设计 §3.2.3：原文保留在 TaskRecord.issues；memo markdown 与终端共用）。
+ISSUE_APPENDIX_NOTE = "完整 message 见任务记录（TaskRecord.issues；附录每条按 600 字截断）。"
 #: 主文系统问题摘要的总预算（设计 §2.2/§3.1：摘要 ≤800 字，优先于单条 160）。
 ISSUE_DIGEST_MAX_CHARS = 800
 
@@ -300,8 +302,9 @@ def render_issue_digest(
     Returns:
         ``(digest, appendix)``：digest = critical/high 前 N 条 + 严重度计数行，
         总长 ≤ ``ISSUE_DIGEST_MAX_CHARS``（800；超出时逐步缩短单条 message，仍 ≤ ``max_chars``）；
-        appendix = 全量 issue（每条 message ≤ ``ISSUE_APPENDIX_MAX_CHARS``，不丢条）。
-        无 issue 时返回 ``("", "")``。
+        appendix = 首行固定标注 :data:`ISSUE_APPENDIX_NOTE` + 全量 issue
+        （每条 message ≤ ``ISSUE_APPENDIX_MAX_CHARS``，不丢条）。
+        无 issue 时返回 ``("", "")``（不产生空附录/孤立标注）。
     """
     items = list(issues or [])
     if not items:
@@ -342,7 +345,8 @@ def render_issue_digest(
         message_limit -= 1
         digest = _compose(message_limit)
 
-    appendix = "\n".join(_line(issue, ISSUE_APPENDIX_MAX_CHARS) for issue in items)
+    issue_lines = "\n".join(_line(issue, ISSUE_APPENDIX_MAX_CHARS) for issue in items)
+    appendix = f"{ISSUE_APPENDIX_NOTE}\n\n{issue_lines}"
     return digest, appendix
 
 

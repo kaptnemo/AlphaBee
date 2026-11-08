@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import hashlib
 
+from alphabee.apps.cli.colors import set_color_enabled
+from alphabee.apps.cli.renderer import render_final_report
 from alphabee.apps.cli.report_layout import (
     APPENDIX_SECTIONS,
     APPENDIX_TITLES,
+    ISSUE_APPENDIX_NOTE,
     LEGACY_ORDER,
     LEGACY_TITLES,
     MAIN_SECTIONS,
@@ -26,7 +29,7 @@ from alphabee.apps.cli.report_layout import (
     section_title,
     title_to_key,
 )
-from alphabee.apps.cli.task_report import build_report_markdown
+from alphabee.apps.cli.task_report import build_report_markdown, render_report_dict
 from alphabee.midterm.models import CompanyStateArtifact, StateBelief
 from alphabee.task_records.models import IssueRecord, TaskRecord
 
@@ -362,12 +365,15 @@ def test_render_issue_digest_34_issues() -> None:
     assert digest.count("- [high]") == 3
     assert "[medium]" not in digest and "[low]" not in digest
     assert "共 34 条问题（critical 2 / high 8 / medium 23 / low 1），完整清单见附录 G。" in digest
-    # 附录全量 34 条、不丢条；每条 message ≤600 字
-    appendix_lines = appendix.splitlines()
+    # 附录首行为固定标注；全量 34 条不丢条；每条 message ≤600 字
+    assert appendix.splitlines()[0] == ISSUE_APPENDIX_NOTE
+    assert "完整 message 见任务记录" in ISSUE_APPENDIX_NOTE
+    appendix_lines = [line for line in appendix.splitlines() if line.startswith("- [")]
     assert len(appendix_lines) == 34
     long_issues = [{"severity": "high", "category": "long", "message": "X" * 1000}]
     _, long_appendix = render_issue_digest(long_issues)
-    assert len(long_appendix.split(": ", 1)[1]) == 600
+    long_line = next(line for line in long_appendix.splitlines() if line.startswith("- ["))
+    assert len(long_line.split(": ", 1)[1]) == 600
 
 
 def test_render_issue_digest_unknown_severity_and_empty() -> None:
@@ -379,7 +385,10 @@ def test_render_issue_digest_unknown_severity_and_empty() -> None:
     digest, appendix = render_issue_digest(issues)
     assert "其它 1" in digest
     assert "共 2 条问题（critical 1 / high 0 / medium 0 / low 0 / 其它 1）" in digest
-    assert len(appendix.splitlines()) == 2
+    assert appendix.splitlines()[0] == ISSUE_APPENDIX_NOTE
+    assert len([line for line in appendix.splitlines() if line.startswith("- [")]) == 2
+    # 空列表不产生孤立标注
+    assert render_issue_digest([]) == ("", "")
 
 
 def test_render_issue_digest_respects_max_items_and_max_chars() -> None:
@@ -407,3 +416,51 @@ def test_render_issue_digest_total_budget_800_with_long_messages() -> None:
     detail_lines = [line for line in digest.splitlines() if line.startswith("- [")]
     assert len(detail_lines) == 5
     assert all(len(line.split(": ", 1)[1]) <= 160 for line in detail_lines)
+
+
+def test_render_issue_digest_appendix_note_single_source() -> None:
+    """标注只由 render_issue_digest 产出：附录首行、恰好一次。"""
+    _digest, appendix = render_issue_digest(_digest_issues())
+    assert appendix.count(ISSUE_APPENDIX_NOTE) == 1
+    assert appendix.splitlines()[0] == ISSUE_APPENDIX_NOTE
+
+
+def _all_sections() -> dict[str, str]:
+    return {key: f"{key}正文" for key in LEGACY_ORDER}
+
+
+def test_memo_appendix_g_note_shared_by_markdown_and_terminal(capsys) -> None:
+    """memo markdown 与终端附录 G 共用同一标注；legacy 不出现该标注。"""
+    issues = [
+        {"severity": "critical", "category": "critical_0", "message": "m1"},
+        {"severity": "low", "category": "low_0", "message": "m2"},
+    ]
+    sections = _all_sections()
+    memo_markdown = render_report_dict({"title": "T", "layout": "memo", "sections": sections}, issues=issues)
+    assert "## 附录 G 系统问题清单" in memo_markdown
+    g_section = memo_markdown[memo_markdown.index("## 附录 G 系统问题清单") :]
+    assert ISSUE_APPENDIX_NOTE in g_section
+
+    legacy_markdown = render_report_dict({"title": "T", "layout": "legacy", "sections": sections}, issues=issues)
+    assert "## 系统问题" in legacy_markdown
+    assert ISSUE_APPENDIX_NOTE not in legacy_markdown  # legacy 路径不消费该文案
+
+    set_color_enabled(False)
+    try:
+        render_final_report(
+            {
+                "final_report": {
+                    "title": "T",
+                    "layout": "memo",
+                    "sections": sections,
+                    "summary": "S",
+                    "overall_confidence": "high",
+                },
+                "issues": issues,
+            }
+        )
+    finally:
+        set_color_enabled(True)
+    terminal_out = capsys.readouterr().out
+    assert "附录 G 系统问题清单" in terminal_out
+    assert ISSUE_APPENDIX_NOTE in terminal_out
