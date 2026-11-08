@@ -15,8 +15,9 @@ from typing import Any
 
 import pytest
 
+from alphabee.apps.cli.report_layout import ISSUE_APPENDIX_NOTE
 from alphabee.orchestrator import reporter
-from alphabee.orchestrator.contracts import ReportGenerationPayload
+from alphabee.orchestrator.contracts import ReportGenerationPayload, ReportIssuePayload
 from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT, REPORT_GENERATOR_PROMPT_MEMO
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -61,10 +62,48 @@ def _report_json() -> dict[str, Any]:
     }
 
 
-def _write_payload(tmp_path: Path) -> Path:
+def _issues() -> list[ReportIssuePayload]:
+    """5 条 issue（2 critical / 2 high / 1 medium），含数字以便验证 numeric_tokens 口径。"""
+    return [
+        ReportIssuePayload(
+            id="issue-1",
+            severity="critical",
+            category="verified_conflict",
+            message="Q4 交付集中确认：前三季 -34.19%（20260930）",
+        ),
+        ReportIssuePayload(
+            id="issue-2",
+            severity="critical",
+            category="margin_split",
+            message="毛利率 10.07% vs 2025 全年 13.70%",
+        ),
+        ReportIssuePayload(
+            id="issue-3",
+            severity="high",
+            category="inventory_gap",
+            message="存货 170.21 亿元（+50.2%）",
+        ),
+        ReportIssuePayload(
+            id="issue-4",
+            severity="high",
+            category="valuation",
+            message="PB 5.641x / ROE 4.24%",
+        ),
+        ReportIssuePayload(
+            id="issue-5",
+            severity="medium",
+            category="thesis_gap",
+            message="维度证据覆盖率 21%",
+        ),
+    ]
+
+
+def _write_payload(tmp_path: Path, *, issues: list[ReportIssuePayload] | None = None) -> Path:
+    payload = ReportGenerationPayload(issues=issues or [])
     path = tmp_path / "payload.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(ReportGenerationPayload().model_dump(mode="json"), ensure_ascii=False),
+        json.dumps(payload.model_dump(mode="json"), ensure_ascii=False),
         encoding="utf-8",
     )
     return path
@@ -101,7 +140,7 @@ def _patch_model(
 
 
 def test_report_ab_end_to_end_two_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = _write_payload(tmp_path)
+    payload = _write_payload(tmp_path, issues=_issues())
     out = tmp_path / "ab"
     monkeypatch.setattr(report_ab, "WORKSPACE_ROOT", tmp_path)
     factory_calls = _patch_model(monkeypatch)
@@ -127,6 +166,27 @@ def test_report_ab_end_to_end_two_modes(tmp_path: Path, monkeypatch: pytest.Monk
     assert "## 一页结论" in memo_md
     assert "## 核心观点摘要" not in memo_md
 
+    # legacy：系统问题全量（与生产 build_report_markdown 同格式），位于 13 节之后
+    assert legacy_md.index("## 免责声明") < legacy_md.index("## 系统问题")
+    assert "共 5 个问题" in legacy_md
+    legacy_issue_lines = [line for line in legacy_md.splitlines() if line.startswith("- [")]
+    assert len(legacy_issue_lines) == 5
+    assert "- [medium] thesis_gap: 维度证据覆盖率 21%" in legacy_md
+
+    # memo：审查摘要 + 附录 G + 标注；不再出现 legacy 全量标题
+    assert "## 审查与数据问题（摘要）" in memo_md
+    assert "## 附录 G 系统问题清单" in memo_md
+    assert ISSUE_APPENDIX_NOTE in memo_md
+    assert "完整清单见附录 G" in memo_md
+    assert "## 系统问题" not in memo_md
+    assert "## 附录 H" not in memo_md  # payload 无 midterm artifact（见脚本 docstring 限制）
+    g_start = memo_md.index("## 附录 G 系统问题清单")
+    g_lines = [line for line in memo_md[g_start:].splitlines() if line.startswith("- [")]
+    assert len(g_lines) == 5
+    # 主文摘要只含 critical/high；medium 只在附录 G
+    digest_section = memo_md[memo_md.index("## 审查与数据问题（摘要）") : memo_md.index("## 附录 A")]
+    assert "[medium]" not in digest_section
+
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     for mode in ("legacy", "memo_lite"):
         assert {"main_chars", "appendix_chars", "numeric_tokens", "section_count", "degraded"} <= set(metrics[mode])
@@ -135,11 +195,41 @@ def test_report_ab_end_to_end_two_modes(tmp_path: Path, monkeypatch: pytest.Monk
     assert metrics["legacy"]["appendix_chars"] == 0
     assert metrics["memo_lite"]["appendix_chars"] > 0
     assert metrics["legacy"]["numeric_tokens"] > 0
+    # numeric_tokens 从“含 issues”的渲染 md 统计
+    assert metrics["legacy"]["numeric_tokens"] == len(report_ab.NUMERIC_TOKEN_RE.findall(legacy_md))
+    assert metrics["memo_lite"]["numeric_tokens"] == len(report_ab.NUMERIC_TOKEN_RE.findall(memo_md))
     # 同一 payload、同一模型参数
     assert factory_calls == [
         (("agent.report",), {"max_tokens": 8192}),
         (("agent.report",), {"max_tokens": 8192}),
     ]
+
+    # memo 的 main/appendix 口径不因 issues 改变（与空 issues 对照）
+    empty_payload = _write_payload(tmp_path / "empty", issues=[])
+    empty_out = tmp_path / "ab-empty"
+    monkeypatch.setattr(report_ab, "WORKSPACE_ROOT", tmp_path)
+    assert report_ab.main(["--payload", str(empty_payload), "--out", str(empty_out)]) == 0
+    empty_metrics = json.loads((empty_out / "metrics.json").read_text(encoding="utf-8"))
+    for mode in ("legacy", "memo_lite"):
+        assert metrics[mode]["main_chars"] == empty_metrics[mode]["main_chars"]
+        assert metrics[mode]["appendix_chars"] == empty_metrics[mode]["appendix_chars"]
+        assert metrics[mode]["section_count"] == empty_metrics[mode]["section_count"]
+        assert metrics[mode]["numeric_tokens"] > empty_metrics[mode]["numeric_tokens"]
+
+
+def test_report_ab_empty_issues_has_no_folded_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = _write_payload(tmp_path, issues=[])
+    out = tmp_path / "ab-empty-only"
+    monkeypatch.setattr(report_ab, "WORKSPACE_ROOT", tmp_path)
+    _patch_model(monkeypatch)
+    assert report_ab.main(["--payload", str(payload), "--out", str(out)]) == 0
+
+    legacy_md = (out / "legacy.md").read_text(encoding="utf-8")
+    memo_md = (out / "memo_lite.md").read_text(encoding="utf-8")
+    assert "## 系统问题" not in legacy_md
+    assert "## 审查与数据问题（摘要）" not in memo_md
+    assert "## 附录 G 系统问题清单" not in memo_md
+    assert ISSUE_APPENDIX_NOTE not in memo_md
 
 
 def test_report_ab_single_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

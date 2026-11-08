@@ -10,6 +10,19 @@
 3. 写 ``<mode>.json``（ReportOutput）、``<mode>.md``（复用 ``task_report.render_report_dict``）
    与 ``metrics.json``（主文/附录字符、数字 token、章节数，按 ``report_layout.report_shape`` 口径）。
 
+渲染口径：
+
+- 两种 mode 都把 ``payload.issues`` 传给 ``render_report_dict(issues=...)``，**非论证块与生产
+  ``--task-report`` 一致**：legacy 输出 ``## 系统问题`` 全量；memo 输出 ``## 审查与数据问题（摘要）``
+  + ``## 附录 G 系统问题清单``（含“完整 message 见任务记录”标注）。
+- ``numeric_tokens`` 等指标基于**含 issues 的渲染后 markdown** 统计；``report_shape`` 的
+  main/appendix 口径不变（系统问题摘要/附录 G 不计入 main/appendix）。
+
+已知限制（midterm）：payload 只有 ``ReportGenerationPayload``，不含 ``TaskRecord.midterm``
+artifact，因此 A/B 渲染不会产生 ``## 附录 H 中期决策明细``；生产 ``--task-report`` 对含 midterm
+的记录会输出附录 H（本轮 3 个实盘 run 均无 midterm，故 A/B 无 H 是忠实的）。midterm 折叠需
+在含 midterm 的记录上单独验证。
+
 路径纪律：``--out`` 必须在工作区内（否则报错退出），脚本只写 ``--out`` 下的文件。
 不联网；模型调用由调用方（测试）提供假实现。
 """
@@ -107,7 +120,9 @@ def run(payload: ReportGenerationPayload, modes: list[str], out_dir: Path) -> di
         report, meta = _generate_mode(payload, mode)
         layout = "legacy" if mode == "legacy" else "memo"
         _write_json(out_dir / f"{mode}.json", report)
-        markdown = render_report_dict(report)
+        # 传 issues：非论证块与生产 --task-report 一致（legacy 全量系统问题 / memo 摘要+附录 G）。
+        # midterm 不传：payload 无 TaskRecord.midterm artifact（见模块 docstring 的限制说明）。
+        markdown = render_report_dict(report, issues=payload.issues)
         (out_dir / f"{mode}.md").write_text(markdown, encoding="utf-8")
         shape = report_shape(markdown, layout)
         metrics[mode] = {
