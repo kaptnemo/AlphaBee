@@ -230,10 +230,33 @@ class ReportArtifact(ReportOutput):
     """Typed final report artifact payload."""
 
 
+class ReportCompanyProfilePayload(BaseModel):
+    """公司档案（memo 报告「公司概况」的唯一结构化事实源）。
+
+    字段来自 ``get_company_profile``（Tushare ``stock_basic`` + ``stock_company``）；
+    全部可缺失——拿不到档案时保持默认空串，报告层必须容忍并省略对应句子。
+    """
+
+    name: str = ""
+    industry: str = ""
+    market: str = ""
+    exchange: str = ""
+    list_date: str = ""
+    area: str = ""
+    province: str = ""
+    city: str = ""
+    introduction: str = ""
+    main_business: str = ""
+    employees: str = ""
+    registered_capital: str = ""
+
+
 class ReportCompanyPayload(BaseModel):
     symbol: str = ""
     query: str = ""
     raw_response: str = ""
+    # memo「公司概况」用：结构化公司档案。空对象 = 档案不可用（不回归 legacy）。
+    profile: ReportCompanyProfilePayload = Field(default_factory=ReportCompanyProfilePayload)
 
 
 class ReportMetricEntry(BaseModel):

@@ -101,6 +101,57 @@ def _falsification_markdown(conditions: list[FalsificationCondition], limit: int
     return "\n".join(lines) or "无"
 
 
+def _company_overview_text(payload: ReportGenerationPayload) -> str:
+    """确定性降级版「公司概况」：只用 payload 里可核实的档案/赛道字段，缺失即省略。"""
+    company = payload.company
+    profile = company.profile
+    symbol = company.symbol or "标的"
+    name = profile.name or symbol
+    sentences: list[str] = []
+
+    if profile.main_business:
+        sentences.append(f"{name}的主营业务为{profile.main_business.rstrip('。')}。")
+    elif profile.introduction:
+        intro = profile.introduction.strip().rstrip("。")
+        sentences.append(f"{name}：{intro[:180]}{'…' if len(intro) > 180 else ''}。")
+    elif company.query:
+        sentences.append(f"{name}（{symbol}）：{company.query.strip().rstrip('。')}。")
+
+    track = payload.company_track
+    if track is not None and (track.track_label or track.dominant_segment):
+        bits = [part for part in (track.track_label, track.dominant_segment) if part]
+        sentences.append(f"业务定位为{' / '.join(bits)}。")
+
+    listing: list[str] = []
+    if profile.industry:
+        listing.append(f"所属行业 {profile.industry}")
+    if profile.market and profile.exchange:
+        listing.append(f"{profile.market}（{profile.exchange}）上市")
+    elif profile.market:
+        listing.append(f"{profile.market}上市")
+    elif profile.exchange:
+        listing.append(f"{profile.exchange} 上市")
+    if profile.list_date:
+        date = profile.list_date
+        if len(date) == 8 and date.isdigit():
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        listing.append(f"上市日期 {date}")
+    if profile.area:
+        listing.append(f"注册地 {profile.area}")
+    if listing:
+        sentences.append("，".join(listing) + "。")
+
+    scale: list[str] = []
+    if profile.employees:
+        scale.append(f"员工 {profile.employees} 人")
+    if profile.registered_capital:
+        scale.append(f"注册资本 {profile.registered_capital} 万元")
+    if scale:
+        sentences.append("规模：" + "，".join(scale) + "（公司档案口径）。")
+
+    return "\n\n".join(sentences)[:450]
+
+
 def build_deterministic_report(
     payload: ReportGenerationPayload,
     failure_reason: str = "",
@@ -226,6 +277,7 @@ def build_deterministic_report(
     report = ReportArtifact(
         title=f"{symbol} 财报质量体检报告（确定性降级版）",
         sections=ReportSections(
+            company_overview=_company_overview_text(payload) if layout == "memo" else "",
             executive_summary=exec_summary[:800],
             investment_viewpoint=viewpoint[:800],
             scenario_analysis=scenario[:800] or "无情景分析数据",

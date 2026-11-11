@@ -37,6 +37,7 @@ from alphabee.apps.cli.report_layout import (
     APPENDIX_SECTIONS,
     ISSUE_DIGEST_TITLE,
     MAIN_SECTIONS,
+    OVERVIEW_SECTIONS,
     PLACEHOLDER_VALUES,
     normalize_layout,
     ordered_blocks,
@@ -159,7 +160,8 @@ def _append_memo_sections(
 
     折叠顺序（设计 §3.2.3/§3.2.4）：系统问题主文只留 critical/high 前 5 条摘要 + 计数行，
     全量进附录 G；中期决策完整控制台块进附录 H；免责声明始终最后。未知 section key
-    保持原位（附录 A–F 之后、附录 G 之前）透传，fail-open 不丢内容。
+    保持原位（附录 A–F 之后、附录 G 之前）透传，fail-open 不丢内容。公司概况由
+    :func:`render_report_dict` 在摘要之前单独渲染，这里跳过。
     """
     blocks = ordered_blocks(sections, "memo")
     main_blocks = [block for block in blocks if block.key in MAIN_SECTIONS]
@@ -167,7 +169,10 @@ def _append_memo_sections(
     unknown_blocks = [
         block
         for block in blocks
-        if block.key not in MAIN_SECTIONS and block.key not in APPENDIX_SECTIONS and block.key != "disclaimer"
+        if block.key not in MAIN_SECTIONS
+        and block.key not in APPENDIX_SECTIONS
+        and block.key not in OVERVIEW_SECTIONS
+        and block.key != "disclaimer"
     ]
     disclaimer_block = next((block for block in blocks if block.key == "disclaimer"), None)
 
@@ -243,13 +248,22 @@ def render_report_dict(
     parts.extend(meta_lines)
     parts.append("")
 
+    sections = raw.get("sections") or {}
+    layout = normalize_layout(raw.get("layout"))
+    if layout == "memo":
+        # memo 专属：公司概况放在摘要之前，供不了解公司的读者建立背景。
+        overview = next(
+            (block for block in ordered_blocks(sections, "memo") if block.key in OVERVIEW_SECTIONS),
+            None,
+        )
+        if overview is not None and overview.text and overview.text != PLACEHOLDER_VALUES.get(overview.key):
+            _append_section(parts, overview.title, overview.text)
+
     summary = str(raw.get("summary") or "").strip()
     if summary:
         parts.append("> " + summary.replace("\n", "\n> "))
         parts.append("")
 
-    sections = raw.get("sections") or {}
-    layout = normalize_layout(raw.get("layout"))
     if not raw:
         parts.append(f"_{_MISSING_REPORT_NOTE}_")
         parts.append("")

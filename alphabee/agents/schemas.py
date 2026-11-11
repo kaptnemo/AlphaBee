@@ -259,6 +259,9 @@ class ReportSections(BaseModel):
     falsification_conditions: str
     risks: str
     disclaimer: str
+    # memo 专属（additive，默认空）：公司概况，渲染在摘要之前，面向不了解公司的读者。
+    # legacy prompt 不产出该键 ⇒ 旧报告 JSON/渲染不变。
+    company_overview: str = ""
 
 
 class ReportOutput(BaseModel):

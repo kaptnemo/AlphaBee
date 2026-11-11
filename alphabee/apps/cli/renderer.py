@@ -20,6 +20,7 @@ from alphabee.apps.cli.report_layout import (
     APPENDIX_SECTIONS,
     ISSUE_DIGEST_TITLE,
     MAIN_SECTIONS,
+    OVERVIEW_SECTIONS,
     PLACEHOLDER_VALUES,
     normalize_layout,
     ordered_blocks,
@@ -769,6 +770,7 @@ class _TerminalSectionSpec(NamedTuple):
 #: 终端展示规格（key 与 ``report_layout`` 的 section key 一一对应；未知 key 不打印，
 #: 与旧终端行为一致）。``company_track`` 在旧终端未渲染，legacy 继续跳过、memo 作为附录 E 打印。
 _TERMINAL_SECTION_SPECS: dict[str, _TerminalSectionSpec] = {
+    "company_overview": _TerminalSectionSpec("🏢", Color.CYAN, Color.CYAN),
     "executive_summary": _TerminalSectionSpec("📌", Color.CYAN, Color.CYAN, indent=True),
     "investment_viewpoint": _TerminalSectionSpec("🎯", Color.MAGENTA, Color.MAGENTA, max_chars=3000),
     "scenario_analysis": _TerminalSectionSpec("🔮", Color.MAGENTA, Color.MAGENTA),
@@ -977,6 +979,21 @@ def render_final_report(
             + f"  证据 {m_evidence} 条"
         )
     print()
+
+    if layout == "memo":
+        overview = next(
+            (block for block in ordered_blocks(sections, "memo") if block.key in OVERVIEW_SECTIONS),
+            None,
+        )
+        if overview is not None and overview.text and overview.text != PLACEHOLDER_VALUES.get(overview.key):
+            spec = _TERMINAL_SECTION_SPECS["company_overview"]
+            _print_section_block(
+                overview,
+                spec,
+                display_text=overview.text,
+                layout="memo",
+                appendix_clip_chars=appendix_clip_chars,
+            )
 
     if summary:
         print(color("  💡 摘要", Color.BOLD, Color.WHITE))

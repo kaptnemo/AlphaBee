@@ -428,6 +428,17 @@ def test_memo_markdown_without_issues_omits_digest_and_appendix_g() -> None:
     assert headings[-1] == "## 免责声明"
 
 
+def test_memo_company_overview_renders_before_summary() -> None:
+    """memo：公司概况在摘要 blockquote 之前，且只渲染一次。"""
+    record = _record()
+    report_raw = dict(record.report_raw)
+    report_raw["layout"] = "memo"
+    report_raw["sections"] = {**record.report_raw["sections"], "company_overview": "公司概况正文。"}
+    markdown = build_report_markdown(record.model_copy(update={"report_raw": report_raw}))
+    assert markdown.index("## 公司概况") < markdown.index("> 一句话摘要。") < markdown.index("## 一页结论")
+    assert markdown.count("## 公司概况") == 1
+
+
 def test_memo_layout_placeholder_sections_skipped() -> None:
     record = _record()
     report_raw = dict(record.report_raw)

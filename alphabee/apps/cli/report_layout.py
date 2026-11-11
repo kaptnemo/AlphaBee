@@ -4,8 +4,8 @@
 ``renderer.render_final_report`` 终端）共用的**标题、顺序、占位符与字符口径**：
 
 - ``legacy``：现状 13 节（归档报告 / 旧记录），顺序与标题必须与 Q0 基线逐字节一致；
-- ``memo``：Q1-lite 投资备忘录，主文六节 → 审查与数据问题（摘要）→ 附录 A–F →
-  附录 G（系统问题全量）/ 附录 H（中期决策明细）→ 免责声明。其中 G/H 由
+- ``memo``：Q1-lite 投资备忘录，公司概况 → 摘要 → 主文六节 → 审查与数据问题 →
+  附录 A–F → 附录 G（系统问题全量）/ 附录 H（中期决策明细）→ 免责声明。其中 G/H 由
   :func:`render_issue_digest` 与渲染面负责折叠，不属于 13 个 section key。
 
 同时提供后续 G4 门禁与 A/B 指标共用的 :func:`report_shape`：从**渲染后的 markdown**
@@ -16,8 +16,8 @@
 
 - 章节正文 = ``## `` 标题行之后、下一个 ``## `` 标题行之前的内容，去掉章节边界空行
   （保留正文内部段落空行）；标题行、头部元信息、空行不计入正文字符数。
-- ``legacy`` 的 ``main_chars`` = 13 节正文之和；``memo`` 的 ``main_chars`` = 主文六节之和、
-  ``appendix_chars`` = 附录 A–F 六节之和；``issue_chars`` 沿用 Q0 基线口径
+- ``legacy`` 的 ``main_chars`` = 13 节正文之和；``memo`` 的 ``main_chars`` = 公司概况 +
+  主文六节之和、``appendix_chars`` = 附录 A–F 六节之和；``issue_chars`` 沿用 Q0 基线口径
   （``## 系统问题`` 行起至中期决策块之前；中期块不计入 issue）。
 - **过滤职责在消费者**：:func:`ordered_blocks` 返回 ``raw_text``（原值）与 ``text``（strip
   后）双视图，但不替调用方跳过空值/占位符；markdown 面按 strip 后文本判空/比占位符，
@@ -66,6 +66,9 @@ LEGACY_TITLES: dict[str, str] = {
     "disclaimer": "免责声明",
 }
 
+#: memo 主文前的「公司概况」节（memo 专属：渲染在摘要之前，面向零基础读者）。
+OVERVIEW_SECTIONS: tuple[str, ...] = ("company_overview",)
+
 #: memo 主文六节（设计 §3.1；不含免责声明与附录）。
 MAIN_SECTIONS: tuple[str, ...] = (
     "executive_summary",
@@ -85,6 +88,11 @@ APPENDIX_SECTIONS: tuple[str, ...] = (
     "company_track",
     "review_findings",
 )
+
+#: memo 公司概况标题（渲染在摘要之前；legacy 无此节）。
+OVERVIEW_TITLES: dict[str, str] = {
+    "company_overview": "公司概况",
+}
 
 #: memo 主文标题（顺序与 ``MAIN_SECTIONS`` 一致）。
 MAIN_TITLES: dict[str, str] = {
@@ -141,6 +149,7 @@ _MIDTERM_SEPARATOR_RE = re.compile(r"(?m)^(?:═|=){3,}[ \t]*$")
 #: 标题 → key 反查（legacy + memo 主文/附录；供基线脚本等只读消费者使用）。
 _TITLE_TO_KEY: dict[str, str] = {
     **{title: key for key, title in LEGACY_TITLES.items()},
+    **{title: key for key, title in OVERVIEW_TITLES.items()},
     **{title: key for key, title in MAIN_TITLES.items()},
     **{title: key for key, title in APPENDIX_TITLES.items()},
     "免责声明": "disclaimer",
@@ -156,7 +165,9 @@ _APPENDIX_PREFIX_TO_KEY: tuple[tuple[str, str], ...] = (
     ("附录 F", "review_findings"),
 )
 
-_KNOWN_SECTIONS: frozenset[str] = frozenset(LEGACY_ORDER) | frozenset(MAIN_SECTIONS) | frozenset(APPENDIX_SECTIONS)
+_KNOWN_SECTIONS: frozenset[str] = (
+    frozenset(LEGACY_ORDER) | frozenset(OVERVIEW_SECTIONS) | frozenset(MAIN_SECTIONS) | frozenset(APPENDIX_SECTIONS)
+)
 
 
 class SectionBlock(NamedTuple):
@@ -194,7 +205,9 @@ def title_to_key(title: str) -> str | None:
 def section_title(key: str, layout: str = "legacy") -> str:
     """取某布局下 section 的展示标题；未知 key 回退为 key 本身（fail-open 透传）。"""
     if normalize_layout(layout) == "memo":
-        return MAIN_TITLES.get(key) or APPENDIX_TITLES.get(key) or LEGACY_TITLES.get(key, key)
+        return (
+            OVERVIEW_TITLES.get(key) or MAIN_TITLES.get(key) or APPENDIX_TITLES.get(key) or LEGACY_TITLES.get(key, key)
+        )
     return LEGACY_TITLES.get(key, key)
 
 
@@ -227,8 +240,8 @@ def _legacy_keys(sections: Mapping[str, Any]) -> list[str]:
 
 
 def _memo_keys(sections: Mapping[str, Any]) -> list[str]:
-    """memo 顺序：主文六节 → 附录 A–F → 免责声明 → 未知 key（尾部透传）。"""
-    ordered = [key for key in (*MAIN_SECTIONS, *APPENDIX_SECTIONS, "disclaimer") if key in sections]
+    """memo 顺序：公司概况 → 主文六节 → 附录 A–F → 免责声明 → 未知 key（尾部透传）。"""
+    ordered = [key for key in (*OVERVIEW_SECTIONS, *MAIN_SECTIONS, *APPENDIX_SECTIONS, "disclaimer") if key in sections]
     ordered.extend(key for key in sections if key not in _KNOWN_SECTIONS)
     return ordered
 
@@ -403,7 +416,7 @@ def report_shape(markdown: str, layout: str = "legacy") -> dict[str, int]:
     normalized = normalize_layout(layout)
     sections = _markdown_section_bodies(markdown)
     if normalized == "memo":
-        main_keys: tuple[str, ...] = MAIN_SECTIONS
+        main_keys: tuple[str, ...] = (*OVERVIEW_SECTIONS, *MAIN_SECTIONS)
         appendix_keys: tuple[str, ...] = APPENDIX_SECTIONS
     else:
         main_keys = LEGACY_ORDER

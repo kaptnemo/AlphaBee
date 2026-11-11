@@ -198,7 +198,7 @@ REPORT_GENERATOR_PROMPT_MEMO = """你是 AlphaBee 的投资分析报告生成器
 ## 输入 JSON 结构
 
 你会收到一个 JSON，包含：
-- company: 公司基本信息（symbol, query, raw_response 摘要）
+- company: 公司基本信息（symbol, query, raw_response 摘要, **profile 公司档案**）
 - metrics: 核心衍生指标（top_metrics 列表，每项含 name/value/level/interpretation）
 - signals: 风险信号列表（signal_id/level/interpretation/thesis_impact）
 - thesis: 投资论点（dimensions 各维度 judgment/score/confidence/evidence/interpretation）
@@ -220,12 +220,13 @@ REPORT_GENERATOR_PROMPT_MEMO = """你是 AlphaBee 的投资分析报告生成器
 
 ## 输出 JSON 结构
 
-输出一个 JSON 对象（字段结构与旧版报告一致；`sections` 必须包含全部 13 个 key）：
+输出一个 JSON 对象（字段结构与旧版报告一致；`sections` 必须包含全部 13 个 key + `company_overview`）：
 
 ```json
 {
   "title": "{symbol} 投资分析报告 — 财报口径 {报告期} / 行情口径 {行情截止日，或"未在输入中提供"}",
   "sections": {
+    "company_overview": "见下方【公司概况】",
     "executive_summary": "见下方【主文六节指令】",
     "investment_viewpoint": "见下方【主文六节指令】",
     "scenario_analysis": "见下方【主文六节指令】",
@@ -254,6 +255,23 @@ REPORT_GENERATOR_PROMPT_MEMO = """你是 AlphaBee 的投资分析报告生成器
 3. 每个数字必须带口径（财报期/行情日）；不得出现输入 JSON 之外的数字。
 4. 附录允许长，但只放明细与清单，不再写"与 core_view 的关系"。
 5. 主文引用附录时写"见附录 X"，不要复制附录内容。
+
+## 公司概况（≤450 字，独立于主文预算）
+
+放在**摘要之前**，读者假设是"完全不了解这家公司的人"。用 3–5 句话回答：
+
+1. **做什么、卖给谁**：一句话定位（引用 `company.profile.main_business` / `introduction`，
+   配合 `company_track.business_model`）；写清产品形态与下游客户类型。
+2. **靠什么赚钱**：主导业务线 / 收入结构（`company_track.dominant_segment`、财报口径的分部或
+   产品占比；输入没有就省略，不推测）。
+3. **行业与上市地**：`profile.industry` / `market` / `exchange` / `list_date` / `area`。
+4. **规模锚点**（输入里有才写）：员工数、注册资本、总市值/营收体量，必须带口径与时点。
+
+硬性要求：
+
+- 只写输入 JSON 中有依据的事实；缺失项直接省略，**不得**脑补客户名、市场份额、竞争对手或历史沿革。
+- 这是背景介绍，不写观点、不写估值判断、不出现"值得关注"式评价，也不得与后文主张重复。
+- `profile` 为空对象时，仅用 `symbol` + `company_track` 中可确认的信息写 2–3 句；仍无信息则输出空字符串 `""`。
 
 ## 主文六节指令
 

@@ -49,7 +49,7 @@ report_window:
 
 # 报告输出模式（Q1-lite；docs/implementation/framework/REPORT_CLAIM_FIRST_AND_PARAMS_GOVERNANCE_DESIGN.md §3.2）
 # legacy    = 现状 13 节报告（默认；渲染与 JSON 形状逐字节不变）
-# memo_lite = 投资备忘录：主文六节 + 附录 A–F 布局 + memo prompt（只做减法与重排，无 claims 字段）
+# memo_lite = 投资备忘录：公司概况 + 主文六节 + 附录 A–F 布局 + memo prompt（只做减法与重排，无 claims 字段）
 # 回滚方式 = 整段省略或 mode: legacy。memo 模式生成的报告 JSON 会写 "layout": "memo"；
 # 旧记录（无 layout 字段）一律按 legacy 渲染。
 report:

@@ -27,7 +27,11 @@ from alphabee.apps.cli.renderer import render_final_report
 from alphabee.apps.cli.report_layout import APPENDIX_TITLES, MAIN_TITLES
 from alphabee.config import ReportSettings
 from alphabee.orchestrator import reporter
-from alphabee.orchestrator.contracts import ReportGenerationPayload
+from alphabee.orchestrator.contracts import (
+    ReportCompanyPayload,
+    ReportCompanyProfilePayload,
+    ReportGenerationPayload,
+)
 from alphabee.orchestrator.prompts import REPORT_GENERATOR_PROMPT, REPORT_GENERATOR_PROMPT_MEMO
 
 _SECTION_KEYS = (
@@ -189,6 +193,42 @@ async def test_config_failure_fail_open_to_legacy(monkeypatch: pytest.MonkeyPatc
     assert "layout" not in _artifact_value(result)
 
 
+def test_memo_prompt_requires_company_overview_before_summary() -> None:
+    prompt = REPORT_GENERATOR_PROMPT_MEMO
+    assert "## 公司概况" in prompt
+    assert "company_overview" in prompt
+    assert "放在**摘要之前**" in prompt
+    assert "company.profile" in prompt
+    assert "≤450 字" in prompt
+    # legacy prompt 不引入公司概况（legacy 渲染逐字节不变）
+    assert "company_overview" not in REPORT_GENERATOR_PROMPT
+
+
+def test_deterministic_memo_builds_overview_from_company_profile() -> None:
+    payload = ReportGenerationPayload(
+        company=ReportCompanyPayload(
+            symbol="300857.SZ",
+            profile=ReportCompanyProfilePayload(
+                name="协创数据",
+                industry="IT设备",
+                market="创业板",
+                exchange="SZSE",
+                list_date="20200727",
+                main_business="消费电子领域物联网智能终端和数据存储设备等产品的研发、生产和销售",
+                employees="1775",
+            ),
+        )
+    )
+    memo = reporter.build_deterministic_report(payload, mode="memo_lite")
+    overview = memo["sections"]["company_overview"]
+    assert "协创数据" in overview
+    assert "创业板" in overview
+    assert "2020-07-27" in overview
+    assert "1775" in overview
+    # legacy 不携带公司概况（避免旧布局把未知节渲染到末尾）
+    assert reporter.build_deterministic_report(payload, mode="legacy")["sections"]["company_overview"] == ""
+
+
 def test_build_deterministic_report_layout_by_mode() -> None:
     payload = ReportGenerationPayload()
     legacy = reporter.build_deterministic_report(payload)
@@ -289,6 +329,18 @@ def test_terminal_memo_prints_main_sections_and_clips_appendix(
     assert "A" * 900 not in out  # 附录被裁剪到 800 字
     assert "核心观点摘要" not in out  # memo 不打印 legacy 标题
     assert "公司赛道与对标组" in out  # memo 下 company_track 作为附录 E 打印
+
+
+def test_terminal_memo_prints_company_overview_before_summary(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sections = _sections()
+    sections["company_overview"] = "概况：主营物联网终端。"
+    report = _report_json(layout="memo", sections=sections)
+    out = _render(capsys, {"final_report": report, "issues": []})
+    assert "公司概况" in out
+    assert out.index("公司概况") < out.index("💡 摘要") < out.index("一页结论")
+    assert out.count("概况：主营物联网终端。") == 1
 
 
 def test_terminal_appendix_clip_is_configurable(capsys: pytest.CaptureFixture[str]) -> None:

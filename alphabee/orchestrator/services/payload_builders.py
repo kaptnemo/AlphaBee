@@ -19,6 +19,7 @@ from alphabee.orchestrator.contracts import (
     InsightArtifact,
     ReportAnomalyPayload,
     ReportCompanyPayload,
+    ReportCompanyProfilePayload,
     ReportCompanyTrackPayload,
     ReportConflictAnalysisPayload,
     ReportConflictHypothesisPayload,
@@ -412,6 +413,46 @@ def build_verify_context(state: OrchestratorState, symbol: str | None) -> dict[s
     return context
 
 
+def _profile_scalar(section: Mapping[str, Any], key: str) -> str:
+    """取 Tushare ``to_dict(orient="dict")`` 的单值：``{col: {0: value}}`` → ``str``。"""
+    value: Any = section.get(key)
+    if isinstance(value, Mapping):
+        value = value.get(0)
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _build_company_profile(symbol: str) -> ReportCompanyProfilePayload:
+    """拉取公司档案（缓存命中优先；任何失败都 fail-open 返回空档案）。"""
+    if not symbol:
+        return ReportCompanyProfilePayload()
+    try:
+        from alphabee.agents.facts.tools.company_profile import get_company_profile
+
+        data = get_company_profile(symbol)
+    except Exception:  # noqa: BLE001 - 档案缺失不得阻断报告生成
+        return ReportCompanyProfilePayload()
+    basic = data.get("basic") or {}
+    company = data.get("company") or {}
+    if not isinstance(basic, Mapping) or not isinstance(company, Mapping):
+        return ReportCompanyProfilePayload()
+    return ReportCompanyProfilePayload(
+        name=_profile_scalar(basic, "company_name"),
+        industry=_profile_scalar(basic, "industry"),
+        market=_profile_scalar(basic, "market"),
+        exchange=_profile_scalar(basic, "exchange"),
+        list_date=_profile_scalar(basic, "list_date"),
+        area=_profile_scalar(basic, "area"),
+        province=_profile_scalar(company, "province"),
+        city=_profile_scalar(company, "city"),
+        introduction=_profile_scalar(company, "introduction"),
+        main_business=_profile_scalar(company, "main_business"),
+        employees=_profile_scalar(company, "employees"),
+        registered_capital=_profile_scalar(company, "registered_capital"),
+    )
+
+
 def build_report_generation_payload(state: Mapping[str, Any]) -> ReportGenerationPayload:
     """Assemble all structured node outputs into a typed report-generation payload."""
 
@@ -426,6 +467,8 @@ def build_report_generation_payload(state: Mapping[str, Any]) -> ReportGeneratio
             symbol=fact_val.symbol or "",
             query=fact_val.query,
             raw_response=(fact_val.raw_response or "")[:2000],
+            # memo「公司概况」事实源：filing 档案（缓存命中；取数失败 ⇒ 空档案）。
+            profile=_build_company_profile(fact_val.symbol or ""),
         )
 
     derived_val = find_artifact_model(artifacts, ArtifactType.DERIVED_FACTS, DerivedFactsArtifact)

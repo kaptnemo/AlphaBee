@@ -409,8 +409,8 @@ class ReportSettings(BaseModel):
     """报告输出模式（Q1-lite；缺段/缺键 ⇒ legacy，行为与改造前逐字一致）。
 
     - ``mode="legacy"``：现状 13 节报告（默认；渲染与 JSON 形状不变）；
-    - ``mode="memo_lite"``：投资备忘录（主文六节 + 附录 A–F + memo prompt；schema 仅
-      additive ``ReportOutput.layout``，无 claims 字段）。
+    - ``mode="memo_lite"``：投资备忘录（公司概况 + 主文六节 + 附录 A–F + memo prompt；schema 仅
+      additive ``ReportOutput.layout`` 与 ``ReportSections.company_overview``，无 claims 字段）。
     回滚方式：整段省略或 ``mode: legacy``。
 
     ``capture_payload`` 本步只定义不消费（下一步用于归档报告生成 payload 供离线 A/B）。

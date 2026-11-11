@@ -283,6 +283,33 @@ def test_ordered_blocks_empty_input() -> None:
     assert ordered_blocks({}, "memo") == []
 
 
+def test_memo_company_overview_is_first_and_titled() -> None:
+    """memo 独有：公司概况排在主文之前，legacy 无该标题（未知 key 原样透传）。"""
+    sections = {**dict(ALL_SECTIONS), "company_overview": "公司做什么、卖给谁。"}
+    blocks = ordered_blocks(sections, "memo")
+    assert blocks[0].key == "company_overview"
+    assert blocks[0].title == "公司概况"
+    assert [block.key for block in blocks[1:7]] == list(MAIN_SECTIONS)
+    assert section_title("company_overview", "memo") == "公司概况"
+    assert section_title("company_overview", "legacy") == "company_overview"
+    assert title_to_key("公司概况") == "company_overview"
+    # 未知 key 尾部透传的判定不把公司概况当未知
+    assert [block.key for block in blocks].count("company_overview") == 1
+
+
+def test_report_shape_memo_counts_overview_as_main_text() -> None:
+    markdown, bodies = _markdown_with_all_sections()
+    markdown = markdown.replace(
+        "## 核心观点摘要",
+        "## 公司概况\n\n概况正文\n\n## 核心观点摘要",
+        1,
+    )
+    shape = report_shape(markdown, "memo")
+    main_expected = len("概况正文") + sum(len(bodies[key]) for key in MAIN_SECTIONS)
+    assert shape["main_chars"] == main_expected
+    assert shape["section_count"] == len(LEGACY_ORDER) + 1
+
+
 # ═══════════════════════════════════════════════════════════════════
 # report_shape
 # ═══════════════════════════════════════════════════════════════════
