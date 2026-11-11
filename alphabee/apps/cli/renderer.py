@@ -986,10 +986,10 @@ def render_final_report(
             None,
         )
         if overview is not None and overview.text and overview.text != PLACEHOLDER_VALUES.get(overview.key):
-            spec = _TERMINAL_SECTION_SPECS["company_overview"]
+            overview_spec = _TERMINAL_SECTION_SPECS["company_overview"]
             _print_section_block(
                 overview,
-                spec,
+                overview_spec,
                 display_text=overview.text,
                 layout="memo",
                 appendix_clip_chars=appendix_clip_chars,

@@ -293,6 +293,7 @@ def _parse_registry(raw: Any, source: Path) -> list[ParamEntry]:
     )
     raw_entries = raw.get("entries")
     _require(isinstance(raw_entries, list) and bool(raw_entries), f"参数注册表 {source} entries 必须是非空列表")
+    assert isinstance(raw_entries, list)  # mypy 收窄（_require 只负责运行时校验）
 
     entries: list[ParamEntry] = []
     for index, raw_entry in enumerate(raw_entries):

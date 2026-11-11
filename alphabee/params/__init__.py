@@ -15,6 +15,8 @@
 抛给生产调用方。P1 才把 ``resolve_*`` 接进 ``decision_model`` / ``classifier_dispatch``。
 """
 
+from typing import Any
+
 from alphabee.params.models import (
     DEFAULT_EVIDENCE_PARAMS,
     DEFAULT_REPORT_QUALITY_PARAMS,
@@ -73,7 +75,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """延迟导出 ``ParametersSettings``（避免包导入期触发 ``alphabee.config`` 构造）。
 
     ``config.yaml`` 的 ``parameters`` 段类型定义在 ``alphabee.config``；本包只在被显式
