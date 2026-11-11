@@ -146,7 +146,7 @@ def pick_report_links(links: dict[str, Any]) -> list[dict[str, Any]]:
     full_reports = [
         r
         for r in reports
-        if r.get("download_url") and "摘要" not in r.get("title", "") and "英文版" not in r.get("title", "")
+        if r.get("download_url") and "摘要" not in r.get("title", "") and "英文" not in r.get("title", "")
     ]
     # if not full_reports:
     #     raise ValueError("未获取到任何可下载的完整报告链接（可能无该类型报告，或日期范围过窄）。")
