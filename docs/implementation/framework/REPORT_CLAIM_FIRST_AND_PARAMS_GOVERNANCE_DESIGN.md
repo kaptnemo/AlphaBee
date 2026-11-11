@@ -205,6 +205,7 @@ Q0 另外产出 `docs/implementation/report/REPORT_ARGUMENT_SPEC.md`（一页）
 
 | 旧 section key | 新位置 | 新标题 | 预算（字） | 内容要求 |
 |---|---|---|---:|---|
+| （新增）`company_overview` | 主文 0（摘要之前） | 公司概况 | 450 | 面向零基础读者：做什么/卖给谁、主导业务线与收入结构、行业与上市地、规模锚点；只写有据可查的事实 |
 | `executive_summary` | 主文 1 | 一页结论 | 800 | 1 主张 + 3 证据 + 2 反证 + 1 失效条件 |
 | `investment_viewpoint` | 主文 2 | 核心主张 | 1,600 | Q1：2–3 条 claim 段落；Q2：改由 `claims[]` 渲染 |
 | `scenario_analysis` | 主文 3 | 情景与触发 | 1,200 | base/bull/bear 各 ≤300 + 触发条件 |
@@ -221,7 +222,7 @@ Q0 另外产出 `docs/implementation/report/REPORT_ARGUMENT_SPEC.md`（一页）
 | `TaskRecord.midterm` | 附录 H | 中期决策明细 | 不限 | 完整控制台块 |
 | `disclaimer` | 主文尾 | 免责声明 | 200 | 原样 |
 
-**渲染顺序唯一来源**：新增 `alphabee/apps/cli/report_layout.py`，定义 `MAIN_SECTIONS`、`APPENDIX_SECTIONS`、`MAIN_TITLES`、`APPENDIX_TITLES`、`LEGACY_ORDER` 与 `ordered_blocks(sections, layout)`；`task_report.py` 与 `renderer.py` 都只消费该模块。这是修 F5 的最小改动。
+**渲染顺序唯一来源**：新增 `alphabee/apps/cli/report_layout.py`，定义 `OVERVIEW_SECTIONS`、`MAIN_SECTIONS`、`APPENDIX_SECTIONS`、`OVERVIEW_TITLES`、`MAIN_TITLES`、`APPENDIX_TITLES`、`LEGACY_ORDER` 与 `ordered_blocks(sections, layout)`；`task_report.py` 与 `renderer.py` 都只消费该模块。这是修 F5 的最小改动。
 
 ### 3.2 Q1-lite：只做减法与重排（W1，2 天）
 
@@ -235,6 +236,7 @@ Q1-lite 的目标不是"写短"，而是**验证形状假设**：同一批证据
 
 | 章节 | 新指令（要点） | 删除的旧要求 |
 |---|---|---|
+| company_overview（新增） | ≤450 字，渲染在摘要之前：做什么/卖给谁、主导业务线与收入结构、行业与上市地、规模锚点；事实只取自 `company.profile` / `company_track`，缺失即省略 | — |
 | executive_summary | ≤800 字；固定四段：主张 / 3 条证据（带数字与口径）/ 2 条反证 / 1 条失效条件 | "2–3 段话，含置信度与关键不确定性" |
 | investment_viewpoint | 输出 2–3 条主张；每条用固定六段：主张/依据/推理/反证/限定/失效条件；每条 ≤500 字；只引用支撑该主张的 2–4 条证据 | "逐一讨论 supporting_evidence（至少2条）和 counter_evidence（至少2条）" |
 | scenario_analysis | ≤1,200 字；三情景各 ≤300 字 + 触发条件；不再回扣 materiality_rank 每项 | 各情景"回扣 main_driver 与 materiality_rank 关键变量" |
@@ -250,7 +252,7 @@ Q1-lite 的目标不是"写短"，而是**验证形状假设**：同一批证据
 `task_report.build_report_markdown` 与 `renderer.render_final_report` 改为调用 `report_layout.ordered_blocks(sections, layout)`：
 
 - `layout="legacy"`：完全维持现状顺序（13 节），零行为变化；
-- `layout="memo"`：主文 6 节 → 附录 A–F → 免责声明；
+- `layout="memo"`：公司概况（摘要之前）→ 主文 6 节 → 附录 A–F → 免责声明；
 - 附录标题统一 `## 附录 A 风险信号明细`，不使用旧标题（避免读者误以为仍是正文）；
 - 终端渲染对附录只打印标题 + 前 800 字（可配置），完整内容在 markdown 文件。
 
@@ -1232,6 +1234,11 @@ parameters:
 4. 附录允许长，但只放明细与清单，不再写"与 core_view 的关系"。
 5. 主文引用附录时写"见附录 X"，不要复制附录内容。
 
+### company_overview（≤450 字，渲染在摘要之前）
+面向"完全不了解这家公司的人"：做什么/卖给谁、主导业务线与收入结构、
+行业与上市地、规模锚点；事实只取自 `company.profile` / `company_track`，
+缺失即省略，不写观点与评价。
+
 ### executive_summary（≤800 字）
 固定四段，不要写成散文：
 【主张】一句话，可反驳。
@@ -1571,7 +1578,7 @@ def report_shape(markdown: str, layout: str) -> dict[str, int]:
     """返回 main_chars / appendix_chars / issue_chars / total_chars。
 
     layout="legacy"：main_chars = 13 节正文之和（即读者必须读的全部论证）
-    layout="memo"  ：main_chars = 一页结论..关键指标 六节之和（不含附录）
+    layout="memo"  ：main_chars = 公司概况 + 一页结论..关键指标 六节之和（不含附录）
     两口径都从**渲染后的 markdown** 计算，保证与门禁 G4、A/B 指标、基线脚本一致。
     """
 ```

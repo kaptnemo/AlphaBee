@@ -30,6 +30,7 @@
 
 | 单元 | 预算 | 说明 |
 |---|---:|---|
+| 公司概况 | ≤450 字 | 摘要之前；做什么/卖给谁、主导业务线与收入结构、行业与上市地、规模锚点（只写有据事实） |
 | 一页结论 | ≤800 字 | 1 主张 + 3 证据 + 2 反证 + 1 失效条件 |
 | 核心主张 | 3 条 × ≤500 字 | 每条六要素齐全；Q2 上限 5 条 |
 | 情景与触发 | ≤1,200 字 | base/bull/bear 各 ≤300 字 + 触发条件 |
@@ -39,7 +40,7 @@
 | **主文合计** | **≤10,000 字** | 硬上限（Q2 门禁 G4） |
 | 附录 | 不限 | 必须与主文不重复论证；主文用“见附录 X”引用 |
 
-字符数按 Python `len()` 计（中文 1 字符），与基线脚本同一口径；主文 = 上述六节之和（不含免责声明与附录）。
+字符数按 Python `len()` 计（中文 1 字符），与基线脚本同一口径；主文 = 公司概况 + 上述六节之和（不含免责声明与附录）。
 
 ## 4. 好坏对照（600760 真实内容改写）
 
@@ -89,7 +90,7 @@
 7. `detail_ratio` = `detail_chars / body13_chars`；`nonarg_ratio` = `(issue_chars + midterm_chars) / total_chars`；分母为 0 记 0。
 8. `issue_count` / `issue_max_msg_chars`：归档 md 从 `- [severity] category: message` 行单行解析；TaskRecord 口径直接取 `record.issues` 的条数与消息长度。
 
-`--layout memo` 时追加 `main_chars` / `appendix_chars`（主文六节之和 / 附录 A–F 六节之和）；`--layout legacy` 时 `main_chars = body13_chars`、`appendix_chars = 0`。
+`--layout memo` 时追加 `main_chars` / `appendix_chars`（公司概况 + 主文六节之和 / 附录 A–F 六节之和）；`--layout legacy` 时 `main_chars = body13_chars`、`appendix_chars = 0`。
 
 ### 6.2 复现命令
 
