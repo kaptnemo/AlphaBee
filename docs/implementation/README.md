@@ -19,6 +19,7 @@
 | | | `DRIVER_PROFILE_P0_FIX_PLAN.md` / `DRIVER_PROFILE_P1_P2_FIX_PLAN.md`（修复计划） | ✅ 已实施 |
 | `financial_report/` | `alphabee/financial_report/`（+ `tools/financial_report.py`） | `REPORT_INDEX_AGENT_CACHE_DESIGN.md`（财报检索 index / fetch agent 缓存 + 路径守卫） | ✅ 已实施（P0/P1/P2），P3 未实施 |
 | `report/` | `alphabee/apps/cli/`（+ `orchestrator/reporter` 报告渲染面） | `REPORT_ARGUMENT_SPEC.md`（报告论证规范：实质主张判据/六要素/长度预算/反模式） | ✅ 本步（W1-Q0） |
+| `observability/` | `alphabee/observability/`（trace store：core/profile/adapters/query） | `TRACE_STORE_IMPLEMENTATION_DESIGN.md`（trace store P0 编码设计：schema/存储/接线/测试/PR 切分） | ⬜ 未实施（本文） |
 | `apiary/` | AlphaBee 仓：`alphabee/research/` + `scripts/alphabee_poc/`；Apiary 仓：`poc/`（控制面） | `POC_SPEC.md`（窄范围验证：利润/毛利率可持续性；A/B/C/D 评估；两仓边界） | ⬜ 未实施 |
 
 ## 分类规则
